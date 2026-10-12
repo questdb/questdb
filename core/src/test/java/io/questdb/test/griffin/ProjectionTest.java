@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerFactory;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -36,9 +37,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.TextPlanSink;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.tools.TestUtils;
@@ -335,13 +336,13 @@ public class ProjectionTest extends AbstractCairoTest {
                     final SqlCompilerImpl compiler = new SqlCompilerImpl(engine) {
                         @Override
                         protected RecordCursorFactory generateSelectOneShot(
-                                QueryModel model,
+                                ObjList<ViewDefinition> views,
                                 SqlExecutionContext executionContext,
                                 boolean generateProgressLogger
                         ) throws SqlException {
                             Assert.assertNotNull(getPlanForTesting());
                             generatedQueries[0]++;
-                            return super.generateSelectOneShot(model, executionContext, generateProgressLogger);
+                            return super.generateSelectOneShot(views, executionContext, generateProgressLogger);
                         }
                     };
                     return compiler;

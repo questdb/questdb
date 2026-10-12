@@ -37,7 +37,6 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
-import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -546,14 +545,14 @@ public class SqlBinderTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine) {
                 @Override
                 protected RecordCursorFactory generateSelectOneShot(
-                        QueryModel model,
+                        ObjList<ViewDefinition> views,
                         SqlExecutionContext executionContext,
                         boolean generateProgressLogger
                 ) throws SqlException {
                     final LogicalPlan plan = getPlanForTesting();
                     Assert.assertNotNull(plan);
                     final String before = describePlan(plan);
-                    final RecordCursorFactory factory = super.generateSelectOneShot(model, executionContext, generateProgressLogger);
+                    final RecordCursorFactory factory = super.generateSelectOneShot(views, executionContext, generateProgressLogger);
                     try {
                         Assert.assertSame(plan, getPlanForTesting());
                         Assert.assertEquals(before, describePlan(plan));
@@ -673,14 +672,14 @@ public class SqlBinderTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine) {
                 @Override
                 protected RecordCursorFactory generateSelectOneShot(
-                        QueryModel model,
+                        ObjList<ViewDefinition> views,
                         SqlExecutionContext executionContext,
                         boolean generateProgressLogger
                 ) throws SqlException {
                     if (++attempts[0] == 1) {
                         engine.execute("ALTER TABLE lp_rows ADD COLUMN added INT", executionContext);
                     }
-                    return super.generateSelectOneShot(model, executionContext, generateProgressLogger);
+                    return super.generateSelectOneShot(views, executionContext, generateProgressLogger);
                 }
             }) {
                 try (RecordCursorFactory factory = compiler.compile(
@@ -1001,13 +1000,13 @@ public class SqlBinderTest extends AbstractCairoTest {
                     final SqlCompilerImpl compiler = new SqlCompilerImpl(engine) {
                         @Override
                         protected RecordCursorFactory generateSelectOneShot(
-                                QueryModel model,
+                                ObjList<ViewDefinition> views,
                                 SqlExecutionContext executionContext,
                                 boolean generateProgressLogger
                         ) throws SqlException {
                             Assert.assertNotNull(getPlanForTesting());
                             generatedQueries[0]++;
-                            return super.generateSelectOneShot(model, executionContext, generateProgressLogger);
+                            return super.generateSelectOneShot(views, executionContext, generateProgressLogger);
                         }
                     };
                     return compiler;

@@ -24,13 +24,6 @@
 
 package io.questdb.griffin;
 
-import io.questdb.griffin.codegen.SqlCodeGenerator;
-import io.questdb.griffin.optimiser.SqlOptimiser;
-import io.questdb.griffin.bind.SqlBinder;
-import io.questdb.griffin.bind.JoinGraphBuilder;
-import io.questdb.griffin.bind.UpdateTarget;
-import io.questdb.griffin.bind.BindScopeStack;
-import io.questdb.griffin.bind.BindScope;
 import io.questdb.MessageBus;
 import io.questdb.TelemetryEvent;
 import io.questdb.TelemetryOrigin;
@@ -82,6 +75,12 @@ import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
 import io.questdb.cutlass.parquet.CopyExportRequestTask;
+import io.questdb.griffin.bind.BindScope;
+import io.questdb.griffin.bind.BindScopeStack;
+import io.questdb.griffin.bind.JoinGraphBuilder;
+import io.questdb.griffin.bind.SqlBinder;
+import io.questdb.griffin.bind.UpdateTarget;
+import io.questdb.griffin.codegen.SqlCodeGenerator;
 import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.StaleViewCheckFactory;
 import io.questdb.griffin.engine.groupby.TimestampSampler;
@@ -115,6 +114,7 @@ import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.griffin.model.WindowExpression;
+import io.questdb.griffin.optimiser.SqlOptimiser;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
@@ -229,6 +229,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final BindScopeStack scopes = new BindScopeStack();
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ObjList<Subquery> subqueries = new ObjList<>();
+    private final SubqueryCompiler subqueryCompiler = new SubqueryCompiler() {
+        @Override
+        public Subquery bindSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
+            return SqlCompilerImpl.this.bindSubquery(model, position, executionContext);
+        }
+
+        @Override
+        public RecordCursorFactory compileSubqueryFactory(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
+            return SqlCompilerImpl.this.compileSubqueryFactory(model, position, executionContext);
+        }
+
+        @Override
+        public RecordCursorFactory generateSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException {
+            return SqlCompilerImpl.this.generateSubquery(subquery, executionContext);
+        }
+    };
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final ObjList<BoundExpression> tmpArguments = new ObjList<>(2);
@@ -252,22 +268,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
     private boolean isSingleQueryMode = true;
     private LogicalPlan root;
-    private final SubqueryCompiler subqueryCompiler = new SubqueryCompiler() {
-        @Override
-        public Subquery bindSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
-            return SqlCompilerImpl.this.bindSubquery(model, position, executionContext);
-        }
-
-        @Override
-        public RecordCursorFactory compileSubqueryFactory(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
-            return SqlCompilerImpl.this.compileSubqueryFactory(model, position, executionContext);
-        }
-
-        @Override
-        public RecordCursorFactory generateSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException {
-            return SqlCompilerImpl.this.generateSubquery(subquery, executionContext);
-        }
-    };
 
     public SqlCompilerImpl(CairoEngine engine) {
         try {
@@ -614,7 +614,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         int remainingRetries = maxRecompileAttempts;
         for (; ; ) {
             try {
-                return generateSelectOneShot(queryModel, executionContext, generateProgressLogger);
+                return generateSelectOneShot(queryModel.getReferencedViews(), executionContext, generateProgressLogger);
             } catch (TableReferenceOutOfDateException e) {
                 if (--remainingRetries < 0) {
                     throw tooManyRetries(0, e);
@@ -768,15 +768,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         clear();
         lexer.of(expression);
         parser.expr(lexer, listener, this);
-    }
-
-    protected AlterOperationBuilder createAlterOperationBuilder() {
-        return new AlterOperationBuilder();
-    }
-
-    protected void lexerToFirstToken(GenericLexer lexer, int rollbackPosition) throws SqlException {
-        lexer.goToPosition(rollbackPosition);
-        SqlUtil.fetchNext(lexer);
     }
 
     private static void addSupportedConversion(short fromType, short... toTypes) {
@@ -1015,10 +1006,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return sink;
     }
 
-    private static SqlException tooManyRetries(int position, TableReferenceOutOfDateException e) {
-        return SqlException.position(position).put("too many ").put(e.getFlyweightMessage());
-    }
-
     /**
      * The compile-time partition layout checks (reject*On*Partitions) only gate statements a user
      * submits. They are skipped when:
@@ -1182,6 +1169,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     .put(unquote(foreignSource.token))
                     .put("]; the statement is replicated as SQL and re-executed on every node, and the referenced table is not synchronised with this one, so nodes could write different data");
         }
+    }
+
+    private static SqlException tooManyRetries(int position, TableReferenceOutOfDateException e) {
+        return SqlException.position(position).put("too many ").put(e.getFlyweightMessage());
     }
 
     private int addColumnWithType(
@@ -2355,6 +2346,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    private void bindInsertAsSelect(SqlExecutionContext executionContext, InsertModel model) throws SqlException {
+        compileQuery(model.getQueryModel(), executionContext);
+        final int columnNameListSize = model.getColumnNameList().size();
+        if (columnNameListSize > 0 && root.getOutput().getColumnCount() != columnNameListSize) {
+            throw SqlException.$(model.getTableNameExpr().position, "column count mismatch");
+        }
+    }
+
+    /**
+     * Binds the model into {@link #root}, the bound plan the caller optimises.
+     */
+    private void bindQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        assert model.getBottomUpColumns().size() > 0 || model.getNestedModel() == null;
+        optimiser.clear();
+        planNodePools.clear();
+        CairoException.rethrowCleanupFailure(clearPlan(null));
+        scopes.clear();
+        clearExpressionStages();
+        binder.clear();
+        final SubqueryCompiler previous = functionParser.swapSubqueryCompiler(subqueryCompiler);
+        try {
+            root = binder.bind(model, this, executionContext);
+        } finally {
+            functionParser.swapSubqueryCompiler(previous);
+        }
+    }
+
     private Function bindStatementExpression(ExpressionNode expression, RecordMetadata metadata, int preferredType, SqlExecutionContext executionContext) throws SqlException {
         assert root == null;
         if (expression == null) {
@@ -2433,6 +2451,15 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         CairoException.rethrowCleanupFailure(failure);
     }
 
+    private void clearExpressionStages() {
+        try {
+            functionInstantiator.clear();
+        } finally {
+            binder.clearExpressions();
+            expressionRewriter.clear();
+        }
+    }
+
     /**
      * Recycles the bound expressions, their preparations and the sub-queries they read while the plan nodes stay: a
      * standalone expression keeps only the function it instantiated.
@@ -2445,15 +2472,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             subqueries.clear();
             clearExpressionStages();
             planNodePools.clearExpressions();
-        }
-    }
-
-    private void clearExpressionStages() {
-        try {
-            functionInstantiator.clear();
-        } finally {
-            binder.clearExpressions();
-            expressionRewriter.clear();
         }
     }
 
@@ -3430,6 +3448,113 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
     }
 
+    /**
+     * Compiles the SELECT of a CREATE MATERIALIZED VIEW or CREATE VIEW: binds it, validates it as the view's
+     * definition, and generates it. A materialized view validates the bound plan, whose select levels its rules
+     * read, before optimisation merges them, and binds and generates with non-deterministic functions refused; a
+     * view validates the output of the optimised plan. Errors of the SELECT report their position in the statement.
+     */
+    private void compileCreateSelect(@Transient @NotNull SqlExecutionContext executionContext, @NotNull Operation op) throws SqlException {
+        final CreateMatViewOperation createMatViewOp = op instanceof CreateMatViewOperation matView ? matView : null;
+        final CreateTableOperation createTableOp = createMatViewOp != null
+                ? createMatViewOp.getCreateTableOperation() : ((CreateViewOperation) op).getCreateTableOperation();
+        lexer.of(createTableOp.getSelectText());
+        clear();
+
+        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
+        if (!circuitBreaker.isTimerSet()) {
+            circuitBreaker.resetTimer();
+        }
+        final CharSequence tok = SqlUtil.fetchNext(lexer);
+        if (tok == null) {
+            throw SqlException.$(lexer.lastTokenPosition(), "SELECT query expected");
+        }
+        lexer.unparseLast();
+
+        sqlText = createTableOp.getSelectText();
+        compiledQuery.withContext(executionContext);
+
+        final int startPos = lexer.getPosition();
+        final long beginNanos = configuration.getNanosecondClock().getTicks();
+
+        final int selectTextPosition = createTableOp.getSelectTextPosition();
+        final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
+        try {
+            if (createMatViewOp != null) {
+                executionContext.setAllowNonDeterministicFunction(false);
+            }
+            final QueryModel queryModel;
+            final boolean cacheable;
+            try {
+                try {
+                    final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
+                    if (executionModel.getModelType() != ExecutionModel.QUERY) {
+                        throw SqlException.$(startPos, "SELECT query expected");
+                    }
+                    queryModel = (QueryModel) executionModel;
+                    bindQuery(queryModel, executionContext);
+                    if (createMatViewOp != null) {
+                        final SqlExecutionRequirements executionRequirements = functionResolver.getExecutionRequirements();
+                        final int securityContextPosition = executionRequirements.getPosition(
+                                SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                        );
+                        if (securityContextPosition > -1) {
+                            throw SqlException.position(securityContextPosition)
+                                    .put("administrative function cannot be used in materialized view: ")
+                                    .put(executionRequirements.getFunctionName(
+                                            SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
+                                    ));
+                        }
+                    }
+                } catch (SqlException e) {
+                    e.setPosition(e.getPosition() + selectTextPosition);
+                    throw e;
+                }
+                if (createMatViewOp != null) {
+                    createMatViewOp.validateAndUpdateMetadataFromPlan(executionContext, root, binder.getOutputColumnPositions(root));
+                }
+                try {
+                    optimise(executionContext);
+                } catch (SqlException e) {
+                    e.setPosition(e.getPosition() + selectTextPosition);
+                    throw e;
+                }
+                if (createMatViewOp == null) {
+                    ((CreateViewOperation) op).validateAndUpdateMetadataFromColumns(root.getOutput(), binder.getOutputColumnPositions(root));
+                }
+                // See compileUsingModel(): read before generation, so a throw here cannot orphan the generated
+                // factory tree, and the read cannot land on a model the retry path has already recycled. Inside
+                // this try on purpose -- a throw must still free the resources binding left in flight.
+                cacheable = queryModel.isCacheable();
+            } catch (Throwable th) {
+                // Rejecting the query after binding returned leaves the cursor functions it
+                // instantiated for FROM/JOIN table functions unowned: generation, which takes them over,
+                // has not run yet. Freeing after generateSelectWithRetries below would be a double free.
+                freePlanningResources(th);
+                throw th;
+            }
+
+            if (createMatViewOp != null) {
+                executionContext.pushTimestampRequiredFlag(createTableOp.isTimestampRequired());
+            }
+            try {
+                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false), cacheable);
+            } catch (SqlException e) {
+                e.setPosition(e.getPosition() + selectTextPosition);
+                throw e;
+            } finally {
+                if (createMatViewOp != null) {
+                    executionContext.popTimestampRequiredFlag();
+                }
+            }
+        } catch (Throwable th) {
+            QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
+            throw th;
+        } finally {
+            executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
+        }
+    }
+
     private void compileDeallocate(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         CharSequence statementName = unquote(expectToken(lexer, "statement name"));
         CharSequence tok = SqlUtil.fetchNext(lexer);
@@ -3649,27 +3774,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    private ExecutionModel compileExecutionModelOnce(SqlExecutionContext executionContext, boolean generateCompileViewEvents) throws SqlException {
-        final ExecutionModel model = parser.parse(lexer, executionContext, this);
-        try {
-            if (model.getModelType() != ExecutionModel.EXPLAIN) {
-                compileExecutionModel0(executionContext, model);
-            } else {
-                compileExplainExecutionModel0(executionContext, ((ExplainModel) model).getInnerExecutionModel());
-            }
-            return model;
-        } catch (Throwable e) {
-            // Model compilation binds but never generates, so a throw here - the INSERT column
-            // count check, UPDATE column validation, an authorization failure - can leave cursor
-            // functions the binder instantiated for FROM/JOIN table functions with no owner.
-            freePlanningResources(e);
-            if (generateCompileViewEvents && !executionContext.isValidationOnly()) {
-                enqueueCompileViews(model);
-            }
-            throw e;
-        }
-    }
-
     private void compileExecutionModel0(SqlExecutionContext executionContext, ExecutionModel model) throws SqlException {
         switch (model.getModelType()) {
             case ExecutionModel.QUERY:
@@ -3714,6 +3818,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 break;
             default:
                 break;
+        }
+    }
+
+    private ExecutionModel compileExecutionModelOnce(SqlExecutionContext executionContext, boolean generateCompileViewEvents) throws SqlException {
+        final ExecutionModel model = parser.parse(lexer, executionContext, this);
+        try {
+            if (model.getModelType() != ExecutionModel.EXPLAIN) {
+                compileExecutionModel0(executionContext, model);
+            } else {
+                compileExplainExecutionModel0(executionContext, ((ExplainModel) model).getInnerExecutionModel());
+            }
+            return model;
+        } catch (Throwable e) {
+            // Model compilation binds but never generates, so a throw here - the INSERT column
+            // count check, UPDATE column validation, an authorization failure - can leave cursor
+            // functions the binder instantiated for FROM/JOIN table functions with no owner.
+            freePlanningResources(e);
+            if (generateCompileViewEvents && !executionContext.isValidationOnly()) {
+                enqueueCompileViews(model);
+            }
+            throw e;
         }
     }
 
@@ -4100,113 +4225,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
-    /**
-     * Compiles the SELECT of a CREATE MATERIALIZED VIEW or CREATE VIEW: binds it, validates it as the view's
-     * definition, and generates it. A materialized view validates the bound plan, whose select levels its rules
-     * read, before optimisation merges them, and binds and generates with non-deterministic functions refused; a
-     * view validates the output of the optimised plan. Errors of the SELECT report their position in the statement.
-     */
-    private void compileCreateSelect(@Transient @NotNull SqlExecutionContext executionContext, @NotNull Operation op) throws SqlException {
-        final CreateMatViewOperation createMatViewOp = op instanceof CreateMatViewOperation matView ? matView : null;
-        final CreateTableOperation createTableOp = createMatViewOp != null
-                ? createMatViewOp.getCreateTableOperation() : ((CreateViewOperation) op).getCreateTableOperation();
-        lexer.of(createTableOp.getSelectText());
-        clear();
-
-        SqlExecutionCircuitBreaker circuitBreaker = executionContext.getCircuitBreaker();
-        if (!circuitBreaker.isTimerSet()) {
-            circuitBreaker.resetTimer();
-        }
-        final CharSequence tok = SqlUtil.fetchNext(lexer);
-        if (tok == null) {
-            throw SqlException.$(lexer.lastTokenPosition(), "SELECT query expected");
-        }
-        lexer.unparseLast();
-
-        sqlText = createTableOp.getSelectText();
-        compiledQuery.withContext(executionContext);
-
-        final int startPos = lexer.getPosition();
-        final long beginNanos = configuration.getNanosecondClock().getTicks();
-
-        final int selectTextPosition = createTableOp.getSelectTextPosition();
-        final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
-        try {
-            if (createMatViewOp != null) {
-                executionContext.setAllowNonDeterministicFunction(false);
-            }
-            final QueryModel queryModel;
-            final boolean cacheable;
-            try {
-                try {
-                    final ExecutionModel executionModel = parser.parse(lexer, executionContext, this);
-                    if (executionModel.getModelType() != ExecutionModel.QUERY) {
-                        throw SqlException.$(startPos, "SELECT query expected");
-                    }
-                    queryModel = (QueryModel) executionModel;
-                    bindQuery(queryModel, executionContext);
-                    if (createMatViewOp != null) {
-                        final SqlExecutionRequirements executionRequirements = functionResolver.getExecutionRequirements();
-                        final int securityContextPosition = executionRequirements.getPosition(
-                                SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
-                        );
-                        if (securityContextPosition > -1) {
-                            throw SqlException.position(securityContextPosition)
-                                    .put("administrative function cannot be used in materialized view: ")
-                                    .put(executionRequirements.getFunctionName(
-                                            SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
-                                    ));
-                        }
-                    }
-                } catch (SqlException e) {
-                    e.setPosition(e.getPosition() + selectTextPosition);
-                    throw e;
-                }
-                if (createMatViewOp != null) {
-                    createMatViewOp.validateAndUpdateMetadataFromPlan(executionContext, root, binder.getOutputColumnPositions(root));
-                }
-                try {
-                    optimise(executionContext);
-                } catch (SqlException e) {
-                    e.setPosition(e.getPosition() + selectTextPosition);
-                    throw e;
-                }
-                if (createMatViewOp == null) {
-                    ((CreateViewOperation) op).validateAndUpdateMetadataFromColumns(root.getOutput(), binder.getOutputColumnPositions(root));
-                }
-                // See compileUsingModel(): read before generation, so a throw here cannot orphan the generated
-                // factory tree, and the read cannot land on a model the retry path has already recycled. Inside
-                // this try on purpose -- a throw must still free the resources binding left in flight.
-                cacheable = queryModel.isCacheable();
-            } catch (Throwable th) {
-                // Rejecting the query after binding returned leaves the cursor functions it
-                // instantiated for FROM/JOIN table functions unowned: generation, which takes them over,
-                // has not run yet. Freeing after generateSelectWithRetries below would be a double free.
-                freePlanningResources(th);
-                throw th;
-            }
-
-            if (createMatViewOp != null) {
-                executionContext.pushTimestampRequiredFlag(createTableOp.isTimestampRequired());
-            }
-            try {
-                compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false), cacheable);
-            } catch (SqlException e) {
-                e.setPosition(e.getPosition() + selectTextPosition);
-                throw e;
-            } finally {
-                if (createMatViewOp != null) {
-                    executionContext.popTimestampRequiredFlag();
-                }
-            }
-        } catch (Throwable th) {
-            QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
-            throw th;
-        } finally {
-            executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
-        }
-    }
-
     // PG compatibility no-op: RESET ALL, CLOSE ALL, UNLISTEN *, DISCARD ALL — consume exactly one argument.
     private void compileNoOp(SqlExecutionContext executionContext, @Transient CharSequence sqlText) throws SqlException {
         expectToken(lexer, "argument");
@@ -4217,24 +4235,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Binds, optimises and authorizes the query into the statement's plan, which {@link #generatePlan} generates and
      * which stays readable until the compiler clears it.
      */
-    /**
-     * Binds the model into {@link #root}, the bound plan the caller optimises.
-     */
-    private void bindQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        assert model.getBottomUpColumns().size() > 0 || model.getNestedModel() == null;
-        optimiser.clear();
-        planNodePools.clear();
-        CairoException.rethrowCleanupFailure(clearPlan(null));
-        scopes.clear();
-        clearExpressionStages();
-        binder.clear();
-        final SubqueryCompiler previous = functionParser.swapSubqueryCompiler(subqueryCompiler);
-        try {
-            root = binder.bind(model, this, executionContext);
-        } finally {
-            functionParser.swapSubqueryCompiler(previous);
-        }
-    }
 
     private void compileQuery(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
         bindQuery(model, executionContext);
@@ -5661,10 +5661,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
         if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
             QueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
-            final QueryModel selectQueryModel = updateQueryModel.getNestedModel();
             final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
                     updateTarget.getTableToken(),
-                    selectQueryModel,
                     updateQueryModel,
                     executionContext
             );
@@ -5707,11 +5705,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private RecordCursorFactory generateUpdateFactory(
             TableToken tableToken,
-            @Transient QueryModel selectQueryModel,
             @Transient QueryModel updateQueryModel,
             @Transient SqlExecutionContext executionContext
     ) throws SqlException {
-        RecordCursorFactory updateToDataCursorFactory = generateSelectOneShot(selectQueryModel, executionContext, false);
+        RecordCursorFactory updateToDataCursorFactory = generateSelectOneShot(updateQueryModel.getReferencedViews(), executionContext, false);
         try {
             if (!updateToDataCursorFactory.supportsUpdateRowId(tableToken)) {
                 // in theory this should never happen because all valid UPDATE statements should result in
@@ -5724,33 +5721,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } catch (Throwable th) {
             updateToDataCursorFactory.close();
             throw th;
-        }
-    }
-
-    /**
-     * Generates a new, owned factory of an optimised sub-query.
-     */
-    RecordCursorFactory generateSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException {
-        executionContext.pushTimestampRequiredFlag(false);
-        boolean hasPushedWindowContext = false;
-        final int depth = scopes.enter(subquery.getDepth());
-        try {
-            if (!executionContext.getWindowContext().isEmpty()) {
-                executionContext.pushWindowContext();
-                hasPushedWindowContext = true;
-            }
-            final LogicalPlan plan = subquery.getRoot();
-            final RecordCursorFactory factory = codeGenerator.generate(plan, executionContext);
-            assert plan.getOutput().hasColumnTypesOf(factory.getMetadata()) : "generated sub-query metadata differs from its plan";
-            assert executionContext.allowNonDeterministicFunctions() || !factory.usesExternalDataSource()
-                    : "external sub-query passed the binding guard";
-            return factory;
-        } finally {
-            if (hasPushedWindowContext) {
-                executionContext.popWindowContext();
-            }
-            scopes.enter(depth);
-            executionContext.popTimestampRequiredFlag();
         }
     }
 
@@ -6104,14 +6074,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return token;
     }
 
-    private void bindInsertAsSelect(SqlExecutionContext executionContext, InsertModel model) throws SqlException {
-        compileQuery(model.getQueryModel(), executionContext);
-        final int columnNameListSize = model.getColumnNameList().size();
-        if (columnNameListSize > 0 && root.getOutput().getColumnCount() != columnNameListSize) {
-            throw SqlException.$(model.getTableNameExpr().position, "column count mismatch");
-        }
-    }
-
     private TableToken viewExistsOrFail(CharSequence viewName, SqlExecutionContext executionContext, SqlException notExistException) throws SqlException {
         if (executionContext.getTableStatus(path, viewName) != TableUtils.TABLE_EXISTS) {
             throw notExistException;
@@ -6198,6 +6160,34 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      */
     @SuppressWarnings({"unused", "RedundantThrows"})
     protected void authorizeColumnAccess(SqlExecutionContext executionContext, LogicalPlan root) throws SqlException {
+    }
+
+    /**
+     * Binds a sub-query of the query binding now with the scope one depth deeper and returns it. The statement
+     * optimises it, in the order binding finished, before the statement itself.
+     */
+    Subquery bindSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
+        final BindScope scope = scopes.push();
+        final LogicalPlan subqueryRoot;
+        final boolean isWindowContextPushed = !executionContext.getWindowContext().isEmpty();
+        if (isWindowContextPushed) {
+            executionContext.pushWindowContext();
+        }
+        try {
+            subqueryRoot = binder.bind(model, binder.getParserCallback(), executionContext);
+        } finally {
+            scopes.pop();
+            if (isWindowContextPushed) {
+                executionContext.popWindowContext();
+            }
+        }
+        if (!executionContext.allowNonDeterministicFunctions() && LogicalPlans.hasExternalDataSource(subqueryRoot)) {
+            throw SqlException.nonDeterministicColumn(position, "sub-query", executionContext.isLiveViewCompile() ? "live view" : "materialized view");
+        }
+        final Subquery subquery = planNodePools.subqueries.next().of(subqueryRoot, scopes.depth() + 1,
+                LogicalPlans.isResultStable(subqueryRoot, executionContext.isParallelGroupByEnabled()));
+        subqueries.add(subquery);
+        return subquery;
     }
 
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
@@ -6335,34 +6325,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Binds a sub-query of the query binding now with the scope one depth deeper and returns it. The statement
-     * optimises it, in the order binding finished, before the statement itself.
-     */
-    Subquery bindSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
-        final BindScope scope = scopes.push();
-        final LogicalPlan subqueryRoot;
-        final boolean isWindowContextPushed = !executionContext.getWindowContext().isEmpty();
-        if (isWindowContextPushed) {
-            executionContext.pushWindowContext();
-        }
-        try {
-            subqueryRoot = binder.bind(model, binder.getParserCallback(), executionContext);
-        } finally {
-            scopes.pop();
-            if (isWindowContextPushed) {
-                executionContext.popWindowContext();
-            }
-        }
-        if (!executionContext.allowNonDeterministicFunctions() && LogicalPlans.hasExternalDataSource(subqueryRoot)) {
-            throw SqlException.nonDeterministicColumn(position, "sub-query", executionContext.isLiveViewCompile() ? "live view" : "materialized view");
-        }
-        final Subquery subquery = planNodePools.subqueries.next().of(subqueryRoot, scopes.depth() + 1,
-                LogicalPlans.isResultStable(subqueryRoot, executionContext.isParallelGroupByEnabled()));
-        subqueries.add(subquery);
-        return subquery;
-    }
-
-    /**
      * Binds a sub-query whose rows binding consumes, optimises and authorizes it after the sub-queries it contains,
      * and generates it; the caller owns the factory.
      */
@@ -6377,13 +6339,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return generateSubquery(subquery, executionContext);
     }
 
+    protected AlterOperationBuilder createAlterOperationBuilder() {
+        return new AlterOperationBuilder();
+    }
+
     protected RecordCursorFactory generateSelectOneShot(
-            QueryModel selectQueryModel,
+            ObjList<ViewDefinition> views,
             SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException {
         RecordCursorFactory factory = generatePlan(executionContext);
-        ObjList<ViewDefinition> views = selectQueryModel.getReferencedViews();
         if (views.size() > 0) {
             factory = new StaleViewCheckFactory(factory, views, engine);
         }
@@ -6391,6 +6356,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return new QueryProgress(queryRegistry, sqlText, factory);
         } else {
             return factory;
+        }
+    }
+
+    /**
+     * Generates a new, owned factory of an optimised sub-query.
+     */
+    RecordCursorFactory generateSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException {
+        executionContext.pushTimestampRequiredFlag(false);
+        boolean hasPushedWindowContext = false;
+        final int depth = scopes.enter(subquery.getDepth());
+        try {
+            if (!executionContext.getWindowContext().isEmpty()) {
+                executionContext.pushWindowContext();
+                hasPushedWindowContext = true;
+            }
+            final LogicalPlan plan = subquery.getRoot();
+            final RecordCursorFactory factory = codeGenerator.generate(plan, executionContext);
+            assert plan.getOutput().hasColumnTypesOf(factory.getMetadata()) : "generated sub-query metadata differs from its plan";
+            assert executionContext.allowNonDeterministicFunctions() || !factory.usesExternalDataSource()
+                    : "external sub-query passed the binding guard";
+            return factory;
+        } finally {
+            if (hasPushedWindowContext) {
+                executionContext.popWindowContext();
+            }
+            scopes.enter(depth);
+            executionContext.popTimestampRequiredFlag();
         }
     }
 
@@ -6403,7 +6395,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // |-- QueryModel of select-virtual or select-choose of data selected for update
         final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
                 updateTableToken,
-                selectQueryModel,
                 updateQueryModel,
                 executionContext
         );
@@ -6471,6 +6462,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     updateColumnNames
             );
         }
+    }
+
+    protected void lexerToFirstToken(GenericLexer lexer, int rollbackPosition) throws SqlException {
+        lexer.goToPosition(rollbackPosition);
+        SqlUtil.fetchNext(lexer);
     }
 
     protected void registerKeywordBasedExecutors() {

@@ -24,6 +24,13 @@
 
 package io.questdb.test.cairo.view;
 
+import io.questdb.cairo.TableWriterAPI;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.ops.UpdateOperation;
+import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class ViewQueryTest extends AbstractViewTest {
@@ -1566,6 +1573,32 @@ public class ViewQueryTest extends AbstractViewTest {
                     sql.indexOf(VIEW1),
                     "UPDATE cannot require live WAL progress"
             );
+        });
+    }
+
+    @Test
+    public void testViewUpdateRejectsOutdatedView() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            createView(VIEW1, "SELECT ts, v FROM " + TABLE1, TABLE1);
+            execute("CREATE TABLE plain (ts TIMESTAMP, v LONG)");
+            execute("INSERT INTO plain SELECT ts, 0 FROM " + TABLE1);
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final CompiledQuery cq = compiler.compile(
+                        "UPDATE plain t SET v = x.v FROM " + VIEW1 + " x WHERE t.ts = x.ts",
+                        sqlExecutionContext
+                );
+                try (UpdateOperation op = cq.getUpdateOperation()) {
+                    alterView("SELECT ts, v * 10 v FROM " + TABLE1, TABLE1);
+                    op.withContext(sqlExecutionContext);
+                    try (TableWriterAPI writer = engine.getTableWriterAPI(op.getTableToken(), "test")) {
+                        writer.apply(op);
+                        Assert.fail();
+                    } catch (TableReferenceOutOfDateException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), VIEW1);
+                    }
+                }
+            }
         });
     }
 

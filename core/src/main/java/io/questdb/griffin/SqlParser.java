@@ -6210,6 +6210,7 @@ public class SqlParser {
         final QueryModel model = parseDmlUpdate(lexer, sqlParserCallback, decls);
         final CharSequence tok = optTok(lexer);
         if (tok == null || Chars.equals(tok, ';')) {
+            model.recordViews(recordedViews);
             return model;
         }
         throw errUnexpected(lexer, tok);
