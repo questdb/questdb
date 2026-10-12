@@ -199,6 +199,21 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPowerLossInTheTailKeepsExactlyTheIntactPrefix() throws Exception {
+        assertMemoryLeak(() -> {
+            final Sweep sweep = new Sweep(root);
+            for (Window window : Window.values()) {
+                for (int txn : alignments()) {
+                    sweep.run(window, txn, false);
+                    sweep.run(window, txn, true);
+                }
+            }
+            final String report = sweep.report();
+            Assert.assertEquals(report, 0, sweep.failures);
+        });
+    }
+
+    @Test
     public void testReplicaReloadFollowsLivePolicyButLocalCommitsKeepConfiguredGrade() throws Exception {
         assertMemoryLeak(() -> {
             final int[] flushes = {0};
@@ -255,21 +270,6 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                     Assert.assertEquals(1, log.lastTxn());
                 }
             }
-        });
-    }
-
-    @Test
-    public void testPowerLossInTheTailKeepsExactlyTheIntactPrefix() throws Exception {
-        assertMemoryLeak(() -> {
-            final Sweep sweep = new Sweep(root);
-            for (Window window : Window.values()) {
-                for (int txn : alignments()) {
-                    sweep.run(window, txn, false);
-                    sweep.run(window, txn, true);
-                }
-            }
-            final String report = sweep.report();
-            Assert.assertEquals(report, 0, sweep.failures);
         });
     }
 

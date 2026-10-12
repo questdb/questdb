@@ -205,8 +205,10 @@ one case and removes an endless apply loop and stray rows in another, but it doe
   lost (section 4). Use a window of 0, or the QWP durable acknowledgement, where that matters.
 - **Enterprise replicas.** A replica keeps no save points; its source of truth is the object store. A power loss on
   a replica behaves as in `nosync`, and the replica catches up from the object store. ATTACH and DETACH PARTITION
-  finish at once on a replica, as outside `adaptive`. An explicitly `adaptive` replica pays no applied-state or
-  downloaded-log flush that `nosync` does not; local commits, promotion and boot retain their configured grade.
+  finish at once on a replica, as outside `adaptive`. With `adaptive` configured, the resolved structural
+  apply-state and downloaded-log gates use `nosync` grade. This does not change other cold-storage flush gates
+  or mandatory repair barriers; explicit `sync` replicas, local commits, promotion and boot retain their
+  configured grade.
 - **A power loss during a `nosync` or `async` run** loses what those modes lose, also after a switch to `adaptive`
   later.
 - **Detection is for torn writes.** Damage to an already written record of a version 1 sequencer log (bit rot, a

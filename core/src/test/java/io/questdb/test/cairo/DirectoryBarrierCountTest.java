@@ -115,6 +115,62 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonWalO3IntoLastPartition() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO x VALUES
+                        ('2024-01-01T00:00:00.000000Z', 0),
+                        ('2024-01-02T00:00:00.000000Z', 0),
+                        ('2024-01-02T12:00:00.000000Z', 0)
+                    """);
+            final String tableDir = tableDir("x");
+            ff.clear();
+            for (int i = 1; i <= 5; i++) {
+                // Each commit writes a new version of the last partition, which the writer then reopens.
+                execute("INSERT INTO x VALUES ('2024-01-02T0" + i + ":00:00.000000Z', " + i + ")");
+            }
+            assertTableSide(5, tableDir);
+        });
+    }
+
+    @Test
+    public void testNonWalOneCommitAcrossPartitions() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
+            final String tableDir = tableDir("x");
+            ff.clear();
+            execute("""
+                    INSERT INTO x
+                    SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L), x
+                    FROM long_sequence(48)
+                    """);
+            assertTableSide(48, tableDir);
+        });
+    }
+
+    @Test
+    public void testNonWalPartitionSwitch() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 0)");
+            final String tableDir = tableDir("x");
+            ff.clear();
+            for (int i = 1; i <= 5; i++) {
+                execute("INSERT INTO x VALUES ('2024-01-0" + (i + 1) + "T00:00:00.000000Z', " + i + ")");
+            }
+            assertTableSide(5, tableDir);
+
+            // Appending to the open partition creates nothing, so no mode fsyncs a directory for it.
+            ff.clear();
+            for (int i = 1; i <= 5; i++) {
+                execute("INSERT INTO x VALUES ('2024-01-06T0" + i + ":00:00.000000Z', " + i + ")");
+            }
+            assertTableSide(0, tableDir);
+        });
+    }
+
+    @Test
     public void testOpenWriterFlushModeFollowsPolicy() throws Exception {
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE w (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -198,59 +254,8 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testNonWalO3IntoLastPartition() throws Exception {
-        assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("""
-                    INSERT INTO x VALUES
-                        ('2024-01-01T00:00:00.000000Z', 0),
-                        ('2024-01-02T00:00:00.000000Z', 0),
-                        ('2024-01-02T12:00:00.000000Z', 0)
-                    """);
-            final String tableDir = tableDir("x");
-            ff.clear();
-            for (int i = 1; i <= 5; i++) {
-                // Each commit writes a new version of the last partition, which the writer then reopens.
-                execute("INSERT INTO x VALUES ('2024-01-02T0" + i + ":00:00.000000Z', " + i + ")");
-            }
-            assertTableSide(5, tableDir);
-        });
-    }
-
-    @Test
-    public void testNonWalOneCommitAcrossPartitions() throws Exception {
-        assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
-            final String tableDir = tableDir("x");
-            ff.clear();
-            execute("""
-                    INSERT INTO x
-                    SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L), x
-                    FROM long_sequence(48)
-                    """);
-            assertTableSide(48, tableDir);
-        });
-    }
-
-    @Test
-    public void testNonWalPartitionSwitch() throws Exception {
-        assertMemoryLeak(ff, () -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 0)");
-            final String tableDir = tableDir("x");
-            ff.clear();
-            for (int i = 1; i <= 5; i++) {
-                execute("INSERT INTO x VALUES ('2024-01-0" + (i + 1) + "T00:00:00.000000Z', " + i + ")");
-            }
-            assertTableSide(5, tableDir);
-
-            // Appending to the open partition creates nothing, so no mode fsyncs a directory for it.
-            ff.clear();
-            for (int i = 1; i <= 5; i++) {
-                execute("INSERT INTO x VALUES ('2024-01-06T0" + i + ":00:00.000000Z', " + i + ")");
-            }
-            assertTableSide(0, tableDir);
-        });
+    public void testReplicaSwitchToParquet() throws Exception {
+        assertSwitchToParquet(true);
     }
 
     @Test
@@ -376,11 +381,6 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testReplicaSwitchToParquet() throws Exception {
-        assertSwitchToParquet(true);
-    }
-
-    @Test
     public void testWalApplyPartitionSwitch() throws Exception {
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -456,6 +456,12 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
         });
     }
 
+    private static void appendRow(WalWriter writer, long ts, long v) {
+        final TableWriter.Row row = writer.newRow(ts);
+        row.putLong(1, v);
+        row.append();
+    }
+
     private void assertSwitchToParquet(boolean replica) throws Exception {
         assertMemoryLeak(ff, () -> {
             if (replica) {
@@ -497,12 +503,6 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
                 }
             }
         });
-    }
-
-    private static void appendRow(WalWriter writer, long ts, long v) {
-        final TableWriter.Row row = writer.newRow(ts);
-        row.putLong(1, v);
-        row.append();
     }
 
     /**

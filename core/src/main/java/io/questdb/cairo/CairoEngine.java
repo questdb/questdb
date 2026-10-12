@@ -2321,13 +2321,6 @@ public class CairoEngine implements Closeable, WriterSource {
         return liveViewStateStore;
     }
 
-    /**
-     * The configured grade resolved through the live role policy, never cached.
-     */
-    public int getResolvedCommitMode() {
-        return LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), localDurabilityPolicy);
-    }
-
     public @NotNull LocalDurabilityPolicy getLocalDurabilityPolicy() {
         return localDurabilityPolicy;
     }
@@ -2487,6 +2480,13 @@ public class CairoEngine implements Closeable, WriterSource {
 
     public RecentWriteTracker getRecentWriteTracker() {
         return recentWriteTracker;
+    }
+
+    /**
+     * The configured grade resolved through the live role policy, never cached.
+     */
+    public int getResolvedCommitMode() {
+        return LocalDurabilityPolicy.resolveCommitMode(configuration.getCommitMode(), localDurabilityPolicy);
     }
 
     public Lock getRoleSwitchReadLock() {
