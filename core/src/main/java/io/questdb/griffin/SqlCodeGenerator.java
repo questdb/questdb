@@ -4256,9 +4256,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             final RecordMetadata baseMeta = groupByFactory.getMetadata();
             final int timestampIndex = findFillBucketIndex(model, baseMeta, curr);
-            // The group-by output does not carry the bucket key that rewriteSampleBy
-            // recorded (e.g. an outer GROUP BY that projects different columns). Skip
-            // fill entirely.
+            // This group-by owns the fill (checked above), so its output must carry the
+            // bucket key that rewriteSampleBy recorded. A miss means an optimizer path
+            // re-aliased or dropped the key without updating fillBucketAlias. Fail
+            // loudly under -ea; without -ea skip the fill rather than guess a column.
+            assert timestampIndex >= 0
+                    : "fill bucket alias does not resolve on the group-by output: " + curr.getFillBucketAlias();
             if (timestampIndex < 0) {
                 final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
                 fillValues = null;
