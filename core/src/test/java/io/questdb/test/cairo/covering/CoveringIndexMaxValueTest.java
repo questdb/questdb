@@ -163,6 +163,30 @@ public class CoveringIndexMaxValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveredMaxValuesWalStraddleLeavesUnsealedGeneration() throws Exception {
+        // One WAL transaction straddling 2024-01-01/02: the single-transaction straddle split
+        // (#7574) appends the 2024-01-01 prefix in order, and the deferred compaction (#7516)
+        // leaves that partition's one generation unsealed. Its covered values are then read raw
+        // from the sidecar, and must still be the rows written.
+        assertMemoryLeak(() -> {
+            createTable("t_max_straddle", "POSTING", "WAL");
+            insertMaxRows("t_max_straddle", 3, false);
+            drainWalQueue();
+            assertSidecarUnsealed("t_max_straddle");
+            assertCoveredMaxValueRows("t_max_straddle", 3);
+            assertQuery("SELECT sym, count(), max(v_long), min(v_int), max(v_short) FROM t_max_straddle WHERE sym IN ('a', 'b') ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            sym\tcount\tmax\tmin\tmax1
+                            a\t3\t9223372036854775807\t2147483647\t32767
+                            b\t1\t1\t1\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testCoveredMaxValuesParquet() throws Exception {
         assertMemoryLeak(() -> {
             createTable("t_max_parquet", "POSTING", "WAL");

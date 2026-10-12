@@ -187,6 +187,35 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testCoveringIndexScanIrregularKeyIntervalBounds() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start()) {
+                // the key at irregular spacing, so its posting blocks hold variable deltas, whose
+                // runs the block fill must end at an interval bound inside a block (a key at a fixed
+                // stride makes constant-delta blocks, which check the bound on their own path)
+                serverMain.execute("create table cv (ts timestamp, sym symbol, i int, l long, d double) timestamp(ts) partition by DAY BYPASS WAL");
+                final String select = "select (x * 3000000)::timestamp, case when x % 9 = 0 or x % 13 = 0 or x % 31 = 0 then 'R' else 'k' || (x % 13) end, " +
+                        "x::int, x * 1000003, x * 1.5";
+                serverMain.execute("insert into cv " + select + " from long_sequence(60000)");
+                serverMain.execute("alter table cv alter column sym add index type posting include (i, l, d)");
+                for (int c = 0; c < 4; c++) {
+                    serverMain.execute("insert into cv " + select.replace("(x * 3000000)::timestamp", "((x + " + (60000 + c * 3000) + ") * 3000000)::timestamp") + " from long_sequence(3000)");
+                }
+                final String[] sqls = {
+                        "select ts, (d + l) / 2 m, i * 2 i2 from cv where sym = 'R' and ts >= '1970-01-01T10:00:00.5' and ts < '1970-01-02T07:00:00.5'",
+                        "select ts, (d + l) / 2 m from cv where sym = 'R' and ts < '1970-01-03T02:30:01'",
+                        "select ts, (d + l) / 2 m from cv where sym = 'R' and ts >= '1970-01-02T02:00:01' and ts < '1970-01-03T03:30:01'",
+                };
+                for (String q : sqls) {
+                    assertPlanContains(serverMain, q, "CoveringIndex");
+                }
+                assertBlockFillMatchesRowFill(sqls, "", 0, -1);
+                assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=1000", 0, -1);
+            }
+        });
+    }
+
+    @Test
     public void testAsyncFilter() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = start(filterEnv())) {

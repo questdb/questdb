@@ -114,6 +114,23 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
     }
 
     @Test
+    public void testExplainCoveringScanInsideScalarSubQuery() throws Exception {
+        // a covering scan in a scalar sub-query of a filter: EXPLAIN threw a NullPointerException
+        assertMemoryLeak(() -> {
+            execute("create table s (ts timestamp, sym symbol index type posting include (v, w), v long, w double) timestamp(ts) partition by day");
+            execute("insert into s select (x * 1_000_000L)::timestamp, case when x % 2 = 0 then 'F' else 'G' end, x, x / 7.0 from long_sequence(1_000)");
+            // the outer filter prints against its base's metadata, which the sub-query's covering
+            // scan must not inherit
+            final String sql = "select count(), sum(v) from s where sym = 'F' and w < (select min(w) + 10 from s where sym = 'G')";
+            final StringSink plan = new StringSink();
+            printSql("explain " + sql, plan);
+            TestUtils.assertContains(plan, "CoveringIndex on: sym with: w\n");
+            TestUtils.assertContains(plan, "filter: sym='G'");
+            assertSameResult(sql, sql.replace("select count()", "select /*+ no_index */ count()"));
+        });
+    }
+
+    @Test
     public void testHintsPickThePath() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
