@@ -53,6 +53,14 @@ import java.util.Base64;
  */
 public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
+    // Names the rule rather than the header: an operator who hits it is almost
+    // always behind a proxy that rewrote or dropped the port from Host, or one
+    // that terminates TLS without qwp.browser.tls.termination.enabled. The
+    // handshake answers 400 with this text. HttpConnectionContext also logs it as
+    // the reason when it answers a cross-origin upgrade with 401 before the
+    // handshake runs, because the upgrade did not authenticate with the
+    // credential subprotocol.
+    public static final String ERROR_CROSS_ORIGIN_NOT_ALLOWED = "Origin is not same-origin with Host on QWP WebSocket";
     public static final Utf8String HEADER_CONNECTION = new Utf8String("Connection");
     public static final Utf8String HEADER_HOST = new Utf8String("Host");
     public static final Utf8String HEADER_ORIGIN = new Utf8String("Origin");
@@ -86,6 +94,7 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // Browser-safe durable-ack opt-in and confirmation. Browser JavaScript can
     // offer and inspect WebSocket subprotocols but cannot set/read X-QWP-* headers.
     public static final Utf8String WEBSOCKET_PROTOCOL_QWP_DURABLE_ACK = new Utf8String("questdb.qwp.durable-ack.v1");
+    public static final Utf8String WEBSOCKET_PROTOCOL_QWP_V1 = new Utf8String("questdb.qwp.v1");
     /**
      * The required WebSocket version (RFC 6455).
      */
@@ -95,12 +104,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // the reject path the per-call reason.getBytes / Integer.toString /
     // contentLength.getBytes allocations.
     static final String ERROR_CONNECTION_MUST_CONTAIN_UPGRADE = "Connection header must contain 'upgrade'";
-    // Names the rule rather than the header: an Origin IS allowed, as long as
-    // it is same-origin with Host. An operator who hits this is almost always
-    // behind a proxy that rewrote or dropped the port from Host, and a message
-    // reading "Origin header not allowed" sends them looking for a way to turn
-    // browser support on instead.
-    static final String ERROR_CROSS_ORIGIN_NOT_ALLOWED = "Origin is not same-origin with Host on QWP WebSocket";
     static final String ERROR_INVALID_SEC_WEBSOCKET_KEY = "Invalid Sec-WebSocket-Key (must be 24-character base64 key)";
     static final String ERROR_INVALID_UPGRADE_HEADER_VALUE = "Invalid Upgrade header value";
     static final String ERROR_MISSING_CONNECTION_HEADER = "Missing Connection header";
@@ -166,6 +169,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     // QwpIngressUpgradeProcessor.onHeadersReady.
     private static final byte[] RESPONSE_WEBSOCKET_PROTOCOL_DURABLE_ACK =
             "\r\nSec-WebSocket-Protocol: questdb.qwp.durable-ack.v1".getBytes(StandardCharsets.US_ASCII);
+    private static final byte[] RESPONSE_WEBSOCKET_PROTOCOL_QWP_V1 =
+            "\r\nSec-WebSocket-Protocol: questdb.qwp.v1".getBytes(StandardCharsets.US_ASCII);
     private static final int SHA1_BASE64_SIZE = 28;
     private static final FiberLocal<byte[]> BASE64_SCRATCH = new FiberLocal<>(() -> new byte[SHA1_BASE64_SIZE]);
     // Thread-local SHA-1 digest for computing Sec-WebSocket-Accept
@@ -255,21 +260,11 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         if (protocols == null || expected == null || expected.size() == 0) {
             return false;
         }
-        int start = 0;
-        final int size = protocols.size();
-        while (start < size) {
-            while (start < size && (protocols.byteAt(start) == ' ' || protocols.byteAt(start) == '\t')) {
-                start++;
-            }
-            int end = start;
-            while (end < size && protocols.byteAt(end) != ',') {
-                end++;
-            }
-            int tokenEnd = end;
-            while (tokenEnd > start && (protocols.byteAt(tokenEnd - 1) == ' ' || protocols.byteAt(tokenEnd - 1) == '\t')) {
-                tokenEnd--;
-            }
-            if (tokenEnd - start == expected.size()) {
+        for (long token = nextWebSocketProtocolToken(protocols, 0);
+             token != -1;
+             token = nextWebSocketProtocolToken(protocols, Numbers.decodeHighInt(token))) {
+            final int start = Numbers.decodeLowInt(token);
+            if (Numbers.decodeHighInt(token) - start == expected.size()) {
                 boolean equal = true;
                 for (int i = 0; i < expected.size(); i++) {
                     if (protocols.byteAt(start + i) != expected.byteAt(i)) {
@@ -281,7 +276,6 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
                     return true;
                 }
             }
-            start = end + 1;
         }
         return false;
     }
@@ -329,12 +323,23 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     /**
+     * Returns {@code true} when the request carries an Origin that is not the
+     * origin of the Host it was sent to, as decided by {@link #isSameOrigin}.
+     * A request without Origin, which is how non-browser clients connect, is
+     * not cross-origin.
+     */
+    public static boolean isCrossOrigin(HttpRequestHeader header, boolean secureConnection) {
+        final Utf8Sequence origin = header.getHeader(HEADER_ORIGIN);
+        return origin != null && !isSameOrigin(origin, header.getHeader(HEADER_HOST), secureConnection);
+    }
+
+    /**
      * Returns {@code true} when a browser WebSocket Origin belongs to the HTTP
      * Host receiving the upgrade and its scheme matches the connection security.
      * RFC 6455 browsers always send Origin and do not let JavaScript remove it,
      * while non-browser QWP clients normally omit it. Restricting browser upgrades
-     * to same-origin keeps the CSWSH protection without making QWP inaccessible to
-     * web applications served from QuestDB's own HTTP(S) endpoint.
+     * to same-origin by default keeps the CSWSH protection without making QWP
+     * inaccessible to web applications served from QuestDB's own endpoint.
      */
     public static boolean isSameOrigin(Utf8Sequence origin, Utf8Sequence host, boolean secureConnection) {
         if (origin == null || host == null) {
@@ -429,6 +434,33 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     /**
+     * Finds the next non-blank token of a comma-separated WebSocket subprotocol
+     * offer at or after {@code lo} and returns its bounds, without the spaces
+     * and tabs around it, packed by {@link Numbers#encodeLowHighInts}, or -1
+     * when no token remains. Start at 0 and continue from the previous token's
+     * high bound. Blank tokens never name a subprotocol or a credential, so
+     * skipping them does not change what callers find.
+     */
+    public static long nextWebSocketProtocolToken(Utf8Sequence protocols, int lo) {
+        final int size = protocols.size();
+        int start = lo;
+        while (start < size && (protocols.byteAt(start) == ',' || isSpaceOrTab(protocols.byteAt(start)))) {
+            start++;
+        }
+        if (start == size) {
+            return -1;
+        }
+        int end = start;
+        while (end < size && protocols.byteAt(end) != ',') {
+            end++;
+        }
+        while (end > start && isSpaceOrTab(protocols.byteAt(end - 1))) {
+            end--;
+        }
+        return Numbers.encodeLowHighInts(start, end);
+    }
+
+    /**
      * Returns the size of the handshake response for the given accept key and QWP version.
      *
      * @param acceptKey  the computed accept key bytes
@@ -513,6 +545,16 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * handshake.
      */
     public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol) {
+        return responseSize(acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocol, false);
+    }
+
+    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol) {
+        return responseSize(acceptKey, qwpVersion, contentEncodingBytes,
+                durableAckEnabled ? RESPONSE_DURABLE_ACK_TOKEN_ENABLED : null,
+                roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocol, isQwpV1WebSocketProtocol);
+    }
+
+    public static int responseSize(byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol) {
         int size = RESPONSE_PREFIX.length + acceptKey.length
                 + RESPONSE_AFTER_ACCEPT.length + VERSION_BYTES[qwpVersion].length
                 + RESPONSE_SUFFIX.length;
@@ -524,6 +566,8 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
         }
         if (durableAckWebSocketProtocol) {
             size += RESPONSE_WEBSOCKET_PROTOCOL_DURABLE_ACK.length;
+        } else if (isQwpV1WebSocketProtocol) {
+            size += RESPONSE_WEBSOCKET_PROTOCOL_QWP_V1.length;
         }
         if (roleBytes != null) {
             size += RESPONSE_ROLE_PREFIX.length + roleBytes.length;
@@ -538,18 +582,24 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
     }
 
     /**
-     * Validates WebSocket handshake headers and returns an error message if invalid.
+     * Validates WebSocket handshake headers against the current, immutable browser
+     * origin allowlist and returns an error message if invalid.
      *
      * @param header           the HTTP request header
      * @param secureConnection whether the request was received over TLS
+     * @param allowedOrigins   cross-origin browser origins allowed to upgrade
      * @return null if valid, error message otherwise
      */
-    public static String validateHandshake(HttpRequestHeader header, boolean secureConnection) {
-        // Browsers always send Origin. Permit a same-origin browser application,
-        // but retain the Cross-Site WebSocket Hijacking (CSWSH) guard for every
-        // cross-origin or malformed request. Machine clients normally omit it.
-        Utf8Sequence origin = header.getHeader(HEADER_ORIGIN);
-        if (origin != null && !isSameOrigin(origin, header.getHeader(HEADER_HOST), secureConnection)) {
+    public static String validateHandshake(HttpRequestHeader header, boolean secureConnection, QwpBrowserAllowedOrigins allowedOrigins) {
+        // Browsers always send Origin. Permit same-origin and explicitly listed
+        // browser applications, but retain the CSWSH guard for all others.
+        // Machine clients normally omit Origin. The upgrade processors'
+        // isCrossOriginBrowserUpgrade() applies the same isCrossOrigin()
+        // predicate before this runs, so HttpConnectionContext authenticates a
+        // cross-origin upgrade only with the credential subprotocol (or not at
+        // all when authentication is disabled), never with a cookie, a session
+        // or an Authorization header.
+        if (isCrossOrigin(header, secureConnection) && !allowedOrigins.isAllowed(header.getHeader(HEADER_ORIGIN))) {
             return ERROR_CROSS_ORIGIN_NOT_ALLOWED;
         }
 
@@ -710,6 +760,16 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
      * rather than allocating per handshake.
      */
     public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol) {
+        return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes, durableAckConfirmToken, roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocol, false);
+    }
+
+    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, boolean durableAckEnabled, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol) {
+        return writeResponse(buf, acceptKey, qwpVersion, contentEncodingBytes,
+                durableAckEnabled ? RESPONSE_DURABLE_ACK_TOKEN_ENABLED : null,
+                roleBytes, maxBatchSizeBytes, sessionCookieValueBytes, durableAckWebSocketProtocol, isQwpV1WebSocketProtocol);
+    }
+
+    public static int writeResponse(long buf, byte[] acceptKey, int qwpVersion, byte[] contentEncodingBytes, Utf8Sequence durableAckConfirmToken, byte[] roleBytes, byte[] maxBatchSizeBytes, byte[] sessionCookieValueBytes, boolean durableAckWebSocketProtocol, boolean isQwpV1WebSocketProtocol) {
         int offset = 0;
 
         for (byte b : RESPONSE_PREFIX) {
@@ -753,6 +813,10 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
 
         if (durableAckWebSocketProtocol) {
             for (byte b : RESPONSE_WEBSOCKET_PROTOCOL_DURABLE_ACK) {
+                Unsafe.putByte(buf + offset++, b);
+            }
+        } else if (isQwpV1WebSocketProtocol) {
+            for (byte b : RESPONSE_WEBSOCKET_PROTOCOL_QWP_V1) {
                 Unsafe.putByte(buf + offset++, b);
             }
         }
@@ -825,6 +889,10 @@ public class QwpIngressHttpProcessor implements HttpRequestHandler {
             }
         }
         return false;
+    }
+
+    private static boolean isSpaceOrTab(byte b) {
+        return b == ' ' || b == '\t';
     }
 
     private static byte toLowerAscii(byte value) {

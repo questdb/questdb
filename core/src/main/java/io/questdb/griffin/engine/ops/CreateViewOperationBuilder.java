@@ -46,4 +46,8 @@ public interface CreateViewOperationBuilder extends ExecutionModel, Sinkable {
     default int getModelType() {
         return CREATE_VIEW;
     }
+
+    boolean isAudited();
+
+    void setAudited(boolean audited);
 }

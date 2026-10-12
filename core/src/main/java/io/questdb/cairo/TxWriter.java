@@ -245,6 +245,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     public void commit(ObjList<? extends SymbolCountProvider> symbolCountProviders) {
+        commit(resolveCommitMode(), symbolCountProviders);
+    }
+
+    public void commit(int commitMode, ObjList<? extends SymbolCountProvider> symbolCountProviders) {
         if (prevRecordStructureVersion == recordStructureVersion && prevRecordBaseOffset > 0) {
             // Optimisation for the case where commit appends rows to the last partition only
             // In this case all to be changed is TX_OFFSET_MAX_TIMESTAMP_64 and TX_OFFSET_TRANSIENT_ROW_COUNT_64
@@ -287,13 +291,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             prevRecordBaseOffset = lastRecordBaseOffset;
             lastRecordBaseOffset = writeBaseOffset;
             prevPartitionTableVersion = partitionTableVersion;
-            final int commitMode = resolveCommitMode();
             if (CommitMode.appliesColumnSync(commitMode)) {
                 txMemBase.sync(commitMode == CommitMode.ASYNC);
             }
         } else {
             // Slow path, record structure changed
-            commitFullRecord(resolveCommitMode(), symbolCountProviders);
+            commitFullRecord(commitMode, symbolCountProviders);
         }
     }
 
