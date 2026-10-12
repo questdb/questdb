@@ -34,6 +34,7 @@ import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.SingleColumnType;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.ParquetDecodeHint;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -112,6 +113,9 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
     // Null when there are no symbol columns in the ASOF join key.
     protected final ObjList<SymbolTranslatingRecord> perWorkerSymbolTranslatingRecords;
     private final HorizonJoinSymbolTableSource horizonJoinSymbolTableSource;
+    private boolean isSlaveFilterInitialized;
+    private @Nullable Function ownerSlaveFilter;
+    private @Nullable ObjList<Function> perWorkerSlaveFilters;
 
     protected BaseAsyncHorizonJoinAtom(
             @Transient @NotNull BytecodeAssembler asm,
@@ -138,6 +142,8 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
 
         // Adopt the worker function views before configuration or allocation can fail. The
         // factory's transfer holder retains everything that this constructor has not adopted yet.
+        this.ownerSlaveFilter = resources.takeSlaveFilter();
+        this.perWorkerSlaveFilters = resources.takePerWorkerSlaveFilters();
         this.ownerGroupByFunctions = ownerGroupByFunctions;
         this.perWorkerGroupByFunctions = resources.takePerWorkerGroupByFunctions();
         assert perWorkerGroupByFunctions == null || perWorkerGroupByFunctions.size() == workerCount;
@@ -187,22 +193,28 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
             final long lookahead = configuration.getSqlAsOfJoinLookAhead();
             this.ownerSlaveTimeFrameCursor = slaveFactory.newTimeFrameCursor();
             this.ownerSlaveTimeFrameHelper = new HorizonJoinTimeFrameHelper(
+                    configuration,
                     lookahead,
                     slaveTsScale,
                     bwdScanAbsoluteThreshold,
                     bwdScanMinGap,
-                    bwdScanSwitchFactor
+                    bwdScanSwitchFactor,
+                    ownerSlaveFilter,
+                    asOfJoinKeyTypes
             );
             this.perWorkerSlaveTimeFrameCursors = new ObjList<>(workerCount);
             this.perWorkerSlaveTimeFrameHelpers = new ObjList<>(workerCount);
             for (int i = 0; i < workerCount; i++) {
                 perWorkerSlaveTimeFrameCursors.add(slaveFactory.newTimeFrameCursor());
                 perWorkerSlaveTimeFrameHelpers.add(new HorizonJoinTimeFrameHelper(
+                        configuration,
                         lookahead,
                         slaveTsScale,
                         bwdScanAbsoluteThreshold,
                         bwdScanMinGap,
-                        bwdScanSwitchFactor
+                        bwdScanSwitchFactor,
+                        perWorkerSlaveFilters == null ? ownerSlaveFilter : perWorkerSlaveFilters.getQuick(i),
+                        asOfJoinKeyTypes
                 ));
             }
 
@@ -287,34 +299,51 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
 
     @Override
     public void clear() {
-        // Clear group by functions
-        Misc.clearObjList(ownerGroupByFunctions);
-        if (perWorkerGroupByFunctions != null) {
-            for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
-                PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+        Throwable cleanupFailure = null;
+        try {
+            // Clear group by functions
+            Misc.clearObjList(ownerGroupByFunctions);
+            if (perWorkerGroupByFunctions != null) {
+                for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
+                    PerWorkerFunctionList.clear(perWorkerGroupByFunctions.getQuick(i));
+                }
+            }
+            Misc.clear(ownerAllocator);
+            Misc.clearObjList(perWorkerAllocators);
+
+            // Clear ASOF join maps
+            Misc.free(ownerAsOfJoinMap);
+            Misc.freeObjListAndKeepObjects(perWorkerAsOfJoinMaps);
+            Misc.free(ownerSlaveTimeFrameHelper);
+            Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameHelpers);
+
+            // Clear filter context (memory pools, etc.)
+            filterCtx.clear();
+
+            // Release symbol translating records' native caches; initTimeFrameCursors() reopens them
+            Misc.free(ownerSymbolTranslatingRecord);
+            Misc.freeObjListAndKeepObjects(perWorkerSymbolTranslatingRecords);
+
+            // Clear time frame cursors
+            Misc.free(ownerSlaveTimeFrameCursor);
+            Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
+
+            // Let subclass clear its resources
+            clearAggregationState();
+        } catch (Throwable th) {
+            cleanupFailure = th;
+        }
+        if (isSlaveFilterInitialized) {
+            isSlaveFilterInitialized = false;
+            cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, ownerSlaveFilter);
+            if (perWorkerSlaveFilters != null) {
+                for (int i = 0, n = perWorkerSlaveFilters.size(); i < n; i++) {
+                    cleanupFailure = HorizonJoinSlaveState.cursorClosed(cleanupFailure, perWorkerSlaveFilters.getQuick(i));
+                }
             }
         }
-        Misc.clear(ownerAllocator);
-        Misc.clearObjList(perWorkerAllocators);
-
-        // Clear ASOF join maps
-        Misc.free(ownerAsOfJoinMap);
-        Misc.freeObjListAndKeepObjects(perWorkerAsOfJoinMaps);
-
-        // Clear filter context (memory pools, etc.)
-        filterCtx.clear();
-
-        // Release symbol translating records' native caches; initTimeFrameCursors() reopens them
-        Misc.free(ownerSymbolTranslatingRecord);
-        Misc.freeObjListAndKeepObjects(perWorkerSymbolTranslatingRecords);
-
-        // Clear time frame cursors
-        Misc.free(ownerSlaveTimeFrameCursor);
-        Misc.freeObjListAndKeepObjects(perWorkerSlaveTimeFrameCursors);
-
-        // Let subclass clear its resources
-        clearAggregationState();
         memoryTracker = null;
+        CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
     @Override
@@ -355,11 +384,19 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
         }
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerAsOfJoinMap);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerAsOfJoinMaps);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerSlaveTimeFrameHelper);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveTimeFrameHelpers);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerSlaveTimeFrameCursor);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveTimeFrameCursors);
         // Horizon timestamp iterators
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerHorizonIterator);
         cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerHorizonIterators);
+        final Function ownerSlaveFilter = this.ownerSlaveFilter;
+        this.ownerSlaveFilter = null;
+        final ObjList<Function> perWorkerSlaveFilters = this.perWorkerSlaveFilters;
+        this.perWorkerSlaveFilters = null;
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, ownerSlaveFilter);
+        cleanupFailure = Misc.freeObjListBestEffort(cleanupFailure, perWorkerSlaveFilters);
         // Filter and memory pool resources
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, filterCtx);
         // Symbol translating records
@@ -469,6 +506,10 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
         return perWorkerSlaveAsOfJoinMapSinks != null ? perWorkerSlaveAsOfJoinMapSinks.getQuick(slotId) : null;
     }
 
+    public @Nullable Function getSlaveFilter() {
+        return ownerSlaveFilter;
+    }
+
     /**
      * Get the time frame helper for the given slot.
      */
@@ -516,18 +557,31 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
             TablePageFrameCursor slavePageFrameCursor,
             ConcurrentTimeFrameState sharedState
     ) throws SqlException {
+        isSlaveFilterInitialized = true;
+        if (ownerSlaveFilter != null) {
+            ownerSlaveFilter.init(slavePageFrameCursor, executionContext);
+        }
+        if (perWorkerSlaveFilters != null) {
+            final boolean current = executionContext.getCloneSymbolTables();
+            executionContext.setCloneSymbolTables(true);
+            try {
+                Function.init(perWorkerSlaveFilters, slavePageFrameCursor, executionContext, ownerSlaveFilter);
+            } finally {
+                executionContext.setCloneSymbolTables(current);
+            }
+        }
         // Initialize owner cursor
         final int timestampIndex = ownerSlaveTimeFrameCursor.getTimestampIndex();
         ownerSlaveTimeFrameCursor.of(sharedState, slavePageFrameCursor, timestampIndex);
         ownerSlaveTimeFrameCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-        ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor);
+        ownerSlaveTimeFrameHelper.of(ownerSlaveTimeFrameCursor, memoryTracker);
 
         // Initialize per-worker cursors with the same shared state
         for (int i = 0, n = perWorkerSlaveTimeFrameCursors.size(); i < n; i++) {
             final ConcurrentTimeFrameCursor workerCursor = perWorkerSlaveTimeFrameCursors.getQuick(i);
             workerCursor.of(sharedState, slavePageFrameCursor, timestampIndex);
             workerCursor.setParquetDecodeHint(ParquetDecodeHint.MONOTONIC);
-            perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor);
+            perWorkerSlaveTimeFrameHelpers.getQuick(i).of(workerCursor, memoryTracker);
         }
 
         // Rebind the combined symbol table source for the per-worker clones below. The owner
@@ -620,6 +674,14 @@ public abstract class BaseAsyncHorizonJoinAtom implements StatefulAtom, PerWorke
     }
 
     public void toTop() {
+        if (isSlaveFilterInitialized) {
+            if (ownerSlaveFilter != null) {
+                ownerSlaveFilter.toTop();
+            }
+            if (perWorkerSlaveFilters != null) {
+                GroupByUtils.toTop(perWorkerSlaveFilters);
+            }
+        }
         if (perWorkerGroupByFunctions != null) {
             for (int i = 0, n = perWorkerGroupByFunctions.size(); i < n; i++) {
                 GroupByUtils.toTop(perWorkerGroupByFunctions.getQuick(i));
