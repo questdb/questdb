@@ -79,7 +79,7 @@ SecurityContextTest {
                             method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
                         } else if (name.equals("authorizeSelect") && parameters[0] == ViewDefinition.class) {
                             final ViewDefinition viewDefinition = new ViewDefinition();
-                            viewDefinition.init(userTableToken, tableName, 0L);
+                            viewDefinition.init(userTableToken, tableName, 0L, false);
                             method.invoke(sc, viewDefinition);
                         } else {
                             method.invoke(sc, ONE_PARAM_ARGS);
@@ -124,7 +124,7 @@ SecurityContextTest {
                                 method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
                             } else if (name.equals("authorizeSelect") && parameters[0] == ViewDefinition.class) {
                                 final ViewDefinition viewDefinition = new ViewDefinition();
-                                viewDefinition.init(userTableToken, tableName, 0L);
+                                viewDefinition.init(userTableToken, tableName, 0L, false);
                                 method.invoke(sc, viewDefinition);
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
@@ -181,7 +181,7 @@ SecurityContextTest {
                                 method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
                             } else if (name.equals("authorizeSelect") && parameters[0] == ViewDefinition.class) {
                                 final ViewDefinition viewDefinition = new ViewDefinition();
-                                viewDefinition.init(userTableToken, tableName, 0L);
+                                viewDefinition.init(userTableToken, tableName, 0L, false);
                                 method.invoke(sc, viewDefinition);
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);

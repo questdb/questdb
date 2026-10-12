@@ -419,6 +419,9 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
                 if (overwrite) {
                     securityContext.authorizeTableDrop(tableToken);
+                    // Overwriting drops the table, so a table that cannot be dropped cannot be
+                    // overwritten either, or this would be the route around the veto.
+                    engine.checkTableDroppable(tableToken);
                     engine.dropTableOrViewOrMatView(path, tableToken);
                     tableToken = createTable(names, detectedTypes, securityContext, path);
                     tableReCreated = true;
