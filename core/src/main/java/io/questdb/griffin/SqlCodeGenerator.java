@@ -1858,14 +1858,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * EXPIRE ROWS policy is anything other than a cutoff on its designated timestamp reads through a row
      * filter, and a row-filtered read has no time frames. The caller wrote the view's name, not a
      * sub-query, so in that case the error names the view and points at its reference.
+     * <p>
+     * A join that steals a per-row filter off its right-hand side accepts a value WHEN policy, so the cause
+     * it reports is a KEEP or window-function policy, which has no per-row filter to steal. Any other join,
+     * and a filter-stealing join over a view without such a policy, reports the missing timestamp cutoff.
      */
-    private static SqlException unsupportedTimeFrameSlave(IQueryModel slaveModel, String sideName, String genericMessage) {
+    private static SqlException unsupportedTimeFrameSlave(
+            IQueryModel slaveModel,
+            String sideName,
+            boolean isFilterStealingJoin,
+            String genericMessage
+    ) {
         final ExpressionNode expiryViewNameExpr = slaveModel.getExpiryViewNameExpr();
         if (expiryViewNameExpr != null) {
-            return SqlException.position(expiryViewNameExpr.position)
+            final SqlException e = SqlException.position(expiryViewNameExpr.position)
                     .put(sideName)
                     .put(" cannot be materialized view '").put(expiryViewNameExpr.token)
-                    .put("' because its EXPIRE ROWS policy is not a cutoff on the designated timestamp");
+                    .put("' because its EXPIRE ROWS policy ");
+            return isFilterStealingJoin && slaveModel.isExpiryStructuralPolicy()
+                    ? e.put("uses KEEP or a window function")
+                    : e.put("is not a cutoff on the designated timestamp");
         }
         return SqlException.position(slaveModel.getJoinKeywordPosition()).put(genericMessage);
     }
@@ -5362,6 +5374,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw unsupportedTimeFrameSlave(
                         slaveModel,
                         "right-hand side of HORIZON JOIN",
+                        true,
                         "right-hand side of HORIZON JOIN can only be a table with an optional filter"
                 );
             }
@@ -7272,6 +7285,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     throw unsupportedTimeFrameSlave(
                                             slaveModel,
                                             "right side of window join",
+                                            false,
                                             "right side of window join must be a table, not sub-query"
                                     );
                                 }
@@ -8278,6 +8292,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw unsupportedTimeFrameSlave(
                             slaveModels.getQuick(s),
                             "right-hand side of HORIZON JOIN",
+                            true,
                             "right-hand side of HORIZON JOIN can only be a table with an optional filter"
                     );
                 }

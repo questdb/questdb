@@ -1987,9 +1987,13 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
     @Test
     public void testTimeFrameJoinOverPoliciedViewNamesTheView() throws Exception {
         // WINDOW JOIN and HORIZON JOIN need time frames from their right-hand side. A policy that is not a
-        // cutoff on the designated timestamp reads the view through a row filter, which has none, so the
-        // join is refused with an error that names the view the caller wrote. A timestamp cutoff reads as
-        // an interval scan and keeps both joins working.
+        // cutoff on the designated timestamp reads the view through a row filter, which has none. HORIZON
+        // JOIN takes a plain per-row filter off its right-hand side and applies it while it looks up the
+        // prevailing row, so a value WHEN policy, clock arithmetic included, keeps it working. WINDOW JOIN
+        // takes no filter, and a KEEP or window WHEN policy decides each row against the other rows, so its
+        // read has no per-row filter to take. Those joins are refused with an error that names the view the
+        // caller wrote: WINDOW JOIN's names the missing cutoff, HORIZON JOIN's the KEEP or window policy.
+        // A timestamp cutoff reads as an interval scan and keeps both joins working.
         assertMemoryLeak(() -> {
             execute("create table prices (ts timestamp, sym symbol, price double) timestamp(ts) partition by day wal");
             execute("create table trades (ts timestamp, sym symbol, qty double) timestamp(ts) partition by day");
@@ -2017,19 +2021,63 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     "range from 0s to 0s step 1s as h";
             final String multiHorizonJoin = "select avg(b.price) ab, avg(p.price) ap from trades as t " +
                     "horizon join prices as b on (t.sym = b.sym) horizon join pmv as p on (t.sym = p.sym) list (0) as h";
-            final String policyReason = " cannot be materialized view 'pmv' because its EXPIRE ROWS policy is not a cutoff on the designated timestamp";
+            final String horizonJoinOnFilter = "select avg(p.price) from trades as t horizon join pmv as p " +
+                    "on (t.sym = p.sym and p.price < 8) range from 0s to 0s step 1s as h";
+            final String multiHorizonJoinOnFilter = "select avg(b.price) ab, avg(p.price) ap from trades as t " +
+                    "horizon join prices as b on (t.sym = b.sym) horizon join pmv as p on (t.sym = p.sym and p.price < 8) list (0) as h";
+            final String cutoffReason = " cannot be materialized view 'pmv' because its EXPIRE ROWS policy is not a cutoff on the designated timestamp";
+            final String structuralReason = " cannot be materialized view 'pmv' because its EXPIRE ROWS policy uses KEEP or a window function";
 
-            final String[] policies = {
-                    "when price < 0",
+            // The expired -1.0 and -2.0 prices never prevail, so the four trades see 5.0, 5.0, 20.0 and 30.0.
+            execute("alter materialized view pmv set expire rows when price < 0");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(windowJoin, windowJoin.indexOf("pmv"), "right side of window join" + cutoffReason);
+            assertQuery(horizonJoin).noLeakCheck().noRandomAccess().expectSize().returns("""
+                    avg
+                    15.0
+                    """);
+            assertQuery(multiHorizonJoin).noLeakCheck().noRandomAccess().expectSize().returns("""
+                    ab\tap
+                    5.5\t15.0
+                    """);
+            // An ON predicate on the view's columns applies on top of the keep-filter: the expired -1.0 and -2.0
+            // prices pass price < 8 but stay hidden, so the three A trades see 5.0 and the B trade finds no price.
+            assertQuery(horizonJoinOnFilter).noLeakCheck().noRandomAccess().expectSize().returns("""
+                    avg
+                    5.0
+                    """);
+            assertQuery(multiHorizonJoinOnFilter).noLeakCheck().noRandomAccess().expectSize().returns("""
+                    ab\tap
+                    5.5\t5.0
+                    """);
+
+            // now() - c does not flip to an interval, so it reads through a per-row filter too. An hour before
+            // the clock keeps only the 2024-02-10 prices: the first two trades find no price, and the last two
+            // see 20.0 and -2.0.
+            setCurrentMicros(MicrosTimestampDriver.floor("2024-02-10T00:01:00.000000Z"));
+            execute("alter materialized view pmv set expire rows when ts < now() - 3_600_000_000L");
+            drainWalAndMatViewQueues();
+            assertExceptionNoLeakCheck(windowJoin, windowJoin.indexOf("pmv"), "right side of window join" + cutoffReason);
+            assertQuery(horizonJoin).noLeakCheck().noRandomAccess().expectSize().returns("""
+                    avg
+                    9.0
+                    """);
+            assertQuery(multiHorizonJoin).noLeakCheck().noRandomAccess().expectSize().returns("""
+                    ab\tap
+                    5.5\t9.0
+                    """);
+
+            final String[] structuralPolicies = {
                     "keep latest on ts partition by sym",
-                    "keep highest on price partition by sym"
+                    "keep highest on price partition by sym",
+                    "when price < max(price) over (partition by sym)"
             };
-            for (String policy : policies) {
+            for (String policy : structuralPolicies) {
                 execute("alter materialized view pmv set expire rows " + policy);
                 drainWalAndMatViewQueues();
-                assertExceptionNoLeakCheck(windowJoin, windowJoin.indexOf("pmv"), "right side of window join" + policyReason);
-                assertExceptionNoLeakCheck(horizonJoin, horizonJoin.indexOf("pmv"), "right-hand side of HORIZON JOIN" + policyReason);
-                assertExceptionNoLeakCheck(multiHorizonJoin, multiHorizonJoin.indexOf("pmv"), "right-hand side of HORIZON JOIN" + policyReason);
+                assertExceptionNoLeakCheck(windowJoin, windowJoin.indexOf("pmv"), "right side of window join" + cutoffReason);
+                assertExceptionNoLeakCheck(horizonJoin, horizonJoin.indexOf("pmv"), "right-hand side of HORIZON JOIN" + structuralReason);
+                assertExceptionNoLeakCheck(multiHorizonJoin, multiHorizonJoin.indexOf("pmv"), "right-hand side of HORIZON JOIN" + structuralReason);
             }
 
             execute("alter materialized view pmv set expire rows when ts < '2020-01-01'");

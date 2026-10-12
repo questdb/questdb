@@ -22,29 +22,41 @@ constant, `now()` or `dateadd()` over them (`WHEN ts < dateadd('d', -30, now())`
 `WHEN ts < '2020-01-01'`), is a timestamp cutoff. The parser flips it into an
 interval, and the view reads like a table. Arithmetic on the clock
 (`now() - 3_600_000_000L`) does not qualify; see "Clock arithmetic thresholds do
-not prune". Every other policy reads the view through a filtered sub-query,
-which these queries do not accept:
+not prune". Every other policy reads the view through a filtered sub-query: a
+per-row filter under a value `WHEN`, and a `LATEST ON` or window-function
+sub-query under `KEEP` and window `WHEN` policies. These queries accept that
+sub-query only in part:
 
 | Query over the view | Timestamp cutoff | Any other policy |
 | --- | --- | --- |
-| Right-hand side of WINDOW JOIN or HORIZON JOIN | works | rejected |
+| Right-hand side of WINDOW JOIN | works | rejected |
+| Right-hand side of HORIZON JOIN | works | works under a value `WHEN`, rejected under `KEEP` and window policies |
 | Left-hand side of either join | works | works |
 | `LATEST ON` result fed to SAMPLE BY, ASOF JOIN or LT JOIN | works | works under a value `WHEN`, rejected under `KEEP` and window policies |
 | Deprecated `LATEST BY` result fed to the same | rejected | rejected |
 
-- **Why accepted:** every case fails at compile time; no query returns wrong
-  rows. The joins require a right-hand side that provides time frames, and no
-  row-filtered read does, including a filtered sub-query written by hand over a
-  plain table. The join errors name the view
-  (`SqlCodeGenerator.unsupportedTimeFrameSlave()`). The `LATEST ON` and
+- **Why accepted:** every rejected case fails at compile time; no query returns
+  wrong rows. Both joins require a right-hand side that provides time frames,
+  and no row-filtered read does, including a filtered sub-query written by hand
+  over a plain table. HORIZON JOIN takes a per-row filter off its right-hand
+  side, reads the table's time frames, and applies the filter while it looks up
+  the prevailing row (`SqlCodeGenerator.generateHorizonJoinFactory()` and
+  `generateMultiHorizonJoinFactory()`). A `KEEP` or window `WHEN` policy decides
+  each row against the other rows of the view, so its read has no per-row filter
+  to take, and WINDOW JOIN takes no filter at all. The join errors name the view
+  (`SqlCodeGenerator.unsupportedTimeFrameSlave()`): WINDOW JOIN's names the
+  missing timestamp cutoff, and HORIZON JOIN's names the `KEEP` or window-function
+  policy when the parser has recorded one on the model
+  (`IQueryModel.isExpiryStructuralPolicy()`), and the missing cutoff otherwise.
+  The `LATEST ON` and
   `LATEST BY` cases keep the generic
   `TIMESTAMP column is required but not provided`.
 - **Pinned by:**
   `MatViewExpireRowsTest.testTimeFrameJoinOverPoliciedViewNamesTheView`,
   `MatViewExpireRowsTest.testRelativePoliciedViewRejectsTimestampOperatorAboveLatestOn`.
-- **Follow-up:** time-frame support for a row-filtered right-hand side, and
-  carrying the designated timestamp through `LATEST BY` and `LATEST ON` over a
-  sub-query.
+- **Follow-up:** time-frame support for a row-filtered right-hand side of WINDOW
+  JOIN and a windowed right-hand side of either join, and carrying the
+  designated timestamp through `LATEST BY` and `LATEST ON` over a sub-query.
 
 ### Passthrough views keep the columns they were created with
 
@@ -216,15 +228,16 @@ caller's timestamp filter sits above the window; only an equality on every
 ### Clock arithmetic thresholds do not prune
 
 `WHEN ts < now() - 3_600_000_000L` reads through a full scan with a per-row
-filter, so the time-frame join limitation above applies to it as well.
-`WHEN ts < dateadd('h', -1, now())` expresses the same window and reads as an
-interval scan.
+filter, so the WINDOW JOIN limitation above applies to it as well; HORIZON JOIN
+accepts it. `WHEN ts < dateadd('h', -1, now())` expresses the same window and
+reads as an interval scan.
 
 - **Why accepted:** the interval flip requires a threshold that is provably
   non-NULL, and arithmetic with a clock under it is not provable at DDL time.
   The policy still keeps the right rows and still reclaims disk. The public docs
   recommend `dateadd`.
-- **Pinned by:** `MatViewExpireRowsTest.testClockArithmeticThresholdKeepsUnflippedFilter`.
+- **Pinned by:** `MatViewExpireRowsTest.testClockArithmeticThresholdKeepsUnflippedFilter`,
+  `MatViewExpireRowsTest.testTimeFrameJoinOverPoliciedViewNamesTheView`.
 
 ### Fixed thresholds reclaim through the survivor scan
 

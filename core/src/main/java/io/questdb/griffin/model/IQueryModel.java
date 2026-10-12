@@ -503,6 +503,14 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
      */
     boolean isExpiryKeepFilter();
 
+    /**
+     * True on the model that carries {@link #getExpiryViewNameExpr()} when the view's EXPIRE ROWS policy is a
+     * KEEP or window-function policy (see {@code RowExpiryUtil.isStructuralPolicy}). Such a policy decides
+     * each row against the other rows of the view, so its read has no per-row filter that a join could
+     * take off and apply on its own.
+     */
+    boolean isExpiryStructuralPolicy();
+
     boolean isExpiryWindowBarrier();
 
     boolean isForceBackwardScan();
@@ -611,6 +619,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setExplicitTimestamp(boolean explicitTimestamp);
 
     void setExpiryKeepFilter(boolean isExpiryKeepFilter);
+
+    void setExpiryStructuralPolicy(boolean isExpiryStructuralPolicy);
 
     void setExpiryViewNameExpr(ExpressionNode expiryViewNameExpr);
 

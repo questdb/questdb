@@ -868,6 +868,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public boolean isExpiryStructuralPolicy() {
+        return delegate.isExpiryStructuralPolicy();
+    }
+
+    @Override
     public boolean isExpiryWindowBarrier() {
         return delegate.isExpiryWindowBarrier();
     }
@@ -1114,6 +1119,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setExpiryKeepFilter(boolean isExpiryKeepFilter) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setExpiryStructuralPolicy(boolean isExpiryStructuralPolicy) {
         throw new UnsupportedOperationException();
     }
 
