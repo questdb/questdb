@@ -438,8 +438,8 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
      */
     private void assertFuzzProjection(
             CharSequence tradesInner,
-            boolean symbolEq,
-            boolean groupBySym,
+            boolean isSymbolEq,
+            boolean isGroupBySym,
             CharSequence horizonAggregates,
             CharSequence referenceAggregates,
             CharSequence[][] perSlaveColumns,
@@ -460,7 +460,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         sink.put(" FROM ").put(tradesInner).put(" AS t");
         for (int s = 0; s < slaveCount; s++) {
             sink.put(" HORIZON JOIN ").put(slaveTable(isMulti, s)).put(" AS ").put(slaveAlias(isMulti, s));
-            if (symbolEq) {
+            if (isSymbolEq) {
                 sink.put(" ON (t.sym = ").put(slaveAlias(isMulti, s)).put(".sym)");
             }
         }
@@ -492,7 +492,7 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
                     .put(") TIMESTAMP(ts)) t");
             for (int s = 0; s < slaveCount; s++) {
                 sink.put(" ASOF JOIN ").put(slaveTable(isMulti, s)).put(' ').put(slaveAlias(isMulti, s));
-                if (symbolEq) {
+                if (isSymbolEq) {
                     sink.put(" ON (t.sym = ").put(slaveAlias(isMulti, s)).put(".sym)");
                 }
             }
@@ -504,29 +504,29 @@ public class HorizonJoinFuzzTest extends AbstractCairoTest {
         // The markout shape of the report: aggregate the projection in an outer query.
         sink.clear();
         sink.put("SELECT h.offset AS h_offset");
-        if (groupBySym) {
+        if (isGroupBySym) {
             sink.put(", t.sym");
         }
         sink.put(", ").put(horizonAggregates).put(" FROM ").put(tradesInner).put(" AS t");
         for (int s = 0; s < slaveCount; s++) {
             sink.put(" HORIZON JOIN ").put(slaveTable(isMulti, s)).put(" AS ").put(slaveAlias(isMulti, s));
-            if (symbolEq) {
+            if (isSymbolEq) {
                 sink.put(" ON (t.sym = ").put(slaveAlias(isMulti, s)).put(".sym)");
             }
         }
         sink.put(' ').put(horizonClause).put(" ORDER BY h_offset");
-        if (groupBySym) {
+        if (isGroupBySym) {
             sink.put(", t.sym");
         }
         final String fusedQuery = sink.toString();
 
         sink.clear();
         sink.put("SELECT h_offset");
-        if (groupBySym) {
+        if (isGroupBySym) {
             sink.put(", sym");
         }
         sink.put(", ").put(referenceAggregates).put(" FROM (").put(rowsQuery).put(") ORDER BY h_offset");
-        if (groupBySym) {
+        if (isGroupBySym) {
             sink.put(", sym");
         }
         assertQueriesMatch(sink.toString(), fusedQuery);

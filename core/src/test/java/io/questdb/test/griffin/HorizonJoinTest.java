@@ -901,8 +901,8 @@ public class HorizonJoinTest extends AbstractCairoTest {
         // the rare key makes every other lookup scan back to row 0, which switches them to forward
         // scan mode at the second window. The aggregating factories don't sum the gaps and stay
         // in backward-only mode. Both scan modes return the same rows, so this test pins the
-        // results with and without the switch; HorizonJoinTimeFrameHelperTest observes the modes,
-        // e.g. testWindowSwitchOverSmallGapsOnlyWhenEnabled().
+        // results with and without the switch; HorizonJoinTimeFrameHelperForwardScanTest observes
+        // the modes, e.g. testWindowSwitchOverSmallGapsOnlyWhenEnabled().
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
                     "CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR",
@@ -936,12 +936,14 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             """
             );
 
-            String sql = "SELECT t.sym, count() AS n, avg(p.price) AS avg_price " +
-                    "FROM trades AS t " +
-                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
-                    "LIST (0) AS h " +
-                    "GROUP BY t.sym " +
-                    "ORDER BY t.sym";
+            String sql = """
+                    SELECT t.sym, count() AS n, avg(p.price) AS avg_price
+                    FROM trades AS t
+                    HORIZON JOIN prices AS p ON (t.sym = p.sym)
+                    LIST (0) AS h
+                    GROUP BY t.sym
+                    ORDER BY t.sym
+                    """;
 
             assertQuery(sql)
                     .noLeakCheck()

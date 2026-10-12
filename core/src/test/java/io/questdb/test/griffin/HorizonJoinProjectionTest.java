@@ -594,6 +594,65 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionDeepLookupsMatchAsOfJoin() throws Exception {
+        // Trades 1 and 163 look up a key that the quotes last held 5,000 rows back, across an
+        // hourly partition boundary: the backward scan puts about 4,500 keys into the key cache,
+        // which grows to fit them. Every other trade finds its key within 10 rows. Batches and
+        // tasks hold 50 trades. The lookups after a deep one keep their few keys in the grown cache
+        // rather than clear it, and the batches or tasks after it keep the grown capacity: their
+        // first lookup clears the cache. The key shapes cover every map the cache can be: an
+        // Unordered8Map for LONG, an Unordered4Map for INT and SYMBOL, an UnorderedVarcharMap for
+        // VARCHAR and an OrderedMap for two columns. The rows must equal those of the ASOF JOIN
+        // in the serial factory and on four workers, with and without a filter on the quotes.
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 50);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 50);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, context) -> {
+                        engine.execute("""
+                                CREATE TABLE quotes AS (
+                                    SELECT '2026-01-01'::TIMESTAMP + x * 1_000_000L ts, k, k::INT ki, k::SYMBOL ks,
+                                           k::VARCHAR kv, 0 kz, (x % 997) / 997.0 bid
+                                    FROM (SELECT x, CASE WHEN x % 10 = 0 THEN -1 ELSE x END k FROM long_sequence(12_000))
+                                ) TIMESTAMP(ts) PARTITION BY HOUR
+                                """, context);
+                        engine.execute("""
+                                CREATE TABLE trades AS (
+                                    SELECT x id, '2026-01-01'::TIMESTAMP + (10_000 + x) * 1_000_000L + 500_000L ts,
+                                           k, k::INT ki, k::SYMBOL ks, k::VARCHAR kv, 0 kz
+                                    FROM (SELECT x, CASE WHEN x IN (1, 163) THEN 5_000 + x ELSE -1 END k FROM long_sequence(300))
+                                ) TIMESTAMP(ts) PARTITION BY HOUR
+                                """, context);
+                        final StringSink expected = new StringSink();
+                        for (String slave : List.of("quotes", "(quotes WHERE bid < 0.9)")) {
+                            for (String on : List.of(
+                                    "ON (k)",
+                                    "ON (ki)",
+                                    "ON (ks)",
+                                    "ON (kv)",
+                                    "ON (t.k = q.k AND t.kz = q.kz)"
+                            )) {
+                                TestUtils.printSql(engine, context, "SELECT t.id, q.bid, q.ts FROM trades t ASOF JOIN " + slave + " q " + on, expected);
+                                for (boolean isParallel : MODES) {
+                                    context.setParallelHorizonJoinEnabled(isParallel);
+                                    assertQuery("SELECT t.id, q.bid, q.ts FROM trades t HORIZON JOIN " + slave + " q " + on + " LIST (0s) AS h")
+                                            .withEngine(engine).withContext(context).noLeakCheck().noRandomAccess().expectSize()
+                                            .withPlanContaining(isParallel ? "Horizon Join Projection workers: 4 offsets: 1" : "Horizon Join Projection offsets: 1")
+                                            .returns(expected);
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
     public void testProjectionDuplicateSlaveTimestamps() throws Exception {
         // ASOF picks the last of several slave rows sharing the matched timestamp, exactly as the
         // ASOF JOIN does.
@@ -878,7 +937,8 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                 // JIT-compiled filter.
                 assertQuery(head + "WHERE t.price > 15").noRandomAccess().timestamp("ts")
                         .withPlanContaining(projectionPlan(isParallel, 3)).returns(bcRows);
-                // Java filter that is not thread-safe, so each worker gets a clone.
+                // Java filter that is not thread-safe. Without a worker pool the owner thread
+                // filters every frame with the original filter, so the worker clones stay idle.
                 assertQuery(head + "WHERE concat(t.sym, '') = 'A'").noRandomAccess().timestamp("ts")
                         .withPlanContaining(projectionPlan(isParallel, 3)).returns(aRows);
                 // Bind variable.
@@ -1162,6 +1222,55 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                 )) {
                     assertMatchesAsOfJoin("trades", "quotes", on, "t.id, q.bid, q.ts");
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionKeyedLookupRestartRechecksKeptEntriesWithFilter() throws Exception {
+        // Quote row r holds id r and symbol 's' || (r % 5); only the s0 to s3 rows 90 to 99 of
+        // every 100 pass the filter. The s4 trade sits on quote row 140: its backward scan finds no
+        // qualifying s4 row, reads all 141 rows down to row 0, past the absolute threshold of 100,
+        // and leaves the s0 to s3 rows 95 to 98 in the key cache. The s0 to s3 trades sit on quote
+        // row 1,340, 1,200 rows on. The lookup switches to forward scan mode there, but a forward
+        // scan would read more than the 141 x 8 rows the cache is worth, so the lookup restarts it
+        // at row 1,340, and five entries fill under 1/8 of the cache, so the restart keeps them.
+        // The backward scan from row 1,340 must run the filter over the rows of a key whose kept
+        // entry is older and return rows 1,295 to 1,298, as the ASOF JOIN does. A scan that takes
+        // a kept entry as resolved skips those rows and returns the stale rows 95 to 98.
+        setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE quotes (ts TIMESTAMP, id LONG, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO quotes
+                    SELECT '2026-01-01'::TIMESTAMP + (x - 1) * 10_000L, x - 1, ('s' || ((x - 1) % 5))::SYMBOL,
+                           CASE WHEN (x - 1) % 5 <> 4 AND (x - 1) % 100 >= 90 THEN 100.0 ELSE 1.0 END
+                    FROM long_sequence(1_500)
+                    """);
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2026-01-01T00:00:01.400', 's4'),
+                        ('2026-01-01T00:00:13.400', 's0'),
+                        ('2026-01-01T00:00:13.400', 's1'),
+                        ('2026-01-01T00:00:13.400', 's2'),
+                        ('2026-01-01T00:00:13.400', 's3')
+                    """);
+            final String expected = """
+                    sym\tid
+                    s4\tnull
+                    s0\t1295
+                    s1\t1296
+                    s2\t1297
+                    s3\t1298
+                    """;
+            assertQuery("SELECT t.sym, q.id FROM trades t ASOF JOIN (quotes WHERE bid > 50) q ON (sym)")
+                    .noRandomAccess().expectSize().returns(expected);
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("SELECT t.sym, q.id FROM trades t HORIZON JOIN (quotes WHERE bid > 50) q ON (sym) LIST (0s) AS h")
+                        .noRandomAccess().expectSize()
+                        .withPlanContaining(projectionPlan(isParallel, 1)).returns(expected);
             }
         });
     }
@@ -1916,7 +2025,9 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                                 2026-01-01T00:00:02.000000Z\tC\t0\t20.0
                                 2026-01-01T00:00:02.000000Z\tC\t1000000\t22.0
                                 """);
-                // A Java filter that is not thread-safe, so each worker gets a clone. Only the A
+                // A Java filter that is not thread-safe. Without a worker pool the owner thread
+                // matches every frame with the original filter, so the worker clones stay idle;
+                // testProjectionWorkerPoolSlaveFilterClonesMatchSerial() runs them. Only the A
                 // quotes pass.
                 assertQuery(select + "HORIZON JOIN (TaqQuote WHERE concat(sym, '_') = 'A_') q" + offsets)
                         .noRandomAccess().expectSize().timestamp("ts")
@@ -2236,6 +2347,58 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                                     Assert.assertEquals(3, rows);
                                 }
                             }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testProjectionWorkerPoolSlaveFilterClonesMatchSerial() throws Exception {
+        // The code generator compiles a clone of a right-hand filter that is not thread-safe for
+        // every worker slot, and the matcher of each slot must use its own clone. concat() is
+        // such a filter: it builds its string in a sink of its own, so threads that share one
+        // filter corrupt each other's strings or fail, and a worker matcher without a filter
+        // accepts every quote. Frames of at most 100 trades, each matched whole by one task,
+        // leave hundreds of tasks per pass to the four workers. The parallel rows must equal the
+        // serial rows, order included.
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 300);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, context) -> {
+                        createRandomTradesAndQuotes(engine, context, 20_000, 100_000, 30);
+                        final ObjList<String> queries = new ObjList<>(
+                                // Keyed: the s3 trades find no quote.
+                                """
+                                SELECT t.id, h.offset, q.bid FROM trades t
+                                HORIZON JOIN (quotes WHERE concat(sym, '_') != 's3_') q ON (sym) LIST (-1s, 0s, 1s) AS h
+                                """,
+                                // Unkeyed: only 2 of the 31 quote symbols pass.
+                                """
+                                SELECT t.id, h.offset, q.bid, q.sym FROM trades t
+                                HORIZON JOIN (quotes WHERE concat(sym, '_') IN ('s1_', 's2_')) q LIST (-1s, 0s, 1s) AS h
+                                """,
+                                // Two slaves, each with clones of its own filter.
+                                """
+                                SELECT t.id, h.offset, q.bid, r.bid FROM trades t
+                                HORIZON JOIN (quotes WHERE concat(sym, '_') != 's3_') q ON (sym)
+                                HORIZON JOIN (quotes WHERE concat(sym, '_') IN ('s1_', 's2_')) r LIST (-1s, 1s) AS h
+                                """
+                        );
+                        final StringSink expected = new StringSink();
+                        for (int i = 0, n = queries.size(); i < n; i++) {
+                            final String sql = queries.getQuick(i);
+                            context.setParallelHorizonJoinEnabled(false);
+                            TestUtils.printSql(engine, context, sql, expected);
+                            context.setParallelHorizonJoinEnabled(true);
+                            assertQuery(sql).withEngine(engine).withContext(context).noLeakCheck().noRandomAccess().expectSize()
+                                    .withPlanContaining("Horizon Join Projection workers: 4", "slave filter: concat")
+                                    .returns(expected);
                         }
                     },
                     configuration,

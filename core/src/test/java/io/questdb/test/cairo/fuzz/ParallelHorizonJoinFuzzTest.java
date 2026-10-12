@@ -570,23 +570,27 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
 
     private static void createPricesTable(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String name) throws SqlException {
         engine.execute(
-                "CREATE TABLE " + name + " ("
-                        + "    ts TIMESTAMP,"
-                        + "    sym SYMBOL CAPACITY 1024,"
-                        + "    bid DOUBLE,"
-                        + "    ask DOUBLE"
-                        + ") TIMESTAMP(ts) PARTITION BY HOUR;",
+                """
+                        CREATE TABLE %s (
+                            ts TIMESTAMP,
+                            sym SYMBOL CAPACITY 1024,
+                            bid DOUBLE,
+                            ask DOUBLE
+                        ) TIMESTAMP(ts) PARTITION BY HOUR;
+                        """.formatted(name),
                 sqlExecutionContext
         );
         // Price rows at 360_000 us = 360ms spacing, 10x denser than trades.
         engine.execute(
-                "INSERT INTO " + name
-                        + "  SELECT "
-                        + "      '2020-01-01'::TIMESTAMP + (360_000*x) + rnd_long(-200, 200, 0) AS ts, "
-                        + "      rnd_symbol_zipf(100, 2.0) AS sym, "
-                        + "      rnd_double() * 10.0 + 5.0 AS bid, "
-                        + "      rnd_double() * 10.0 + 5.0 AS ask "
-                        + "  FROM long_sequence(" + 10 * ROW_COUNT + ");",
+                """
+                        INSERT INTO %s
+                        SELECT
+                            '2020-01-01'::TIMESTAMP + (360_000*x) + rnd_long(-200, 200, 0) AS ts,
+                            rnd_symbol_zipf(100, 2.0) AS sym,
+                            rnd_double() * 10.0 + 5.0 AS bid,
+                            rnd_double() * 10.0 + 5.0 AS ask
+                        FROM long_sequence(%d);
+                        """.formatted(name, 10 * ROW_COUNT),
                 sqlExecutionContext
         );
     }

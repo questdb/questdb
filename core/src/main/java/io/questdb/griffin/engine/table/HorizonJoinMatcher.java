@@ -243,14 +243,18 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
 
     /**
      * Resets the sequential scan state before a new walk over horizon timestamps.
+     * <p>
+     * The key caches keep their entries and their capacity. The first lookup of the walk clears
+     * the cache before it reads it, see {@link HorizonJoinTimeFrameHelper#findKeyedAsOfMatch}, so
+     * every walk starts with one clear of the capacity that the deepest lookup so far grew the
+     * cache to. The cache keeps that capacity until {@link #clear()}: a walk that fills it again,
+     * such as one with a deep lookup, does not grow it again. Growing it again would rehash its
+     * entries at every doubling, which costs as much as tens to hundreds of clears of the grown
+     * cache.
      */
     public void toTop() {
         for (int s = 0; s < slaveCount; s++) {
             helpers.getQuick(s).toTop();
-            final Map asOfJoinMap = asOfJoinMaps.getQuick(s);
-            if (asOfJoinMap != null) {
-                asOfJoinMap.clear();
-            }
         }
     }
 }
