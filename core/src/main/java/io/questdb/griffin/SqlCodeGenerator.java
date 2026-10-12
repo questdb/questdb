@@ -623,6 +623,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private IQueryModel forcedScanModel;
     // {selected, scanned} of the last covering-index selection estimate, see estimateSelection()
     private final long[] coveringEstimate = new long[2];
+    // the models whose where clauses a second generation of the same model restores, and the
+    // clauses as they were before the first one consumed them, see snapshotWhereClauses()
+    private final ObjList<IQueryModel> whereSnapshotModels = new ObjList<>();
+    private final ObjList<ExpressionNode> whereSnapshotClauses = new ObjList<>();
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     // the PARTITION BY of a worker's copy compiled without it, see compileStreamingWindowCopy()
@@ -813,6 +817,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         markoutHorizonContext.clear();
         sharedFactoryCache.clear();
         generationState.clear();
+        whereSnapshotModels.clear();
+        whereSnapshotClauses.clear();
     }
 
     @Override
@@ -12202,41 +12208,50 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * otherwise take, and the cached factory holds both plans, each with its per-worker state.
      */
     private RecordCursorFactory generateSelectGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursorFactory indexPlan = generateSelectGroupBy0(model, executionContext);
-        // its expression nodes go back to the pool with this compilation, also where the GROUP BY
-        // does not gather and the index scan sits deeper, under a sort (twap)
-        releaseIndexGatherFilterExpr(indexPlan);
-        if (!configuration.isSqlIndexScanChoiceEnabled() || forcedScanModel != null) {
-            return indexPlan;
-        }
         final IQueryModel nested = model.getNestedModel();
-        if (nested == null
-                || !(indexPlan.getBaseFactory() instanceof IndexGatherRecordCursorFactory gather)
+        if (!configuration.isSqlIndexScanChoiceEnabled()
+                || forcedScanModel != null
+                || nested == null
                 || SqlHints.hasUseIndexHint(model)
                 || SqlHints.hasUseIndexHint(nested)
                 || (model instanceof QueryModel qm && qm.getSharedRefCount() > 0)) {
-            return indexPlan;
+            final RecordCursorFactory plan = generateSelectGroupBy0(model, executionContext);
+            // its expression nodes go back to the pool with this compilation, also where the GROUP BY
+            // does not gather and the index scan sits deeper, under a sort (twap)
+            releaseIndexGatherFilterExpr(plan);
+            return plan;
         }
-        RecordCursorFactory scanPlan = null;
+        // the where clauses as they are before the index plan consumes them, those of the
+        // sub-queries in them included, for the scan plan
+        final int whereSnapshot = snapshotWhereClauses(model);
         try {
-            // the where clauses as they were before the index plan consumed them
-            IQueryModel.restoreWhereClause(expressionNodePool, model);
-            forcedScanModel = nested;
-            try {
-                scanPlan = generateSelectGroupBy0(model, executionContext);
-            } finally {
-                forcedScanModel = null;
+            final RecordCursorFactory indexPlan = generateSelectGroupBy0(model, executionContext);
+            releaseIndexGatherFilterExpr(indexPlan);
+            if (!(indexPlan.getBaseFactory() instanceof IndexGatherRecordCursorFactory gather)) {
+                return indexPlan;
             }
-            return new IndexScanChoiceRecordCursorFactory(
-                    indexPlan,
-                    scanPlan,
-                    gather,
-                    configuration.getSqlIndexScanChoiceMaxSelectivity()
-            );
-        } catch (Throwable th) {
-            Misc.free(scanPlan);
-            Misc.free(indexPlan);
-            throw th;
+            RecordCursorFactory scanPlan = null;
+            try {
+                restoreWhereClauses(whereSnapshot);
+                forcedScanModel = nested;
+                try {
+                    scanPlan = generateSelectGroupBy0(model, executionContext);
+                } finally {
+                    forcedScanModel = null;
+                }
+                return new IndexScanChoiceRecordCursorFactory(
+                        indexPlan,
+                        scanPlan,
+                        gather,
+                        configuration.getSqlIndexScanChoiceMaxSelectivity()
+                );
+            } catch (Throwable th) {
+                Misc.free(scanPlan);
+                Misc.free(indexPlan);
+                throw th;
+            }
+        } finally {
+            dropWhereClauseSnapshot(whereSnapshot);
         }
     }
 
@@ -12764,12 +12779,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     // mode and arg_max/arg_min keep the tie a slot met first. So one task reads a
                     // key's rows of a partition run, rather than row-range pieces of it.
                     gather.setSplitKeysByRowRange(!orderSensitive);
+                    // compiled below, once the lists a sub-query in it would overwrite are copied
                     filterExpr = gather.getStealFilterExpr();
-                    if (filterExpr != null) {
-                        filter = compileBooleanFilter(filterExpr, factory.getMetadata(), executionContext);
-                        filterUsedColumnIndexes = new IntHashSet();
-                        collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
-                    }
                     supportsParallelism = true;
                 }
 
@@ -12780,6 +12791,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
                     ArrayColumnTypes valueTypesCopy = new ArrayColumnTypes().addAll(valueTypes);
                     ListColumnFilter listColumnFilterCopy = listColumnFilterA.copy();
+
+                    if (filter == null && filterExpr != null && factory instanceof IndexGatherRecordCursorFactory) {
+                        // the rest of the gather's filter; a sub-query in it generates its own GROUP
+                        // BY, which reuses keyTypes, valueTypes and listColumnFilterA
+                        filter = compileBooleanFilter(filterExpr, factory.getMetadata(), executionContext);
+                        filterUsedColumnIndexes = new IntHashSet();
+                        collectColumnIndexes(sqlNodeStack, factory.getMetadata(), filterExpr, filterUsedColumnIndexes);
+                    }
 
                     if (keyTypesCopy.getColumnCount() == 0) {
                         assert keyFunctions.size() == 0;
@@ -16438,13 +16457,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // this is server side execution of the update. It executes against the reader metadata, which by now
             // has to be fully up-to-date due to WAL apply execution order.
             try (TableReader reader = executionContext.getReader(tableToken, model.getMetadataVersion())) {
-                // the where clause as it is before generation consumes it, should a scan replace the covering plan
-                final ExpressionNode coveringChoiceWhere = isCoveringScanChoiceCandidate(model, latestBy, reader, executionContext)
-                        ? ExpressionNode.deepClone(expressionNodePool, model.getWhereClause())
-                        : null;
-                result = generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
-                if (coveringChoiceWhere != null) {
-                    result = scanInPlaceOfFrequentCovering(model, executionContext, latestBy, supportsRandomAccess, reader, result, coveringChoiceWhere);
+                if (isCoveringScanChoiceCandidate(model, latestBy, reader, executionContext)) {
+                    // the where clauses as they are before generation consumes them, those of the
+                    // sub-queries in them included, should a scan replace the covering plan
+                    final int whereSnapshot = snapshotWhereClauses(model);
+                    try {
+                        result = generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
+                        result = scanInPlaceOfFrequentCovering(model, executionContext, latestBy, supportsRandomAccess, reader, result, whereSnapshot);
+                    } finally {
+                        dropWhereClauseSnapshot(whereSnapshot);
+                    }
+                } else {
+                    result = generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
                 }
             }
         }
@@ -19498,6 +19522,84 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         processNodeQueryModels(node, RESTORE_WHERE_CLAUSE);
     }
 
+    /**
+     * Puts back the where clauses {@link #snapshotWhereClauses} recorded, for a second generation
+     * of the same model. Each is cloned, so the snapshot holds until it is dropped.
+     */
+    private void restoreWhereClauses(int mark) {
+        for (int i = mark, n = whereSnapshotModels.size(); i < n; i++) {
+            whereSnapshotModels.getQuick(i).setWhereClause(ExpressionNode.deepClone(expressionNodePool, whereSnapshotClauses.getQuick(i)));
+        }
+    }
+
+    /**
+     * Records, before a model is generated a first time, the where clause of every model that
+     * generation can consume, so that a second generation of the same model starts from them
+     * ({@link #restoreWhereClauses}): the models of the model's chain (nested, union, join and
+     * UPDATE models), and, recursively, those of the sub-queries in their where clauses, columns
+     * and join criteria. A generation consumes a where clause, keeping only the residual filter,
+     * and a cloned expression shares its sub-query models with the original, so restoring only the
+     * outer where clauses would generate a sub-query without its own predicates. Returns the mark
+     * that {@link #restoreWhereClauses} and {@link #dropWhereClauseSnapshot} take; snapshots nest.
+     */
+    private int snapshotWhereClauses(IQueryModel model) {
+        final int mark = whereSnapshotModels.size();
+        snapshotWhereClauses0(model, mark);
+        return mark;
+    }
+
+    private void snapshotWhereClauses0(IQueryModel model, int mark) {
+        IQueryModel current = model;
+        while (current != null && current.isOptimisable()) {
+            for (int i = mark, n = whereSnapshotModels.size(); i < n; i++) {
+                if (whereSnapshotModels.getQuick(i) == current) {
+                    return;
+                }
+            }
+            whereSnapshotModels.add(current);
+            whereSnapshotClauses.add(ExpressionNode.deepClone(expressionNodePool, current.getWhereClause()));
+            snapshotSubQueryWhereClauses(current.getWhereClause(), mark);
+            final ObjList<QueryColumn> columns = current.getColumns();
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                snapshotSubQueryWhereClauses(columns.getQuick(i).getAst(), mark);
+            }
+            if (current.getUnionModel() != null) {
+                snapshotWhereClauses0(current.getUnionModel(), mark);
+            }
+            if (current.getUpdateTableModel() != null) {
+                snapshotWhereClauses0(current.getUpdateTableModel(), mark);
+            }
+            final ObjList<IQueryModel> joinModels = current.getJoinModels();
+            for (int i = 1, n = joinModels.size(); i < n; i++) {
+                final IQueryModel m = joinModels.getQuick(i);
+                if (m != null && m != current) {
+                    snapshotSubQueryWhereClauses(m.getJoinCriteria(), mark);
+                    snapshotWhereClauses0(m, mark);
+                }
+            }
+            current = current.getNestedModel();
+        }
+    }
+
+    private void snapshotSubQueryWhereClauses(@Nullable ExpressionNode node, int mark) {
+        if (node == null) {
+            return;
+        }
+        if (node.queryModel != null) {
+            snapshotWhereClauses0(node.queryModel, mark);
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            snapshotSubQueryWhereClauses(node.args.getQuick(i), mark);
+        }
+        snapshotSubQueryWhereClauses(node.lhs, mark);
+        snapshotSubQueryWhereClauses(node.rhs, mark);
+    }
+
+    private void dropWhereClauseSnapshot(int mark) {
+        whereSnapshotModels.setPos(mark);
+        whereSnapshotClauses.setPos(mark);
+    }
+
     private void snapshotHashJoinFilters(IQueryModel model, ObjList<IQueryModel> models,
                                          ObjList<ExpressionNode> whereClauses, ObjList<ExpressionNode> backups) {
         while (model != null) {
@@ -19798,7 +19900,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             boolean supportsRandomAccess,
             TableReader reader,
             RecordCursorFactory coveringPlan,
-            ExpressionNode whereClause
+            int whereSnapshot
     ) throws SqlException {
         final CoveringIndexRecordCursorFactory covering = coveringBaseOf(coveringPlan);
         try {
@@ -19818,7 +19920,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 .$(", plan=scan")
                 .I$();
         Misc.free(coveringPlan);
-        model.setWhereClause(whereClause);
+        restoreWhereClauses(whereSnapshot);
         final IQueryModel prevForcedScanModel = forcedScanModel;
         forcedScanModel = model;
         try {

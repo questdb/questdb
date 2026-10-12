@@ -865,6 +865,43 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScanPlanKeepsSubQueryPredicates() throws Exception {
+        // The choice generates the GROUP BY twice, the second time as a scan. A sub-query in the
+        // residual filter is a model that the first generation consumed the where clause of: the
+        // scan plan must still read the sub-query's key and interval, and so return the rows of
+        // no_index for a frequent key, which the choice opens as the scan.
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext, "t", ROWS, 47);
+            createTable(engine, sqlExecutionContext, "r", ROWS, 53);
+            setFeatures(true, true);
+            final String[] queries = {
+                    "select count() n, sum(x) s from t where sym = 'S0' and x > (select avg(x) from r where sym = 'R1')",
+                    "select count() n, sum(x) s from t where sym = 'S0' and y > (select max(y) - 100 from r where sym = 'S2' and ts in '1970-01-02')",
+                    "select sym, count() n, sum(x) s from t where sym in ('S0', 'S1') and x > (select avg(x) from r where sym = 'R1' and ts in '1970-01-03') order by sym",
+                    "select sym, count() n from t where sym in ('S0', 'S1') and y < (select min(y) + 300 from r where sym = 'S0' and ts in '1970-01-01' and x > (select avg(x) from t where sym = 'R2')) order by sym",
+            };
+            for (String sql : queries) {
+                try (RecordCursorFactory factory = select(sql)) {
+                    final IndexScanChoiceRecordCursorFactory chooser = findChoice(factory);
+                    Assert.assertNotNull(sql, chooser);
+                    final long scanOpens = chooser.getScanPlanOpens();
+                    final String actual = print(factory, sqlExecutionContext);
+                    Assert.assertTrue(sql, chooser.getScanPlanOpens() > scanOpens);
+                    final String reference = runToString(engine, sqlExecutionContext, sql.replaceFirst("select ", "select /*+ no_index */ "));
+                    TestUtils.assertEquals(sql, reference, actual);
+                    // the gather alone compiles the rest of the filter a second time, for its tasks
+                    setFeatures(true, false);
+                    final StringSink plan = new StringSink();
+                    printSql("explain " + sql, plan);
+                    Assert.assertTrue(sql + '\n' + plan, plan.toString().contains("Async Index Group By"));
+                    TestUtils.assertEquals(sql, reference, runToString(engine, sqlExecutionContext, sql));
+                    setFeatures(true, true);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testResidualFilters() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext, "t", ROWS, 43);

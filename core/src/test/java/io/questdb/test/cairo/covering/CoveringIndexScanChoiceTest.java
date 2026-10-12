@@ -89,6 +89,31 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
     }
 
     @Test
+    public void testFrequentKeyScanKeepsSubQueryPredicates() throws Exception {
+        // A frequent key generates the table query a second time, as a scan. The sub-queries of
+        // the residual filter are models whose where clauses the first generation consumed: the
+        // scan must still read their keys and intervals.
+        assertMemoryLeak(() -> {
+            createTable();
+            execute("create table t2 (ts timestamp, sym symbol index type posting, v long, w double) timestamp(ts) partition by day");
+            execute("insert into t2 select ts, sym, v, w from t");
+            execute("create table r (ts timestamp, k symbol, x double) timestamp(ts) partition by day");
+            execute("insert into r select (x * 1_000_000L)::timestamp, case when x % 2 = 0 then 'a' else 'b' end, x * 3.0 from long_sequence(100_000)");
+            final String[] queries = {
+                    "select ts, v from t where sym = 'F' and v > (select avg(v) from t where sym = 'R')",
+                    "select count(), sum(v) from t where sym = 'F' and w * 2 < (select max(x) from r where k = 'a' and ts in '1970-01-01')",
+                    "select count() from t where sym = 'F' and w > (select max(w) from t2 where sym = 'R' and ts in '1970-01-01')",
+                    "select ts, v from t where sym = 'F' and w > (select max(w) from t where sym = 'R' and ts in '1970-01-02') limit -5",
+                    "select count() from t where sym = 'F' and v < (select max(v) from t2 where sym = 'G' and v < (select avg(v) from t where sym = 'R'))",
+            };
+            for (String q : queries) {
+                assertPlanLacks(q.substring(0, q.indexOf(" and ")), "CoveringIndex");
+                assertSameResult(q, q.replaceFirst("select ", "select /*+ no_index */ "));
+            }
+        });
+    }
+
+    @Test
     public void testHintsPickThePath() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
