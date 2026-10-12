@@ -10138,15 +10138,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (toTxn <= fromTxn || !txnScoreboard.isRangeAvailable(fromTxn, toTxn)) {
             return false;
         }
-        // A running checkpoint is the one thing left that TRIM-FILES has to wait for, and it is not a reader:
-        // backup sizes this partition's column files by the physical row extent E its manifest copied out of
-        // the checkpoint, then reads them from the LIVE db root, so shortening them would leave the upload
-        // asking for more rows than the file holds. Decline the whole of MAKE-PLAIN rather than commit a plain
-        // partition whose files TRIM-FILES could not touch - the dead bytes would then be reported by nothing
-        // (deadRows reads 0) and picked up by nothing (selectMakePlainCandidate skips a plain partition).
-        if (isCheckpointInProgress()) {
-            return false;
-        }
         // MAKE-PLAIN clamps column tops and TRIM-FILES shortens the files: no merge-append frame stays open across it.
         evictCompositeFrames();
         final long partitionTs = txWriter.getPartitionTimestampByIndex(partitionIndex);
@@ -10172,6 +10163,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     configuration.getCommitMode()
             );
             setGeometryRefRetiringGenerations(partitionTs, geometryRef);
+            // The partition ends up plain with fewer rows under the same name txn, and later in-place appends
+            // can bring the row count back to a value an incremental backup already archived, with different
+            // rows. Name txn, row count and the cleared geometry would then all match that archive, so bump the
+            // squash counter: it is the staleness key backup and storage policy compare for plain partitions.
+            if (!txWriter.incrementPartitionSquashCounter(partitionIndex)) {
+                squashSplitPartitions_updateSquashTimestampFile(partitionTs, partitionNameTxn);
+            }
             if (clampColumnTopsToLiveRows(partitionTs, liveRows)) {
                 // _cv must never carry a top above the row count of a partition whose E is its live rows.
                 columnVersionWriter.commit();
@@ -10185,6 +10183,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // at row 0 - so the bytes cut below are bytes no live or arriving reader can ask for. POSTING index
         // files are left alone - their size tracks seal history, and PostingSealPurgeJob already reclaims old
         // generations.
+        //
+        // A checkpoint is the one pinned txn TRIM-FILES does have to wait for: backup sizes this partition's
+        // column files by the physical row extent E its manifest copied out of the checkpoint's _txn, then
+        // reads them from the LIVE db root. A checkpoint that copied the pre-lowering E is pinned on a txn
+        // below the commit that lowered it, so re-run the range check up to the current txn. isRangeAvailable
+        // first moves the scoreboard max to that txn, so a checkpoint that has not opened its reader yet can
+        // only acquire the lowered E; and DatabaseCheckpointAgent sets its in-progress flag before it pins
+        // anything and releases its pins before it clears the flag, so a pin below the current txn that
+        // coincides with the flag is a checkpoint's (or an ordinary reader's, while a checkpoint runs). Any
+        // other reader at an older txn maps only the live rows and does not count. Declining here leaves
+        // the halfway state - composite, E == live rows - that isMakePlainShape selects again once the
+        // checkpoint's pins are gone.
+        if (!txnScoreboard.isRangeAvailable(fromTxn, txWriter.getTxn()) && isCheckpointInProgress()) {
+            return false;
+        }
         if (!trimPartitionFiles(partitionTs, partitionNameTxn, liveRows)) {
             return false;
         }

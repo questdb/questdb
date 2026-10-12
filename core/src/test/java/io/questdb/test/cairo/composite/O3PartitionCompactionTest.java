@@ -37,6 +37,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -57,6 +58,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
@@ -115,17 +117,17 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      * files by the physical row extent its manifest copied out of the checkpoint but reads them from the LIVE db
      * root, so a trim under a checkpoint leaves the upload asking for more rows than the file holds.
      * <p>
-     * Nothing names the checkpoint here. {@link io.questdb.cairo.DatabaseCheckpointAgent} pins its transaction on
-     * the {@link io.questdb.cairo.TxnScoreboard}, but that is not what stops the trim: MAKE-PLAIN asks
-     * {@code isCheckpointInProgress()} outright, before it commits anything. Its scoreboard check does not see the
-     * pin either way, that pin sitting at or above the geometry record MAKE-PLAIN retires.
-     * <p>
-     * So MAKE-PLAIN does not commit at all here, and that is the point: a partition it cannot trim must not be
-     * recorded as plain, or its dead bytes are left with nothing to report them and nothing to reclaim them. The
-     * second half of the test releases the checkpoint and asserts the partition then goes all the way.
+     * {@link io.questdb.cairo.DatabaseCheckpointAgent} pins its reader's transaction on the
+     * {@link io.questdb.cairo.TxnScoreboard}. That pin sits at or above the geometry record MAKE-PLAIN retires, so
+     * the check at the top of MAKE-PLAIN lets it through and MAKE-PLAIN commits its first half: E lowered to the
+     * live rows, the partition still composite. The re-check between that commit and TRIM-FILES then finds the
+     * pin below the commit while a checkpoint runs, and declines - the files stay long, which is what the
+     * checkpoint's E asks for, and the halfway shape is one {@code isMakePlainShape} selects again. The second
+     * half of the test releases the checkpoint and asserts the partition then goes all the way.
      * <p>
      * Fixture of {@link #testMakePlainWaitsForAPinnedReaderThenReclaimsOnceItGoes} run past the reader's exit;
-     * without the checkpoint it trims ({@link #testMakePlainReclaimsAMoveTailedFrontsDeadSpace}).
+     * without the checkpoint it trims ({@link #testMakePlainReclaimsAMoveTailedFrontsDeadSpace}). The checkpoint
+     * that starts INSIDE MAKE-PLAIN is {@link #testACheckpointStartingMidMakePlainDefersTrimFiles}.
      */
     @Test
     public void testACheckpointDefersTrimFiles() throws Exception {
@@ -166,41 +168,102 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                 setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
                 runCompactionPasses("x");
 
-                Assert.assertTrue(
-                        "MAKE-PLAIN recorded the partition as plain while the checkpoint kept TRIM-FILES from" +
-                                " running - its dead bytes are now reported by nothing and reclaimed by nothing",
-                        isComposite("x", "2024-01-01")
-                );
-                Assert.assertEquals(
-                        "the dead space must stay on the books while the trim that would reclaim it cannot run",
-                        deadBefore,
-                        deadRowsOfDay("x", "2024-01-01")
-                );
-                Assert.assertEquals(
-                        "TRIM-FILES shortened a live column file while a checkpoint was running - a backup sizing" +
-                                " that file by the manifest's physical row extent would fail its upload",
-                        diskBefore,
-                        diskSizeOfDay("x", "2024-01-01")
-                );
+                assertMakePlainHalfwayUnderCheckpoint("x", "2024-01-01", deadBefore, diskBefore);
             } finally {
                 execute("checkpoint release");
             }
 
-            // Checkpoint gone: the same partition must now go all the way - plain AND trimmed.
+            assertMakePlainCompletesAfterCheckpoint("x", "2024-01-01", before, diskBefore);
+        });
+    }
+
+    /**
+     * The checkpoint of {@link #testACheckpointDefersTrimFiles}, but started INSIDE MAKE-PLAIN: after its top
+     * check ran and before its first commit. A flag check at the top alone would miss it - the checkpoint's reader
+     * opens at the pre-lowering txn and its {@code _txn} copy carries the larger E, then TRIM-FILES shortens the
+     * live files that E sizes. The re-check between the commit and TRIM-FILES must catch the checkpoint's pin.
+     * <p>
+     * The hook is the geometry file open of MAKE-PLAIN's first commit ({@code lowerEToLiveRows} publishes a
+     * record), which is strictly after the top check and strictly before the commit. The checkpoint runs on its
+     * own thread, as it would in production, and this thread waits for it.
+     */
+    @Test
+    public void testACheckpointStartingMidMakePlainDefersTrimFiles() throws Exception {
+        // CHECKPOINT CREATE calls sync(), which Windows does not have.
+        Assume.assumeTrue(Os.type != Os.WINDOWS);
+        final AtomicBoolean armed = new AtomicBoolean();
+        final AtomicInteger fired = new AtomicInteger();
+        final AtomicReference<Throwable> checkpointFailure = new AtomicReference<>();
+        // openRW is synchronized in the parent; the checkpoint thread needs that monitor for its own opens, so
+        // the hook runs after super returned, outside it.
+        final WindowsMappedTruncateFacade ff = new WindowsMappedTruncateFacade() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final long fd = super.openRW(name, opts);
+                if (armed.get() && Utf8s.containsAscii(name, TableUtils.PARTITION_GEOMETRY_FILE_NAME + '.') && fired.getAndIncrement() == 0) {
+                    final Thread checkpoint = new Thread(() -> {
+                        try {
+                            engine.checkpointCreate(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER, false);
+                        } catch (Throwable e) {
+                            checkpointFailure.set(e);
+                        }
+                    }, "checkpoint-mid-make-plain");
+                    checkpoint.start();
+                    try {
+                        checkpoint.join();
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return fd;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            enableMergeAppend();
+            enableCompaction();
+            letPreSplitCut();
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+            createDayTable("x", "2024-01-01", 20_000);
+            buildMoveTailWaste("x");
+            pinPieceCap(2);
+
+            try (TableReader pinned = engine.getReader(engine.verifyTableName("x"))) {
+                Assert.assertNotNull(pinned);
+                runCompactionPasses("x");
+                Assert.assertTrue("fixture did not reach MOVE-TAIL", isComposite("x", "2024-01-01"));
+                Assert.assertEquals(1, pieceCountOfDay("x", "2024-01-01"));
+                Assert.assertTrue("MOVE-TAIL left no dead space to protect", deadRowsOfDay("x", "2024-01-01") > 0);
+            }
+            engine.releaseInactive();
+
+            final String before = fingerprintOfDay("x", "2024-01-01");
+            final long diskBefore = diskSizeOfDay("x", "2024-01-01");
+            final long deadBefore = deadRowsOfDay("x", "2024-01-01");
+
+            // Clear the decline's backoff, then let MAKE-PLAIN run into the checkpoint.
             setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
-            runCompactionPasses("x");
-            Assert.assertFalse(
-                    "the partition is still composite after the checkpoint was released;" +
-                            " dead rows: " + deadRowsOfDay("x", "2024-01-01"),
-                    isComposite("x", "2024-01-01")
-            );
-            Assert.assertEquals(0, deadRowsOfDay("x", "2024-01-01"));
-            Assert.assertTrue(
-                    "the dead bytes the checkpoint deferred were never reclaimed [before=" + diskBefore
-                            + ", after=" + diskSizeOfDay("x", "2024-01-01") + "]",
-                    diskSizeOfDay("x", "2024-01-01") < diskBefore
-            );
-            Assert.assertEquals("the deferred trim changed the data", before, fingerprintOfDay("x", "2024-01-01"));
+            armed.set(true);
+            try {
+                runCompactionPasses("x");
+            } finally {
+                armed.set(false);
+            }
+            Assert.assertEquals("the hook did not fire: MAKE-PLAIN did not publish a geometry record", 1, fired.get());
+            if (checkpointFailure.get() != null) {
+                throw new AssertionError("checkpoint create failed", checkpointFailure.get());
+            }
+            try {
+                assertMakePlainHalfwayUnderCheckpoint("x", "2024-01-01", deadBefore, diskBefore);
+            } finally {
+                execute("checkpoint release");
+            }
+
+            assertMakePlainCompletesAfterCheckpoint("x", "2024-01-01", before, diskBefore);
         });
     }
 
@@ -668,6 +731,52 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
                         geometryChainReaches("y", "2024-01-01", pinnedGeometryRef)
                 );
             }
+        });
+    }
+
+    /**
+     * An incremental backup treats a plain partition as unchanged while its name txn, row count and squash counter
+     * all match the archived copy. MOVE-TAIL starts the tail sibling at its first row, not one past the front's last,
+     * so rows timestamped in between still route to the front and append to it in place after MAKE-PLAIN trims it.
+     * Refilling exactly the rows MOVE-TAIL took away returns the front to its original name txn and row count with
+     * different rows, so MAKE-PLAIN must bump the squash counter or the backup reuses the stale archive.
+     */
+    @Test
+    public void testMakePlainBumpsSquashCounterSoARefilledFrontLooksChanged() throws Exception {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
+            enableMergeAppend();
+            enableCompaction();
+            letPreSplitCut();
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+            // 20000 rows one second apart: the front's last row before 05:00 is row 17999 at 04:59:59.
+            createDayTable("x", "2024-01-01", 20_000);
+            Assert.assertFalse(isComposite("x", "2024-01-01"));
+            final long nameTxnBefore = frontNameTxnOfDay("x", "2024-01-01");
+            final long squashBefore = frontSquashCountOfDay("x", "2024-01-01");
+
+            buildMoveTailWaste("x");
+            pinPieceCap(2);
+            runCompactionPasses("x");
+            Assert.assertFalse("MAKE-PLAIN did not follow MOVE-TAIL", isComposite("x", "2024-01-01"));
+            Assert.assertEquals(18_000, frontRowCountOfDay("x", "2024-01-01"));
+
+            // The gap between the front's last row and the tail's first: these rows land in the front, in place.
+            execute("insert into x select cast(x as int) + 600000 i," +
+                    " timestamp_sequence('2024-01-01T04:59:59.000001', 1L) ts from long_sequence(2000)");
+            drainWalQueue();
+
+            Assert.assertFalse(isComposite("x", "2024-01-01"));
+            Assert.assertEquals("fixture no longer refills the front in place", nameTxnBefore, frontNameTxnOfDay("x", "2024-01-01"));
+            Assert.assertEquals("fixture no longer refills the front in place", 20_000, frontRowCountOfDay("x", "2024-01-01"));
+            Assert.assertNotEquals(
+                    "front has the archived name txn and row count with different rows, but the same squash counter",
+                    squashBefore,
+                    frontSquashCountOfDay("x", "2024-01-01")
+            );
         });
     }
 
@@ -1715,6 +1824,46 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertMakePlainCompletesAfterCheckpoint(String table, String day, String before, long diskBefore) throws Exception {
+        // Checkpoint gone: the same partition must now go all the way - plain AND trimmed.
+        setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+        runCompactionPasses(table);
+        Assert.assertFalse(
+                "the partition is still composite after the checkpoint was released;" +
+                        " dead rows: " + deadRowsOfDay(table, day),
+                isComposite(table, day)
+        );
+        Assert.assertEquals(0, deadRowsOfDay(table, day));
+        Assert.assertTrue(
+                "the dead bytes the checkpoint deferred were never reclaimed [before=" + diskBefore
+                        + ", after=" + diskSizeOfDay(table, day) + "]",
+                diskSizeOfDay(table, day) < diskBefore
+        );
+        Assert.assertEquals("the deferred trim changed the data", before, fingerprintOfDay(table, day));
+    }
+
+    private static void assertMakePlainHalfwayUnderCheckpoint(String table, String day, long deadBefore, long diskBefore) throws Exception {
+        Assert.assertTrue(
+                "MAKE-PLAIN recorded the partition as plain while the checkpoint kept TRIM-FILES from" +
+                        " running - its dead bytes are now reported by nothing and reclaimed by nothing",
+                isComposite(table, day)
+        );
+        // MAKE-PLAIN's first commit may or may not have lowered E (the halfway state) - either way the dead rows
+        // are no more than before, and the FILES must not have been touched.
+        Assert.assertTrue(
+                "dead rows grew under the checkpoint",
+                deadRowsOfDay(table, day) <= deadBefore
+        );
+        // Not equal: the halfway commit appends a geometry record. A trim would cut thousands of rows' worth.
+        final long diskAfter = diskSizeOfDay(table, day);
+        Assert.assertTrue(
+                "TRIM-FILES shortened a live column file while a checkpoint was running - a backup sizing" +
+                        " that file by the manifest's physical row extent would fail its upload [before="
+                        + diskBefore + ", after=" + diskAfter + ']',
+                diskAfter >= diskBefore
+        );
+    }
+
     private static void backdate(String table, String ts, int rows) throws Exception {
         execute("insert into " + table + " select cast(x as int) + 500000 i," +
                 " timestamp_sequence('" + ts + "', 1000000L) ts from long_sequence(" + rows + ")");
@@ -1919,6 +2068,24 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
             Assert.assertTrue("day has no partition", partitionIndex > -1);
             return txReader.getPartitionNameTxn(partitionIndex);
+        }
+    }
+
+    private static long frontRowCountOfDay(String table, String day) throws Exception {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(table))) {
+            final TxReader txReader = reader.getTxFile();
+            final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
+            Assert.assertTrue("day has no partition", partitionIndex > -1);
+            return txReader.getPartitionSize(partitionIndex);
+        }
+    }
+
+    private static int frontSquashCountOfDay(String table, String day) throws Exception {
+        try (TableReader reader = engine.getReader(engine.verifyTableName(table))) {
+            final TxReader txReader = reader.getTxFile();
+            final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
+            Assert.assertTrue("day has no partition", partitionIndex > -1);
+            return txReader.getPartitionSquashCount(partitionIndex);
         }
     }
 

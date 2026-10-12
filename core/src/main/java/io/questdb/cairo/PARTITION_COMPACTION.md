@@ -93,7 +93,12 @@ That is a claim about `TableReader` only. Writer-side consumers do size to `E` (
 txn they were dispatched at. A new consumer that sizes to `E` and runs concurrently with TRIM-FILES needs its
 own check.
 
-**Checkpoint.** A running CHECKPOINT is not a reader: backup sizes files by the `E` in its manifest and reads
-them from the live root. MAKE-PLAIN therefore declines while a checkpoint is in progress - a folder that cannot
-be trimmed must not be recorded as plain, or its dead bytes are reported by nothing and reclaimed by nothing.
-The ordinary decline/backoff brings it back afterwards.
+**Checkpoint.** A running CHECKPOINT sizes files by the `E` its `_txn` copy carries and reads them from the
+live root, so a checkpoint that copied the pre-lowering `E` must see files at least that long until it is
+released. It is also a pinned reader: `DatabaseCheckpointAgent` sets its in-progress flag, opens a reader per
+TABLE and pins that reader's txn under `CHECKPOINT_ID` until release. MAKE-PLAIN therefore re-runs the range
+check AFTER the commit that lowers `E` and BEFORE TRIM-FILES, up to the current txn, and declines when a pin
+below it coincides with a running checkpoint. `isRangeAvailable` moves the scoreboard max first, so a
+checkpoint that has not opened its reader yet can only acquire the lowered `E`. A flag check alone would race:
+the checkpoint can start between it and the trim. A decline leaves the halfway state - composite, `E == live
+rows` - that `isMakePlainShape` selects again once the checkpoint's pins are gone.
