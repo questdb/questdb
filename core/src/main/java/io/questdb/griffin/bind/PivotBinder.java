@@ -43,7 +43,6 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
-import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinPlan;
 import io.questdb.griffin.plan.logical.LatestByPlan;
@@ -72,8 +71,8 @@ final class PivotBinder implements Mutable {
     private final CairoConfiguration configuration;
     private final BindContext ctx;
     private final JoinBinder joinBinder;
-    private final CharSequenceHashSet pivotValues = new CharSequenceHashSet();
     private final StringSink pivotValueSink;
+    private final CharSequenceHashSet pivotValues = new CharSequenceHashSet();
     private final SubqueryCompiler subqueryCompiler;
     private final TemporalJoinBinder temporalJoinBinder;
     private final WindowBinder windowBinder;
@@ -657,8 +656,7 @@ final class PivotBinder implements Mutable {
                 predicate = ctx.functionBinder.toBooleanSubquery(ctx.expressionRewriter.combineConjunction(pivotPredicate,
                         binder.bindConjuncts(userWhere, source, input, executionContext), where.position));
             }
-            final FilterPlan filter = ctx.planNodes.filters.next().of(source, predicate, predicate.getPosition());
-            source = filter;
+            source = ctx.planNodes.filters.next().of(source, predicate, predicate.getPosition());
         }
         if (latest != null) {
             latest.replaceInput(0, source);

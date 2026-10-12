@@ -220,16 +220,16 @@ public final class BindContext implements Mutable {
         return true;
     }
 
-    static boolean isSameColumn(ExpressionNode left, ExpressionNode right, OutputSchema input, QueryModel source) {
-        final int index = FunctionBinder.findColumn(left, input, sourceAlias(source));
-        return index >= 0 && index == FunctionBinder.findColumn(right, input, sourceAlias(source));
-    }
-
     static boolean isRowCount(ExpressionNode expression) {
         return expression.type == ExpressionNode.FUNCTION && expression.windowExpression == null
                 && SqlKeywords.isCountKeyword(expression.token)
                 && (expression.paramCount == 0 || expression.paramCount == 1
                 && expression.rhs.type == ExpressionNode.CONSTANT && !SqlKeywords.isNullKeyword(expression.rhs.token));
+    }
+
+    static boolean isSameColumn(ExpressionNode left, ExpressionNode right, OutputSchema input, QueryModel source) {
+        final int index = FunctionBinder.findColumn(left, input, sourceAlias(source));
+        return index >= 0 && index == FunctionBinder.findColumn(right, input, sourceAlias(source));
     }
 
     static boolean isWildcardColumn(ExpressionNode expression, OutputSchema input, int index, CharSequence inputAlias) {
@@ -274,7 +274,6 @@ public final class BindContext implements Mutable {
     }
 
     void addProjection(ProjectPlan project, BoundExpression expression, OutputSchema nestedSchema, CharSequence requestedName, boolean isVisible) {
-        final BindScope scope = scopes.current();
         project.getExpressions().add(expression);
         if (expression instanceof ColumnExpression column) {
             final OutputSchema input = project.getInput().getOutput();

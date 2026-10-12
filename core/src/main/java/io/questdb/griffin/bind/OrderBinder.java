@@ -50,11 +50,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.bind.BindContext.getColumnIndexQuiet;
-import static io.questdb.griffin.bind.BindContext.hasComputedProjection;
-import static io.questdb.griffin.bind.BindContext.isRowCount;
-import static io.questdb.griffin.bind.BindContext.isSameColumn;
-import static io.questdb.griffin.bind.BindContext.sourceAlias;
+import static io.questdb.griffin.bind.BindContext.*;
 import static io.questdb.griffin.bind.TemporalJoinBinder.designateTimestampOffset;
 
 final class OrderBinder implements Mutable {
@@ -281,15 +277,6 @@ final class OrderBinder implements Mutable {
         designateTimestampOffset(project);
     }
 
-    private boolean isSameInputColumn(ExpressionNode left, ExpressionNode right, QueryModel source, GroupingPlan aggregate) {
-        if (left.type != ExpressionNode.LITERAL || right.type != ExpressionNode.LITERAL || left.isWildcard() || right.isWildcard()) {
-            return false;
-        }
-        final OutputSchema input = aggregate.getInput() instanceof WindowPlan
-                ? ctx.windowBindingScope(aggregate.getInput().getOutput()) : aggregate.getInput().getOutput();
-        return isSameColumn(left, right, input, source);
-    }
-
     private boolean hasOrderAliasReference(ExpressionNode expression, OutputSchema input, ProjectPlan project, int visibleCount) throws SqlException {
         if (expression == null) {
             return false;
@@ -307,6 +294,15 @@ final class OrderBinder implements Mutable {
             }
         }
         return false;
+    }
+
+    private boolean isSameInputColumn(ExpressionNode left, ExpressionNode right, QueryModel source, GroupingPlan aggregate) {
+        if (left.type != ExpressionNode.LITERAL || right.type != ExpressionNode.LITERAL || left.isWildcard() || right.isWildcard()) {
+            return false;
+        }
+        final OutputSchema input = aggregate.getInput() instanceof WindowPlan
+                ? ctx.windowBindingScope(aggregate.getInput().getOutput()) : aggregate.getInput().getOutput();
+        return isSameColumn(left, right, input, source);
     }
 
     private int orderAliasIndex(
@@ -711,7 +707,7 @@ final class OrderBinder implements Mutable {
     int resolveOrderIndex(
             ExpressionNode order, ObjList<ExpressionNode> selected, OutputSchema input, QueryModel source, GroupingPlan aggregate,
             ObjList<ExpressionNode> orders, int i
-    ) throws SqlException {
+    ) {
         final int index = selected == null ? -1 : selectedOrderIndex(order, selected, input, source, aggregate);
         return index >= 0 ? index : earlierOrderIndex(order, orders, i);
     }
@@ -732,7 +728,7 @@ final class OrderBinder implements Mutable {
      * columns it expands to in {@code input}; under {@code aggregate}, else of the selected column that names the
      * same input column. -1 when none does.
      */
-    int selectedOrderIndex(ExpressionNode order, ObjList<ExpressionNode> selected, OutputSchema input, QueryModel source, GroupingPlan aggregate) throws SqlException {
+    int selectedOrderIndex(ExpressionNode order, ObjList<ExpressionNode> selected, OutputSchema input, QueryModel source, GroupingPlan aggregate) {
         for (int pass = 0, passes = aggregate == null ? 1 : 2; pass < passes; pass++) {
             int outputIndex = 0;
             for (int k = 0, n = selected.size(); k < n; k++) {

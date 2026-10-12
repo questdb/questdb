@@ -57,7 +57,6 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
-import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
@@ -629,8 +628,7 @@ public final class SqlBinder implements Mutable {
         if (predicate.getDataType() != ColumnType.BOOLEAN) {
             throw SqlException.$(expression.position, "boolean expression expected");
         }
-        final FilterPlan filter = ctx.planNodes.filters.next().of(branch, predicate, predicate.getPosition());
-        return filter;
+        return ctx.planNodes.filters.next().of(branch, predicate, predicate.getPosition());
     }
 
     private LogicalPlan bindSetOperation(QueryModel model, SqlExecutionContext executionContext) throws SqlException {
@@ -1320,8 +1318,7 @@ public final class SqlBinder implements Mutable {
             ctx.scope().keySubqueryColumnIds.clear();
         }
         if (!(predicate instanceof ConstantExpression constant) || constant.getLongValue() == 0) {
-            final FilterPlan filter = ctx.planNodes.filters.next().of(sourcePlan, predicate, predicate.getPosition());
-            return filter;
+            return ctx.planNodes.filters.next().of(sourcePlan, predicate, predicate.getPosition());
         }
         return sourcePlan;
     }

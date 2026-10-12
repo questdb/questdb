@@ -42,7 +42,6 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
-import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
@@ -700,7 +699,6 @@ final class TemporalJoinBinder {
 
     LogicalPlan bindHorizonJoin(QueryModel model, QueryModel source, ExpressionNode where,
                                 SqlExecutionContext executionContext) throws SqlException {
-        final BindScope scope = ctx.scope();
         final ObjList<QueryModel> sources = source.getJoinModels();
         final QueryModel last = sources.getLast();
         final int sourceCount = sources.size();
@@ -743,8 +741,7 @@ final class TemporalJoinBinder {
             master = binder.bindLatestBy(master, where, source, executionContext);
         } else if (where != null) {
             final BoundExpression predicate = binder.bindPredicate(where, master, masterModel, executionContext);
-            final FilterPlan filter = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
-            master = filter;
+            master = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
         }
         final OutputSchema masterOutput = master.getOutput();
         if (masterOutput.getTimestampIndex() < 0) {
@@ -864,8 +861,7 @@ final class TemporalJoinBinder {
             if (predicate instanceof ConstantExpression constant && constant.getLongValue() == 0) {
                 isEmpty = true;
             } else {
-                final FilterPlan filter = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
-                master = filter;
+                master = ctx.planNodes.filters.next().of(master, predicate, predicate.getPosition());
                 plan.replaceInput(0, master);
             }
         }

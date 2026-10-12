@@ -32,8 +32,6 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.std.IntList;
 
-import static io.questdb.cairo.ColumnType.*;
-
 /**
  * Binding-side typing of UNION/EXCEPT/INTERSECT: output column types, branch casts, symbol columns and timestamp.
  */
