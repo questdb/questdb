@@ -108,7 +108,7 @@ public class CairoTable implements Sinkable {
     }
 
     /**
-     * Returns the dedup mode, {@link TableUtils#DEDUP_MODE_UPSERT} or {@link TableUtils#DEDUP_MODE_REJECT}.
+     * Returns the dedup mode, {@link TableUtils#DEDUP_MODE_UPSERT} or {@link TableUtils#DEDUP_MODE_SKIP}.
      * It applies only when {@link #hasDedup()} is true.
      */
     public int getDedupMode() {

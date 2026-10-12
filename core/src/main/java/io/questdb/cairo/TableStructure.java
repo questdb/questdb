@@ -40,7 +40,7 @@ public interface TableStructure {
 
     /**
      * Returns the dedup mode of the table, {@link TableUtils#DEDUP_MODE_UPSERT} (default) or
-     * {@link TableUtils#DEDUP_MODE_REJECT}. It applies only when the table has dedup keys.
+     * {@link TableUtils#DEDUP_MODE_SKIP}. It applies only when the table has dedup keys.
      */
     default int getDedupMode() {
         return TableUtils.DEDUP_MODE_UPSERT;

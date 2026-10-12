@@ -1604,7 +1604,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         boolean tsIncludedInDedupColumns = false;
 
-        // ALTER TABLE abc DEDUP <ENABLE> UPSERT|REJECT KEYS(a, b)
+        // ALTER TABLE abc DEDUP <ENABLE> UPSERT|SKIP KEYS(a, b)
         // ENABLE word is not mandatory to be compatible v7.3
         // where it was omitted from the syntax
         if (tok != null && isEnableKeyword(tok)) {
@@ -1614,10 +1614,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final int dedupMode;
         if (tok != null && isUpsertKeyword(tok)) {
             dedupMode = TableUtils.DEDUP_MODE_UPSERT;
-        } else if (tok != null && isRejectKeyword(tok)) {
-            dedupMode = TableUtils.DEDUP_MODE_REJECT;
+        } else if (tok != null && isSkipKeyword(tok)) {
+            dedupMode = TableUtils.DEDUP_MODE_SKIP;
         } else {
-            throw SqlException.position(lexer.lastTokenPosition()).put("expected 'upsert' or 'reject'");
+            throw SqlException.position(lexer.lastTokenPosition()).put("expected 'upsert' or 'skip'");
         }
         AlterOperationBuilder setDedup = alterOperationBuilder.ofDedupEnable(
                 tableNamePosition,

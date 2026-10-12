@@ -62,8 +62,8 @@ inline int64_t branch_free_search(const index_t *array, int64_t count, int64_t v
 }
 
 // Merges existing partition rows (src) with new O3 rows (index). When a new row matches an existing
-// row on all dedup keys, UPSERT mode emits the new row in place of the existing one, while REJECT
-// mode (reject_mode == true) keeps the existing row and drops the new one.
+// row on all dedup keys, UPSERT mode emits the new row in place of the existing one, while SKIP
+// mode (skip_mode == true) keeps the existing row and drops the new one.
 template<typename LambdaDiff>
 int64_t merge_dedup_long_index_int_keys(
         const uint64_t *src,
@@ -74,7 +74,7 @@ int64_t merge_dedup_long_index_int_keys(
         const int64_t index_hi_incl,
         index_t *dest_index,
         const LambdaDiff compare,
-        const bool reject_mode
+        const bool skip_mode
 ) {
     int64_t &src_pos = src_lo;
     int64_t &index_pos = index_lo;
@@ -114,10 +114,10 @@ int64_t merge_dedup_long_index_int_keys(
                                                                  src_pos, compare);
                 if (matched_index > -1) {
                     // the matched new row is consumed either way: it replaces the existing
-                    // row (UPSERT) or it is dropped (REJECT)
+                    // row (UPSERT) or it is dropped (SKIP)
                     used_indexes.set(matched_index);
                 }
-                if (matched_index > -1 && !reject_mode) {
+                if (matched_index > -1 && !skip_mode) {
                     (*dest).i = conflict_index_start[matched_index].i;
                 } else {
                     (*dest).i = src_pos | (1ull << 63);
@@ -152,15 +152,15 @@ int64_t merge_dedup_long_index_int_keys(
 }
 
 // Keeps one row per timestamp of a timestamp-sorted index. Rows with the same timestamp are in
-// commit order, so UPSERT keeps the last row of each run (the latest write wins), while REJECT
-// (reject_mode == true) keeps the first row (the earliest write wins). The function supports
+// commit order, so UPSERT keeps the last row of each run (the latest write wins), while SKIP
+// (skip_mode == true) keeps the first row (the earliest write wins). The function supports
 // in-place operation (index_out == index_in): it never writes past the position it reads from.
 template<typename IndexT>
 inline int64_t dedup_sorted_timestamp_index(
         const IndexT *index_in,
         int64_t count,
         IndexT *index_out,
-        const bool reject_mode
+        const bool skip_mode
 ) {
     if (count > 0) {
         int64_t copyTo = 0;
@@ -168,7 +168,7 @@ inline int64_t dedup_sorted_timestamp_index(
         uint64_t lastTimestamp = index_in[0].ts;
         for (int64_t i = 1; i < count; i++) {
             if (index_in[i].ts > lastTimestamp) {
-                index_out[copyTo] = index_in[reject_mode ? runStart : i - 1];
+                index_out[copyTo] = index_in[skip_mode ? runStart : i - 1];
                 copyTo++;
                 runStart = i;
                 lastTimestamp = index_in[i].ts;
@@ -176,7 +176,7 @@ inline int64_t dedup_sorted_timestamp_index(
                 return error_not_sorted;
             }
         }
-        index_out[copyTo] = index_in[reject_mode ? runStart : count - 1];
+        index_out[copyTo] = index_in[skip_mode ? runStart : count - 1];
         return copyTo + 1;
     }
     return 0;
@@ -184,7 +184,7 @@ inline int64_t dedup_sorted_timestamp_index(
 
 // Keeps one row per (timestamp, dedup keys) group of a timestamp-sorted index. The groups are formed
 // with a stable sort, so the rows of a group stay in commit order: UPSERT keeps the last row of each
-// group (the latest write wins), REJECT (reject_mode == true) keeps the first one (the earliest write wins).
+// group (the latest write wins), SKIP (skip_mode == true) keeps the first one (the earliest write wins).
 template<typename DiffLambda, typename IndexT>
 inline int64_t dedup_sorted_timestamp_index_with_keys(
         const IndexT *index_src,
@@ -192,7 +192,7 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
         IndexT *index_dest,
         IndexT *index_tmp,
         const DiffLambda diff_l,
-        const bool reject_mode
+        const bool skip_mode
 ) {
     if (count < 2) {
         return no_timestamp_duplicates;
@@ -235,13 +235,13 @@ inline int64_t dedup_sorted_timestamp_index_with_keys(
         auto r = merge_result[i].i;
         if (merge_result[i].ts > merge_result[last].ts || diff_l(l, r) != 0) {
             // a new group starts at i, emit the previous group, which spans [last, i - 1]
-            index_dest[copy_to++] = merge_result[reject_mode ? last : i - 1];
+            index_dest[copy_to++] = merge_result[skip_mode ? last : i - 1];
             last = i;
         } else if (merge_result[i].ts != merge_result[last].ts) {
             return error_not_sorted;
         }
     }
-    index_dest[copy_to] = merge_result[reject_mode ? last : dup_end - 1];
+    index_dest[copy_to] = merge_result[skip_mode ? last : dup_end - 1];
 
     // copy prefix and the tail if necessary
     if (index_src != index_dest) {
@@ -326,10 +326,10 @@ int64_t dedup_sorted_timestamp_index_many_addresses(
         int32_t dedup_key_count,
         const dedup_column *src_keys,
         uint16_t segment_bits,
-        const bool reject_mode
+        const bool skip_mode
 ) {
     if (dedup_key_count == 0) {
-        return dedup_sorted_timestamp_index(index_in, index_count, index_out, reject_mode);
+        return dedup_sorted_timestamp_index(index_in, index_count, index_out, skip_mode);
     }
     const uint64_t segment_mask = (1ULL << segment_bits) - 1;
     const auto diff_l = [&](const index_tr_i<TIdx> l, const index_tr_i<TIdx> r) {
@@ -401,7 +401,7 @@ int64_t dedup_sorted_timestamp_index_many_addresses(
         return 0;
     };
 
-    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, diff_l, reject_mode);
+    return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, diff_l, skip_mode);
 }
 
 template<typename TIdx>
@@ -413,7 +413,7 @@ int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_clean(
         jlong indexTemp,
         int32_t dedup_key_count,
         const dedup_column *src_keys,
-        const bool reject_mode
+        const bool skip_mode
 ) {
     static_assert(std::is_integral_v<TIdx> && std::is_unsigned_v<TIdx>, "TRevIdx must be an unsigned integer");
 
@@ -425,7 +425,7 @@ int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_clean(
             dedup_key_count,
             src_keys,
             segment_encoding_bytes * 8,
-            reject_mode
+            skip_mode
     );
 
     // -2 means no dups
@@ -487,7 +487,7 @@ int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_row_encoding(
         jlong indexTemp,
         int32_t dedup_key_count,
         const dedup_column *src_keys,
-        const bool reject_mode
+        const bool skip_mode
 ) {
 
     auto rows_bytes = read_reverse_index_format_bytes(index_format);
@@ -497,25 +497,25 @@ int64_t dedup_sorted_timestamp_index_many_addresses_segment_bits_row_encoding(
             return dedup_sorted_timestamp_index_many_addresses_segment_bits_clean<uint8_t>(
                     segment_encoding_bytes, indexOut,
                     indexIn, index_count, indexTemp,
-                    dedup_key_count, src_keys, reject_mode
+                    dedup_key_count, src_keys, skip_mode
             );
         case 2:
             return dedup_sorted_timestamp_index_many_addresses_segment_bits_clean<uint16_t>(
                     segment_encoding_bytes, indexOut,
                     indexIn, index_count, indexTemp,
-                    dedup_key_count, src_keys, reject_mode
+                    dedup_key_count, src_keys, skip_mode
             );
         case 4:
             return dedup_sorted_timestamp_index_many_addresses_segment_bits_clean<uint32_t>(
                     segment_encoding_bytes, indexOut,
                     indexIn, index_count, indexTemp,
-                    dedup_key_count, src_keys, reject_mode
+                    dedup_key_count, src_keys, skip_mode
             );
         case 8:
             return dedup_sorted_timestamp_index_many_addresses_segment_bits_clean<uint64_t>(
                     segment_encoding_bytes, indexOut,
                     indexIn, index_count, indexTemp,
-                    dedup_key_count, src_keys, reject_mode
+                    dedup_key_count, src_keys, skip_mode
             );
         default:
             return error_out_of_range;
@@ -903,11 +903,11 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
         jlong indexLo,
         jlong indexHiInclusive,
         jlong pDestIndex,
-        jboolean rejectMode
+        jboolean skipMode
 ) {
     const uint64_t *src = reinterpret_cast<uint64_t *> (pSrc);
     const index_t *index = reinterpret_cast<index_t *> (pIndex);
-    const bool reject_mode = rejectMode;
+    const bool skip_mode = skipMode;
 
     auto src_pos = __JLONG_REINTERPRET_CAST__(int64_t, srcLo);
     auto index_pos = __JLONG_REINTERPRET_CAST__(int64_t, indexLo);
@@ -934,7 +934,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexAsc(
                 index_pos++;
             }
 
-            if (reject_mode) {
+            if (skip_mode) {
                 // keep all existing records with the same timestamp, the new records are dropped
                 while (src_pos <= src_hi_incl && src[src_pos] == conflict_ts) {
                     (*dest).ts = conflict_ts;
@@ -978,9 +978,9 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
         jlong tempIndexAddr,
         jint dedupKeyCount,
         jlong dedupColBuffs,
-        jboolean rejectMode
+        jboolean skipMode
 ) {
-    const bool reject_mode = rejectMode;
+    const bool skip_mode = skipMode;
     auto *src = reinterpret_cast<uint64_t *> (srcTimestampAddr);
     auto data_lo = __JLONG_REINTERPRET_CAST__(int64_t, mergeDataLo);
     auto data_hi = __JLONG_REINTERPRET_CAST__(int64_t, mergeDataHi);
@@ -999,7 +999,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                         src, data_lo, data_hi,
                         index, index_lo, index_hi, index_tmp,
                         *reinterpret_cast<const MergeColumnComparer<int8_t> *>(src_keys),
-                        reject_mode
+                        skip_mode
                 );
             }
             case 2: {
@@ -1007,7 +1007,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                         src, data_lo, data_hi,
                         index, index_lo, index_hi, index_tmp,
                         *reinterpret_cast<const MergeColumnComparer<int16_t> *>(src_keys),
-                        reject_mode
+                        skip_mode
                 );
             }
             case 4: {
@@ -1016,7 +1016,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                         index, index_lo, index_hi,
                         index_tmp,
                         *reinterpret_cast<const MergeColumnComparer<int32_t> *>(src_keys),
-                        reject_mode
+                        skip_mode
                 );
             }
             case 8: {
@@ -1025,7 +1025,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                         index, index_lo, index_hi,
                         index_tmp,
                         *reinterpret_cast<const MergeColumnComparer<int64_t> *>(src_keys),
-                        reject_mode
+                        skip_mode
                 );
             }
             case 16: {
@@ -1034,7 +1034,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                         index, index_lo, index_hi,
                         index_tmp,
                         *reinterpret_cast<const MergeColumnComparer<__int128> *>(src_keys),
-                        reject_mode
+                        skip_mode
                 );
             }
             case 32: {
@@ -1043,7 +1043,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                         index, index_lo, index_hi,
                         index_tmp,
                         *reinterpret_cast<const MergeColumnComparer<int256> *>(src_keys),
-                        reject_mode
+                        skip_mode
                 );
             }
             case -1: {
@@ -1054,7 +1054,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                 index, index_lo, index_hi,
                                 index_tmp,
                                 *reinterpret_cast<const MergeVarcharColumnComparer *>(src_keys),
-                                reject_mode
+                                skip_mode
                         );
                     }
                     case ColumnType::STRING: {
@@ -1063,7 +1063,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                 index, index_lo, index_hi,
                                 index_tmp,
                                 *reinterpret_cast<const MergeStrBinColumnComparer<int32_t, 2> *>(src_keys),
-                                reject_mode
+                                skip_mode
                         );
                     }
                     case ColumnType::BINARY: {
@@ -1072,7 +1072,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
                                 index, index_lo, index_hi,
                                 index_tmp,
                                 *reinterpret_cast<const MergeStrBinColumnComparer<int64_t, 1> *>(src_keys),
-                                reject_mode
+                                skip_mode
                         );
                     }
                     default: {
@@ -1157,7 +1157,7 @@ Java_io_questdb_std_Vect_mergeDedupTimestampWithLongIndexIntKeys(
         }
         return 0;
     };
-    return merge_dedup_long_index_int_keys(src, data_lo, data_hi, index, index_lo, index_hi, index_tmp, compareIndexes, reject_mode);
+    return merge_dedup_long_index_int_keys(src, data_lo, data_hi, index, index_lo, index_hi, index_tmp, compareIndexes, skip_mode);
 }
 
 JNIEXPORT jlong JNICALL
@@ -1169,16 +1169,16 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
         jlong pIndexTemp,
         const jint dedupKeyCount,
         jlong dedupColBuffs,
-        jboolean rejectMode
+        jboolean skipMode
 ) {
-    const bool reject_mode = rejectMode;
+    const bool skip_mode = skipMode;
     const auto *index_in = reinterpret_cast<const index_t *> (pIndexIn);
     const auto index_count = __JLONG_REINTERPRET_CAST__(int64_t, count);
     auto *index_out = reinterpret_cast<index_t *> (pIndexOut);
     auto *index_temp = reinterpret_cast<index_t *> (pIndexTemp);
 
     if (dedupKeyCount == 0) {
-        return dedup_sorted_timestamp_index(index_in, index_count, index_out, reject_mode);
+        return dedup_sorted_timestamp_index(index_in, index_count, index_out, skip_mode);
     } else {
         const auto src_keys = reinterpret_cast<const dedup_column *>(dedupColBuffs);
 
@@ -1190,37 +1190,37 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                     return dedup_sorted_timestamp_index_with_keys(
                             index_in, index_count, index_out, index_temp,
                             *reinterpret_cast<const SortColumnComparer<int8_t> *>(src_keys),
-                            reject_mode
+                            skip_mode
                     );
                 case 2:
                     return dedup_sorted_timestamp_index_with_keys(
                             index_in, index_count, index_out, index_temp,
                             *reinterpret_cast<const SortColumnComparer<int16_t> *>(src_keys),
-                            reject_mode
+                            skip_mode
                     );
                 case 4:
                     return dedup_sorted_timestamp_index_with_keys(
                             index_in, index_count, index_out, index_temp,
                             *reinterpret_cast<const SortColumnComparer<int32_t> *>(src_keys),
-                            reject_mode
+                            skip_mode
                     );
                 case 8:
                     return dedup_sorted_timestamp_index_with_keys(
                             index_in, index_count, index_out, index_temp,
                             *reinterpret_cast<const SortColumnComparer<int64_t> *>(src_keys),
-                            reject_mode
+                            skip_mode
                     );
                 case 16:
                     return dedup_sorted_timestamp_index_with_keys(
                             index_in, index_count, index_out, index_temp,
                             *reinterpret_cast<const SortColumnComparer<__int128> *>(src_keys),
-                            reject_mode
+                            skip_mode
                     );
                 case 32:
                     return dedup_sorted_timestamp_index_with_keys(
                             index_in, index_count, index_out, index_temp,
                             *reinterpret_cast<const SortColumnComparer<int256> *>(src_keys),
-                            reject_mode
+                            skip_mode
                     );
                 case -1:
                     switch ((ColumnType) (col_key->column_type)) {
@@ -1228,19 +1228,19 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
                             return dedup_sorted_timestamp_index_with_keys(
                                     index_in, index_count, index_out, index_temp,
                                     *reinterpret_cast<const SortVarcharColumnComparer *>(src_keys),
-                                    reject_mode
+                                    skip_mode
                             );
                         case ColumnType::STRING:
                             return dedup_sorted_timestamp_index_with_keys(
                                     index_in, index_count, index_out, index_temp,
                                     *reinterpret_cast<const SortStrBinColumnComparer<int32_t, 2> *>(src_keys),
-                                    reject_mode
+                                    skip_mode
                             );
                         case ColumnType::BINARY:
                             return dedup_sorted_timestamp_index_with_keys(
                                     index_in, index_count, index_out, index_temp,
                                     *reinterpret_cast<const SortStrBinColumnComparer<int64_t, 1> *>(src_keys),
-                                    reject_mode
+                                    skip_mode
                             );
                         default:
                             assertm(false, "unsupported column type");
@@ -1323,7 +1323,7 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndex(
             return 0;
         };
 
-        return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, diff_l, reject_mode);
+        return dedup_sorted_timestamp_index_with_keys(index_in, index_count, index_out, index_temp, diff_l, skip_mode);
     }
 }
 
@@ -1335,9 +1335,9 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndexManyAddresses(
         jlong pIndexTemp,
         jint dedupKeyCount,
         jlong dedupColBuffs,
-        jboolean rejectMode
+        jboolean skipMode
 ) {
-    const bool reject_mode = rejectMode;
+    const bool skip_mode = skipMode;
     auto segment_bytes = read_segment_bytes(indexFormat);
     auto dedup_key_count = (int32_t) dedupKeyCount;
     auto format = read_format(indexFormat);
@@ -1357,7 +1357,7 @@ Java_io_questdb_std_Vect_dedupSortedTimestampIndexManyAddresses(
             pIndexTemp,
             dedup_key_count,
             src_keys,
-            reject_mode
+            skip_mode
     );
 
     if (dedup_row_count == no_timestamp_duplicates) {

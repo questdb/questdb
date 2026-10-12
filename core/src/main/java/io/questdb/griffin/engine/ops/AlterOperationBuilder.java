@@ -181,7 +181,7 @@ public class AlterOperationBuilder implements Mutable {
      * The UPSERT mode keeps the SET_DEDUP_ENABLE encoding, which versions that predate the dedup mode
      * can apply. Other modes need SET_DEDUP_ENABLE_WITH_MODE.
      *
-     * @param dedupMode {@code TableUtils.DEDUP_MODE_UPSERT} or {@code TableUtils.DEDUP_MODE_REJECT}
+     * @param dedupMode {@code TableUtils.DEDUP_MODE_UPSERT} or {@code TableUtils.DEDUP_MODE_SKIP}
      */
     public AlterOperationBuilder ofDedupEnable(int tableNamePosition, TableToken tableToken, int dedupMode) {
         this.tableNamePosition = tableNamePosition;

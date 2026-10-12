@@ -50,8 +50,8 @@ public class AlterOperationFlagsTest {
     private static final long V2_FORMAT_MARKER = 1L << 63;
 
     @Test
-    public void testDedupEnableRejectRoundTrip() throws Exception {
-        // REJECT needs opcode 28 (SET_DEDUP_ENABLE_WITH_MODE): extraInfo carries the dedup mode first,
+    public void testDedupEnableSkipRoundTrip() throws Exception {
+        // SKIP needs opcode 28 (SET_DEDUP_ENABLE_WITH_MODE): extraInfo carries the dedup mode first,
         // followed by the writer indexes of the dedup key columns. The WAL sequencer stores the operation
         // with serializeBody and replays it with deserializeBody, so the payload must round-trip exactly.
         TestUtils.assertMemoryLeak(() -> {
@@ -60,7 +60,7 @@ public class AlterOperationFlagsTest {
             );
             final int tableNamePosition = 42;
             final AlterOperationBuilder builder = new AlterOperationBuilder()
-                    .ofDedupEnable(tableNamePosition, tableToken, TableUtils.DEDUP_MODE_REJECT);
+                    .ofDedupEnable(tableNamePosition, tableToken, TableUtils.DEDUP_MODE_SKIP);
             builder.setDedupKeyFlag(3);
             builder.setDedupKeyFlag(0);
             final AlterOperation src = builder.build();
@@ -74,7 +74,7 @@ public class AlterOperationFlagsTest {
                 Assert.assertEquals(AlterOperation.SET_DEDUP_ENABLE_WITH_MODE, sink1.getShort(0));
                 Assert.assertEquals(tableNamePosition, sink1.getInt(2));
                 Assert.assertEquals("mode and two dedup key indexes", 3, sink1.getInt(6));
-                Assert.assertEquals(TableUtils.DEDUP_MODE_REJECT, sink1.getLong(10));
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, sink1.getLong(10));
                 Assert.assertEquals(3, sink1.getLong(18));
                 Assert.assertEquals(0, sink1.getLong(26));
                 Assert.assertEquals("no strings", 0, sink1.getInt(34));

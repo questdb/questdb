@@ -135,12 +135,12 @@ step; the column conversions (Phase 1a), destination sizing (Phase 1b) and copy 
 byte-for-byte identical with and without dedup.
 
 The table's dedup mode (`_meta` header, `TableUtils.DEDUP_MODE_*`) decides which row of a
-duplicate group survives. UPSERT keeps the latest write, REJECT keeps the earliest one and drops
-the rest. `tableWriter.isCommitDedupRejectMode()` passes the choice to every native dedup kernel
-as `isRejectMode`: the sort-dedup of a commit or a WAL block (`Vect.dedupSortedTimestampIndex*`)
+duplicate group survives. UPSERT keeps the latest write, SKIP keeps the earliest one and drops
+the rest. `tableWriter.isCommitDedupSkipMode()` passes the choice to every native dedup kernel
+as `isSkipMode`: the sort-dedup of a commit or a WAL block (`Vect.dedupSortedTimestampIndex*`)
 and the merge with partition rows (`Vect.mergeDedupTimestampWithLongIndex*`), for native and
 parquet partitions alike. Both modes rely on the same invariant: equal-key rows reach the kernels
-in commit order (stable sorts, lag rows before new rows, partition rows before O3 rows). In REJECT
+in commit order (stable sorts, lag rows before new rows, partition rows before O3 rows). In SKIP
 mode a merge whose O3 rows are all duplicates leaves the partition as is by construction, so
 `O3PartitionJob` skips the `checkDedupCommitIdenticalToPartition` column comparison.
 

@@ -89,8 +89,8 @@ public final class Vect {
      * Deduplicates a timestamp-sorted index. Rows that are equal on the timestamp and all dedup key
      * columns form a group, kept in commit order.
      *
-     * @param isRejectMode when false (DEDUP UPSERT), the last row of each group wins; when true
-     *                     (DEDUP REJECT), the first row of each group wins and the later rows are dropped
+     * @param isSkipMode when false (DEDUP UPSERT), the last row of each group wins; when true
+     *                   (DEDUP SKIP), the first row of each group wins and the later rows are dropped
      */
     public static native long dedupSortedTimestampIndex(
             long inIndexAddr,
@@ -99,7 +99,7 @@ public final class Vect {
             long indexAddrTemp,
             int dedupColumnCount,
             long dedupColumnData,
-            boolean isRejectMode
+            boolean isSkipMode
     );
 
     public static long dedupSortedTimestampIndexIntKeysChecked(
@@ -109,7 +109,7 @@ public final class Vect {
             long indexAddrTemp,
             int dedupColumnCount,
             long dedupColumnData,
-            boolean isRejectMode
+            boolean isSkipMode
     ) {
         long dedupRowCount = dedupSortedTimestampIndex(
                 inIndexAddr,
@@ -118,7 +118,7 @@ public final class Vect {
                 indexAddrTemp,
                 dedupColumnCount,
                 dedupColumnData,
-                isRejectMode
+                isSkipMode
         );
         assert dedupRowCount != -1 : "unsorted data passed to deduplication";
         return dedupRowCount;
@@ -126,7 +126,7 @@ public final class Vect {
 
     /**
      * Multi-segment variant of {@link #dedupSortedTimestampIndex}, see it for the meaning of
-     * {@code isRejectMode}.
+     * {@code isSkipMode}.
      */
     public static native long dedupSortedTimestampIndexManyAddresses(
             long indexFormat,
@@ -134,7 +134,7 @@ public final class Vect {
             long outIndexAddr,
             int dedupColumnCount,
             long dedupColumnData,
-            boolean isRejectMode
+            boolean isSkipMode
     );
 
     public static native void flattenIndex(long pIndex, long count);
@@ -221,8 +221,8 @@ public final class Vect {
     /**
      * Merges existing partition timestamps with a sorted O3 index, deduplicating on the timestamp only.
      *
-     * @param isRejectMode when false (DEDUP UPSERT), the new row replaces the existing rows with the
-     *                     same timestamp; when true (DEDUP REJECT), the existing rows stay and the new row is dropped
+     * @param isSkipMode when false (DEDUP UPSERT), the new row replaces the existing rows with the
+     *                   same timestamp; when true (DEDUP SKIP), the existing rows stay and the new row is dropped
      */
     public static native long mergeDedupTimestampWithLongIndexAsc(
             long pSrc,
@@ -232,15 +232,15 @@ public final class Vect {
             long indexLo,
             long indexHiInclusive,
             long pDestIndex,
-            boolean isRejectMode
+            boolean isSkipMode
     );
 
     /**
      * Merges existing partition timestamps with a sorted O3 index, deduplicating on the timestamp and
      * the dedup key columns described by {@code dedupColBuffs}.
      *
-     * @param isRejectMode when false (DEDUP UPSERT), the new row replaces the matching existing row;
-     *                     when true (DEDUP REJECT), the existing row stays and the new row is dropped
+     * @param isSkipMode when false (DEDUP UPSERT), the new row replaces the matching existing row;
+     *                   when true (DEDUP SKIP), the existing row stays and the new row is dropped
      */
     public static native long mergeDedupTimestampWithLongIndexIntKeys(
             long srcTimestampAddr,
@@ -252,7 +252,7 @@ public final class Vect {
             long tempIndexAddr,
             int dedupKeyCount,
             long dedupColBuffs,
-            boolean isRejectMode
+            boolean isSkipMode
     );
 
     public static void mergeLongIndexesAsc(long pIndexStructArray, int count, long mergedIndexAddr) {

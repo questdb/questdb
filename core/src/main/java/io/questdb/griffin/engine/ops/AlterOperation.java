@@ -833,7 +833,7 @@ public class AlterOperation extends AbstractOperation implements Mutable {
                     .put(svc.getTableToken().getTableName()).put(']');
         }
         final int dedupMode = hasMode ? (int) extraInfo.getQuick(0) : TableUtils.DEDUP_MODE_UPSERT;
-        if (dedupMode != TableUtils.DEDUP_MODE_UPSERT && dedupMode != TableUtils.DEDUP_MODE_REJECT) {
+        if (dedupMode != TableUtils.DEDUP_MODE_UPSERT && dedupMode != TableUtils.DEDUP_MODE_SKIP) {
             throw CairoException.critical(0).put("invalid dedup mode [table=").put(svc.getTableToken().getTableName())
                     .put(", mode=").put(dedupMode).put(']');
         }

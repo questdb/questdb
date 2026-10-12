@@ -130,15 +130,15 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testAlterTableDedupRejectAndBack() throws Exception {
+    public void testAlterTableDedupSkipAndBack() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             assertDedupMode("x", false, TableUtils.DEDUP_MODE_UPSERT);
 
-            execute("ALTER TABLE x DEDUP ENABLE REJECT KEYS(ts, sym)");
+            execute("ALTER TABLE x DEDUP ENABLE SKIP KEYS(ts, sym)");
             drainWalQueue();
-            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
-            assertShowCreateTable("x", "\nDEDUP REJECT KEYS(ts,sym)");
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_SKIP);
+            assertShowCreateTable("x", "\nDEDUP SKIP KEYS(ts,sym)");
 
             // ENABLE is optional
             execute("ALTER TABLE x DEDUP UPSERT KEYS(ts)");
@@ -146,10 +146,10 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             assertDedupMode("x", true, TableUtils.DEDUP_MODE_UPSERT);
             assertShowCreateTable("x", "\nDEDUP UPSERT KEYS(ts)");
 
-            execute("ALTER TABLE x DEDUPLICATE REJECT KEYS(ts)");
+            execute("ALTER TABLE x DEDUPLICATE SKIP KEYS(ts)");
             drainWalQueue();
-            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
-            assertShowCreateTable("x", "\nDEDUP REJECT KEYS(ts)");
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_SKIP);
+            assertShowCreateTable("x", "\nDEDUP SKIP KEYS(ts)");
 
             // disabling dedup resets the mode
             execute("ALTER TABLE x DEDUP DISABLE");
@@ -175,7 +175,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             assertQuery(alterPrefix + "deduplicate UPSERT KEYS (s)")
                     .fails(39, "deduplicate key list must include dedicated timestamp column");
             assertQuery(alterPrefix + "deduplicate KEYS (s);")
-                    .fails(26, "expected 'upsert' or 'reject'");
+                    .fails(26, "expected 'upsert' or 'skip'");
             assertQuery(alterPrefix + "deduplicate UPSERT (s);")
                     .fails(33, "expected 'keys'");
             assertQuery(alterPrefix + "deduplicate UPSERT KEYS")
@@ -184,15 +184,15 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableAsSelectDedupReject() throws Exception {
+    public void testCreateTableAsSelectDedupSkip() throws Exception {
         assertMemoryLeak(() -> {
             execute("""
                     CREATE TABLE x AS (
                         SELECT timestamp_sequence('2024-01-01', 1_000_000) ts, 'a'::SYMBOL sym, x v FROM long_sequence(3)
-                    ) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)
+                    ) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)
                     """);
             drainWalQueue();
-            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_SKIP);
 
             execute("INSERT INTO x VALUES ('2024-01-01T00:00:01.000000Z', 'a', 10), ('2024-01-01T00:00:01.000000Z', 'b', 11)");
             drainWalQueue();
@@ -210,16 +210,16 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testCreateTableDedupReject() throws Exception {
+    public void testCreateTableDedupSkip() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
-            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_SKIP);
             try (TableWriter writer = getWriter("x")) {
                 Assert.assertTrue(writer.getMetadata().isDedupKey(0));
                 Assert.assertTrue(writer.getMetadata().isDedupKey(1));
                 Assert.assertFalse(writer.getMetadata().isDedupKey(2));
             }
-            assertShowCreateTable("x", "\nDEDUP REJECT KEYS(ts,sym)");
+            assertShowCreateTable("x", "\nDEDUP SKIP KEYS(ts,sym)");
             assertQuery("SELECT table_name, dedup FROM tables() WHERE table_name = 'x'")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -237,10 +237,10 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     @Test
     public void testCreateTableLikeCopiesDedupMode() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
             execute("CREATE TABLE y (LIKE x)");
-            assertDedupMode("y", true, TableUtils.DEDUP_MODE_REJECT);
-            assertShowCreateTable("y", "\nDEDUP REJECT KEYS(ts,sym)");
+            assertDedupMode("y", true, TableUtils.DEDUP_MODE_SKIP);
+            assertShowCreateTable("y", "\nDEDUP SKIP KEYS(ts,sym)");
 
             execute("CREATE TABLE u (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
             execute("CREATE TABLE z (LIKE u)");
@@ -261,7 +261,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS (s);")
                     .fails(127, "deduplicate key list must include dedicated timestamp column");
             assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate KEYS (s);")
-                    .fails(114, "expected 'upsert' or 'reject'");
+                    .fails(114, "expected 'upsert' or 'skip'");
             assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT (s);")
                     .fails(121, "expected 'keys'");
             assertQuery(createPrefix + " timestamp(ts) partition by day wal deduplicate UPSERT KEYS")
@@ -567,8 +567,8 @@ public class CreateTableDedupTest extends AbstractCairoTest {
         // _meta files written before the dedup mode field existed do not carry it. The minor format
         // version gates the field, so the bytes at its offset are ignored for such files.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
-            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_SKIP);
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
@@ -579,7 +579,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             ) {
                 path.of(configuration.getDbRoot()).concat(token).concat(TableUtils.META_FILE_NAME);
                 mem.smallFile(configuration.getFilesFacade(), path.$(), MemoryTag.MMAP_DEFAULT);
-                Assert.assertEquals(TableUtils.DEDUP_MODE_REJECT, mem.getInt(TableUtils.META_OFFSET_DEDUP_MODE));
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, mem.getInt(TableUtils.META_OFFSET_DEDUP_MODE));
                 // older versions do not write a minor format version that is recognised as current
                 mem.putInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION, 0);
             }
@@ -592,7 +592,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     @Test
     public void testDedupModePreservedByOtherAlterations() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG, w INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG, w INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
             execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 'a', 1, 1)");
             // each of these rewrites the _meta file
             execute("ALTER TABLE x ADD COLUMN z DOUBLE");
@@ -604,7 +604,7 @@ public class CreateTableDedupTest extends AbstractCairoTest {
             execute("ALTER TABLE x ALTER COLUMN sym ADD INDEX");
             drainWalQueue();
             Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("x")));
-            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_SKIP);
 
             execute("INSERT INTO x(ts, sym, v2) VALUES ('2024-01-01T00:00:00.000000Z', 'a', 2)");
             drainWalQueue();
@@ -622,41 +622,41 @@ public class CreateTableDedupTest extends AbstractCairoTest {
     @Test
     public void testDedupModeSurvivesMetadataReload() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
             execute("CREATE TABLE y (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
-            execute("ALTER TABLE y DEDUP ENABLE REJECT KEYS(ts)");
+            execute("ALTER TABLE y DEDUP ENABLE SKIP KEYS(ts)");
             drainWalQueue();
 
             engine.releaseAllWriters();
             engine.releaseAllReaders();
             reloadMetadataCache();
 
-            assertDedupMode("x", true, TableUtils.DEDUP_MODE_REJECT);
-            assertDedupMode("y", true, TableUtils.DEDUP_MODE_REJECT);
-            assertShowCreateTable("y", "\nDEDUP REJECT KEYS(ts)");
+            assertDedupMode("x", true, TableUtils.DEDUP_MODE_SKIP);
+            assertDedupMode("y", true, TableUtils.DEDUP_MODE_SKIP);
+            assertShowCreateTable("y", "\nDEDUP SKIP KEYS(ts)");
         });
     }
 
     @Test
-    public void testDedupRejectSyntaxErrors() throws Exception {
+    public void testDedupSkipSyntaxErrors() throws Exception {
         assertMemoryLeak(() -> {
             String createPrefix = "create table a (ts timestamp, i int, s symbol) timestamp(ts) partition by day";
-            assertQuery(createPrefix + " bypass wal dedup reject keys(ts);")
+            assertQuery(createPrefix + " bypass wal dedup skip keys(ts);")
                     .fails(95, "deduplication is possible only on WAL tables");
-            assertQuery(createPrefix + " wal dedup rejected keys(ts);")
-                    .fails(88, "expected 'upsert' or 'reject'");
-            assertQuery(createPrefix + " wal dedup reject (ts);")
-                    .fails(95, "expected 'keys'");
-            assertQuery(createPrefix + " wal dedup reject keys(s);")
-                    .fails(100, "deduplicate key list must include dedicated timestamp column");
+            assertQuery(createPrefix + " wal dedup skipped keys(ts);")
+                    .fails(88, "expected 'upsert' or 'skip'");
+            assertQuery(createPrefix + " wal dedup skip (ts);")
+                    .fails(93, "expected 'keys'");
+            assertQuery(createPrefix + " wal dedup skip keys(s);")
+                    .fails(98, "deduplicate key list must include dedicated timestamp column");
 
             execute(createPrefix + " wal");
-            assertQuery("alter table a dedup enable rejected keys(ts)")
-                    .fails(27, "expected 'upsert' or 'reject'");
-            assertQuery("alter table a dedup reject (ts)")
-                    .fails(27, "expected 'keys'");
-            assertQuery("alter table a dedup enable reject keys(s)")
-                    .fails(39, "deduplicate key list must include dedicated timestamp column");
+            assertQuery("alter table a dedup enable skipped keys(ts)")
+                    .fails(27, "expected 'upsert' or 'skip'");
+            assertQuery("alter table a dedup skip (ts)")
+                    .fails(25, "expected 'keys'");
+            assertQuery("alter table a dedup enable skip keys(s)")
+                    .fails(37, "deduplicate key list must include dedicated timestamp column");
         });
     }
 
@@ -1013,10 +1013,10 @@ public class CreateTableDedupTest extends AbstractCairoTest {
 
                 // a payload with the mode but without the dedup keys
                 final AlterOperation noKeys = new AlterOperationBuilder()
-                        .ofDedupEnable(1, tableToken, TableUtils.DEDUP_MODE_REJECT)
+                        .ofDedupEnable(1, tableToken, TableUtils.DEDUP_MODE_SKIP)
                         .build();
                 noKeys.withContext(new SqlExecutionContextImpl(engine, 1).with(AllowAllSecurityContext.INSTANCE));
-                noKeys.withSqlStatement("ALTER TABLE x DEDUP ENABLE REJECT KEYS()");
+                noKeys.withSqlStatement("ALTER TABLE x DEDUP ENABLE SKIP KEYS()");
                 try {
                     writer.apply(noKeys, true);
                     Assert.fail();

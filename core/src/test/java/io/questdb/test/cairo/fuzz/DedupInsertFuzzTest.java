@@ -358,7 +358,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testRandomColumnsDedupMultipleKeyColReject() throws Exception {
+    public void testRandomColumnsDedupMultipleKeyColSkip() throws Exception {
         Rnd rnd = generateRandomAndProps();
         boolean createAsParquet = rnd.nextBoolean();
         boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
@@ -480,7 +480,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
-    public void testRandomColumnsDedupOneKeyColReject() throws Exception {
+    public void testRandomColumnsDedupOneKeyColSkip() throws Exception {
         Rnd rnd = generateRandomAndProps();
         boolean createAsParquet = rnd.nextBoolean();
         boolean convertToParquet = !createAsParquet && rnd.nextBoolean();
@@ -635,7 +635,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             String tableNameNoWal,
             ObjList<CharSequence> upsertKeyNames,
             String tableNameWal,
-            boolean isRejectMode
+            boolean isSkipMode
     ) throws SqlException {
         Log log = LOG;
         // Define where clause for debugging
@@ -650,7 +650,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                         RecordCursor previewCursor = factoryPreview.getCursor(sqlExecutionContext)
                 ) {
                     try (
-                            RecordCursor dedupWrapper = new DedupCursor(factory.getMetadata(), cursor1, previewCursor, upsertKeyNames, isRejectMode);
+                            RecordCursor dedupWrapper = new DedupCursor(factory.getMetadata(), cursor1, previewCursor, upsertKeyNames, isSkipMode);
                             RecordCursor actualCursor = factory2.getCursor(sqlExecutionContext)
                     ) {
                         try {
@@ -951,7 +951,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         }
     }
 
-    private void runFuzzWithRandomColsDedup(Rnd rnd, int dedupKeys, boolean convertToParquet, boolean isRejectMode) throws Exception {
+    private void runFuzzWithRandomColsDedup(Rnd rnd, int dedupKeys, boolean convertToParquet, boolean isSkipMode) throws Exception {
         assertMemoryLeak(() -> {
             String tableNameBase = getTestName();
             String tableNameDedup = tableNameBase + "_wal";
@@ -990,7 +990,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                 String alterStatement = String.format(
                         "alter table %s dedup %s keys(%s)",
                         tableNameDedup,
-                        isRejectMode ? "reject" : "upsert",
+                        isSkipMode ? "skip" : "upsert",
                         comaSeparatedUpsertCols
                 );
                 execute(alterStatement);
@@ -1015,7 +1015,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             tableNameWalNoDedup,
                             upsertKeyNames,
                             tableNameDedup,
-                            isRejectMode
+                            isSkipMode
                     );
 
                     fuzzer.assertCounts(tableNameDedup, timestampColumnName);
@@ -1031,7 +1031,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             tableNameWalNoDedup,
                             upsertKeyNames,
                             tableNameDedup,
-                            isRejectMode
+                            isSkipMode
                     );
 
                 } finally {
@@ -1413,7 +1413,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
     private static class DedupCursor implements RecordCursor {
 
         private final StringSink currentRecordKeys = new StringSink();
-        // REJECT keeps the first row of each duplicate group, UPSERT keeps the last one
+        // SKIP keeps the first row of each duplicate group, UPSERT keeps the last one
         private final boolean isKeepFirst;
         private final IntList keyColumns = new IntList();
         private final ObjHashSet<String> keyProcessed = new ObjHashSet<>();

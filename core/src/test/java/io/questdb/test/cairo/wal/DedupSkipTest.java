@@ -33,26 +33,26 @@ import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * Data semantics of DEDUP REJECT: a new row that matches an existing row, or an earlier row of the
+ * Data semantics of DEDUP SKIP: a new row that matches an existing row, or an earlier row of the
  * same commit, on all dedup keys is discarded. The earliest write wins, mirroring DEDUP UPSERT where
  * the latest write wins.
  */
-public class DedupRejectTest extends AbstractCairoTest {
+public class DedupSkipTest extends AbstractCairoTest {
 
     @Test
-    public void testRejectAcrossCommitsAppliedOneByOne() throws Exception {
-        assertMemoryLeak(() -> assertRejectAcrossCommits(true));
+    public void testSkipAcrossCommitsAppliedOneByOne() throws Exception {
+        assertMemoryLeak(() -> assertSkipAcrossCommits(true));
     }
 
     @Test
-    public void testRejectAcrossCommitsAppliedTogether() throws Exception {
-        assertMemoryLeak(() -> assertRejectAcrossCommits(false));
+    public void testSkipAcrossCommitsAppliedTogether() throws Exception {
+        assertMemoryLeak(() -> assertSkipAcrossCommits(false));
     }
 
     @Test
-    public void testRejectAcrossWalWriters() throws Exception {
+    public void testSkipAcrossWalWriters() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
             final TableToken tableToken = engine.verifyTableName("t");
             final long ts = MicrosTimestampDriver.floor("2024-01-01T00:00:00");
             try (
@@ -89,7 +89,7 @@ public class DedupRejectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectAgainstWalLag() throws Exception {
+    public void testSkipAgainstWalLag() throws Exception {
         assertMemoryLeak(() -> {
             // maxUncommittedRows caps both the WAL lag (20 rows) and the transaction block size, so the two
             // transactions are applied one by one. The second transaction overlaps the first one, which keeps
@@ -97,7 +97,7 @@ public class DedupRejectTest extends AbstractCairoTest {
             execute("""
                     CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL
                     WITH maxUncommittedRows=1
-                    DEDUP REJECT KEYS(ts, sym)
+                    DEDUP SKIP KEYS(ts, sym)
                     """);
             execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T10:00:10', 1_000_000), 'a', x FROM long_sequence(15)");
             execute("INSERT INTO t SELECT timestamp_sequence('2024-01-01T10:00:05', 1_000_000), 'a', 100 + x FROM long_sequence(10)");
@@ -125,9 +125,9 @@ public class DedupRejectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectAllDuplicatesThenAppend() throws Exception {
+    public void testSkipAllDuplicatesThenAppend() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
             execute("""
                     INSERT INTO t VALUES
                     ('2024-01-01T00:00:00.000000Z', 'a', 1),
@@ -157,7 +157,7 @@ public class DedupRejectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectColumnTopKey() throws Exception {
+    public void testSkipColumnTopKey() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("""
@@ -169,7 +169,7 @@ public class DedupRejectTest extends AbstractCairoTest {
 
             // the existing rows have the column top for k, i.e. NULL
             execute("ALTER TABLE t ADD COLUMN k INT");
-            execute("ALTER TABLE t DEDUP ENABLE REJECT KEYS(ts, k)");
+            execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts, k)");
             execute("""
                     INSERT INTO t(ts, v, k) VALUES
                     ('2024-01-01T00:00:00.000000Z', 10, null),
@@ -191,9 +191,9 @@ public class DedupRejectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectDuplicatesInOlderPartition() throws Exception {
+    public void testSkipDuplicatesInOlderPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
             execute("""
                     INSERT INTO t VALUES
                     ('2024-01-01T10:00:00.000000Z', 'a', 1),
@@ -233,9 +233,9 @@ public class DedupRejectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectParquetPartition() throws Exception {
+    public void testSkipParquetPartition() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
             execute("""
                     INSERT INTO t VALUES
                     ('2024-01-01T00:00:00.000000Z', 'a', 1),
@@ -288,9 +288,9 @@ public class DedupRejectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectParquetPartitionTimestampOnlyKey() throws Exception {
+    public void testSkipParquetPartitionTimestampOnlyKey() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts)");
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts)");
             execute("""
                     INSERT INTO t VALUES
                     ('2024-01-01T00:00:00.000000Z', 1),
@@ -324,7 +324,7 @@ public class DedupRejectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectPreExistingDuplicates() throws Exception {
+    public void testSkipPreExistingDuplicates() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("""
@@ -334,8 +334,8 @@ public class DedupRejectTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
 
-            // dedup enabled after the duplicates were written, REJECT leaves them in place
-            execute("ALTER TABLE t DEDUP ENABLE REJECT KEYS(ts, sym)");
+            // dedup enabled after the duplicates were written, SKIP leaves them in place
+            execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts, sym)");
             execute("""
                     INSERT INTO t VALUES
                     ('2024-01-01T00:00:00.000000Z', 'a', 3),
@@ -356,9 +356,9 @@ public class DedupRejectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectTimestampOnlyKey() throws Exception {
+    public void testSkipTimestampOnlyKey() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts)");
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts)");
             // a duplicate within the commit
             execute("""
                     INSERT INTO t VALUES
@@ -413,9 +413,9 @@ public class DedupRejectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectVarSizeKeys() throws Exception {
+    public void testSkipVarSizeKeys() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, k1 VARCHAR, k2 STRING, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, k1, k2)");
+            execute("CREATE TABLE t (ts TIMESTAMP, k1 VARCHAR, k2 STRING, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, k1, k2)");
             execute("""
                     INSERT INTO t VALUES
                     ('2024-01-01T00:00:00.000000Z', 'a', 'x', 1),
@@ -450,9 +450,9 @@ public class DedupRejectTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectWithinCommit() throws Exception {
+    public void testSkipWithinCommit() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
             // in-order commit
             execute("""
                     INSERT INTO t VALUES
@@ -496,7 +496,7 @@ public class DedupRejectTest extends AbstractCairoTest {
             drainWalQueue();
             assertValue(2);
 
-            execute("ALTER TABLE t DEDUP ENABLE REJECT KEYS(ts, sym)");
+            execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts, sym)");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 'a', 3)");
             drainWalQueue();
             assertValue(2);
@@ -509,7 +509,7 @@ public class DedupRejectTest extends AbstractCairoTest {
 
             // every transaction is applied with the dedup mode in effect when it was committed
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 'a', 5)");
-            execute("ALTER TABLE t DEDUP REJECT KEYS(ts, sym)");
+            execute("ALTER TABLE t DEDUP SKIP KEYS(ts, sym)");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 'a', 6)");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 'a', 7)");
             drainWalQueue();
@@ -518,7 +518,7 @@ public class DedupRejectTest extends AbstractCairoTest {
             execute("ALTER TABLE t DEDUP UPSERT KEYS(ts, sym)");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 'a', 8)");
             execute("ALTER TABLE t DEDUP DISABLE");
-            execute("ALTER TABLE t DEDUP ENABLE REJECT KEYS(ts, sym)");
+            execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts, sym)");
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 'a', 9)");
             drainWalQueue();
             assertValue(8);
@@ -532,8 +532,8 @@ public class DedupRejectTest extends AbstractCairoTest {
         row.append();
     }
 
-    private void assertRejectAcrossCommits(boolean drainEachCommit) throws Exception {
-        execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP REJECT KEYS(ts, sym)");
+    private void assertSkipAcrossCommits(boolean drainEachCommit) throws Exception {
+        execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
         execute("""
                 INSERT INTO t VALUES
                 ('2024-01-01T00:00:00.000000Z', 'a', 1),

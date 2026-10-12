@@ -110,9 +110,9 @@ public final class TableUtils {
     public static final String COLUMN_VERSION_FILE_NAME = "_cv";
     // Dedup modes, stored in the _meta header at META_OFFSET_DEDUP_MODE. The mode matters only when
     // deduplication is enabled, i.e. when the designated timestamp is a dedup key.
-    // REJECT: a new row is discarded when a row with the same dedup key values already exists,
+    // SKIP: a new row is discarded when a row with the same dedup key values already exists,
     // the earliest write wins.
-    public static final int DEDUP_MODE_REJECT = 1;
+    public static final int DEDUP_MODE_SKIP = 1;
     // UPSERT: a new row replaces the existing row with the same dedup key values, the latest write wins.
     public static final int DEDUP_MODE_UPSERT = 0;
     public static final String DEFAULT_PARTITION_NAME = "default";

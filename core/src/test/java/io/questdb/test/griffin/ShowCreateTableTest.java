@@ -99,9 +99,9 @@ public class ShowCreateTableTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDedupReject() throws Exception {
+    public void testDedupSkip() throws Exception {
         assertMemoryLeak(() -> {
-            execute("create table foo ( ts timestamp, s symbol, i int ) timestamp(ts) partition by day wal dedup reject keys(ts, s)");
+            execute("create table foo ( ts timestamp, s symbol, i int ) timestamp(ts) partition by day wal dedup skip keys(ts, s)");
             assertQuery("show create table foo")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -112,7 +112,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
                             \ts SYMBOL,
                             \ti INT
                             ) timestamp(ts) PARTITION BY DAY
-                            DEDUP REJECT KEYS(ts,s);
+                            DEDUP SKIP KEYS(ts,s);
                             """);
 
             // The printed DDL re-creates the table with the same dedup mode. It omits WAL, the default
@@ -123,7 +123,7 @@ public class ShowCreateTableTest extends AbstractCairoTest {
             execute("drop table foo");
             execute(printedSql);
             try (TableReader reader = getReader("foo")) {
-                Assert.assertEquals(TableUtils.DEDUP_MODE_REJECT, reader.getMetadata().getDedupMode());
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, reader.getMetadata().getDedupMode());
             }
             printSql("SHOW CREATE TABLE foo");
             TestUtils.assertEquals(printedSql, sink.toString().replace("ddl\n", ""));

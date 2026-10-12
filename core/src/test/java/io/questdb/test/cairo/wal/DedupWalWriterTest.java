@@ -110,28 +110,28 @@ public class DedupWalWriterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDedupRejectNoPartitionRewriteArray() throws Exception {
-        assertMemoryLeak(() -> testRejectedInsertsKeepPartition("double[]", "null", "ARRAY[1.0,1.0]", "ARRAY[2.0,2.0]", "ARRAY[3.0,3.0]"));
+    public void testDedupSkipNoPartitionRewriteArray() throws Exception {
+        assertMemoryLeak(() -> testSkippedInsertsKeepPartition("double[]", "null", "ARRAY[1.0,1.0]", "ARRAY[2.0,2.0]", "ARRAY[3.0,3.0]"));
     }
 
     @Test
-    public void testDedupRejectNoPartitionRewriteInt() throws Exception {
-        assertMemoryLeak(() -> testRejectedInsertsKeepPartition("int", "null", "123", "2345567", "22"));
+    public void testDedupSkipNoPartitionRewriteInt() throws Exception {
+        assertMemoryLeak(() -> testSkippedInsertsKeepPartition("int", "null", "123", "2345567", "22"));
     }
 
     @Test
-    public void testDedupRejectNoPartitionRewriteString() throws Exception {
-        assertMemoryLeak(() -> testRejectedInsertsKeepPartition("string", "", "'123'", "'2345567'", "'22'"));
+    public void testDedupSkipNoPartitionRewriteString() throws Exception {
+        assertMemoryLeak(() -> testSkippedInsertsKeepPartition("string", "", "'123'", "'2345567'", "'22'"));
     }
 
     @Test
-    public void testDedupRejectNoPartitionRewriteSymbol() throws Exception {
-        assertMemoryLeak(() -> testRejectedInsertsKeepPartition("symbol", "", "'123'", "'2345567'", "'22'"));
+    public void testDedupSkipNoPartitionRewriteSymbol() throws Exception {
+        assertMemoryLeak(() -> testSkippedInsertsKeepPartition("symbol", "", "'123'", "'2345567'", "'22'"));
     }
 
     @Test
-    public void testDedupRejectNoPartitionRewriteVarchar() throws Exception {
-        assertMemoryLeak(() -> testRejectedInsertsKeepPartition("varchar", "", "'123'", "'2345567'", "'a varchar value that is not inlined'"));
+    public void testDedupSkipNoPartitionRewriteVarchar() throws Exception {
+        assertMemoryLeak(() -> testSkippedInsertsKeepPartition("varchar", "", "'123'", "'2345567'", "'a varchar value that is not inlined'"));
     }
 
     // The dedup key is added after the partition data, the existing rows read the key's null value
@@ -163,48 +163,6 @@ public class DedupWalWriterTest extends AbstractCairoTest {
                         2022-02-24T00:00:01.000000Z\t11
                         2022-02-24T00:00:02.000000Z\t3
                         """);
-    }
-
-    // In REJECT mode a commit made of duplicates only leaves the partition as is, even when the
-    // non-key values of the duplicates differ from the existing rows.
-    private void testRejectedInsertsKeepPartition(String columnType, String nullValue, String value1, String value2, String value3) throws Exception {
-        execute("create table test (ts timestamp, x int, v " + columnType + ") timestamp(ts) partition by DAY WAL dedup reject keys (ts, x) ");
-        execute("insert into test(ts,x,v) values ('2022-02-24', 1, " + value1 + "), ('2022-02-24', 2, null), ('2022-02-24', 3, " + value2 + ")");
-        drainWalQueue();
-
-        final String expected = "ts\tx\tv\n" +
-                "2022-02-24T00:00:00.000000Z\t1\t" + unquote(value1) + "\n" +
-                "2022-02-24T00:00:00.000000Z\t2\t" + nullValue + "\n" +
-                "2022-02-24T00:00:00.000000Z\t3\t" + unquote(value2) + "\n";
-        assertQuery("test")
-                .noLeakCheck()
-                .expectSize()
-                .timestamp("ts")
-                .returns(expected);
-
-        TableToken tt = engine.verifyTableName("test");
-        String partitionsTxnFile = readTxnToString(tt, false, true, true, true);
-
-        // Insert the same keys with the same and with different values, reordered
-        execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value3 + "), ('2022-02-24', 2, " + value3 + "), ('2022-02-24', 1, " + value1 + ")");
-        drainWalQueue();
-
-        assertQuery("test")
-                .noLeakCheck()
-                .expectSize()
-                .timestamp("ts")
-                .returns(expected);
-        Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true, true));
-
-        // A new key with a duplicate in the same commit, the first of them is kept
-        execute("insert into test(ts,x,v) values ('2022-02-24', 4, " + value3 + "), ('2022-02-24', 2, " + value1 + "), ('2022-02-24', 4, " + value1 + ")");
-        drainWalQueue();
-
-        assertQuery("test")
-                .noLeakCheck()
-                .expectSize()
-                .timestamp("ts")
-                .returns(expected + "2022-02-24T00:00:00.000000Z\t4\t" + unquote(value3) + "\n");
     }
 
     private void testSameAndShuffledInserts(String columnType, String nullValue, String value1, String value2, String nullValueUpdated) throws Exception {
@@ -266,6 +224,48 @@ public class DedupWalWriterTest extends AbstractCairoTest {
                         "2022-02-24T00:00:00.000000Z\t1\t" + value1Unquoted + "\n" +
                         "2022-02-24T00:00:00.000000Z\t2\t" + unquote(nullValueUpdated) + "\n" +
                         "2022-02-24T00:00:00.000000Z\t3\t" + value2Unquoted + "\n");
+    }
+
+    // In SKIP mode a commit made of duplicates only leaves the partition as is, even when the
+    // non-key values of the duplicates differ from the existing rows.
+    private void testSkippedInsertsKeepPartition(String columnType, String nullValue, String value1, String value2, String value3) throws Exception {
+        execute("create table test (ts timestamp, x int, v " + columnType + ") timestamp(ts) partition by DAY WAL dedup skip keys (ts, x) ");
+        execute("insert into test(ts,x,v) values ('2022-02-24', 1, " + value1 + "), ('2022-02-24', 2, null), ('2022-02-24', 3, " + value2 + ")");
+        drainWalQueue();
+
+        final String expected = "ts\tx\tv\n" +
+                "2022-02-24T00:00:00.000000Z\t1\t" + unquote(value1) + "\n" +
+                "2022-02-24T00:00:00.000000Z\t2\t" + nullValue + "\n" +
+                "2022-02-24T00:00:00.000000Z\t3\t" + unquote(value2) + "\n";
+        assertQuery("test")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(expected);
+
+        TableToken tt = engine.verifyTableName("test");
+        String partitionsTxnFile = readTxnToString(tt, false, true, true, true);
+
+        // Insert the same keys with the same and with different values, reordered
+        execute("insert into test(ts,x,v) values ('2022-02-24', 3, " + value3 + "), ('2022-02-24', 2, " + value3 + "), ('2022-02-24', 1, " + value1 + ")");
+        drainWalQueue();
+
+        assertQuery("test")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(expected);
+        Assert.assertEquals(partitionsTxnFile, readTxnToString(tt, false, true, true, true));
+
+        // A new key with a duplicate in the same commit, the first of them is kept
+        execute("insert into test(ts,x,v) values ('2022-02-24', 4, " + value3 + "), ('2022-02-24', 2, " + value1 + "), ('2022-02-24', 4, " + value1 + ")");
+        drainWalQueue();
+
+        assertQuery("test")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(expected + "2022-02-24T00:00:00.000000Z\t4\t" + unquote(value3) + "\n");
     }
 
     private String unquote(String v) {

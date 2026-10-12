@@ -2302,10 +2302,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     @Override
     public boolean enableDeduplication(LongList columnsIndexes, int tableDedupMode) {
         assert txWriter.getLagRowCount() == 0;
-        assert tableDedupMode == TableUtils.DEDUP_MODE_UPSERT || tableDedupMode == TableUtils.DEDUP_MODE_REJECT;
+        assert tableDedupMode == TableUtils.DEDUP_MODE_UPSERT || tableDedupMode == TableUtils.DEDUP_MODE_SKIP;
         checkDistressed();
         LogRecord logRec = LOG.info().$("enabling row deduplication [table=").$(tableToken)
-                .$(", mode=").$(tableDedupMode == TableUtils.DEDUP_MODE_REJECT ? "REJECT" : "UPSERT")
+                .$(", mode=").$(tableDedupMode == TableUtils.DEDUP_MODE_SKIP ? "SKIP" : "UPSERT")
                 .$(", columns=[");
 
         boolean isSubsetOfOldKeys = true;
@@ -2768,11 +2768,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Returns true when the current commit deduplicates (see {@link #isCommitDedupMode()}) and
      * duplicates resolve in favour of the row that was written first: a new row that matches an
      * existing row, or an earlier row of the same commit, on all dedup keys is discarded. This is
-     * the case for tables with the REJECT dedup mode, unless the commit explicitly requests UPSERT.
+     * the case for tables with the SKIP dedup mode, unless the commit explicitly requests UPSERT.
      */
-    public boolean isCommitDedupRejectMode() {
+    public boolean isCommitDedupSkipMode() {
         return dedupMode == WalUtils.WAL_DEDUP_MODE_DEFAULT
-                && metadata.getDedupMode() == TableUtils.DEDUP_MODE_REJECT
+                && metadata.getDedupMode() == TableUtils.DEDUP_MODE_SKIP
                 && isDeduplicationEnabled();
     }
 
@@ -6878,7 +6878,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     tempIndexAddr,
                     dedupKeyIndex,
                     DedupColumnCommitAddresses.getAddress(dedupCommitAddr),
-                    isCommitDedupRejectMode()
+                    isCommitDedupSkipMode()
             );
 
             long dedupRowsRemoved = dedupRowCount > 0 ? longIndexLength - dedupRowCount : 0;
@@ -11311,7 +11311,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     outIndexAddr,
                     dedupKeyIndex,
                     DedupColumnCommitAddresses.getAddress(dedupCommitAddr),
-                    isCommitDedupRejectMode()
+                    isCommitDedupSkipMode()
             );
         } finally {
             dedupColumnCommitAddresses.clear();
