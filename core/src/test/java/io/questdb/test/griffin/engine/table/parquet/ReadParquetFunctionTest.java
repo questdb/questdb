@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.table.parquet;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -34,6 +35,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.engine.functions.table.ReadParquetPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.TablePageFrameCursor;
@@ -48,6 +50,7 @@ import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -60,6 +63,7 @@ import java.util.Collection;
 
 import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
+import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 @RunWith(Parameterized.class)
 public class ReadParquetFunctionTest extends AbstractCairoTest {
@@ -753,6 +757,113 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterWithNegativeLimitAcrossRowGroups() throws Exception {
+        // A negative LIMIT makes the parallel filter scan the file backward, last row group first.
+        // Four rows per row group make the matching rows span several row groups.
+        assertMemoryLeak(() -> {
+            encodeFourRowsPerRowGroup();
+
+            parquetLimitAssertion("SELECT * FROM read_parquet('x.parquet') WHERE walid = 1 LIMIT -5", true)
+                    .withPlan(filterPlan(true, 5))
+                    .returns("""
+                            event\twalid\tcreated
+                            7\t1\t1970-01-01T00:00:06.000000Z
+                            10\t1\t1970-01-01T00:00:09.000000Z
+                            13\t1\t1970-01-01T00:00:12.000000Z
+                            16\t1\t1970-01-01T00:00:15.000000Z
+                            19\t1\t1970-01-01T00:00:18.000000Z
+                            """);
+
+            // Min/max statistics prune the last two row groups, so the backward scan skips them.
+            parquetLimitAssertion(
+                    "SELECT * FROM read_parquet('x.parquet') WHERE event < 11 AND walid = 1 LIMIT -2",
+                    true
+            ).returns("""
+                    event\twalid\tcreated
+                    7\t1\t1970-01-01T00:00:06.000000Z
+                    10\t1\t1970-01-01T00:00:09.000000Z
+                    """);
+
+            // Min/max statistics prune the first three row groups, so the backward scan stops early.
+            parquetLimitAssertion(
+                    "SELECT * FROM read_parquet('x.parquet') WHERE event > 14 AND walid = 2 LIMIT -10",
+                    true
+            ).returns("""
+                    event\twalid\tcreated
+                    17\t2\t1970-01-01T00:00:16.000000Z
+                    20\t2\t1970-01-01T00:00:19.000000Z
+                    """);
+
+            // The limit exceeds the number of matching rows.
+            parquetLimitAssertion("SELECT * FROM read_parquet('x.parquet') WHERE walid = 2 LIMIT -100", true)
+                    .returns("""
+                            event\twalid\tcreated
+                            2\t2\t1970-01-01T00:00:01.000000Z
+                            5\t2\t1970-01-01T00:00:04.000000Z
+                            8\t2\t1970-01-01T00:00:07.000000Z
+                            11\t2\t1970-01-01T00:00:10.000000Z
+                            14\t2\t1970-01-01T00:00:13.000000Z
+                            17\t2\t1970-01-01T00:00:16.000000Z
+                            20\t2\t1970-01-01T00:00:19.000000Z
+                            """);
+
+            // Min/max statistics prune every row group. The parallel cursor then sees no frame
+            // and reports an unknown size.
+            parquetLimitAssertion("SELECT * FROM read_parquet('x.parquet') WHERE walid = 5 LIMIT -2", true)
+                    .expectSize(!parallel)
+                    .returns("event\twalid\tcreated\n");
+
+            // A bind variable limit has an unknown sign at compile time; both signs must work.
+            final String query = "SELECT * FROM read_parquet('x.parquet') WHERE walid = 1 LIMIT :lim";
+            bindVariableService.clear();
+            bindVariableService.setLong("lim", -2);
+            parquetLimitAssertion(query, true).returns("""
+                    event\twalid\tcreated
+                    16\t1\t1970-01-01T00:00:15.000000Z
+                    19\t1\t1970-01-01T00:00:18.000000Z
+                    """);
+
+            bindVariableService.setLong("lim", 2);
+            parquetLimitAssertion(query, false).returns("""
+                    event\twalid\tcreated
+                    1\t1\t1970-01-01T00:00:00.000000Z
+                    4\t1\t1970-01-01T00:00:03.000000Z
+                    """);
+        });
+    }
+
+    @Test
+    public void testFilterWithNegativeLimitJavaFilter() throws Exception {
+        // Same backward scan as above, driven by the Java (non-JIT) parallel filter.
+        assertMemoryLeak(() -> {
+            encodeFourRowsPerRowGroup();
+            final int jitMode = sqlExecutionContext.getJitMode();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            try {
+                parquetLimitAssertion("SELECT * FROM read_parquet('x.parquet') WHERE walid = 1 LIMIT -3", true)
+                        .withPlan(filterPlan(false, 3))
+                        .returns("""
+                                event\twalid\tcreated
+                                13\t1\t1970-01-01T00:00:12.000000Z
+                                16\t1\t1970-01-01T00:00:15.000000Z
+                                19\t1\t1970-01-01T00:00:18.000000Z
+                                """);
+
+                parquetLimitAssertion(
+                        "SELECT * FROM read_parquet('x.parquet') WHERE event < 11 AND walid = 1 LIMIT -2",
+                        true
+                ).returns("""
+                        event\twalid\tcreated
+                        7\t1\t1970-01-01T00:00:06.000000Z
+                        10\t1\t1970-01-01T00:00:09.000000Z
+                        """);
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
     public void testLimitOffsetWithMultipleRowGroups() throws Exception {
         assertMemoryLeak(() -> {
             final long rows = 5000;
@@ -979,6 +1090,62 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                 sink.put("select * from read_parquet('x.parquet') order by a_varchar1, a_varchar2");
                 assertSqlCursors0("select * from x order by a_varchar1, a_varchar2");
             }
+        });
+    }
+
+    @Test
+    public void testPageFrameCursorBackwardScan() throws Exception {
+        assertMemoryLeak(() -> {
+            encodeFourRowsPerRowGroup();
+            try (RecordCursorFactory factory = select("SELECT * FROM read_parquet('x.parquet')")) {
+                if (!parallel) {
+                    Assert.assertFalse("the serial parquet scan has no page-frame capability", factory.supportsPageFrameCursor());
+                    return;
+                }
+                final RecordCursorFactory parquetFactory = findParquetPageFrameFactory(factory);
+                // each row: row group, partitionLo, partitionHi, rows remaining after the frame
+                final long[][] descending = {{4, 16, 20, 16}, {3, 12, 16, 12}, {2, 8, 12, 8}, {1, 4, 8, 4}, {0, 0, 4, 0}};
+                final long[][] ascending = {{0, 0, 4, 16}, {1, 4, 8, 12}, {2, 8, 12, 8}, {3, 12, 16, 4}, {4, 16, 20, 0}};
+                try (PageFrameCursor cursor = parquetFactory.getPageFrameCursor(sqlExecutionContext, ORDER_DESC)) {
+                    assertPageFrames(cursor, descending, 20);
+                    cursor.toTop();
+                    assertPageFrames(cursor, descending, 20);
+                }
+                // The factory reuses one page-frame cursor, so each open must reset the scan order.
+                try (PageFrameCursor cursor = parquetFactory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                    assertPageFrames(cursor, ascending, 20);
+                }
+                try (PageFrameCursor cursor = parquetFactory.getPageFrameCursor(sqlExecutionContext, ORDER_DESC)) {
+                    assertPageFrames(cursor, descending, 20);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPageFrameCursorBackwardScanSkipsPrunedRowGroups() throws Exception {
+        assertMemoryLeak(() -> {
+            encodeFourRowsPerRowGroup();
+            // The statistics of row groups 2, 3 and 4 exclude every row, so the backward scan skips
+            // them before returning its first frame.
+            assertPrunedPageFrames(
+                    "SELECT * FROM read_parquet('x.parquet') WHERE event < 9",
+                    new long[][]{{1, 4, 8, 4}, {0, 0, 4, 0}}
+            );
+            // The statistics of row groups 0, 1 and 2 exclude every row, so the backward scan ends
+            // after row group 3.
+            assertPrunedPageFrames(
+                    "SELECT * FROM read_parquet('x.parquet') WHERE event > 14",
+                    new long[][]{{4, 16, 20, 16}, {3, 12, 16, 12}}
+            );
+            // The statistics of row groups 1, 2 and 3 exclude every row, so the backward scan
+            // skips the middle of the file.
+            assertPrunedPageFrames(
+                    "SELECT * FROM read_parquet('x.parquet') WHERE event IN (2, 19)",
+                    new long[][]{{4, 16, 20, 16}, {0, 0, 4, 0}}
+            );
+            // The statistics exclude every row group.
+            assertPrunedPageFrames("SELECT * FROM read_parquet('x.parquet') WHERE event > 100", new long[][]{});
         });
     }
 
@@ -2028,6 +2195,27 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
         });
     }
 
+    private static void assertPageFrames(PageFrameCursor cursor, long[][] expected, long rowCount) {
+        final RecordCursor.Counter counter = new RecordCursor.Counter();
+        cursor.calculateSize(counter);
+        Assert.assertEquals("rows remaining before the first frame", rowCount, counter.get());
+        Assert.assertEquals(rowCount, cursor.size());
+        for (long[] frameSpec : expected) {
+            final PageFrame frame = cursor.next();
+            Assert.assertNotNull(frame);
+            Assert.assertEquals("row group", frameSpec[0], frame.getParquetRowGroup());
+            Assert.assertEquals("partition lo", frameSpec[1], frame.getPartitionLo());
+            Assert.assertEquals("partition hi", frameSpec[2], frame.getPartitionHi());
+            Assert.assertEquals("row group lo", 0, frame.getParquetRowGroupLo());
+            Assert.assertEquals("row group hi", frameSpec[2] - frameSpec[1], frame.getParquetRowGroupHi());
+            counter.clear();
+            cursor.calculateSize(counter);
+            Assert.assertEquals("rows remaining after row group " + frameSpec[0], frameSpec[3], counter.get());
+        }
+        Assert.assertNull(cursor.next());
+        Assert.assertNull("an exhausted cursor stays exhausted", cursor.next());
+    }
+
     private static void assertSqlCursors0(CharSequence expectedSql) throws SqlException {
         try (SqlCompiler sqlCompiler = engine.getSqlCompiler()) {
             TestUtils.assertSqlCursors(
@@ -2039,6 +2227,97 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     true
             );
         }
+    }
+
+    private void assertPrunedPageFrames(String query, long[][] expected) throws Exception {
+        try (RecordCursorFactory factory = select(query)) {
+            if (!parallel) {
+                return;
+            }
+            try (PageFrameCursor cursor = findParquetPageFrameFactory(factory).getPageFrameCursor(sqlExecutionContext, ORDER_DESC)) {
+                Assert.assertTrue(cursor.hasActivePushdownFilter());
+                // Pruned row groups still count towards the remaining rows until the scan passes them.
+                final RecordCursor.Counter counter = new RecordCursor.Counter();
+                cursor.calculateSize(counter);
+                Assert.assertEquals(20, counter.get());
+                for (long[] frameSpec : expected) {
+                    final PageFrame frame = cursor.next();
+                    Assert.assertNotNull(frame);
+                    Assert.assertEquals("row group", frameSpec[0], frame.getParquetRowGroup());
+                    Assert.assertEquals("partition lo", frameSpec[1], frame.getPartitionLo());
+                    Assert.assertEquals("partition hi", frameSpec[2], frame.getPartitionHi());
+                    counter.clear();
+                    cursor.calculateSize(counter);
+                    Assert.assertEquals("rows remaining after row group " + frameSpec[0], frameSpec[3], counter.get());
+                }
+                Assert.assertNull(cursor.next());
+            }
+        }
+    }
+
+    private void encodeFourRowsPerRowGroup() throws Exception {
+        execute("""
+                CREATE TABLE x AS (
+                    SELECT x::int AS event, (x % 3)::long AS walid, timestamp_sequence(0, 1_000_000) AS created
+                    FROM long_sequence(20)
+                ) TIMESTAMP(created) PARTITION BY NONE
+                """);
+        try (
+                Path path = new Path();
+                PartitionDescriptor partitionDescriptor = new PartitionDescriptor();
+                TableReader reader = engine.getReader("x")
+        ) {
+            path.of(root).concat("x.parquet");
+            PartitionEncoder.populateFromTableReader(reader, partitionDescriptor, 0);
+            PartitionEncoder.encodeWithOptions(
+                    partitionDescriptor,
+                    path,
+                    ParquetCompression.COMPRESSION_UNCOMPRESSED,
+                    true,
+                    false,
+                    4,
+                    0,
+                    ParquetVersion.PARQUET_VERSION_V1,
+                    0.0
+            );
+        }
+    }
+
+    private static RecordCursorFactory findParquetPageFrameFactory(RecordCursorFactory factory) {
+        RecordCursorFactory f = factory;
+        while (f != null && !(f instanceof ReadParquetPageFrameRecordCursorFactory)) {
+            f = f.getBaseFactory();
+        }
+        Assert.assertNotNull("the query must compile to a parquet page-frame scan", f);
+        return f;
+    }
+
+    private String filterPlan(boolean isJit, long limit) {
+        if (!parallel) {
+            return """
+                    Limit value: -%d skip-rows: baseRows-%d take-rows-max: %d
+                        Filter filter: walid=1
+                            parquet file sequential scan
+                              columns: event,walid,created
+                    """.formatted(limit, limit, limit);
+        }
+        return """
+                %s workers: 1
+                  limit: %d
+                  filter: walid=1
+                    parquet page frame scan
+                      columns: event,walid,created
+                """.formatted(isJit ? "Async JIT Filter" : "Async Filter", limit);
+    }
+
+    private QueryAssertion parquetLimitAssertion(String query, boolean isNegativeLimit) {
+        // A negative limit counts the matching rows to find the last N, so it knows its size.
+        // Only the serial path loses random access.
+        QueryAssertion assertion = assertQuery(query).noLeakCheck().timestamp("created");
+        if (!parallel) {
+            assertion = assertion.noRandomAccess();
+        }
+        return isNegativeLimit ? assertion.expectSize() : assertion;
     }
 
     private void testCursor(boolean rawArrayEncoding) throws Exception {

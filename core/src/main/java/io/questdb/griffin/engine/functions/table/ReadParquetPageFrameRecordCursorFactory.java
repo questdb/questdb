@@ -43,7 +43,6 @@ import io.questdb.std.str.Path;
 import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
-import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
  * Factory for parallel read_parquet() SQL function.
@@ -77,7 +76,7 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
         if (pageFrameCursor == null) {
             pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata(), pushdownFilterConditions);
         }
-        pageFrameCursor.of(path.$(), executionContext);
+        pageFrameCursor.of(path.$(), executionContext, ORDER_ASC);
         try {
             cursor.of(pageFrameCursor, executionContext);
             return cursor;
@@ -89,12 +88,11 @@ public class ReadParquetPageFrameRecordCursorFactory extends ProjectableRecordCu
 
     @Override
     public PageFrameCursor getPageFrameCursor(SqlExecutionContext executionContext, int order) throws SqlException {
-        assert order != ORDER_DESC;
         if (pageFrameCursor == null) {
             final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
             pageFrameCursor = new ReadParquetPageFrameCursor(configuration.getFilesFacade(), getMetadata(), pushdownFilterConditions);
         }
-        pageFrameCursor.of(path.$(), executionContext);
+        pageFrameCursor.of(path.$(), executionContext, order);
         return pageFrameCursor;
     }
 
