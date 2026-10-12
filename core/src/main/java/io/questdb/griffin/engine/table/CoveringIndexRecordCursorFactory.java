@@ -224,6 +224,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // its answer is exact rather than sampled. See estimateRowsPerPair().
     private static final int PER_KEY_ESTIMATE_MAX_KEYS = 64;
     private static final int PER_KEY_ESTIMATE_MAX_PROBES = 8192;
+    // budget of (partition, key) count probes of one selection estimate, see estimateSelection()
+    private static final int SELECTION_ESTIMATE_MAX_PROBES = 65_536;
     private static final Log LOG = LogFactory.getLog(CoveringIndexRecordCursorFactory.class);
     private static final ThreadLocal<MergeObserver> TEST_MERGE_OBSERVER = new ThreadLocal<>();
     // The plan this query would have got with /*+ no_covering *//*, held so a NULL key over a
@@ -660,6 +662,96 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 writerIndex,
                 intervals
         );
+    }
+
+    /**
+     * Estimates, from the posting index's per-key row counts, the rows this scan selects and the
+     * rows a full scan of the same partition frames reads, the way
+     * {@link IndexGatherRecordCursorFactory#estimateSelection} does for an index gather. It reads
+     * at most {@value #SELECTION_ESTIMATE_MAX_PROBES} (partition, key) counts and samples the
+     * partitions by stride past that. A partition that has no posting reader, or whose counts
+     * the reader cannot give, counts every row as selected, which leans towards the scan.
+     * <p>
+     * The keys must be known now, without an execution's bind values: the estimate answers
+     * {@code false}, leaving the sink as it is, for a runtime-constant key (a bind variable),
+     * symbol patterns and LATEST BY.
+     *
+     * @param sink receives {selected, scanned}
+     * @return whether the sink holds an estimate
+     */
+    public boolean estimateSelection(SqlExecutionContext executionContext, long[] sink) throws SqlException {
+        if (latestBy || patternKeys != null || (keyValueFuncs == null && symbolFunctionRuntimeConstant)) {
+            return false;
+        }
+        final IntList keys = new IntList();
+        if (keyValueFuncs != null) {
+            if (resolvedKeys.size() != keyValueFuncs.size()) {
+                // the keys were not resolved against a reader when the plan was built
+                return false;
+            }
+            for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+                if (keyValueFuncs.getQuick(i).isRuntimeConstant()) {
+                    return false;
+                }
+                final int key = resolvedKeys.getQuick(i);
+                // a value the symbol table does not hold selects no rows
+                if (key != SymbolTable.VALUE_NOT_FOUND && !keys.contains(key)) {
+                    keys.add(key);
+                }
+            }
+        } else if (singleKeyCursor.symbolKey != SymbolTable.VALUE_NOT_FOUND) {
+            keys.add(singleKeyCursor.symbolKey);
+        }
+        long scanned = 0;
+        long sampledScanned = 0;
+        long sampledSelected = 0;
+        try (PartitionFrameCursor frameCursor = dfcFactory.getCursor(executionContext, columnIndexes, PartitionFrameCursorFactory.ORDER_ASC)) {
+            final TableReader reader = frameCursor.getTableReader();
+            final int keyCount = keys.size();
+            final long frameCountBound = frameCursor.getFrameCountUpperBound();
+            final long frameCount = frameCountBound > 0 ? frameCountBound : reader.getPartitionCount();
+            final long stride = keyCount == 0
+                    ? Long.MAX_VALUE
+                    : Math.max(1, (frameCount * keyCount + SELECTION_ESTIMATE_MAX_PROBES - 1) / SELECTION_ESTIMATE_MAX_PROBES);
+            long frameIndex = 0;
+            while (true) {
+                final boolean probe = keyCount > 0 && frameIndex % stride == 0;
+                // a skipped frame is resolved from partition metadata, without opening the partition
+                final PartitionFrame frame = frameCursor.next(probe ? 0 : Long.MAX_VALUE);
+                if (frame == null) {
+                    break;
+                }
+                frameIndex++;
+                final long rowLo = frame.getRowLo();
+                final long rowHi = frame.getRowHi();
+                final long rows = rowHi - rowLo;
+                scanned += rows;
+                if (!probe || rows <= 0) {
+                    continue;
+                }
+                sampledScanned += rows;
+                final IndexReader indexReader = reader.getIndexReader(frame.getPartitionIndex(), indexColumnIndex, IndexReader.DIR_FORWARD);
+                if (!(indexReader instanceof AbstractPostingIndexReader posting)) {
+                    sampledSelected += rows;
+                    continue;
+                }
+                final long callerHiInclusive = rowHi - 1;
+                final long entryMax = posting.getEntryMaxValue();
+                final long clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
+                long selected = 0;
+                for (int k = 0; k < keyCount; k++) {
+                    long count = posting.estimateMatchesClamped(TableUtils.toIndexKey(keys.getQuick(k)), rowLo, callerHiInclusive, clampedMax);
+                    if (count == AbstractPostingIndexReader.ESTIMATE_REJECT || count == Numbers.LONG_NULL) {
+                        count = rows;
+                    }
+                    selected += count;
+                }
+                sampledSelected += Math.min(selected, rows);
+            }
+        }
+        sink[0] = sampledScanned > 0 ? (long) ((double) sampledSelected * scanned / sampledScanned) : 0;
+        sink[1] = scanned;
+        return true;
     }
 
     @Override

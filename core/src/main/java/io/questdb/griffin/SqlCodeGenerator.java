@@ -47,6 +47,7 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
@@ -454,6 +455,10 @@ import static io.questdb.griffin.model.IQueryModel.isWindowJoin;
 import static io.questdb.griffin.model.QueryModel.CREATE_MAT_VIEW;
 
 public class SqlCodeGenerator implements Mutable, Closeable {
+    // the scans a covering-index choice applies to, see scanInPlaceOfFrequentCovering() and
+    // isSmallCoveringSelection(): smaller tables keep their plans, which all run in well under a
+    // millisecond there, and so do the plans tests pin over small fixtures
+    static final long COVERING_CHOICE_MIN_SCANNED_ROWS = 1 << 20;
     public static final int GKK_MICRO_HOUR_INT = 1;
     public static final int GKK_NANO_HOUR_INT = 2;
     public static final int GKK_VANILLA_INT = 0;
@@ -616,6 +621,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // a table model generated as if it carried the no_index hint: the scan side of a choice
     // between an index plan and a scan, see generateSelectGroupBy()
     private IQueryModel forcedScanModel;
+    // {selected, scanned} of the last covering-index selection estimate, see estimateSelection()
+    private final long[] coveringEstimate = new long[2];
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     // the PARTITION BY of a worker's copy compiled without it, see compileStreamingWindowCopy()
@@ -12479,7 +12486,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             RecordMetadata baseMetadata = factory.getMetadata();
 
-            boolean enableParallelGroupBy = executionContext.isParallelGroupByEnabled();
+            // a covering scan that selects fewer rows than a parallel task holds groups them faster
+            // on the query's thread than the workers do
+            boolean enableParallelGroupBy = executionContext.isParallelGroupByEnabled()
+                    && !(pageFramingSupported && isSmallCoveringSelection(factory, executionContext));
             // The vectorized (Rosti) group-by runs SIMD over raw page addresses with no
             // type-cast guard and no row-wise fallback, so it cannot read a column decoded
             // in its pre-conversion source type. Let the guarded Async group-by handle those.
@@ -16377,6 +16387,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return generateQuery(model.getNestedModel(), executionContext, true);
     }
 
+    /**
+     * The covering-index scan a table model generated: the factory itself, or the base of the
+     * filter that applies its residual predicate. Null for any other plan.
+     */
+    private static @Nullable CoveringIndexRecordCursorFactory coveringBaseOf(RecordCursorFactory factory) {
+        if (factory instanceof CoveringIndexRecordCursorFactory covering) {
+            return covering;
+        }
+        if ((factory instanceof AsyncFilteredRecordCursorFactory
+                || factory instanceof AsyncJitFilteredRecordCursorFactory
+                || factory instanceof FilteredRecordCursorFactory)
+                && factory.getBaseFactory() instanceof CoveringIndexRecordCursorFactory covering) {
+            return covering;
+        }
+        return null;
+    }
+
     private RecordCursorFactory generateTableQuery(
             IQueryModel model,
             SqlExecutionContext executionContext
@@ -16411,7 +16438,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // this is server side execution of the update. It executes against the reader metadata, which by now
             // has to be fully up-to-date due to WAL apply execution order.
             try (TableReader reader = executionContext.getReader(tableToken, model.getMetadataVersion())) {
+                // the where clause as it is before generation consumes it, should a scan replace the covering plan
+                final ExpressionNode coveringChoiceWhere = isCoveringScanChoiceCandidate(model, latestBy, reader, executionContext)
+                        ? ExpressionNode.deepClone(expressionNodePool, model.getWhereClause())
+                        : null;
                 result = generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
+                if (coveringChoiceWhere != null) {
+                    result = scanInPlaceOfFrequentCovering(model, executionContext, latestBy, supportsRandomAccess, reader, result, coveringChoiceWhere);
+                }
             }
         }
         if (tableToken.isLiveView() && !model.isUpdate()) {
@@ -16506,8 +16540,60 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && IndexType.isPosting(reader.getMetadata().getColumnIndexType(readerKeyColumnIndex));
     }
 
+    /**
+     * Whether a table model could generate a covering-index scan that a scan of the table should
+     * replace when the key turns out frequent, see {@link #scanInPlaceOfFrequentCovering}: a read
+     * with a where clause over a table with a covering index, no LATEST BY, and no hint that picks
+     * the access path.
+     */
+    private boolean isCoveringScanChoiceCandidate(
+            IQueryModel model,
+            ObjList<ExpressionNode> latestBy,
+            TableReader reader,
+            SqlExecutionContext executionContext
+    ) {
+        if (!configuration.isSqlIndexScanChoiceEnabled()
+                || !executionContext.isCoveringIndexEnabled()
+                || model.isUpdate()
+                || model.getWhereClause() == null
+                || latestBy.size() > 0
+                || isNoIndex(model)
+                || SqlHints.hasNoCoveringHint(model)
+                || SqlHints.hasUseIndexHint(model)
+                || SqlHints.hasForceUseCoveringHint(model)
+                || executionContext.isLiveViewCompile()
+                || executionContext.isOverriddenIntrinsics(reader.getTableToken())) {
+            return false;
+        }
+        final TableReaderMetadata metadata = reader.getMetadata();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            if (metadata.getColumnMetadata(i).isCovering()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private boolean isNoIndex(IQueryModel model) {
         return model == forcedScanModel || SqlHints.hasNoIndexHint(model);
+    }
+
+    /**
+     * Whether the covering-index scan under {@code factory}, with or without its residual filter,
+     * selects fewer rows than one parallel task holds
+     * ({@code cairo.sql.parallel.index.groupby.task.rows}), going by the posting index's per-key
+     * counts of the keys the plan was compiled with. Such a selection runs faster on the query's
+     * thread than spread over the workers, whose dispatch costs more than the rows. Scans of fewer
+     * than {@link #COVERING_CHOICE_MIN_SCANNED_ROWS} rows keep their plans: there both run in well
+     * under a millisecond.
+     */
+    private boolean isSmallCoveringSelection(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
+        final CoveringIndexRecordCursorFactory covering = coveringBaseOf(factory);
+        return covering != null
+                && configuration.isSqlIndexScanChoiceEnabled()
+                && covering.estimateSelection(executionContext, coveringEstimate)
+                && coveringEstimate[1] >= COVERING_CHOICE_MIN_SCANNED_ROWS
+                && coveringEstimate[0] < configuration.getSqlParallelIndexGroupByTaskRows();
     }
 
     private RecordCursorFactory newIndexGather(
@@ -19692,6 +19778,56 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
     }
 
+    /**
+     * Replaces a covering-index scan whose keys select a large share of the rows with the scan the
+     * {@code no_index} hint gives. A covering scan reads its rows from the posting index's sidecars,
+     * a row at a time on the query's thread for a single key; past a few percent of the table the
+     * parallel scan of the columns is faster, as for the index gather (see
+     * {@link IndexScanChoiceRecordCursorFactory}). The posting index's per-key counts decide, with
+     * the threshold of that choice, {@code cairo.sql.index.scan.choice.max.selectivity}.
+     * <p>
+     * The choice is made once, when the query compiles, from the keys the SQL names: a key that is
+     * a bind variable, symbol patterns and LATEST BY keep the covering plan. A cached plan keeps its
+     * choice until it is compiled again; both plans return the same rows. Scans of fewer than
+     * {@link #COVERING_CHOICE_MIN_SCANNED_ROWS} rows keep the covering plan.
+     */
+    private RecordCursorFactory scanInPlaceOfFrequentCovering(
+            IQueryModel model,
+            SqlExecutionContext executionContext,
+            ObjList<ExpressionNode> latestBy,
+            boolean supportsRandomAccess,
+            TableReader reader,
+            RecordCursorFactory coveringPlan,
+            ExpressionNode whereClause
+    ) throws SqlException {
+        final CoveringIndexRecordCursorFactory covering = coveringBaseOf(coveringPlan);
+        try {
+            if (covering == null
+                    || !covering.estimateSelection(executionContext, coveringEstimate)
+                    || coveringEstimate[1] < COVERING_CHOICE_MIN_SCANNED_ROWS
+                    || coveringEstimate[0] <= configuration.getSqlIndexScanChoiceMaxSelectivity() * coveringEstimate[1]) {
+                return coveringPlan;
+            }
+        } catch (Throwable th) {
+            Misc.free(coveringPlan);
+            throw th;
+        }
+        LOG.debug().$("covering or scan [table=").$(reader.getTableToken())
+                .$(", selected=").$(coveringEstimate[0])
+                .$(", scanned=").$(coveringEstimate[1])
+                .$(", plan=scan")
+                .I$();
+        Misc.free(coveringPlan);
+        model.setWhereClause(whereClause);
+        final IQueryModel prevForcedScanModel = forcedScanModel;
+        forcedScanModel = model;
+        try {
+            return generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
+        } finally {
+            forcedScanModel = prevForcedScanModel;
+        }
+    }
+
     private RecordCursorFactory wrapCoveringWithFilter(
             CoveringIndexRecordCursorFactory coveringFactory,
             Function filter,
@@ -19706,7 +19842,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // functions), the filter, and the limit function we may create here.
         Function limitLoFunction = null;
         try {
-            if (executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
+            if (executionContext.isParallelFilterEnabled()
+                    && coveringFactory.supportsPageFrameCursor()
+                    && !isSmallCoveringSelection(coveringFactory, executionContext)) {
                 limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                 // A pushed-down LIMIT lets the async filter stop early (positive limit)
                 // or scan the tail backward (negative limit). Both are correct only
