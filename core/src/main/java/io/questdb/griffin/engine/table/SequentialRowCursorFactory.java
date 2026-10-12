@@ -110,8 +110,12 @@ public class SequentialRowCursorFactory implements KeyedRowCursorFactory {
 
     @Override
     public int getIndexKey(int keyIndex) {
-        if (cursorFactories.getQuick(keyIndex) instanceof SymbolFunctionRowCursorFactory symbolFactory) {
+        final RowCursorFactory factory = cursorFactories.getQuick(keyIndex);
+        if (factory instanceof SymbolFunctionRowCursorFactory symbolFactory) {
             return TableUtils.toIndexKey(symbolFactory.getSymbolKey());
+        }
+        if (factory instanceof DeferredSymbolIndexRowCursorFactory deferredFactory) {
+            return deferredFactory.getIndexKey();
         }
         return -1;
     }
@@ -124,6 +128,13 @@ public class SequentialRowCursorFactory implements KeyedRowCursorFactory {
     @Override
     public void init(PageFrameCursor pageFrameCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
         RowCursorFactory.init(cursorFactories, pageFrameCursor, sqlExecutionContext);
+    }
+
+    @Override
+    public boolean isPlainKeyScan(int keyIndex) {
+        // the unfiltered per-symbol index scans, nothing derived from them
+        final Class<?> factoryClass = cursorFactories.getQuick(keyIndex).getClass();
+        return factoryClass == SymbolIndexRowCursorFactory.class || factoryClass == DeferredSymbolIndexRowCursorFactory.class;
     }
 
     @Override

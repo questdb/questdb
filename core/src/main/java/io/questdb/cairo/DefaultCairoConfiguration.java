@@ -1941,6 +1941,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelFrameDispatchEnabled() {
+        return true;
+    }
+
+    @Override
     public long getSqlParallelIndexGroupByTaskRows() {
         return 65_536;
     }

@@ -70,4 +70,15 @@ public interface KeyedRowCursorFactory extends RowCursorFactory {
      * Number of keys, valid once {@link #prepareCursor} has run for the current execution.
      */
     int getKeyCount();
+
+    /**
+     * Whether the rows of the key at {@code keyIndex} in a frame are exactly those of the index
+     * cursor {@code getIndexReader(getIndexColumnIndex(), getIndexDirection()).getCursor(getIndexKey(keyIndex),
+     * partitionLo, partitionHi - 1)}, with no filter, or none when {@link #getIndexKey} is negative.
+     * Lets {@link KeyMajorPageFrameRecordCursor} count and read them on other threads. Valid once
+     * {@link #prepareCursor} has run.
+     */
+    default boolean isPlainKeyScan(int keyIndex) {
+        return false;
+    }
 }

@@ -1985,6 +1985,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlParallelFrameDispatchEnabled() {
+        return getDelegate().isSqlParallelFrameDispatchEnabled();
+    }
+
+    @Override
     public long getSqlParallelIndexGroupByTaskRows() {
         return getDelegate().getSqlParallelIndexGroupByTaskRows();
     }
