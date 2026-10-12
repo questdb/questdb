@@ -3417,7 +3417,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                 "LIST (0s, 9000000000000s) AS h"
                 );
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "overflow");
+                TestUtils.assertContains(e.getFlyweightMessage(), "horizon timestamp overflow");
             }
         });
     }
@@ -7782,7 +7782,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                                 "LIST (0s, 9000000000000s) AS h"
                 );
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "overflow");
+                TestUtils.assertContains(e.getFlyweightMessage(), "horizon timestamp overflow");
             }
         });
     }
