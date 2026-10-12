@@ -97,20 +97,15 @@ public interface IODispatcherConfiguration {
     NetworkFacade getNetworkFacade();
 
     /**
-     * How long, in milliseconds, the dispatcher must have found nothing to do before it may block
-     * in its poll, see {@link #getPollBlockTimeout()}.
-     */
-    default long getPollBlockIdle() {
-        return 2;
-    }
-
-    /**
-     * The longest, in milliseconds, an idle dispatcher blocks in its poll waiting for a socket
-     * event, instead of returning at once and leaving the worker to back off. A worker that backs
-     * off parks for up to its sleep timeout and only then sees a request, while one blocked in the
-     * poll wakes when the request arrives. The dispatcher blocks only once it has been idle for
-     * {@link #getPollBlockIdle()} and every connection it handed out has come back to it, so no
-     * connection waits to be re-armed while it blocks. 0 disables blocking (Linux only).
+     * The longest, in milliseconds, a worker waits in this dispatcher's poll in place of its nap or
+     * sleep (see {@link io.questdb.mp.IdleParkJob}). A worker that has found nothing to do parks
+     * for up to its sleep timeout and only then sees a request, while one waiting in the poll wakes
+     * when the request arrives. The wait never outlasts the nap or sleep it replaces, so the
+     * worker's other jobs (other dispatchers on a shared pool) wait for it no longer than they
+     * would have. A worker waits here only while every connection of the dispatcher is armed in the
+     * poll and one of them asks for it ({@link IOContext#isIdlePollTarget()}: on HTTP, a QWP
+     * connection), and, in a fiber-hosting pool, while a sibling worker is parked and can take the
+     * wake-ups this one cannot. 0 disables it. Linux only.
      */
     default int getPollBlockTimeout() {
         return 0;

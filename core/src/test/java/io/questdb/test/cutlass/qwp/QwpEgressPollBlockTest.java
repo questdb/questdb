@@ -38,21 +38,22 @@ import org.junit.Test;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.Socket;
 import java.nio.file.Files;
 
 /**
- * An idle HTTP dispatcher blocks in its poll ({@code http.net.poll.block.timeout}) instead of
- * leaving its workers to back off, and must still answer every request as soon as it arrives:
- * a socket event wakes the poll, and the dispatcher never blocks while a connection is out with
- * a worker, whose re-registration could not wake it. The tests set a timeout far longer than any
- * request takes, so a request that waited for it would show; and they check that the dispatcher
- * did block, in {@code epoll_wait}, so that a fast answer is not the trivial one of a dispatcher
- * that never blocks.
+ * While a QWP connection is open, an idle network worker waits in the HTTP dispatcher's poll ({@code http.net.poll.block.timeout})
+ * in place of its nap or sleep, and must still answer every request as soon as it arrives: a
+ * socket event wakes the poll, and the worker never waits there while a connection is out with a
+ * worker, whose re-registration could not wake it. The tests make the workers sleep, and so wait
+ * in the poll, for far longer than any request takes, so a request that waited for the wait to end
+ * would show; and they check that a worker did wait in {@code epoll_wait}, so that a fast answer
+ * is not the trivial one of a poll that never blocks.
  */
 public class QwpEgressPollBlockTest extends AbstractReusedServerQwpEgressTest {
-    // far above what a request takes: a request that waited for the timeout fails the test
+    // far above what a request takes: a request that waited for the park to end fails the test
     private static final long MAX_REQUEST_MILLIS = 500;
-    private static final String TIMEOUT_MILLIS = "1000";
+    private static final String PARK_MILLIS = "1000";
 
     @Override
     @Before
@@ -67,7 +68,7 @@ public class QwpEgressPollBlockTest extends AbstractReusedServerQwpEgressTest {
         // connection, it blocks only once the connection is back in the poll
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    TestServerMain ignore = startPollBlockServer("0");
+                    TestServerMain ignore = startPollBlockServer("2", "100");
                     QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)
             ) {
                 client.connect();
@@ -88,7 +89,7 @@ public class QwpEgressPollBlockTest extends AbstractReusedServerQwpEgressTest {
     public void testBlockedPollWakesOnRequest() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (
-                    TestServerMain ignore = startPollBlockServer("1");
+                    TestServerMain ignore = startPollBlockServer("2", "100");
                     QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)
             ) {
                 client.connect();
@@ -102,34 +103,14 @@ public class QwpEgressPollBlockTest extends AbstractReusedServerQwpEgressTest {
     }
 
     @Test
-    public void testNoBlockWhileBusierThanIdle() throws Exception {
-        // a dispatcher that has not been idle for http.net.poll.block.idle does not block: requests
-        // 20ms apart against an idle of 2s never find it in its poll, after the first
-        TestUtils.assertMemoryLeak(() -> {
-            try (
-                    TestServerMain ignore = startPollBlockServer("2000");
-                    QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)
-            ) {
-                client.connect();
-                // the server may have idled 2s since it started: one request makes it busy. The loop
-                // outlasts the idle threshold, so that a dispatcher that counted its idle time from
-                // anything but its last useful pass would block within it
-                assertSelectOneFast(client, 0);
-                final long deadline = System.currentTimeMillis() + 3_000;
-                int i = 1;
-                while (System.currentTimeMillis() < deadline) {
-                    Os.sleep(20);
-                    Assert.assertFalse("blocked within the idle threshold", isPollBlocked());
-                    assertSelectOneFast(client, i++);
-                }
-            }
-        });
-    }
-
-    @Test
     public void testNewConnectionWakesBlockedPoll() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            try (TestServerMain ignore = startPollBlockServer("1")) {
+            try (
+                    TestServerMain ignore = startPollBlockServer("2", "100");
+                    // the worker waits in the poll only while the dispatcher has a connection
+                    QwpQueryClient idle = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)
+            ) {
+                idle.connect();
                 for (int i = 0; i < 5; i++) {
                     Assert.assertTrue("the dispatcher never blocked in its poll", awaitBlockedPoll());
                     final long start = System.nanoTime();
@@ -142,6 +123,126 @@ public class QwpEgressPollBlockTest extends AbstractReusedServerQwpEgressTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testNoBlockWhileConnectionIsOut() throws Exception {
+        // a connection out with a worker comes back through the interest queue, which cannot wake
+        // the poll: while one is out, no worker waits there, though another connection is armed
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    TestServerMain ignore = startPollBlockServer("2", "100");
+                    QwpQueryClient idle = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT);
+                    QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)
+            ) {
+                idle.connect();
+                client.connect();
+                Assert.assertTrue("the dispatcher never blocked in its poll", awaitBlockedPoll());
+                final Throwable[] error = {null};
+                final Thread sleeper = new Thread(() -> {
+                    try {
+                        client.execute("sleep(2)", new QwpColumnBatchHandler() {
+                            @Override
+                            public void onBatch(QwpColumnBatch batch) {
+                            }
+
+                            @Override
+                            public void onEnd(long totalRows) {
+                            }
+
+                            @Override
+                            public void onError(byte status, String message) {
+                                error[0] = new AssertionError(message);
+                            }
+                        });
+                    } catch (Throwable t) {
+                        error[0] = t;
+                    }
+                });
+                sleeper.start();
+                try {
+                    // the request reaches the server and leaves the poll
+                    Os.sleep(300);
+                    final long deadline = System.currentTimeMillis() + 1_200;
+                    while (System.currentTimeMillis() < deadline) {
+                        Assert.assertFalse("a worker waits in the HTTP poll while a connection is out", isPollBlocked());
+                        Os.sleep(1);
+                    }
+                } finally {
+                    sleeper.join();
+                }
+                Assert.assertNull(error[0]);
+                assertSelectOneFast(client, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testNoBlockWhileWorkersSpin() throws Exception {
+        // a worker waits in the poll only in place of its nap or sleep: workers that never back
+        // off that far never wait there, however idle the dispatcher
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    TestServerMain ignore = startPollBlockServer("2", "1000000000000000");
+                    QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)
+            ) {
+                client.connect();
+                assertSelectOneFast(client, 0);
+                assertNoBlockedPoll();
+                assertSelectOneFast(client, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testNoBlockWithOneWorker() throws Exception {
+        // a lone fiber-hosting worker is the pool's only fiber wake target, which a worker waiting
+        // in the poll cannot be: it sleeps as before
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    TestServerMain ignore = startPollBlockServer("1", "100");
+                    QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)
+            ) {
+                client.connect();
+                assertNoBlockedPoll();
+            }
+        });
+    }
+
+    @Test
+    public void testNoBlockWithPlainHttpConnection() throws Exception {
+        // the wait is for QWP connections: an idle plain HTTP connection leaves the workers to
+        // sleep as before
+        TestUtils.assertMemoryLeak(() -> {
+            try (
+                    TestServerMain ignore = startPollBlockServer("2", "100");
+                    Socket ignored = new Socket("127.0.0.1", HTTP_PORT)
+            ) {
+                assertNoBlockedPoll();
+            }
+        });
+    }
+
+    @Test
+    public void testNoBlockWithoutConnections() throws Exception {
+        // with no connection there is no request to wait for: the workers sleep as before
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain ignore = startPollBlockServer("2", "100")) {
+                assertNoBlockedPoll();
+                try (QwpQueryClient client = QwpQueryClient.newPlainText("127.0.0.1", HTTP_PORT)) {
+                    client.connect();
+                    Assert.assertTrue("the dispatcher never blocked in its poll", awaitBlockedPoll());
+                }
+            }
+        });
+    }
+
+    private static void assertNoBlockedPoll() {
+        final long deadline = System.currentTimeMillis() + 1_500;
+        while (System.currentTimeMillis() < deadline) {
+            Assert.assertFalse("a worker waits in the HTTP poll", isPollBlocked());
+            Os.sleep(1);
+        }
     }
 
     private static void assertSelectOneFast(QwpQueryClient client, int i) {
@@ -197,11 +298,15 @@ public class QwpEgressPollBlockTest extends AbstractReusedServerQwpEgressTest {
         return false;
     }
 
-    private static TestServerMain startPollBlockServer(String idleMillis) {
+    // The workers back off to a sleep of PARK_MILLIS after sleepThreshold idle passes; a worker
+    // that sleeps may wait in the poll for as long instead.
+    private static TestServerMain startPollBlockServer(String networkWorkers, String sleepThreshold) {
         return startServerWithRetry(
-                PropertyKey.HTTP_NET_POLL_BLOCK_TIMEOUT.getEnvVarName(), TIMEOUT_MILLIS,
-                PropertyKey.HTTP_NET_POLL_BLOCK_IDLE.getEnvVarName(), idleMillis,
-                PropertyKey.SHARED_NETWORK_WORKER_COUNT.getEnvVarName(), "2",
+                PropertyKey.HTTP_NET_POLL_BLOCK_TIMEOUT.getEnvVarName(), PARK_MILLIS,
+                PropertyKey.SHARED_WORKER_NAP_THRESHOLD.getEnvVarName(), sleepThreshold,
+                PropertyKey.SHARED_WORKER_SLEEP_THRESHOLD.getEnvVarName(), sleepThreshold,
+                PropertyKey.SHARED_WORKER_SLEEP_TIMEOUT.getEnvVarName(), PARK_MILLIS,
+                PropertyKey.SHARED_NETWORK_WORKER_COUNT.getEnvVarName(), networkWorkers,
                 PropertyKey.SHARED_WORKER_COUNT.getEnvVarName(), "2"
         );
     }

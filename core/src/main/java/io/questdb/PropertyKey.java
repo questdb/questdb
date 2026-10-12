@@ -386,7 +386,6 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_NET_CONNECTION_TIMEOUT("http.net.connection.timeout"),
     HTTP_NET_QUEUED_CONNECTION_TIMEOUT("http.net.queued.connection.timeout"),
     HTTP_NET_CONNECTION_QUEUE_TIMEOUT("http.net.connection.queue.timeout"),
-    HTTP_NET_POLL_BLOCK_IDLE("http.net.poll.block.idle"),
     HTTP_NET_POLL_BLOCK_TIMEOUT("http.net.poll.block.timeout"),
     HTTP_NET_SND_BUF_SIZE("http.net.snd.buf.size"), // deprecated
     HTTP_NET_CONNECTION_SNDBUF("http.net.connection.sndbuf"),

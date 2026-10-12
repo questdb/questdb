@@ -168,7 +168,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(300000, configuration.getHttpServerConfiguration().getTimeout());
         Assert.assertEquals(5000, configuration.getHttpServerConfiguration().getQueueTimeout());
         Assert.assertEquals(10, configuration.getHttpServerConfiguration().getPollBlockTimeout());
-        Assert.assertEquals(2, configuration.getHttpServerConfiguration().getPollBlockIdle());
         Assert.assertEquals(256, configuration.getHttpServerConfiguration().getInterestQueueCapacity());
         Assert.assertEquals(IOOperation.READ, configuration.getHttpServerConfiguration().getInitialBias());
         Assert.assertEquals(256, configuration.getHttpServerConfiguration().getListenBacklog());
@@ -1175,27 +1174,27 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testPollBlockNeedsTwoHttpWorkers() throws Exception {
-        // the worker blocked in the poll is no wake target for the pool's other work: a pool of one
-        // never blocks
+    public void testPollBlockTimeout() throws Exception {
+        // the worker pool decides when a worker may wait in the poll (see IdleParkJob), so the
+        // timeout is what was configured, whatever the pool size
         final String[][] cases = {
-                {"shared.network.worker.count", "1", "0"},
-                {"shared.network.worker.count", "2", "10"},
-                {"http.worker.count", "1", "0"},
-                {"http.worker.count", "3", "10"},
+                {"shared.network.worker.count", "1"},
+                {"shared.network.worker.count", "2"},
+                {"http.worker.count", "1"},
+                {"http.worker.count", "3"},
         };
         for (String[] c : cases) {
             Properties properties = new Properties();
             properties.setProperty(c[0], c[1]);
             final PropServerConfiguration configuration = newPropServerConfiguration(properties);
-            Assert.assertEquals(c[0] + "=" + c[1], Integer.parseInt(c[2]), configuration.getHttpServerConfiguration().getPollBlockTimeout());
+            Assert.assertEquals(c[0] + "=" + c[1], 10, configuration.getHttpServerConfiguration().getPollBlockTimeout());
         }
         Properties properties = new Properties();
         properties.setProperty("http.net.poll.block.timeout", "250");
-        properties.setProperty("http.net.poll.block.idle", "7");
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(250, configuration.getHttpServerConfiguration().getPollBlockTimeout());
-        Assert.assertEquals(7, configuration.getHttpServerConfiguration().getPollBlockIdle());
+        Assert.assertEquals(0, configuration.getPGWireConfiguration().getPollBlockTimeout());
+        Assert.assertEquals(0, configuration.getLineTcpReceiverConfiguration().getPollBlockTimeout());
     }
 
     @Test
@@ -1702,7 +1701,6 @@ public class PropServerConfigurationTest {
         final String[][] cases = {
                 {"http.net.poll.block.timeout", "-1", "http.net.poll.block.timeout must be between 0 and 1000 milliseconds"},
                 {"http.net.poll.block.timeout", "1001", "http.net.poll.block.timeout must be between 0 and 1000 milliseconds"},
-                {"http.net.poll.block.idle", "-1", "http.net.poll.block.idle must not be negative"},
         };
         for (String[] c : cases) {
             Properties properties = new Properties();
