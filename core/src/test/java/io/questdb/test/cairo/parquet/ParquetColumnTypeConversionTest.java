@@ -2216,6 +2216,74 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     /**
+     * An indexed SYMBOL column that was converted from VARCHAR keeps its original
+     * writer index as the parquet column id. An O3 merge that updates such a parquet
+     * partition in place must rebuild the symbol index, otherwise indexed lookups
+     * return rows whose ids no longer match the merged data.
+     */
+    @Test
+    public void testO3InsertRebuildsIndexOfConvertedSymbolParquetColumn() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (s VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO pt VALUES
+                    ('a', '2024-01-01T00:00:00.000000Z'), ('b', '2024-01-01T01:00:00.000000Z'),
+                    ('c', '2024-01-01T02:00:00.000000Z'), ('a', '2024-01-01T03:00:00.000000Z'),
+                    ('b', '2024-01-01T04:00:00.000000Z'), ('c', '2024-01-01T05:00:00.000000Z'),
+                    ('a', '2024-01-01T06:00:00.000000Z'), ('b', '2024-01-01T07:00:00.000000Z'),
+                    ('c', '2024-01-01T08:00:00.000000Z'), ('a', '2024-01-01T09:00:00.000000Z'),
+                    ('b', '2024-01-01T10:00:00.000000Z'), ('c', '2024-01-01T11:00:00.000000Z'),
+                    ('a', '2024-01-02T00:00:00.000000Z')""");
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN s TYPE SYMBOL");
+            drainWalQueue();
+            execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX");
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            final String query = "SELECT * FROM pt WHERE s = 'a' AND ts IN '2024-01-01'";
+            final long nameTxn = getPartitionNameTxn("pt");
+
+            execute("INSERT INTO pt VALUES ('a', '2024-01-01T04:30:00.000000Z')");
+            drainWalQueue();
+            Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("pt"));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("""
+                            s\tts
+                            a\t2024-01-01T00:00:00.000000Z
+                            a\t2024-01-01T03:00:00.000000Z
+                            a\t2024-01-01T04:30:00.000000Z
+                            a\t2024-01-01T06:00:00.000000Z
+                            a\t2024-01-01T09:00:00.000000Z
+                            """);
+
+            execute("INSERT INTO pt VALUES ('a', '2024-01-01T06:30:00.000000Z')");
+            drainWalQueue();
+            Assert.assertEquals("O3 merge must update the parquet partition in place", nameTxn, getPartitionNameTxn("pt"));
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .withPlanContaining("Index forward scan on: s")
+                    .returns("""
+                            s\tts
+                            a\t2024-01-01T00:00:00.000000Z
+                            a\t2024-01-01T03:00:00.000000Z
+                            a\t2024-01-01T04:30:00.000000Z
+                            a\t2024-01-01T06:00:00.000000Z
+                            a\t2024-01-01T06:30:00.000000Z
+                            a\t2024-01-01T09:00:00.000000Z
+                            """);
+        });
+    }
+
+    /**
      * O3 insert into a parquet partition that has a pending column type cast must
      * rewrite the parquet with the new type, materializing the conversion. The
      * partition stays in parquet format but the on-disk parquet column type
