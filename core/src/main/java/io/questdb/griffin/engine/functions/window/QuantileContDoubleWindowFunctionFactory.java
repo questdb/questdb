@@ -24,16 +24,7 @@
 
 package io.questdb.griffin.engine.functions.window;
 
-import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.sql.Function;
-import io.questdb.griffin.SqlException;
-import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.IntList;
-import io.questdb.std.ObjList;
-
-public class QuantileContDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
-
-    private final PercentileContDoubleWindowFunctionFactory delegate = new PercentileContDoubleWindowFunctionFactory();
+public class QuantileContDoubleWindowFunctionFactory extends PercentileContDoubleWindowFunctionFactory {
 
     @Override
     public String getSignature() {
@@ -41,13 +32,7 @@ public class QuantileContDoubleWindowFunctionFactory extends AbstractWindowFunct
     }
 
     @Override
-    public Function newInstance(
-            int position,
-            ObjList<Function> args,
-            IntList argPositions,
-            CairoConfiguration configuration,
-            SqlExecutionContext sqlExecutionContext
-    ) throws SqlException {
-        return delegate.newInstance(position, args, argPositions, configuration, sqlExecutionContext);
+    protected String name() {
+        return "quantile_cont";
     }
 }

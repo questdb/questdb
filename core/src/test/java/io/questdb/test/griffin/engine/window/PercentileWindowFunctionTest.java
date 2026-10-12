@@ -1195,6 +1195,82 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQuantileAliasesRejectFramesUnderOwnName() throws Exception {
+        // The aliases reject the same frames as percentile_disc and percentile_cont, and the error names
+        // the function the query called.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            assertExceptionNoLeakCheck(
+                    "SELECT quantile_disc(v, 0.5) OVER (PARTITION BY k ORDER BY ts) FROM t",
+                    7,
+                    "quantile_disc window function only supports whole partition frames"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT quantile_cont(v, 0.5) OVER (ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
+                    7,
+                    "quantile_cont window function only supports whole partition frames"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT quantile_disc(v, ARRAY[0.25, 0.75]) OVER (ORDER BY ts) FROM t",
+                    7,
+                    "quantile_disc window function only supports whole partition frames"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT quantile_cont(v, ARRAY[0.25, 0.75]) OVER (PARTITION BY k ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
+                    7,
+                    "quantile_cont window function only supports whole partition frames"
+            );
+        });
+    }
+
+    @Test
+    public void testQuantileAliasesShowOwnNameInPlan() throws Exception {
+        // EXPLAIN names the alias the query called rather than the percentile function behind it, and so
+        // does the null function an empty frame compiles to.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v DOUBLE)");
+            execute("INSERT INTO t VALUES ('a', 1.0), ('b', 2.0), ('a', 3.0)");
+            assertQuery("""
+                    SELECT k, v, quantile_disc(v, 0.5) OVER (PARTITION BY k) qd, quantile_cont(v, 0.5) OVER () qc,
+                        quantile_disc(v, ARRAY[0.5]) OVER () qda, quantile_cont(v, ARRAY[0.5]) OVER (PARTITION BY k) qca
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            CachedWindow
+                              unorderedFunctions: [quantile_disc(v, 0.5) over (partition by [k]),quantile_cont(v, 0.5) over (),quantile_disc(v, ARRAY[0.5]) over (),quantile_cont(v, ARRAY[0.5]) over (partition by [k])]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            k\tv\tqd\tqc\tqda\tqca
+                            a\t1.0\t1.0\t2.0\t[2.0]\t[2.0]
+                            b\t2.0\t2.0\t2.0\t[2.0]\t[2.0]
+                            a\t3.0\t1.0\t2.0\t[2.0]\t[2.0]
+                            """);
+            assertQuery("SELECT v, quantile_disc(v, 0.5) OVER (ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) qd FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Window
+                              functions: [quantile_disc(v) over ( rows between 1 preceding and 2 preceding)]
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            v\tqd
+                            1.0\tnull
+                            2.0\tnull
+                            3.0\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testQuantileContAliasEquivalence() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) AS value FROM long_sequence(10))");

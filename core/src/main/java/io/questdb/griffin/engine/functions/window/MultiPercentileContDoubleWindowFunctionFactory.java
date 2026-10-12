@@ -96,7 +96,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         // Percentile functions only support default frame over whole partition
         // Default frame is whole partition when there's no ORDER BY
         if (!windowContext.isDefaultFrame() || windowContext.isOrdered()) {
-            throw SqlException.$(position, "percentile_cont window function only supports whole partition frames");
+            throw SqlException.$(position, name()).put(" window function only supports whole partition frames");
         }
 
         if (partitionByRecord != null) {
@@ -112,11 +112,20 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                     arg,
                     percentilesFunc,
                     percentilesPos,
-                    configuration
+                    configuration,
+                    name()
             );
         } else {
-            return new MultiPercentileContOverWholeResultSetFunction(arg, percentilesFunc, percentilesPos, configuration);
+            return new MultiPercentileContOverWholeResultSetFunction(arg, percentilesFunc, percentilesPos, configuration, name());
         }
+    }
+
+    /**
+     * The name this function reports in errors and in the query plan. The quantile_cont alias
+     * overrides it, so a query that calls the alias sees the name it used.
+     */
+    protected String name() {
+        return NAME;
     }
 
     // Handles percentile_cont() over (partition by x) with multiple percentiles
@@ -127,6 +136,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         private static final long SIZE_OFFSET_BLOCK = 8;
 
         private final MemoryARW listMemory;
+        private final String name;
         private final Function percentilesFunc;
         private final int percentilesPos;
         private final MemoryARW resultMemory;
@@ -140,9 +150,11 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                 Function arg,
                 Function percentilesFunc,
                 int percentilesPos,
-                CairoConfiguration configuration
+                CairoConfiguration configuration,
+                String name
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.name = name;
             this.percentilesFunc = percentilesFunc;
             this.percentilesPos = percentilesPos;
             this.listMemory = Vm.getCARWInstance(
@@ -200,7 +212,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -361,6 +373,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
     // Handles percentile_cont() over () - whole result set with multiple percentiles
     static class MultiPercentileContOverWholeResultSetFunction extends BaseWindowFunction implements Reopenable, WindowArrayFunction {
         private final MemoryARW listMemory;
+        private final String name;
         private final Function percentilesFunc;
         private final int percentilesPos;
         private final int type;
@@ -369,8 +382,9 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         private double[] results;
         private long size;
 
-        public MultiPercentileContOverWholeResultSetFunction(Function arg, Function percentilesFunc, int percentilesPos, CairoConfiguration configuration) {
+        public MultiPercentileContOverWholeResultSetFunction(Function arg, Function percentilesFunc, int percentilesPos, CairoConfiguration configuration, String name) {
             super(arg);
+            this.name = name;
             this.percentilesFunc = percentilesFunc;
             this.percentilesPos = percentilesPos;
             this.listMemory = Vm.getCARWInstance(
@@ -412,7 +426,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override

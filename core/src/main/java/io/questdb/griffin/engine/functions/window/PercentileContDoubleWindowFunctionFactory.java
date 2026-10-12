@@ -97,13 +97,13 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
         long rowsHi = windowContext.getRowsHi();
 
         if (rowsHi < rowsLo) {
-            return new DoubleNullFunction(arg, NAME, rowsLo, rowsHi, framingMode == WindowExpression.FRAMING_RANGE, partitionByRecord);
+            return new DoubleNullFunction(arg, name(), rowsLo, rowsHi, framingMode == WindowExpression.FRAMING_RANGE, partitionByRecord);
         }
 
         // Percentile functions only support default frame over whole partition
         // Default frame is whole partition when there's no ORDER BY
         if (!windowContext.isDefaultFrame() || windowContext.isOrdered()) {
-            throw SqlException.$(position, "percentile_cont window function only supports whole partition frames");
+            throw SqlException.$(position, name()).put(" window function only supports whole partition frames");
         }
 
         if (partitionByRecord != null) {
@@ -119,11 +119,20 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
                     arg,
                     percentileFunc,
                     percentilePos,
-                    configuration
+                    configuration,
+                    name()
             );
         } else {
-            return new PercentileContOverWholeResultSetFunction(arg, percentileFunc, percentilePos, configuration);
+            return new PercentileContOverWholeResultSetFunction(arg, percentileFunc, percentilePos, configuration, name());
         }
+    }
+
+    /**
+     * The name this function reports in errors and in the query plan. The quantile_cont alias
+     * overrides it, so a query that calls the alias sees the name it used.
+     */
+    protected String name() {
+        return NAME;
     }
 
     // Handles percentile_cont() over (partition by x)
@@ -134,6 +143,7 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
         private static final long SIZE_OFFSET_BLOCK = 8;
 
         private final MemoryARW listMemory;
+        private final String name;
         private final Function percentileFunc;
         private final int percentilePos;
         private double result;
@@ -145,9 +155,11 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
                 Function arg,
                 Function percentileFunc,
                 int percentilePos,
-                CairoConfiguration configuration
+                CairoConfiguration configuration,
+                String name
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.name = name;
             this.percentileFunc = percentileFunc;
             this.percentilePos = percentilePos;
             this.listMemory = Vm.getCARWInstance(
@@ -171,7 +183,7 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -320,13 +332,15 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
     // Handles percentile_cont() over () - whole result set
     static class PercentileContOverWholeResultSetFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
         private final MemoryARW listMemory;
+        private final String name;
         private final Function percentileFunc;
         private final int percentilePos;
         private double result;
         private long size;
 
-        public PercentileContOverWholeResultSetFunction(Function arg, Function percentileFunc, int percentilePos, CairoConfiguration configuration) {
+        public PercentileContOverWholeResultSetFunction(Function arg, Function percentileFunc, int percentilePos, CairoConfiguration configuration, String name) {
             super(arg);
+            this.name = name;
             this.percentileFunc = percentileFunc;
             this.percentilePos = percentilePos;
             this.listMemory = Vm.getCARWInstance(
@@ -350,7 +364,7 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
