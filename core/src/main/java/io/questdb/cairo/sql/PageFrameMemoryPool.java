@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.arr.ArrayTypeDriver;
+import io.questdb.cairo.idx.CoveringCompressor;
 import io.questdb.cairo.idx.CoveringRowCursor;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.griffin.engine.table.parquet.ParquetDecoder;
@@ -103,6 +104,8 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     private static final byte FRAME_MEMORY_MASK = 1 << 2;
     private static final byte RECORD_A_MASK = 1;
     private static final byte RECORD_B_MASK = 1 << 1;
+    // values of a compressed covered run decoded at once, see CoveringBuffers.copyRun()
+    private static final int RUN_DECODE_CHUNK = 4096;
     private static final int SHELL_POOL_CAP = 256;
     // O(1) frameIndex lookup. LRU order is tracked separately via the
     // intrusive lruHead/lruTail doubly linked list through ParquetBuffers.
@@ -122,6 +125,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
     // eager production path, which allocates fresh per-frame buffers and frees
     // them at cursor close. The pool is per reduce slot, owned by one worker.
     private final IntObjHashMap<CoveringBuffers> coveringByFrame = new IntObjHashMap<>();
+    // scratch of RUN_DECODE_CHUNK longs for the range decode of compressed covered runs, see
+    // CoveringBuffers.copyRun(); 0 until first used, freed with the covered decode buffers
+    private long runDecodeWorkspace;
     // Each selected include count gets one scratch array. The pool is thread-unsafe,
     // so detached covered-cursor decodes can reuse these arrays without per-frame GC.
     private final ObjList<int[]> coveringIncludeIndexScratch = new ObjList<>();
@@ -1461,6 +1467,9 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
      * than per-frame.
      */
     private void releaseCoveringBuffers() {
+        if (runDecodeWorkspace != 0) {
+            runDecodeWorkspace = Unsafe.free(runDecodeWorkspace, (long) RUN_DECODE_CHUNK * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+        }
         if (coveringByFrame.size() == 0) {
             return;
         }
@@ -1733,7 +1742,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         // decodeInRuns(): the selected fixed-width columns, copied in runs, and the other selected columns
         private boolean[] isRowColumn;
         private boolean[] isRunColumn;
+        // the run's blocks, see captureRunBlocks(): compressed (a dense generation's key block)
+        // or the raw values of a sparse generation
         private long[] runBlockAddrs;
+        private boolean runBlocksCompressed;
         private int runColumnCount;
         private int[] runColumns;
         private int frameIndex = -1;
@@ -1926,17 +1938,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             return count;
         }
 
-        // The block addresses of the run columns for the current row; false when one of them cannot
-        // be read in bulk, which sends the row to the per-row path.
+        // The blocks of the run columns for the current row, without decoding them: a compressed
+        // block is decoded for the run's ordinals only when the run ends (copyRun()), so a frame
+        // that reads a slice of a key's block decodes that slice, not the whole block. False when
+        // one of them cannot be read in bulk, which sends the row to the per-row path.
         private boolean captureRunBlocks(CoveringRowCursor crc) {
             for (int i = 0, n = runColumnCount; i < n; i++) {
                 final int q = runColumns[i];
-                final long addr = crc.getCoveredBlockAddress(coveredIncludeIdx[q]);
+                final long addr = crc.getCoveredBlockId(coveredIncludeIdx[q]);
                 if (addr == 0) {
                     return false;
                 }
                 runBlockAddrs[i] = addr;
             }
+            runBlocksCompressed = crc.isCoveredBlockCompressed();
             return true;
         }
 
@@ -1947,7 +1962,19 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
             for (int i = 0, n = runColumnCount; i < n; i++) {
                 final int q = runColumns[i];
                 final int size = columnSizeBytes[q];
-                Unsafe.copyMemory(runBlockAddrs[i] + (long) startOrdinal * size, colAddr[q] + (long) startRow * size, (long) length * size);
+                final long dest = colAddr[q] + (long) startRow * size;
+                if (!runBlocksCompressed) {
+                    Unsafe.copyMemory(runBlockAddrs[i] + (long) startOrdinal * size, dest, (long) length * size);
+                    continue;
+                }
+                if (runDecodeWorkspace == 0) {
+                    runDecodeWorkspace = Unsafe.malloc((long) RUN_DECODE_CHUNK * Long.BYTES, MemoryTag.NATIVE_INDEX_READER);
+                }
+                for (int done = 0; done < length; ) {
+                    final int n1 = Math.min(RUN_DECODE_CHUNK, length - done);
+                    CoveringCompressor.decompressRangeToAddr(columnTypes[q], runBlockAddrs[i], startOrdinal + done, n1, dest + (long) done * size, runDecodeWorkspace);
+                    done += n1;
+                }
             }
         }
 

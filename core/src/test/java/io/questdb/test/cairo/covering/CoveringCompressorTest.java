@@ -77,6 +77,95 @@ public class CoveringCompressorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRangeDecodeMatchesBlockDecode() throws Exception {
+        // decompressRangeToAddr() decodes [lo, lo + n) of a block: the values the whole-block
+        // decoder writes there, for every layout (FoR, linear prediction, ALP with exceptions,
+        // raw), at aligned and unaligned positions
+        final Random rnd = new Random(1234567L);
+        final int[] types = {ColumnType.DOUBLE, ColumnType.FLOAT, ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.INT, ColumnType.SHORT, ColumnType.BYTE, ColumnType.UUID};
+        assertMemoryLeak(() -> {
+            for (int type : types) {
+                for (int round = 0; round < 12; round++) {
+                    final int count = 1 + rnd.nextInt(round < 6 ? 300 : 20_000);
+                    final int size = ColumnType.sizeOf(type);
+                    final long srcSize = (long) count * size;
+                    final long wsSize = (long) Math.max(1, count) * Long.BYTES * 2;
+                    final long destCap = Math.max(CoveringCompressor.maxCompressedSize(count, type), (long) count * size + 64);
+                    final long src = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+                    final long ws = Unsafe.malloc(wsSize, MemoryTag.NATIVE_DEFAULT);
+                    final long exc = Unsafe.malloc(count, MemoryTag.NATIVE_DEFAULT);
+                    final long block = Unsafe.malloc(destCap, MemoryTag.NATIVE_DEFAULT);
+                    final long full = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+                    final long part = Unsafe.malloc(srcSize, MemoryTag.NATIVE_DEFAULT);
+                    try {
+                        final boolean sortedLongs = (round & 1) == 1;
+                        long acc = rnd.nextInt(1000);
+                        for (int i = 0; i < count; i++) {
+                            final long a = src + (long) i * size;
+                            switch (ColumnType.tagOf(type)) {
+                                case ColumnType.DOUBLE -> Unsafe.putDouble(a, rnd.nextInt(10) == 0 ? rnd.nextDouble() : (rnd.nextInt(100_000) / 100.0));
+                                case ColumnType.FLOAT -> Unsafe.putFloat(a, rnd.nextInt(10) == 0 ? rnd.nextFloat() : (rnd.nextInt(10_000) / 10.0f));
+                                case ColumnType.LONG, ColumnType.TIMESTAMP -> {
+                                    acc += sortedLongs ? 1000 + rnd.nextInt(50) : 0;
+                                    Unsafe.putLong(a, sortedLongs ? acc : rnd.nextLong() >> rnd.nextInt(60));
+                                }
+                                case ColumnType.INT -> Unsafe.putInt(a, rnd.nextInt(1 << rnd.nextInt(31)) - 7);
+                                case ColumnType.SHORT -> Unsafe.putShort(a, (short) rnd.nextInt());
+                                case ColumnType.BYTE -> Unsafe.putByte(a, (byte) rnd.nextInt(round + 2));
+                                default -> {
+                                    for (int k = 0; k < size; k += 8) {
+                                        Unsafe.putLong(a + k, rnd.nextLong());
+                                    }
+                                }
+                            }
+                        }
+                        switch (ColumnType.tagOf(type)) {
+                            case ColumnType.DOUBLE -> CoveringCompressor.compressDoubles(src, count, 3, block, ws, exc);
+                            case ColumnType.FLOAT -> CoveringCompressor.compressFloats(src, count, block, ws, exc);
+                            case ColumnType.LONG -> CoveringCompressor.compressLongs(src, count, block);
+                            case ColumnType.TIMESTAMP -> {
+                                if (sortedLongs) {
+                                    CoveringCompressor.compressLongsLinearPred(src, count, block, ws);
+                                } else {
+                                    CoveringCompressor.compressLongs(src, count, block);
+                                }
+                            }
+                            case ColumnType.INT -> CoveringCompressor.compressInts(src, count, block, ws);
+                            case ColumnType.SHORT -> CoveringCompressor.compressShorts(src, count, block, ws);
+                            case ColumnType.BYTE -> CoveringCompressor.compressBytes(src, count, block, ws);
+                            default -> {
+                                Unsafe.putInt(block, count);
+                                Unsafe.copyMemory(src, block + 4, srcSize);
+                            }
+                        }
+                        CoveringCompressor.decompressRangeToAddr(type, block, 0, count, full, ws);
+                        for (int i = 0; i < count * size; i++) {
+                            Assert.assertEquals(ColumnType.nameOf(type) + " full decode at byte " + i, Unsafe.getByte(src + i), Unsafe.getByte(full + i));
+                        }
+                        for (int r = 0; r < 20; r++) {
+                            final int lo = rnd.nextInt(count);
+                            final int n = 1 + rnd.nextInt(count - lo);
+                            CoveringCompressor.decompressRangeToAddr(type, block, lo, n, part, ws);
+                            for (int i = 0; i < n * size; i++) {
+                                if (Unsafe.getByte(full + (long) lo * size + i) != Unsafe.getByte(part + i)) {
+                                    Assert.fail(ColumnType.nameOf(type) + " count=" + count + " range [" + lo + ", " + (lo + n) + ") differs at byte " + i);
+                                }
+                            }
+                        }
+                    } finally {
+                        Unsafe.free(src, srcSize, MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.free(ws, wsSize, MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.free(exc, count, MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.free(block, destCap, MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.free(full, srcSize, MemoryTag.NATIVE_DEFAULT);
+                        Unsafe.free(part, srcSize, MemoryTag.NATIVE_DEFAULT);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAllIdenticalValues() throws Exception {
         assertMemoryLeak(() -> {
             int count = 64;

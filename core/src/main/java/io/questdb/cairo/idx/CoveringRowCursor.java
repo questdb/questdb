@@ -55,6 +55,16 @@ public interface CoveringRowCursor extends RowCursor {
     }
 
     /**
+     * Whether the blocks {@link #getCoveredBlockId(int)} names for the current row are compressed
+     * key blocks of a dense generation, whose values
+     * {@link io.questdb.cairo.idx.CoveringCompressor#decompressRangeToAddr} decodes by ordinal, rather
+     * than a sparse generation's raw values, which the id addresses directly.
+     */
+    default boolean isCoveredBlockCompressed() {
+        return false;
+    }
+
+    /**
      * The current row's ordinal in its block, see {@link #getCoveredBlockAddress(int)}.
      */
     default int getCoveredBlockOrdinal() {
