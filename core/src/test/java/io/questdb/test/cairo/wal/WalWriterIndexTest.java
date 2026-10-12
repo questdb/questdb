@@ -27,10 +27,13 @@ package io.questdb.test.cairo.wal;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.griffin.engine.ops.AlterOperationBuilder;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -125,6 +128,30 @@ public class WalWriterIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAllowsRemoteParquetColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createTable();
+            convertToRemoteParquet();
+
+            // A new column has no historical data to index.
+            addIndexedColumn(token);
+            try (TableRecordMetadata metadata = engine.getSequencerMetadata(token)) {
+                Assert.assertEquals(indexType, metadata.getColumnIndexType(metadata.getColumnIndex("k")));
+            }
+            execute("INSERT INTO t VALUES (3, '2020-01-02T01:00:00', 'a')");
+            drainWalQueue();
+
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertTrue(reader.getTxFile().isPartitionRemotelyServed(0));
+                Assert.assertEquals(indexType, reader.getMetadata().getColumnIndexType(reader.getMetadata().getColumnIndex("k")));
+            }
+            assertQuery("SELECT x FROM t WHERE k IS NULL ORDER BY ts").returns("x\n1\n2\n");
+            assertQuery("SELECT x FROM t WHERE k = 'a' ORDER BY ts").returns("x\n3\n");
+        });
+    }
+
+    @Test
     public void testRejectsDeltaPartition() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken token = createTable();
@@ -166,18 +193,39 @@ public class WalWriterIndexTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRejectsRemoteParquetPartition() throws Exception {
+    public void testRejectsRemoteParquetIndex() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken token = createTable();
-            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            execute("ALTER TABLE t ADD COLUMN k SYMBOL");
+            execute("INSERT INTO t VALUES (3, '1970-01-01T01:00:00', 'a')");
             drainWalQueue();
+            convertToRemoteParquet();
+
+            // An existing column still needs an index build over the cold partition.
             try (TableWriter writer = getWriter("t")) {
-                writer.getTxWriter().setPartitionRemote(0, true);
-                writer.getTxWriter().setPartitionParquetGenerated(0, false);
-                writer.bumpPartitionTableVersion();
-                writer.commit();
+                final CairoException error = Assert.assertThrows(CairoException.class,
+                        () -> writer.addIndex("k", configuration.getIndexValueBlockSize(), indexType));
+                Assert.assertEquals(CairoException.METADATA_VALIDATION_RECOVERABLE, error.getErrno());
+                TestUtils.assertContains(error.getFlyweightMessage(), "cannot create index");
+                Assert.assertFalse(writer.getMetadata().isColumnIndexed(writer.getMetadata().getColumnIndex("k")));
             }
-            assertRejected(token, "cannot create index");
+            final long sequenced = engine.getTableSequencerAPI().lastTxn(token);
+            final AlterOperationBuilder builder = new AlterOperationBuilder();
+            builder.ofAddIndex(0, token, token.getTableId(), "k", configuration.getIndexValueBlockSize(), indexType, null);
+            try (WalWriter writer = engine.getWalWriter(token);
+                 AlterOperation alter = builder.build()) {
+                alter.withSecurityContext(sqlExecutionContext.getSecurityContext());
+                final CairoException error = Assert.assertThrows(CairoException.class, () -> writer.apply(alter, true));
+                Assert.assertEquals(CairoException.METADATA_VALIDATION_RECOVERABLE, error.getErrno());
+                TestUtils.assertContains(error.getFlyweightMessage(), "cannot create index");
+                Assert.assertFalse(writer.isDistressed());
+            }
+            Assert.assertEquals(sequenced, engine.getTableSequencerAPI().lastTxn(token));
+            try (TableRecordMetadata metadata = engine.getSequencerMetadata(token)) {
+                Assert.assertFalse(metadata.isColumnIndexed(metadata.getColumnIndex("k")));
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
         });
     }
 
@@ -217,6 +265,18 @@ public class WalWriterIndexTest extends AbstractCairoTest {
         TestUtils.assertContains(error.getFlyweightMessage(), message);
         Assert.assertFalse(writer.isDistressed());
         Assert.assertEquals(-1, writer.getMetadata().getColumnIndexQuiet("k"));
+    }
+
+    private void convertToRemoteParquet() throws Exception {
+        execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+        drainWalQueue();
+        try (TableWriter writer = getWriter("t")) {
+            writer.getTxWriter().setPartitionRemote(0, true);
+            writer.getTxWriter().setPartitionParquetGenerated(0, false);
+            writer.bumpPartitionTableVersion();
+            writer.commit();
+            Assert.assertTrue(writer.getTxWriter().isPartitionRemotelyServed(0));
+        }
     }
 
     private TableToken createTable() throws Exception {
