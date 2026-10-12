@@ -563,6 +563,15 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     /**
+     * A QWP connection (egress or ingress, the only callers of {@link #switchProtocol()}) lets an
+     * idle worker wait in the HTTP poll for its next request. Plain HTTP requests do not.
+     */
+    @Override
+    public boolean isIdlePollTarget() {
+        return isProtocolSwitched;
+    }
+
+    /**
      * Switches the connection to a different protocol (e.g., WebSocket).
      * After calling this, normal HTTP parsing is bypassed and the processor
      * handles raw socket I/O directly. The processor is resolved via

@@ -24,6 +24,7 @@
 
 package io.questdb.test.cutlass.qwp;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -131,6 +132,8 @@ public class QwpCursorBlockFillTest extends AbstractCairoTest {
             final Rnd driver = TestUtils.generateRandom(LOG);
             sqlExecutionContext.changePageFrameSizes(1, 64);
             sqlExecutionContext.setParallelHashJoinProbeEnabled(true);
+            // an index scan keeps the small page frames too, as before cairo.sql.index.scan.page.frame.max.rows
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, 1);
             createTable(driver);
             for (String indexType : new String[]{"posting", "bitmap"}) {
                 execute("drop table if exists ix");

@@ -58,6 +58,11 @@ import org.jetbrains.annotations.Nullable;
 // before it asks the row cursor for more. What the row cursor throws while read ahead is kept and
 // thrown by hasNext() once it has returned the rows before it: the row-by-row read meets it there.
 public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCursor {
+    // An index scan's frame holds up to cairo.sql.index.scan.page.frame.max.rows (16M) rows, so the
+    // once-per-frame breaker check alone would leave a dense key's frame uncancellable, and its fiber
+    // unyielding, for 16M rows. The scan also checks every 2^20 rows within a frame, the cadence the
+    // 1M-row frames gave it.
+    static final int IN_FRAME_BREAKER_CHECK_MASK = (1 << 20) - 1;
     private final boolean entityCursor;
     private final Function filter;
     private final RowCursorFactory rowCursorFactory;
@@ -78,6 +83,8 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
     private long pendingRowsPos;
     private RowCursor rowCursor;
     private long rowsProducedSinceSkip;
+    // rows read within frames since the last in-frame breaker check, see IN_FRAME_BREAKER_CHECK_MASK
+    private int rowsSinceBreakerCheck;
 
     public PageFrameRecordCursorImpl(
             CairoConfiguration configuration,
@@ -164,6 +171,9 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
                 throw e;
             }
             if (rowCursor != null && rowCursor.hasNext()) {
+                if ((++rowsSinceBreakerCheck & IN_FRAME_BREAKER_CHECK_MASK) == 0) {
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                }
                 final int frameIndex = frameCount - 1;
                 final long rowIndex = rowCursor.next();
                 frameMemoryPool.navigateTo(frameIndex, recordA);
@@ -256,8 +266,17 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
         }
         if (pendingError == null) {
             try {
+                final long rowsBefore = pendingRows.size();
                 while (pendingRows.size() < wanted && rowCursor.hasNext()) {
                     pendingRows.add(rowCursor.next());
+                }
+                // the rows a block consumer reads ahead count towards the in-frame breaker check too
+                final long rowsRead = pendingRows.size() - rowsBefore;
+                if (rowsSinceBreakerCheck + rowsRead > IN_FRAME_BREAKER_CHECK_MASK) {
+                    rowsSinceBreakerCheck = 0;
+                    circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+                } else {
+                    rowsSinceBreakerCheck += (int) rowsRead;
                 }
             } catch (RuntimeException e) {
                 // NoMoreFramesException (a LATEST ON value's row cursor ends the scan with it), or
@@ -299,6 +318,7 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
         clearPendingRows();
         maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
+        rowsSinceBreakerCheck = 0;
         blockRefusedFrameIndex = -1;
         // prepare for page frame iteration
         super.init(sqlExecutionContext.getMemoryTracker());
@@ -445,6 +465,7 @@ public final class PageFrameRecordCursorImpl extends AbstractPageFrameRecordCurs
         isExhausted = false;
         maxRowsAfterSkip = RecordCursor.UNBOUNDED_ROW_COUNT;
         rowsProducedSinceSkip = 0;
+        rowsSinceBreakerCheck = 0;
         blockRefusedFrameIndex = -1;
         super.toTop();
     }

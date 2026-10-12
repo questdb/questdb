@@ -120,22 +120,35 @@ final class WorkerWakeController implements FiberWakeSink {
         targets.setQuick(workerId, target);
     }
 
-    void unregisterReady(int workerId) {
+    // Whether another Worker than this one holds a ready bit now, so that a publisher has someone
+    // to wake while this one cannot be woken. A snapshot: the sibling may leave the idle path
+    // right after, which only means it is running its loop.
+    boolean isOtherReady(int workerId) {
+        return readyCount.get() > (isReady(workerId) ? 1 : 0);
+    }
+
+    // Takes this Worker's ready bit back. False when a publisher claimed it first: that publisher
+    // owns an unpark that is already on its way to the Worker.
+    boolean tryUnregisterReady(int workerId) {
         if (!isValidWorkerId(workerId)) {
-            return;
+            return false;
         }
         final int wordIndex = workerId >>> 6;
         final long bit = 1L << (workerId & 63);
         while (true) {
             final long current = Unsafe.arrayGetVolatile(readyWords, wordIndex);
             if ((current & bit) == 0) {
-                return;
+                return false;
             }
             if (Unsafe.cas(readyWords, wordIndex, current, current & ~bit)) {
                 decrementReadyCount();
-                return;
+                return true;
             }
         }
+    }
+
+    void unregisterReady(int workerId) {
+        tryUnregisterReady(workerId);
     }
 
     @Override

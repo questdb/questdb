@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -69,6 +70,8 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
     private int cachedRowGroupIndex;
     private long cachedRowGroupStartRow;
     private long filterBufEnd = -1;
+    // frames for a serial scan whose rows come from an index: see CairoConfiguration.getSqlIndexScanPageFrameMaxRows()
+    private boolean indexScan;
     // Track the lowest partition index that has not been released yet
     private int lowestOpenPartitionIndex = 0;
     private int pageFrameMaxRows;
@@ -217,7 +220,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
         this.reader = partitionFrameCursor.getTableReader();
         TablePageFrameCursor.buildColumnMapping(columnMapping, columnIndexes, reader.getMetadata());
         this.pageFrameMinRows = executionContext.getPageFrameMinRows();
-        this.pageFrameMaxRows = executionContext.getPageFrameMaxRows();
+        this.pageFrameMaxRows = indexScan
+                ? Math.max(executionContext.getPageFrameMaxRows(), executionContext.getCairoEngine().getConfiguration().getSqlIndexScanPageFrameMaxRows())
+                : executionContext.getPageFrameMaxRows();
         if (pushdownFilterConditions != null) {
             for (int i = 0, n = pushdownFilterConditions.size(); i < n; i++) {
                 pushdownFilterConditions.getQuick(i).init(executionContext);
@@ -238,6 +243,15 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reader.closePartitionByIndex(i);
         }
         lowestOpenPartitionIndex = reenterPartitionIndex;
+    }
+
+    /**
+     * Marks this cursor as the frame source of a serial scan whose rows come from an index. Its native
+     * frames then hold up to {@link io.questdb.cairo.CairoConfiguration#getSqlIndexScanPageFrameMaxRows()}
+     * rows, from the next {@link #of(SqlExecutionContext, PartitionFrameCursor)} on.
+     */
+    public void setIndexScan(boolean indexScan) {
+        this.indexScan = indexScan;
     }
 
     @Override
@@ -472,7 +486,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             final long frameCount = Math.max((partitionHi - partitionLo) / rowsPerFrame, 1);
             rowsPerFrame += (lastFrameSize + frameCount - 1) / frameCount;
         }
-        return rowsPerFrame;
+        // The adjustment above may take a frame past pageFrameMaxRows. Never past the most rows a
+        // frame may hold, though: the batched GROUP BY packs frame-relative row indexes into 24 bits.
+        // A frame of pageFrameMaxRows = 2^24 rows (the index scan default) then leaves a small
+        // trailing frame rather than one too large to address.
+        return Math.min(rowsPerFrame, Map.BATCH_ROW_INDEX_MASK + 1);
     }
 
     /**

@@ -219,6 +219,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR("cairo.sql.distinct.timestamp.load.factor"),
     CAIRO_SQL_PAGE_FRAME_MIN_ROWS("cairo.sql.page.frame.min.rows"),
     CAIRO_SQL_PAGE_FRAME_MAX_ROWS("cairo.sql.page.frame.max.rows"),
+    CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS("cairo.sql.index.scan.page.frame.max.rows"),
     CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS("cairo.sql.small.page.frame.min.rows"),
     CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS("cairo.sql.small.page.frame.max.rows"),
     CAIRO_SQL_JIT_IR_MEMORY_PAGE_SIZE("cairo.sql.jit.ir.memory.page.size"),
@@ -388,6 +389,7 @@ public enum PropertyKey implements ConfigPropertyKey {
     HTTP_NET_CONNECTION_TIMEOUT("http.net.connection.timeout"),
     HTTP_NET_QUEUED_CONNECTION_TIMEOUT("http.net.queued.connection.timeout"),
     HTTP_NET_CONNECTION_QUEUE_TIMEOUT("http.net.connection.queue.timeout"),
+    HTTP_NET_POLL_BLOCK_TIMEOUT("http.net.poll.block.timeout"),
     HTTP_NET_SND_BUF_SIZE("http.net.snd.buf.size"), // deprecated
     HTTP_NET_CONNECTION_SNDBUF("http.net.connection.sndbuf"),
     HTTP_NET_CONNECTION_RCVBUF("http.net.connection.rcvbuf"),

@@ -47,8 +47,19 @@ public class PostingIndexFrameSeekGenerationsQueryTest extends AbstractCairoTest
     @Before
     public void setUp() {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
+        // index scans take larger frames by default; keep them as small, so a key is read as many frames
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, 1_000);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100);
         super.setUp();
+        // the execution context reads its frame sizes when the class starts, before setUp():
+        // without this, the frames stay at the default 1M rows and each partition is one frame
+        sqlExecutionContext.changePageFrameSizes(100, 1_000);
+    }
+
+    @Override
+    public void tearDown() throws Exception {
+        sqlExecutionContext.restoreToDefaultPageFrameSizes();
+        super.tearDown();
     }
 
     @Test

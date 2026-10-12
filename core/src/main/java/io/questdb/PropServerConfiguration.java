@@ -552,6 +552,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int sqlHorizonJoinMaxOffsets;
     private final int sqlIndexKeyMajorMaxKeys;
     private final long sqlIndexKeyMajorMaxPartitionPasses;
+    private final int sqlIndexScanPageFrameMaxRows;
     private final long sqlInsertModelBatchSize;
     private final int sqlInsertModelPoolCapacity;
     private final int sqlIntervalIncrementalMergeThreshold;
@@ -768,6 +769,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private int httpNetBindPort;
     private int httpNetConnectionLimit;
     private long httpNetConnectionQueueTimeout;
+    private int httpNetPollBlockTimeout;
     private int httpNetConnectionRcvBuf;
     private int httpNetConnectionSndBuf;
     private long httpNetConnectionTimeout;
@@ -1450,6 +1452,11 @@ public class PropServerConfiguration implements ServerConfiguration {
             // deprecated
             this.httpNetConnectionQueueTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_QUEUED_CONNECTION_TIMEOUT, 5 * 1000L);
             this.httpNetConnectionQueueTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_CONNECTION_QUEUE_TIMEOUT, this.httpNetConnectionQueueTimeout);
+            final long pollBlockTimeout = getMillis(properties, env, PropertyKey.HTTP_NET_POLL_BLOCK_TIMEOUT, 10);
+            if (pollBlockTimeout < 0 || pollBlockTimeout > 1_000) {
+                throw new ServerConfigurationException(PropertyKey.HTTP_NET_POLL_BLOCK_TIMEOUT.getPropertyPath() + " must be between 0 and 1000 milliseconds");
+            }
+            this.httpNetPollBlockTimeout = (int) pollBlockTimeout;
 
             // deprecated
             this.httpNetConnectionSndBuf = getIntSize(properties, env, PropertyKey.HTTP_NET_SND_BUF_SIZE, -1);
@@ -1875,12 +1882,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.sqlDistinctTimestampLoadFactor = getDouble(properties, env, PropertyKey.CAIRO_SQL_DISTINCT_TIMESTAMP_LOAD_FACTOR, "0.5");
             this.sqlPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 100_000);
             this.sqlPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
+            this.sqlIndexScanPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1);
             this.sqlSmallPageFrameMinRows = getInt(properties, env, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 10_000);
             this.sqlSmallPageFrameMaxRows = getInt(properties, env, PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100_000);
             // The batched GROUP BY probe packs the frame-relative row index into a
             // 24-bit slot. Reject misconfigurations that would silently truncate.
             validatePageFrameRows(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, this.sqlPageFrameMinRows);
             validatePageFrameRows(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, this.sqlPageFrameMaxRows);
+            validatePageFrameRows(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, this.sqlIndexScanPageFrameMaxRows);
             validatePageFrameRows(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, this.sqlSmallPageFrameMinRows);
             validatePageFrameRows(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, this.sqlSmallPageFrameMaxRows);
 
@@ -5332,6 +5341,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public int getSqlIndexScanPageFrameMaxRows() {
+            return sqlIndexScanPageFrameMaxRows;
+        }
+
+        @Override
         public int getSqlIntervalIncrementalMergeThreshold() {
             return sqlIntervalIncrementalMergeThreshold;
         }
@@ -6687,6 +6701,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public String getPoolName() {
             return "http";
+        }
+
+        @Override
+        public int getPollBlockTimeout() {
+            return httpNetPollBlockTimeout;
         }
 
         @Override

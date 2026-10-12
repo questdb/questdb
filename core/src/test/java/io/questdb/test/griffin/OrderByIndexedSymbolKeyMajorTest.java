@@ -76,6 +76,8 @@ public class OrderByIndexedSymbolKeyMajorTest extends AbstractCairoTest {
     @Override
     public void setUp() {
         super.setUp();
+        // an index scan keeps the small page frames too, as before cairo.sql.index.scan.page.frame.max.rows
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_PAGE_FRAME_MAX_ROWS, 1);
         // 4 rows per page frame: a 24-row PARTITION BY NONE table is 6 frames and each
         // 12-row day partition is 3 frames. reset() in the next setUp() restores the defaults.
         sqlExecutionContext.changePageFrameSizes(1, 4);

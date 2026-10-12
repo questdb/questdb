@@ -194,19 +194,23 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
         PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, columnIndexes, ORDER_ANY);
         if (pageFrameCursor == null) {
             if (order == ORDER_ASC || order == ORDER_ANY) {
-                pageFrameCursor = new FwdTableReaderPageFrameCursor(
+                final FwdTableReaderPageFrameCursor fwdCursor = new FwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
                         partitionFrameCursorFactory.getPushdownFilterConditions(),
                         1 // used for single-threaded exec plans
                 );
+                fwdCursor.setIndexScan(isIndexScan());
+                pageFrameCursor = fwdCursor;
             } else {
-                pageFrameCursor = new BwdTableReaderPageFrameCursor(
+                final BwdTableReaderPageFrameCursor bwdCursor = new BwdTableReaderPageFrameCursor(
                         columnIndexes,
                         columnSizeShifts,
                         partitionFrameCursorFactory.getPushdownFilterConditions(),
                         1 // used for single-threaded exec plans
                 );
+                bwdCursor.setIndexScan(isIndexScan());
+                pageFrameCursor = bwdCursor;
             }
         }
         return pageFrameCursor.of(executionContext, partitionFrameCursor);
@@ -224,4 +228,16 @@ abstract class AbstractPageFrameRecordCursorFactory extends AbstractRecordCursor
             PageFrameCursor frameCursor,
             SqlExecutionContext executionContext
     ) throws SqlException;
+
+    /**
+     * Whether the record cursor's rows come from an index. Its frames are then sized by
+     * {@link io.questdb.cairo.CairoConfiguration#getSqlIndexScanPageFrameMaxRows()}: an index scan
+     * walks the index key once per frame, whatever the frame holds, so on a large partition
+     * full-scan-sized frames make it pay for the rows it skips.
+     *
+     * @return true for a scan driven by an index
+     */
+    protected boolean isIndexScan() {
+        return false;
+    }
 }
