@@ -85,6 +85,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zstd;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
@@ -229,20 +230,34 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
     /**
-     * Per-worker cache of compiled {@link RecordCursorFactory} keyed by SQL text.
-     * {@code HttpServer.bind} calls {@code factory.newInstance()} once per HTTP
-     * worker, so each worker ends up with its own cache -- connections that land
-     * on the same worker share a hit, connections that land on different workers
-     * do not. Same cache shape as {@code HttpServer.selectCache}, separate
-     * instance; engine-level unification is a follow-up exercise.
+     * Cache of compiled {@link RecordCursorFactory} keyed by SQL text (plus bind types).
+     * {@code HttpServer.bind} calls {@code factory.newInstance()} once per HTTP worker; the
+     * default endpoints hand every worker's processor one cache, so a plan compiled on one
+     * worker is a hit on all of them (a connection's requests are served by whichever worker
+     * picks them up). A processor built without a shared cache owns a cache of its own.
+     * A factory is in the cache only while no cursor of it is open.
      */
     private final AssociativeCache<RecordCursorFactory> selectCache;
+    private final boolean ownsSelectCache;
     private final int sharedWorkerCount;
 
     public QwpEgressUpgradeProcessor(
             CairoEngine engine,
             HttpFullFatServerConfiguration httpConfiguration,
             int sharedWorkerCount
+    ) {
+        this(engine, httpConfiguration, sharedWorkerCount, null);
+    }
+
+    /**
+     * @param sharedSelectCache the select cache shared by the server's QWP egress processors, which
+     *                          the caller owns and frees; null for a cache of this processor's own
+     */
+    public QwpEgressUpgradeProcessor(
+            CairoEngine engine,
+            HttpFullFatServerConfiguration httpConfiguration,
+            int sharedWorkerCount,
+            @Nullable AssociativeCache<RecordCursorFactory> sharedSelectCache
     ) {
         this.engine = engine;
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
@@ -252,7 +267,16 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         this.recvBufferSize = httpConfiguration.getRecvBufferSize();
         this.maxSqlRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
         this.sharedWorkerCount = sharedWorkerCount;
-        this.selectCache = httpConfiguration.isQueryCacheEnabled()
+        this.ownsSelectCache = sharedSelectCache == null;
+        this.selectCache = sharedSelectCache != null ? sharedSelectCache : newSelectCache(httpConfiguration);
+    }
+
+    /**
+     * A select cache for the QWP egress processors of one server: concurrent, sized by the HTTP
+     * query-cache keys, or a no-op one when the HTTP query cache is disabled.
+     */
+    public static AssociativeCache<RecordCursorFactory> newSelectCache(HttpFullFatServerConfiguration httpConfiguration) {
+        return httpConfiguration.isQueryCacheEnabled()
                 ? new ConcurrentAssociativeCache<>(httpConfiguration.getConcurrentCacheConfiguration())
                 : NO_OP_SELECT_CACHE;
     }
@@ -427,7 +451,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
     @Override
     public void close() {
-        Misc.free(selectCache);
+        if (ownsSelectCache) {
+            Misc.free(selectCache);
+        }
     }
 
     @Override
@@ -911,18 +937,9 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         if (!state.isStreamingFactoryCacheable()) {
             return;
         }
-        RecordCursorFactory factory = state.detachStreamingFactory();
-        if (factory == null) {
-            return;
-        }
-        CharSequence sqlText = state.getStreamingSqlText();
-        if (sqlText == null) {
-            // Factory was detached but we have no SQL key to cache against.
-            // Shouldn't happen in the normal flow; belt-and-braces free.
-            Misc.free(factory);
-            return;
-        }
-        selectCache.put(sqlText, factory);
+        // The put itself happens in endStreaming, once the cursor is closed: the cache is shared by
+        // the network workers, and another worker may poll the factory as soon as it is in there.
+        state.cacheStreamingFactoryOnEnd(selectCache);
     }
 
     private void dispatchEgressMessage(
