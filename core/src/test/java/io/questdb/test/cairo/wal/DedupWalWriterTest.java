@@ -31,6 +31,16 @@ import org.junit.Test;
 
 public class DedupWalWriterTest extends AbstractCairoTest {
     @Test
+    public void testDedupKeyColumnTopDecimal256() throws Exception {
+        assertMemoryLeak(() -> testDedupKeyColumnTop("decimal(60, 0)", "1::decimal(60, 0)", false));
+    }
+
+    @Test
+    public void testDedupKeyColumnTopDecimal256MultipleKeys() throws Exception {
+        assertMemoryLeak(() -> testDedupKeyColumnTop("decimal(60, 0)", "1::decimal(60, 0)", true));
+    }
+
+    @Test
     public void testDedupKeyColumnTopLong256() throws Exception {
         assertMemoryLeak(() -> testDedupKeyColumnTop("long256", "0x01", false));
     }

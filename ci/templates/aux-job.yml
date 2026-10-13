@@ -78,6 +78,11 @@ jobs:
   # committed one (io/questdb/std/Os.java). Its own workspace keeps both problems out of the lint
   # job. The gate covers the native side only - a Java-only change to CompiledFilterIRSerializer
   # does not set the flag, by design, since test_app.cpp builds its own IR and runs no Java.
+  #
+  # The job also runs dedup_tests, which CMakeLists.txt builds behind the same flag: the dedup merge
+  # of dedup.cpp, compiled with the alignment sanitizer in trap mode. The committed linux-x86-64
+  # library comes from GCC 10, whose code for the merge does not fault on a misaligned read of a
+  # dedup key, so the Java tests do not catch one; the sanitizer traps on it with any compiler.
   - job: NativeJitTests
     displayName: "Native JIT tests"
     pool: hetzner-incus
@@ -150,7 +155,9 @@ jobs:
           # ~190 objects including four -O3 SIMD variants and the simdjson amalgamation.
           cmake --build build/jittest --target jittests --parallel "$(nproc)"
           ./target/classes/io/questdb/bin-local/jittests
-        displayName: "Build and run native JIT tests (jittests)"
+          cmake --build build/jittest --target dedup_tests --parallel "$(nproc)"
+          ./target/classes/io/questdb/bin-local/dedup_tests
+        displayName: "Build and run native JIT and dedup tests (jittests, dedup_tests)"
         env:
           GH_TOKEN: $(GIT_GITHUB_TOKEN)
         condition: and(succeeded(), eq(variables['CXX_SOURCE_CODE_CHANGED'], 'true'))
