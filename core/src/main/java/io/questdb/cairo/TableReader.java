@@ -1684,11 +1684,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
             count++;
-            // A torn live area is terminal: the fallback record that acquireTxn keeps refusing carries the
-            // previous version, and waiting does not repair it. One sample cannot tell it from contention,
-            // because unsafeIsLiveAreaTorn brackets only its own two version reads. A live writer always
-            // publishes by bumping the version, so the area counts as torn only when the version stays
-            // unchanged across a whole window of retries. This check does not need the clock to advance.
+            // A torn live area is terminal, but one sample cannot tell it from contention, so it counts as
+            // torn only once a whole window of retries passes with the version unchanged. No clock needed.
             if ((count & (TORN_DIAGNOSIS_WINDOW - 1)) == 0) {
                 final long versionNow = txFile.unsafeReadVersion();
                 if (versionNow == tornWindowVersion && txFile.unsafeIsLiveAreaTorn()) {
@@ -1698,11 +1695,8 @@ public class TableReader implements Closeable, SymbolTableSource {
             }
             if (clock.getTicks() > deadline) {
                 // A reader that cannot advance is normally contention, but not when the live _txn area is
-                // torn: TxReader falls back to the intact previous A/B area, whose txn a live scoreboard
-                // refuses, so this loop spins out. Report the torn _txn by name rather than a timeout. The
-                // check runs only on a read that has already failed, so the healthy path pays nothing. This
-                // branch covers a load that keeps failing; the window check above covers one that succeeds
-                // onto the fallback.
+                // torn: TxReader's fallback carries a txn a live scoreboard refuses, so this loop spins out.
+                // Report the torn _txn by name rather than a timeout.
                 if (txFile.unsafeIsLiveAreaTorn()) {
                     throw tornLiveAreaException();
                 }
@@ -2048,9 +2042,8 @@ public class TableReader implements Closeable, SymbolTableSource {
         if (columnVersionReader.getVersion() == columnVersion) {
             return true;
         }
-        // A duration, unlike the absolute deadline readTxnSlow() and reloadMetadata() take. A consistent _cv
-        // that lands behind the version _txn names is terminal - a torn live area or a file that lags the
-        // transaction - and the reader throws it by name in there, without waiting on any clock.
+        // Unlike the absolute deadline readTxnSlow()/reloadMetadata() take: a consistent _cv behind the
+        // version _txn names is terminal, and the reader throws it by name without waiting on any clock.
         columnVersionReader.readSafe(clock, configuration.getSpinLockTimeout(), columnVersion);
         if (columnVersionReader.getVersion() == columnVersion) {
             return true;
