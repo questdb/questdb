@@ -2161,7 +2161,7 @@ public class WalTableFailureTest extends AbstractCairoTest {
                 execute("alter table " + tableToken.getTableName() + " force drop partition list '2022-03-02'");
                 Assert.fail();
             } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "attached partition is absent during adaptive epoch");
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not enumerate adaptive directory for fsync");
                 TestUtils.assertContains(e.getFlyweightMessage(), "2022-03-04");
             }
         } else {

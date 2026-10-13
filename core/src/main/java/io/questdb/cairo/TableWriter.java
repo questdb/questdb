@@ -16725,7 +16725,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // or isAdaptiveEpochColumnSyncBatched() false) adds a filesystem-wide flush,
         // as the batched path ends with syncfs(). Otherwise recovery could restore an epoch whose rows never
         // reached the disk. The per-commit apply path stays lazy.
-        if (ff.isSyncfsFileSystemWide() && configuration.isAdaptiveEpochColumnSyncBatched()) {
+        final boolean isSyncfsWide = ff.isSyncfsFileSystemWide();
+        if (isSyncfsWide && configuration.isAdaptiveEpochColumnSyncBatched()) {
             syncColumnsBatchedSync(); // 3-pass KICK/DRAIN/syncfs; also syncs symbol writers (fs-wide)
         } else {
             // Push the open partition's dirty mmap pages to the device (msync MS_SYNC) and make the symbol
@@ -16740,7 +16741,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // per epoch put the symbol maps inside it.
                 symbolWriter.fsyncFiles();
             }
-            if (ff.isSyncfsFileSystemWide()) {
+            if (isSyncfsWide) {
                 // Linux with batching disabled still has a true filesystem-wide syncfs primitive.
                 fsyncMaterializedStateSyncFs();
             } else {
@@ -16752,13 +16753,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // same device before is guaranteed to be persisted when this call returns". The cost then does
                 // not grow with the local file count. On Windows FlushFileBuffers is durable per file,
                 // so there this call is redundant.
-                fsyncAttachedPartitionFiles();
+                fsyncAttachedPartitionFiles(true);
                 // The entry of every partition directory, new or a new version of an old one, lives in the table
                 // directory, which the sweep does not reach. Linux gets it from syncfs. Every time, not only for
                 // a new save point file: the save point names these directories.
                 DurableEpochManifest.fsyncDirectory(configuration, path.trimTo(pathSize), pathSize);
                 fsyncMaterializedStateSyncFs();
             }
+        }
+        if (isSyncfsWide) {
+            // The syncfs covers the filesystem that holds _txn, not the target of a partition linked elsewhere.
+            fsyncAttachedPartitionFiles(false);
         }
 
         // Steps 3 and 4: the commit pointers, data before pointer: _cv before _txn.
@@ -16791,86 +16796,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Non-wide syncfs fallback: flush partition-metadata and column-version obligations plus active appends.
+     * Flushes the partition-metadata and column-version obligations plus active appends: file by file for the
+     * non-wide syncfs fallback, and on every platform through the link of a partition linked to another filesystem.
      * A complete, enabled write set avoids re-walking untouched history; otherwise every partition is covered.
      */
-    private void fsyncAttachedPartitionFiles() {
+    private void fsyncAttachedPartitionFiles(boolean isFileByFile) {
         final LongHashSet txnDirty = txWriter.getDirtyPartitions();
         final LongHashSet cvDirty = columnVersionWriter.getDirtyPartitions();
         final boolean scanAll = epochWriteSetIncomplete || txnDirty == null || cvDirty == null;
-        for (int partitionIndex = 0, partitionCount = txWriter.getPartitionCount(); partitionIndex < partitionCount; partitionIndex++) {
-            if (!scanAll) {
-                final long ts = txWriter.getPartitionTimestampByIndex(partitionIndex);
-                if (txnDirty.excludes(ts) && cvDirty.excludes(ts)) {
-                    continue;
-                }
-            }
-            final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
-            final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-            final boolean readOnly = txWriter.isPartitionReadOnly(partitionIndex);
-            setPathForNativePartition(
-                    path.trimTo(pathSize),
-                    timestampType,
-                    partitionBy,
-                    partitionTimestamp,
-                    partitionNameTxn
-            );
-            final int partitionDirLen = path.size();
-            final long findPtr = ff.findFirst(path.$());
-            if (findPtr <= 0) {
-                // Name the partition directory, then trim before throwing. The caller (handleBestEffortDurableEpochFailure)
-                // swallows this, so a `path` left at the partition directory would corrupt the next unqualified
-                // path.concat() on this writer.
-                final CairoException e = CairoException.critical(ff.errno()).put(findPtr < 0
-                        ? "could not enumerate partition for adaptive epoch [path="
-                        : "attached partition is absent during adaptive epoch [path=").put(path).put(']');
-                path.trimTo(pathSize);
-                throw e;
-            }
-            try {
-                int findResult;
-                do {
-                    final long namePtr = ff.findName(findPtr);
-                    final int type = ff.findType(findPtr);
-                    if (Files.notDots(namePtr) && (type == Files.DT_FILE || type == Files.DT_UNKNOWN)) {
-                        path.trimTo(partitionDirLen).concat(namePtr);
-                        final long fd = DurableEpochManifest.openForFsync(configuration, path, readOnly);
-                        try {
-                            // Plain fsync: it moves this file's bytes to the drive, and the one F_FULLFSYNC
-                            // the caller issues after the sweep flushes the drive cache for all of them (see
-                            // the call site). A durable barrier per file would drain the device queue once
-                            // per file for no added guarantee.
-                            ff.fsync(fd);
-                        } finally {
-                            ff.close(fd);
-                        }
-                    }
-                    findResult = ff.findNext(findPtr);
-                } while (findResult > 0);
-                if (findResult < 0) {
-                    throw CairoException.critical(ff.errno())
-                            .put("could not finish partition enumeration for adaptive epoch [path=").put(path).put(']');
-                }
-            } finally {
-                ff.findClose(findPtr);
-            }
-            try {
-                if (!Os.isWindows()) {
-                    // Per-file fsync does not persist a newly created file's directory entry. The Linux path's
-                    // syncfs journals every partition directory, but this explicit non-wide fallback must do so
-                    // itself before publishing an epoch that references the files.
-                    path.trimTo(partitionDirLen).slash$();
-                    final long partitionDirFd = TableUtils.openRONoCache(ff, path.$(), LOG);
-                    if (partitionDirFd == -1) {
-                        throw CairoException.critical(ff.errno())
-                                .put("could not open partition directory for adaptive epoch fsync [path=").put(path).put(']');
-                    }
-                    ff.fsyncAndClose(partitionDirFd);
-                }
-            } finally {
-                path.trimTo(pathSize);
-            }
-        }
+        DurableEpochManifest.fsyncPartitions(
+                configuration,
+                path,
+                pathSize,
+                txWriter,
+                timestampType,
+                partitionBy,
+                scanAll ? null : txnDirty,
+                scanAll ? null : cvDirty,
+                isFileByFile
+        );
     }
 
     /**

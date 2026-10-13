@@ -19,6 +19,7 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -521,14 +522,22 @@ public final class DurableEpochManifest {
             do {
                 final long namePtr = ff.findName(findPtr);
                 final int type = ff.findType(findPtr);
-                if (Files.notDots(namePtr) && (type == Files.DT_FILE || type == Files.DT_UNKNOWN)) {
+                final boolean isLink = type == Files.DT_LNK;
+                if (Files.notDots(namePtr) && (type == Files.DT_FILE || type == Files.DT_UNKNOWN || isLink)) {
                     dirPath.trimTo(dirLen).concat(namePtr);
-                    final long fd = openForFsync(configuration, dirPath, readOnly);
+                    final long fd = openForFsync(configuration, dirPath, readOnly || isLink);
                     if (fd == -1) {
                         throw CairoException.critical(ff.errno()).put("could not open adaptive file for fsync [path=").put(dirPath).put(']');
                     }
                     try {
-                        ff.fsync(fd);
+                        // A link's target may be on another filesystem, out of reach of the caller's closing
+                        // barrier, so it gets its own: syncfs is filesystem-wide on Linux, a durable flush of
+                        // the file elsewhere.
+                        if (isLink) {
+                            ff.syncfs(fd);
+                        } else {
+                            ff.fsync(fd);
+                        }
                     } finally {
                         ff.close(fd);
                     }
@@ -548,12 +557,64 @@ public final class DurableEpochManifest {
     }
 
     /**
-     * Flushes a table's materialized state file by file: every file of every attached partition and the partition
-     * directory, then every file in the table root and the root itself, then one device barrier. This is the
-     * fallback for platforms where {@link FilesFacade#syncfs(long)} flushes a single file, and it covers the same
-     * write set as the writer's first epoch there ({@code TableWriter.fsyncAttachedPartitionFiles}). Sealing
-     * a partition does not make its last writes durable. The table's entry in the database root closes the flush:
-     * nothing else makes a table created since the last filesystem-wide sync durable.
+     * Flushes the partitions a save point or a baseline names, from the table root at {@code rootLen}: those in
+     * either write set, or every attached partition when the sets are null. File by file, each partition's files
+     * and directory are flushed; otherwise the caller's filesystem-wide {@code syncfs} covers them. Either way a
+     * partition linked to another filesystem then gets a barrier through its link, as the caller's closing barrier
+     * covers only the table's own filesystem. Sealing a partition does not make its last writes durable.
+     */
+    public static void fsyncPartitions(
+            CairoConfiguration configuration,
+            Path path,
+            int rootLen,
+            TxReader txReader,
+            int timestampType,
+            int partitionBy,
+            @Nullable LongHashSet txnDirty,
+            @Nullable LongHashSet cvDirty,
+            boolean isFileByFile
+    ) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try {
+            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
+                final long timestamp = txReader.getPartitionTimestampByIndex(i);
+                if (txnDirty != null && cvDirty != null && txnDirty.excludes(timestamp) && cvDirty.excludes(timestamp)) {
+                    continue;
+                }
+                TableUtils.setPathForNativePartition(path.trimTo(rootLen), timestampType, partitionBy, timestamp, txReader.getPartitionNameTxn(i));
+                final int partitionDirLen = path.size();
+                if (isFileByFile) {
+                    fsyncDirectoryFiles(configuration, path, partitionDirLen, txReader.isPartitionReadOnly(i));
+                }
+                if (ff.isSoftLink(path.trimTo(partitionDirLen).$())) {
+                    if (isFileByFile) {
+                        // The target directory's own entry, in its parent; Linux gets it from the syncfs below.
+                        fsyncDirectory(configuration, path.concat(".."), path.size());
+                    }
+                    // Opened through the link, so the barrier lands on the target's filesystem.
+                    final long fd = TableUtils.openRONoCache(ff, path.trimTo(partitionDirLen).slash$(), LOG);
+                    if (fd == -1) {
+                        throw CairoException.critical(ff.errno()).put("could not open linked partition for fsync [path=").put(path).put(']');
+                    }
+                    try {
+                        ff.syncfs(fd);
+                    } finally {
+                        ff.close(fd);
+                    }
+                }
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
+    }
+
+    /**
+     * Flushes a table's materialized state. Where {@link FilesFacade#syncfs(long)} flushes a single file, that is
+     * file by file: every file of every attached partition and the partition directory, then every file in the table
+     * root and the root itself, then one device barrier, the same write set as the writer's first epoch there. The
+     * table's entry in the database root closes the flush: nothing else makes a table created since the last
+     * filesystem-wide sync durable. Where syncfs is filesystem-wide, the caller's sync of the database root covers
+     * all that, and this flushes only the partitions linked to another filesystem.
      *
      * <p>The per-file fsync moves each file's bytes to the drive, and the closing {@code syncfs} flushes the drive
      * cache once for all of them: F_FULLFSYNC on macOS acts as a barrier for data fsync'd on the same device before
@@ -561,6 +622,7 @@ public final class DurableEpochManifest {
      */
     public static void fsyncTableFiles(CairoConfiguration configuration, TableToken tableToken, int timestampType, int partitionBy) {
         final FilesFacade ff = configuration.getFilesFacade();
+        final boolean isFileByFile = !ff.isSyncfsFileSystemWide();
         try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
             final int dbRootLen = path.of(configuration.getDbRoot()).size();
             final int rootLen = path.concat(tableToken).size();
@@ -569,18 +631,11 @@ public final class DurableEpochManifest {
                 throw CairoException.critical(0).put("could not read adaptive _txn to flush the table [table=")
                         .put(tableToken.getTableName()).put(']');
             }
-            for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
-                TableUtils.setPathForNativePartition(
-                        path.trimTo(rootLen),
-                        timestampType,
-                        partitionBy,
-                        txReader.getPartitionTimestampByIndex(i),
-                        txReader.getPartitionNameTxn(i)
-                );
-                fsyncDirectoryFiles(configuration, path, path.size(), txReader.isPartitionReadOnly(i));
+            fsyncPartitions(configuration, path, rootLen, txReader, timestampType, partitionBy, null, null, isFileByFile);
+            if (isFileByFile) {
+                fsyncTableRoot(configuration, path, rootLen);
+                fsyncDirectory(configuration, path, dbRootLen);
             }
-            fsyncTableRoot(configuration, path, rootLen);
-            fsyncDirectory(configuration, path, dbRootLen);
         }
     }
 
@@ -589,26 +644,16 @@ public final class DurableEpochManifest {
      * the closing step of a file-by-file table flush.
      */
     public static void fsyncTableRoot(CairoConfiguration configuration, Path tablePath, int rootLen) {
-        final FilesFacade ff = configuration.getFilesFacade();
         fsyncDirectoryFiles(configuration, tablePath, rootLen, false);
-        tablePath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME);
-        final long fd = TableUtils.openRW(ff, tablePath.$(), LOG, configuration.getWriterFileOpenOpts());
-        if (fd == -1) {
-            throw CairoException.critical(ff.errno()).put("could not open adaptive _txn for the device flush [path=").put(tablePath).put(']');
-        }
-        try {
-            ff.syncfs(fd);
-        } finally {
-            ff.close(fd);
-            tablePath.trimTo(rootLen);
-        }
+        syncfsTable(configuration, tablePath, rootLen);
     }
 
     /**
      * Makes the live files of the given tables durable, for a caller that keeps them while no save point protects
      * them: a start that leaves adaptive commit mode, and an Enterprise promote, which inherits what the replica applied
      * lazily. Where {@link FilesFacade#syncfs(long)} is filesystem-wide, one sync of the database root and of every
-     * volume a table links to covers every table; elsewhere each table is flushed file by file.
+     * volume a table links to covers every table but its linked partitions; elsewhere each table is flushed file by
+     * file.
      */
     public static void fsyncTables(CairoEngine engine, ObjList<TableToken> tableTokens) {
         if (tableTokens.size() == 0) {
@@ -620,7 +665,6 @@ public final class DurableEpochManifest {
             try (Path path = new Path()) {
                 DatabaseCheckpointAgent.syncRestoredState(ff, path.of(configuration.getDbRoot()), true);
             }
-            return;
         }
         for (int i = 0, n = tableTokens.size(); i < n; i++) {
             final TableToken tableToken = tableTokens.getQuick(i);
@@ -767,6 +811,22 @@ public final class DurableEpochManifest {
     }
 
     // Reads the _txn copy of the generation at `path`, whose valid header is at `header`.
+    // syncfs through the table's _txn: filesystem-wide on Linux, a device barrier elsewhere.
+    private static void syncfsTable(CairoConfiguration configuration, Path tablePath, int rootLen) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        tablePath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME);
+        final long fd = TableUtils.openRW(ff, tablePath.$(), LOG, configuration.getWriterFileOpenOpts());
+        if (fd == -1) {
+            throw CairoException.critical(ff.errno()).put("could not open adaptive _txn for the device flush [path=").put(tablePath).put(']');
+        }
+        try {
+            ff.syncfs(fd);
+        } finally {
+            ff.close(fd);
+            tablePath.trimTo(rootLen);
+        }
+    }
+
     private static boolean txnSectionListsPartition(FilesFacade ff, Path path, long header, long partitionTimestamp, long partitionNameTxn) {
         final long size = Unsafe.getUnsafe().getLong(header + OFFSET_TXN_SIZE);
         if (size <= 0) {

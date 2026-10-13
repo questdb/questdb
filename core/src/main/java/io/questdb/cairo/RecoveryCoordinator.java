@@ -148,19 +148,18 @@ public class RecoveryCoordinator {
 
             // The exit, after every table is restored. The live files of a table enrolled under adaptive are
             // only as durable as its save point says; make them durable before the save point goes, since
-            // nothing restores them afterwards. Where syncfs is filesystem-wide one flush covers every table;
-            // elsewhere each table is flushed file by file.
+            // nothing restores them afterwards. Where syncfs is filesystem-wide one flush covers every table but
+            // its linked partitions; elsewhere each table is flushed file by file.
             boolean isFileSystemSynced = false;
             for (int i = 0, n = exits.size(); i < n; i++) {
                 final TableToken token = exits.getQuick(i);
                 try {
-                    if (!ff.isSyncfsFileSystemWide()) {
-                        try (TableMetadata metadata = engine.getTableMetadata(token)) {
-                            DurableEpochManifest.fsyncTableFiles(configuration, token, metadata.getTimestampType(), metadata.getPartitionBy());
-                        }
-                    } else if (!isFileSystemSynced) {
+                    if (ff.isSyncfsFileSystemWide() && !isFileSystemSynced) {
                         DatabaseCheckpointAgent.syncRestoredState(ff, dir.of(configuration.getDbRoot()), true);
                         isFileSystemSynced = true;
+                    }
+                    try (TableMetadata metadata = engine.getTableMetadata(token)) {
+                        DurableEpochManifest.fsyncTableFiles(configuration, token, metadata.getTimestampType(), metadata.getPartitionBy());
                     }
                     tablePath(dir, token);
                     removeAdaptiveEpochArtifacts(ff, dir, dir.size());

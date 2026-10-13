@@ -42,6 +42,7 @@ import io.questdb.std.LongList;
 import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
@@ -49,6 +50,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.wal.GroupCommitTestUtils.WalFdatasyncFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.ArrayList;
@@ -913,6 +915,21 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         assertReadOnlyPartitionFlushed(true);
     }
 
+    @Test
+    public void testFailedLinkedPartitionBarrierKeepsTheSavePointOwed() throws Exception {
+        assertLinkedPartitionFlushedThroughItsTarget(true, true);
+    }
+
+    @Test
+    public void testSavePointFlushesLinkedPartitionThroughItsTarget() throws Exception {
+        assertLinkedPartitionFlushedThroughItsTarget(true, false);
+    }
+
+    @Test
+    public void testSavePointFlushesLinkedPartitionThroughItsTargetOnNonWideSyncfsPlatform() throws Exception {
+        assertLinkedPartitionFlushedThroughItsTarget(false, false);
+    }
+
     static ColumnVersionWriter columnVersionWriter(TableWriter writer) throws Exception {
         final java.lang.reflect.Field field = TableWriter.class.getDeclaredField("columnVersionWriter");
         field.setAccessible(true);
@@ -1023,6 +1040,68 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                 Assert.assertEquals(0, txnDirty.size());
                 Assert.assertEquals(0, cvDirty.size());
             }
+        });
+    }
+
+    /**
+     * A partition attached through a soft link lives wherever the link points, possibly on another filesystem, so
+     * neither the table's syncfs nor the device barrier issued through {@code _txn} reaches it. The save point that
+     * the attach takes, and a full table flush, must put the target behind a barrier of its own, through the link,
+     * before the manifest names the partition. A failed target barrier keeps the previous save point and the write
+     * set, and a later save point covers the partition.
+     */
+    private void assertLinkedPartitionFlushedThroughItsTarget(boolean isWide, boolean isBarrierFailing) throws Exception {
+        Assume.assumeFalse("partition soft links are POSIX only", Os.isWindows());
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        final LinkTargetBarrierFacade ff = new LinkTargetBarrierFacade(isWide);
+        final String linkTargetRoot = temp.newFolder().getAbsolutePath();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            try (WalWriter walWriter = engine.getWalWriter(tt)) {
+                commitRow(walWriter, 0L, 1L);
+                commitRow(walWriter, Micros.DAY_MICROS, 2L);
+            }
+            drainWalQueue();
+            try (TableWriter writer = getWriter(tt)) {
+                // A completed save point, so the next one flushes only its write set.
+                writer.advanceDurableEpoch(1L);
+            }
+            execute("alter table x detach partition list '1970-01-01'");
+            drainWalQueue();
+            try (Path detached = new Path(); Path target = new Path(); Path attachable = new Path()) {
+                detached.of(configuration.getDbRoot()).concat(tt).concat("1970-01-01" + TableUtils.DETACHED_DIR_MARKER);
+                target.of(linkTargetRoot).concat("1970-01-01");
+                attachable.of(configuration.getDbRoot()).concat(tt).concat("1970-01-01" + configuration.getAttachPartitionSuffix());
+                Assert.assertEquals(0, ff.copyRecursive(detached, target, configuration.getMkDirMode()));
+                Assert.assertEquals(0, ff.softLink(target.$(), attachable.$()));
+            }
+            final String linkedDir = tt.getDirName() + "/1970-01-01";
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            ff.reset(isBarrierFailing ? linkedDir : null);
+            execute("alter table x attach partition list '1970-01-01'");
+            drainWalQueue();
+            final long attachSeqTxn = tracker.getWriterTxn();
+            try (TableWriter writer = getWriter(tt)) {
+                Assert.assertTrue("attached through a link", writer.getTxWriter().isPartitionReadOnlyByPartitionTimestamp(0L));
+                if (isBarrierFailing) {
+                    Assert.assertTrue("a failed barrier publishes nothing", tracker.getDurableEpochSeqTxn() < attachSeqTxn);
+                    Assert.assertFalse("the write set is kept", writer.getTxWriter().getDirtyPartitions().excludes(0L));
+                    ff.reset(null);
+                    writer.advanceDurableEpoch(2L);
+                }
+                Assert.assertEquals("the attach is saved", attachSeqTxn, tracker.getDurableEpochSeqTxn());
+                ff.assertBarrierThrough(linkedDir, true);
+                ff.reset(null);
+                DurableEpochManifest.fsyncTableFiles(
+                        engine.getConfiguration(), tt,
+                        writer.getMetadata().getTimestampType(), writer.getPartitionBy()
+                );
+                ff.assertBarrierThrough(linkedDir, false);
+            }
+            assertQuery("select v from x").expectSize().returns("v\n1\n2\n");
         });
     }
 
@@ -2058,6 +2137,86 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
 
         public int partitionOpenAttempts() {
             return partitionOpenAttempts.get();
+        }
+    }
+
+    /**
+     * Records, in order, every {@code syncfs} with the path its fd was opened by, and every open of a save point
+     * manifest; it can fail the uncached opens under one directory.
+     */
+    static class LinkTargetBarrierFacade extends TestFilesFacadeImpl {
+        private final Map<Long, String> fdPaths = new java.util.concurrent.ConcurrentHashMap<>();
+        private final boolean isWide;
+        private final List<String> ops = java.util.Collections.synchronizedList(new ArrayList<>());
+        private volatile String failOpensUnder;
+
+        LinkTargetBarrierFacade(boolean isWide) {
+            this.isWide = isWide;
+        }
+
+        public void assertBarrierThrough(String linkedDir, boolean isBeforeManifest) {
+            synchronized (ops) {
+                int barrier = -1;
+                int manifest = -1;
+                for (int i = 0, n = ops.size(); i < n; i++) {
+                    final String op = ops.get(i);
+                    if (barrier < 0 && op.startsWith("syncfs ") && op.contains(linkedDir)) {
+                        barrier = i;
+                    }
+                    if (manifest < 0 && op.startsWith("manifest ")) {
+                        manifest = i;
+                    }
+                }
+                Assert.assertTrue("no barrier through the linked partition: " + ops, barrier > -1);
+                if (isBeforeManifest) {
+                    Assert.assertTrue("the barrier must precede the manifest: " + ops, manifest > barrier);
+                }
+            }
+        }
+
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            return isWide;
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            return track(name, super.openRO(name));
+        }
+
+        @Override
+        public long openRONoCache(LPSZ name) {
+            final String failing = failOpensUnder;
+            if (failing != null && Utf8s.containsAscii(name, failing)) {
+                return -1;
+            }
+            return track(name, super.openRONoCache(name));
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME)) {
+                ops.add("manifest " + Utf8String.newInstance(name));
+            }
+            return track(name, super.openRW(name, opts));
+        }
+
+        public void reset(String failOpensUnder) {
+            ops.clear();
+            this.failOpensUnder = failOpensUnder;
+        }
+
+        @Override
+        public void syncfs(long fd) {
+            ops.add("syncfs " + fdPaths.get(fd));
+            super.syncfs(fd);
+        }
+
+        private long track(LPSZ name, long fd) {
+            if (fd != -1) {
+                fdPaths.put(fd, Utf8String.newInstance(name).toString());
+            }
+            return fd;
         }
     }
 }
