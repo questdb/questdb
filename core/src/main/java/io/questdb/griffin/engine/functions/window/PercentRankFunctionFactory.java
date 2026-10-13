@@ -46,6 +46,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.RecordComparator;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -327,6 +328,26 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
                 sink.val(" over ()");
             }
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(partitionByRecord);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(partitionByRecord);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(partitionByRecord);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(partitionByRecord);
+        }
     }
 
     // percent_rank() over (partition by xxx order by xxx)
@@ -516,6 +537,26 @@ public class PercentRankFunctionFactory extends AbstractWindowFunctionFactory {
         public void toTop() {
             super.toTop();
             Misc.clear(map);
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(partitionByRecord);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(partitionByRecord);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(partitionByRecord);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(partitionByRecord);
         }
     }
 

@@ -47,6 +47,7 @@ import io.questdb.cairo.lv.LiveViewStatePageReader;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.IntList;
@@ -306,6 +307,26 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         protected abstract boolean computeNext0(Record record);
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(defaultValue);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(defaultValue);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(defaultValue);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(defaultValue);
+        }
     }
 
     abstract static class BaseLagOverPartitionFunction extends BasePartitionedWindowFunction {
@@ -623,6 +644,26 @@ public class LeadLagWindowFunctionFactoryHelper {
                                                 long startOffset,
                                                 long firstIdx,
                                                 Record record);
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(defaultValue);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(defaultValue);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(defaultValue);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(defaultValue);
+        }
     }
 
     static abstract class BaseLeadFunction extends BaseWindowFunction implements Reopenable {
@@ -726,6 +767,26 @@ public class LeadLagWindowFunctionFactoryHelper {
         }
 
         protected abstract boolean doPass1(Record record, long recordOffset, WindowSPI spi);
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(defaultValue);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(defaultValue);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(defaultValue);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(defaultValue);
+        }
     }
 
     abstract static class BaseLeadLagCurrentRow extends BaseWindowFunction {
@@ -767,6 +828,26 @@ public class LeadLagWindowFunctionFactoryHelper {
                 sink.val(" ignore nulls");
             }
             sink.val(" over ()");
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(partitionByRecord);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(partitionByRecord);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(partitionByRecord);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(partitionByRecord);
         }
     }
 
@@ -903,6 +984,26 @@ public class LeadLagWindowFunctionFactoryHelper {
                                            Record record,
                                            long recordOffset,
                                            WindowSPI spi);
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(defaultValue);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(defaultValue);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(defaultValue);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(defaultValue);
+        }
     }
 
     static {

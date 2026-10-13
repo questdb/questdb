@@ -47,6 +47,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.model.ExpressionNode;
@@ -403,6 +404,26 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
             readOffset = 0;
             sd.reset();
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(compdevArg, tsArg);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(compdevArg, tsArg);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(compdevArg, tsArg);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(compdevArg, tsArg);
+        }
     }
 
     // ---- partitioned, two-pass; per-partition SwingingDoor state lives in the Map ----
@@ -620,6 +641,26 @@ public class SdtWindowFunctionFactory extends AbstractWindowFunctionFactory {
             tsArg.toTop();
             appendOffset = 0;
             readOffset = 0;
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(compdevArg, tsArg);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(compdevArg, tsArg);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(compdevArg, tsArg);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(compdevArg, tsArg);
         }
     }
 }

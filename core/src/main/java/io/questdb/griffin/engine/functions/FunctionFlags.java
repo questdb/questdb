@@ -26,6 +26,7 @@
 package io.questdb.griffin.engine.functions;
 
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
@@ -148,5 +149,22 @@ public final class FunctionFlags {
             }
         }
         return true;
+    }
+
+    // a VirtualRecord over functions: a window's PARTITION BY keys
+    public static boolean hasPerCallState(@Nullable VirtualRecord record) {
+        return record != null && hasPerCallState(record.getFunctions());
+    }
+
+    public static boolean isNonDeterministic(@Nullable VirtualRecord record) {
+        return record != null && isNonDeterministic(record.getFunctions());
+    }
+
+    public static boolean isRandom(@Nullable VirtualRecord record) {
+        return record != null && isRandom(record.getFunctions());
+    }
+
+    public static boolean isStableWithinExecution(@Nullable VirtualRecord record) {
+        return record == null || isStableWithinExecution(record.getFunctions());
     }
 }
