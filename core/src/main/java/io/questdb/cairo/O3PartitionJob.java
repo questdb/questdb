@@ -2311,10 +2311,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     DedupColumnCommitAddresses.setColAddressValues(addr, srcPtrs.getQuick(bi2));
                                 } else {
                                     // Column missing from parquet (ADD COLUMN after partition
-                                    // was created).  columnTop == rowGroupSize, so the native
-                                    // dedup code treats all parquet values as NULL and will
-                                    // not dereference the data pointer.
-                                    assert columnTop == rowGroupSize : "missing column must have columnTop == rowGroupSize";
+                                    // was created). The partition column top covers every row
+                                    // of the file, so columnTop >= rowGroupSize for any of its
+                                    // row groups: the native dedup code treats all parquet values
+                                    // as NULL and will not dereference the data pointer.
+                                    assert columnTop >= rowGroupSize : "missing column must have columnTop >= rowGroupSize";
                                     DedupColumnCommitAddresses.setColAddressValues(addr, 0);
                                 }
                                 final long oooColAddress = oooColumns.get(getPrimaryColumnIndex(columnIndex)).addressOf(0);
@@ -2337,7 +2338,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             srcVarDataLen
                                     );
                                 } else {
-                                    assert columnTop == rowGroupSize : "missing column must have columnTop == rowGroupSize";
+                                    assert columnTop >= rowGroupSize : "missing column must have columnTop >= rowGroupSize";
                                     DedupColumnCommitAddresses.setColAddressValues(addr, 0, 0, 0);
                                 }
                                 MemoryCR oooVarCol = oooColumns.get(getPrimaryColumnIndex(columnIndex));
