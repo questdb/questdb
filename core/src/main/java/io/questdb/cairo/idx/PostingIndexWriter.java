@@ -698,9 +698,7 @@ public class PostingIndexWriter implements IndexWriter {
         // .pk/.pv files, and without it readers see keyCount=0 until the writer closes. Only the flush below
         // depends on the mode.
         flushAllPending();
-        // SYNC and ASYNC only (see IndexWriter.setCommitMode): under ADAPTIVE the posting index is
-        // re-derivable from the durable WAL like the column it indexes, and a save point calls sync(false)
-        // on every indexer before its filesystem-wide syncfs.
+        // SYNC and ASYNC only; see IndexWriter.setCommitMode.
         final int commitMode = indexCommitMode;
         if (CommitMode.appliesColumnSync(commitMode)) {
             sync(commitMode == CommitMode.ASYNC);
@@ -749,9 +747,7 @@ public class PostingIndexWriter implements IndexWriter {
         } else {
             flushAllPendingDense();
         }
-        // Same gate as commit(): the seal writes index data, re-derivable from the column it indexes, so
-        // under ADAPTIVE it stays lazy, and a save point makes it durable (it calls sync(false) on every
-        // indexer before its filesystem-wide syncfs).
+        // Same gate as commit(); see IndexWriter.setCommitMode.
         final int commitMode = indexCommitMode;
         if (CommitMode.appliesColumnSync(commitMode)) {
             boolean async = commitMode == CommitMode.ASYNC;

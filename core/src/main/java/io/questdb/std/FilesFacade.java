@@ -99,8 +99,8 @@ public interface FilesFacade {
     /**
      * Linux sync_file_range(2): starts writeback of the file's page-cache pages over
      * {@code [offset, offset+nbytes)} to the device cache without a device flush (see the
-     * {@code Files.SYNC_FILE_RANGE_*} flags). A no-op returning 0 off Linux. Durability still needs a
-     * following device flush. Fault-injection facades may override it to model writeback.
+     * {@code Files.SYNC_FILE_RANGE_*} flags). A no-op returning 0 off Linux; durability still needs a
+     * following device flush.
      */
     default int syncFileRange(long fd, long offset, long nbytes, int flags) {
         return Files.syncFileRange(fd, offset, nbytes, flags);
@@ -109,9 +109,8 @@ public interface FilesFacade {
     /**
      * Linux syncfs(2): makes the filesystem containing {@code fd} durable in one device flush. It writes back
      * all dirty data and journals every pending metadata change (including ext4 extent conversions), then
-     * flushes the device cache. The batched flush uses it in place of one {@link #fdatasync(long)} per column.
-     * Off Linux it flushes {@code fd} only (see {@link #isSyncfsFileSystemWide()} and
-     * {@link Files#syncfs(long)}). Fault-injection facades override it to model the filesystem-wide flush.
+     * flushes the device cache. Off Linux it flushes {@code fd} only (see {@link #isSyncfsFileSystemWide()}
+     * and {@link Files#syncfs(long)}).
      */
     default void syncfs(long fd) {
         int res = Files.syncfs(fd);
@@ -130,12 +129,9 @@ public interface FilesFacade {
     }
 
     /**
-     * Whether {@link #syncFileRange(long, long, long, int)} is worth issuing against {@code root}.
-     * <p>
-     * {@code sync_file_range} is a Linux page-cache optimisation: it starts, and optionally waits for,
-     * writeback without journalling metadata, so callers must still take a real barrier afterwards. On ZFS
+     * Whether {@link #syncFileRange(long, long, long, int)} is worth issuing against {@code root}. On ZFS
      * the page-cache model does not match (durability is a txg commit), so the call buys nothing and is
-     * skipped rather than risking the known mmap interactions.
+     * skipped; callers must still take a real barrier afterwards regardless.
      *
      * @param root an existing path on the filesystem in question
      * @return {@code true} if a drain pass is likely to help
@@ -242,11 +238,9 @@ public interface FilesFacade {
     int rename(LPSZ from, LPSZ to);
 
     /**
-     * The publish-by-rename barrier: the rename is durable when this returns.
-     * <p>
-     * On POSIX this is {@link #rename(LPSZ, LPSZ)}: the caller makes the new name durable by fsyncing the
-     * parent directory afterwards. Windows has no directory handle to fsync, so there the implementation asks
-     * the move itself to write through. The default calls {@link #rename(LPSZ, LPSZ)}, so a facade that
+     * The publish-by-rename barrier: the rename is durable when this returns. On POSIX this is
+     * {@link #rename(LPSZ, LPSZ)}, with the caller fsyncing the parent directory afterwards; Windows asks the
+     * move itself to write through. The default calls {@link #rename(LPSZ, LPSZ)}, so a facade that
      * intercepts {@code rename} intercepts this too.
      */
     default int renameDurable(LPSZ from, LPSZ to) {

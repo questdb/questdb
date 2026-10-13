@@ -2085,10 +2085,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (reader != null && !PartitionBy.isPartitioned(reader.getMetadata().getPartitionBy())) {
                     throw SqlException.$(pos, "Cannot convert non-partitioned table");
                 }
-                // Converting a WAL table to non-WAL is allowed even when the table is FORMAT
-                // PARQUET or has parquet partitions: the conversion does not rewrite partitions,
-                // so parquet partitions stay parquet and remain readable, and converting back to
-                // WAL restores normal parquet ingestion.
+                // Converting a WAL table to non-WAL is allowed with parquet partitions: the conversion does
+                // not rewrite them, so they stay parquet and remain readable either way.
             }
 
             if (!executionContext.isValidationOnly()) {

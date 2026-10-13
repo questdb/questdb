@@ -32,11 +32,6 @@ package io.questdb.cairo;
  * file written by a released version often holds non-zero data where the trailer would be (see
  * {@link TableUtils#CV_CHECKSUM_MAGIC}).
  * <p>
- * A file-level watermark does not tell a missing trailer from one that should have been written: an older
- * binary can neither see nor withdraw such a promise, so a table it writes to would read back as damaged.
- * Where the distinction is needed, it is made per record by stamping the checksum with the record it
- * describes (see {@link TableUtils#TX_OFFSET_BODY_CHECKSUM_STAMP_32}).
- * <p>
  * Pure functions only: no I/O and no state.
  */
 public final class ChecksumTrailer {

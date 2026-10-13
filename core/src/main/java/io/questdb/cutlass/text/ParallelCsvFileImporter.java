@@ -880,12 +880,8 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
     }
 
     private void flushImportedTable() {
-        // The import writes its partitions and symbol files outside a commit, so in SYNC, and in ADAPTIVE for a WAL
-        // table this import created, they must be durable before COPY reports it done; a failed flush drops a
-        // created table and truncates an existing one. The writer of a created table holds a non-WAL token, so it
-        // takes no save point; an existing WAL table in ADAPTIVE is flushed by the writer's save point after the
-        // attach. Where syncfs is filesystem-wide one sync of the filesystem that holds the table does: a created
-        // table is never in a volume, so that sync also covers its entry in the database root and the registry.
+        // The import writes its partitions and symbol files outside a commit, so they must be durable before
+        // COPY reports it done; a failed flush drops a created table and truncates an existing one.
         if (isImportFlushed()) {
             if (ff.isSyncfsFileSystemWide()) {
                 DatabaseCheckpointAgent.syncRestoredState(ff, tmpPath.of(configuration.getDbRoot()).concat(tableToken), false);

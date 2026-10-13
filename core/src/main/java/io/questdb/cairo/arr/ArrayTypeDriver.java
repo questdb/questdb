@@ -585,12 +585,8 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
         final long auxFileOffset = ARRAY_AUX_WIDTH_BYTES * row;
         final long offset = readLong(ff, auxFd, auxFileOffset) & OFFSET_MAX;
         final int size = readInt(ff, auxFd, auxFileOffset + Long.BYTES);
-        // Torn-write guard: data offsets are monotonic. A null entry has size=0 and
-        // offset=current-data-end (same as the previous end), so null-prefix rows
-        // are never flagged. A torn/un-flushed aux entry leaves the offset field
-        // zeroed while the previous row's data end is non-zero: offset < prevEnd.
-        // Do not check offset==0: a real array whose offset is 0 is valid when all
-        // preceding entries are null (they write no data bytes, so data-end stays 0).
+        // Torn-write guard: data offsets are monotonic, so offset < prevEnd means a torn/un-flushed entry.
+        // Do not check offset==0: a real array's offset can be 0 when all preceding entries are null.
         if (row > 0) {
             final long prevDataEnd = arrayDataEndAtFromFd(ff, auxFd, row - 1);
             if (offset < prevDataEnd) {
@@ -605,8 +601,6 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     // Reads the data-vector end (offset+size) of one aux entry from the fd.
-    // Non-recursive; one entry only. A null entry (size=0) returns its offset,
-    // which equals the previous cumulative end, as monotonicity checks need.
     private static long arrayDataEndAtFromFd(FilesFacade ff, long auxFd, long row) {
         final long auxFileOffset = ARRAY_AUX_WIDTH_BYTES * row;
         return (readLong(ff, auxFd, auxFileOffset) & OFFSET_MAX) + readInt(ff, auxFd, auxFileOffset + Long.BYTES);

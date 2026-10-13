@@ -169,10 +169,7 @@ public class BitmapIndexWriter implements IndexWriter {
     }
 
     public void commit() {
-        // SYNC and ASYNC only: the .k/.v files are re-derivable from the durable WAL like the column they
-        // index, so under ADAPTIVE they stay lazy on the apply path, and a save point makes them durable
-        // (TableWriter.fsyncMaterializedState calls sync(false) on every indexer, then one filesystem-wide
-        // syncfs). See IndexWriter.setCommitMode.
+        // See IndexWriter.setCommitMode for the grade this applies.
         final int commitMode = indexCommitMode;
         if (CommitMode.appliesColumnSync(commitMode)) {
             sync(commitMode == CommitMode.ASYNC);

@@ -327,15 +327,11 @@ public class StringTypeDriver implements ColumnTypeDriver {
     @Override
     public long setAppendPosition(long pos, MemoryMA auxMem, MemoryMA dataMem) {
         if (pos > 0) {
-            // Crash-consistency guard, as in VarcharTypeDriver. aux[pos] is the last
-            // row's data end, written after that row's data; aux[pos-1] is its data
-            // start. Offsets are monotonic, so an end below the start means the aux
-            // tail is torn, and the open fails rather than move the data cursor back
-            // over committed rows. The O(1) check does not catch a whole unflushed aux
-            // page, which nosync may lose on power loss by design.
-            // Read aux[pos-1] first, while its page is mapped: the paged aux memory
-            // (MemoryPMARImpl) would otherwise touch an unmapped page whenever pos<<SHL
-            // lands on a page boundary.
+            // Crash-consistency guard, as in VarcharTypeDriver: offsets are monotonic, so an end below the
+            // start means the aux tail is torn, and the open fails rather than move the data cursor back over
+            // committed rows. The O(1) check does not catch a whole unflushed aux page.
+            // Read aux[pos-1] first, while its page is mapped, since the paged aux memory would otherwise
+            // touch an unmapped page whenever pos<<SHL lands on a page boundary.
             long prevPos = -1;
             if (pos > 1) {
                 auxMem.jumpTo((pos - 1) << LEGACY_VAR_SIZE_AUX_SHL);
