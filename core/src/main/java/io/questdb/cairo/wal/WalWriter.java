@@ -1187,9 +1187,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Test hook, called inside {@link #commit0} under a group window after the txn is sequenced, and with it
-     * pinned by the sequencer, before the writer records it as pending. A test interposes a peer writer's flush
-     * here to drive that race. Null outside tests.
+     * Test hook, called inside {@link #commit0} under a group window after the txn is sequenced but before the
+     * writer records it as pending, so a test can interpose a peer writer's flush to drive that race.
      */
     @TestOnly
     public interface DeferredCommitInterceptor {
@@ -1559,14 +1558,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     private void doClose(boolean truncate) {
         if (open) {
             open = false;
-            // Release every native resource even if one step throws, for example on a close-time fd sync failure.
-            // doClose has already cleared `open`, so a retry is a no-op and a skipped resource would leak until the
-            // process exits. Run every step, keep the first failure, and rethrow it once everything is released.
+            // Release every native resource even if one step throws: run every step, keep the first failure,
+            // and rethrow it once everything is released.
             Throwable closeError = null;
-            // Never leave this writer in the background flush queue. cleanupBeforeClose has already flushed or
-            // dropped the pending batch; this covers a close path that bypasses it, such as a constructor failure.
             // dropPendingDurable() is synchronized, so the pending fields are cleared and the writer deregistered
-            // before the fd-close steps below, which are not. It can flush, so a failure must not skip the frees.
+            // before the fd-close steps below, which are not.
             try {
                 dropPendingDurable();
             } catch (Throwable th) {
@@ -1830,10 +1826,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     private void openNewSegment() {
-        // Flush the pending batch before the segment roll. flushPendingDurable() flushes, clears the pending
-        // fields and deregisters this writer under the writer monitor, so a flusher that takes the monitor
-        // afterwards finds nothing pending. Only the sequencer log needs the flush: the segment's column and
-        // event files were fdatasynced before their commits were sequenced. A no-op when nothing is pending.
+        // Flush the pending batch before the segment roll, under the writer monitor, so a flusher that takes
+        // it afterwards finds nothing pending. A no-op when nothing is pending.
         flushPendingDurable();
         boolean refreshed = refreshSymbolWatermarks();
         final int newSegmentId = segmentId + 1;
@@ -2633,12 +2627,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     /**
      * Runs the batched sequencer flush of the adaptive group commit, then advances {@code localDurableSeqTxn}
-     * and clears the pending state. The private WAL files were made durable before sequencing, so this flush
-     * cannot publish volatile data or events, and the frontier advances only after the device flush completes.
+     * and clears the pending state.
      * <p>
      * Synchronized on the writer monitor: the background flusher ({@link #forceDurableIfPending}) and the
      * committing thread both route through here, so at most one flush of a backlog runs. A no-op when nothing
-     * is pending, as for the loser of that race.
+     * is pending.
      */
     private synchronized void flushPendingDurable() {
         final long flushTo = pendingDurableSeqTxn;
@@ -2681,17 +2674,13 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     /**
      * Background flusher entry point: if this writer's oldest pending commit is at least {@code windowUs} old
      * at {@code nowMicros}, runs the batched flush, so the commit becomes durable within W after commits stop.
-     * <p>
-     * Synchronized on the writer monitor, as are {@link #flushPendingDurable()} and the commit-driven flush, so
-     * it never flushes twice or reads half-updated pending fields. When a concurrent commit has just flushed,
-     * nothing is pending and this call returns false.
+     * Synchronized on the writer monitor, as is {@link #flushPendingDurable()}, so it never flushes twice.
      *
      * @return {@code true} if a flush was performed
      */
     synchronized boolean forceDurableIfPending(long nowMicros, long windowUs) {
-        // Both nowMicros, from the caller's clock, and pendingSinceMicros, from
-        // configuration.getMicrosecondClock(), must be in microseconds. WalPurgeJob passes MicrosecondClock
-        // ticks; a millisecond clock would make every batch look 1000 times younger and break the window bound.
+        // Both nowMicros and pendingSinceMicros must be in microseconds; a millisecond clock would make every
+        // batch look 1000 times younger and break the window bound.
         if (pendingDurableSeqTxn < 0) {
             return false;
         }

@@ -607,14 +607,9 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                         writer.commitSeqTxn();
                     }
 
-                    // Right after the batch commits, while this thread holds the writer and so sees a
-                    // consistent cut, take a durable epoch at most once per configured cadence. Under ADAPTIVE
-                    // this is the main place the table's column state becomes durable; a graceful writer close
-                    // also takes a final epoch (TableWriter.doClose). Materialized view and view block files
-                    // (_mv.s, _mv, _view) are gated at each write site by LocalDurabilityPolicy.resolveCommitMode.
-                    // A run that applies nothing takes the idle save point WalPurgeJob asked for, under the same
-                    // gates: it puts both save point generations on the current state, so the purges free what
-                    // the older one kept.
+                    // Save points follow committed batches while this thread still holds the writer. A run
+                    // that applies nothing instead takes the idle save point WalPurgeJob asked for, so an idle
+                    // request also reclaims the older save-point generation's retention.
                     final boolean idleEpochRequested = seqTxnTracker.consumeIdleEpochRequest();
                     if (totalTransactionCount > 0 || idleEpochRequested) {
                         maybeAdvanceDurableEpoch(tableToken, writer, rowsAdded);
@@ -713,11 +708,8 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         if (writer.getEffectiveCommitMode() != CommitMode.ADAPTIVE) {
             return;
         }
-        // A replica takes no durable epoch: it keeps its applied state at NOSYNC grade, and since nothing
-        // re-downloads WAL a crash would need, it keeps no anchor to rewind to either.
-        // TableWriter.reconcileDurableEpochAnchor() makes the table durable and removes the anchor before the
-        // batch, and startup then leaves the table at its live cut. The OSS default policy is ALWAYS_ON; only a
-        // live Enterprise replica installs REPLICA_SKIP.
+        // A replica takes no durable epoch: it keeps its applied state at NOSYNC grade and keeps no rewind
+        // anchor. The OSS default policy is ALWAYS_ON; only a live Enterprise replica installs REPLICA_SKIP.
         if (!engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
             return;
         }
@@ -735,9 +727,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
         final long lastEpochTs = tracker.getLastEpochTs();
         final long maxRows = config.getAdaptiveEpochMaxRows();
         // Fire on the first batch (lastEpochTs == 0), once intervalMs has elapsed, or once the applied-row
-        // backlog reaches the cap. The cap bounds WAL retention and recovery replay, so the interval can be
-        // long; maxRows <= 0 disables it. MicrosecondClock is wall time: a backwards clock step counts as an
-        // elapsed interval, so it cannot suppress epochs until the clock catches up.
+        // backlog reaches the cap; a backwards clock step counts as elapsed, so it cannot suppress epochs.
         final boolean timeElapsed = lastEpochTs == 0 || nowMs < lastEpochTs || (nowMs - lastEpochTs) >= intervalMs;
         final boolean backlogHit = maxRows > 0 && tracker.getRowsSinceEpoch() >= maxRows;
         if (!timeElapsed && !backlogHit && !epochOwed) {

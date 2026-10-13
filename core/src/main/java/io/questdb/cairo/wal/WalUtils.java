@@ -263,11 +263,9 @@ public class WalUtils {
             writeRebaseNewMarker(ff, dstDir);
         }
 
-        // ADAPTIVE makes the staging table durable before the caller's rename publishes it. ff.copy, the munmap in
-        // MemoryMARW.close and createSequencerFiles leave the new _meta, _txn and sequencer files in the page
-        // cache, and the rename makes neither them nor the new entry durable (the caller fsyncs the destination
-        // parent after it). Startup adopts the dir by its presence at the final path, so without this sync a
-        // power loss could publish a table with a size-0 _meta, which recovery suspends on.
+        // ADAPTIVE makes the staging table durable before the caller's rename publishes it, since the rename
+        // itself does not (the caller fsyncs the destination parent after it). Without this, a power loss could
+        // publish a table with a size-0 _meta, which recovery suspends on.
         // REBASE staging is local truth, not downloaded state: keep the configured grade.
         if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
             dstDir.trimTo(dstLen);
@@ -632,9 +630,8 @@ public class WalUtils {
     }
 
     // Whether a top-level file is copied into a rebase clone: every file except the source's work and rebase
-    // files and its save point files. The clone resets _txn and _meta to a new table, so a copied save point
-    // could never validate, and recovery would refuse to start on the published dir. The clone publishes its
-    // own generation-zero save point instead (cloneTableDirForRebase).
+    // files and its save point files, since the clone resets _txn and _meta and needs its own generation-zero
+    // save point (cloneTableDirForRebase), not a copy of the source's.
     private static boolean isRebaseClonedRootFile(CharSequence name) {
         if (Chars.equals(name, TableUtils.TODO_FILE_NAME)
                 || Chars.equals(name, CONVERT_FILE_NAME)

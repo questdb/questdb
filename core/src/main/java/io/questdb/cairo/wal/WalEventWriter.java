@@ -88,9 +88,7 @@ class WalEventWriter implements Closeable {
     }
 
     public void close(boolean truncate, byte truncateMode) {
-        // Close both memories even if the first throws, for example on a close-time fd sync failure.
-        // MemoryCMARWImpl.close unmaps before it syncs the fd, so a throw from eventMem would otherwise leak the
-        // mapping of eventIndexMem. The original failure still propagates.
+        // Close both memories even if the first throws, so a throw from eventMem cannot leak eventIndexMem's mapping.
         try {
             eventMem.close(truncate, truncateMode);
         } finally {
@@ -529,10 +527,8 @@ class WalEventWriter implements Closeable {
      */
     void sync(int commitMode) {
         if (commitMode != CommitMode.NOSYNC) {
-            // With a group window the mappings get only MS_ASYNC, which flushes nothing, and the writer fdatasyncs
-            // these private files before sequencing (syncBeforeSequencing); only the shared sequencer flush is
-            // batched. ADAPTIVE with no window takes MS_SYNC plus the barrier below. ASYNC and SYNC keep their own
-            // grade.
+            // With a group window only the shared sequencer flush is batched (MS_ASYNC here, plus
+            // syncBeforeSequencing); ADAPTIVE with no window takes MS_SYNC plus the barrier below.
             final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
                     && configuration.getAdaptiveCommitGroupWindowUs() > 0;
             final boolean async = commitMode == CommitMode.ASYNC || deferDeviceFlush;
@@ -551,15 +547,10 @@ class WalEventWriter implements Closeable {
     }
 
     /**
-     * Orders the WAL event and index files ahead of the sequencer record. Under ADAPTIVE, WalWriter calls this
-     * after the private column data and before sequencing: on the data commit path at every group window, on the
-     * other paths with a window above zero ({@link #sync(int)} calls it with none, and
-     * {@link #syncBeforeSequencing(int)} for any record still unflushed).
-     * <p>
-     * It is an ordering barrier, not a durability barrier: a sequencer record must never reach the medium ahead
-     * of the _event entry it names. The sequencer flush at the commit point, which advances localDurableSeqTxn,
-     * is a full device-cache flush and makes everything ordered before it durable. See
-     * {@link io.questdb.std.Files#barrierFsync(long)}.
+     * Orders the WAL event and index files ahead of the sequencer record (see
+     * {@link io.questdb.std.Files#barrierFsync(long)}). It is an ordering barrier, not a durability barrier:
+     * the sequencer flush at the commit point is the full device-cache flush that makes everything ordered
+     * before it durable.
      */
     void barrierFsync() {
         if (eventMem.isOpen()) {
@@ -648,13 +639,9 @@ class WalEventWriter implements Closeable {
                 lastRefreshBaseTxn, lastRefreshTimestamp, lastPeriodHi,
                 replaceRangeLowTs, replaceRangeHiTs, dedupMode
         );
-        // Flush the replaced record before the caller sequences it. The record and its index entry are replaced
-        // in place in two files the kernel writes back independently. A power loss that keeps the original in
-        // one file and the replacement in the other suspends the table on a record that disagrees with its
-        // index entry, or applies the original record without the new column's null flag. Nothing names the
-        // record until it is sequenced, so flushing both files here, in any order, is enough. MS_ASYNC plus the
-        // barrier is the pair ADAPTIVE uses for every commit's private files. NOSYNC and ASYNC promise nothing
-        // across a power loss and take no barrier.
+        // Flush the replaced record before the caller sequences it: the record and its index entry are
+        // replaced in place in two files the kernel writes back independently, and nothing names the record
+        // until it is sequenced, so flushing both here in any order is enough.
         // Local WAL events keep the configured grade; a replica does not upload them.
         final int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {

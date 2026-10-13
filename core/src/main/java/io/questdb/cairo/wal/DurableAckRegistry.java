@@ -31,11 +31,9 @@ import io.questdb.cairo.TableToken;
  * the configured object store) for each WAL table. Used by QWP to emit a second
  * "durable" acknowledgment frame to clients that opt in.
  * <p>
- * The OSS server ships {@link LocalDurableAckRegistry} as the default, which tracks the
- * local-fsync tier (ADAPTIVE commit mode). Enterprise installations with primary replication
- * enabled override this via {@link io.questdb.cairo.CairoEngine#setDurableAckRegistry} with an
- * implementation backed by the upload pipeline. {@link DefaultDurableAckRegistry} is a
- * legacy no-op kept for tests and Enterprise composition.
+ * The OSS server ships {@link LocalDurableAckRegistry} as the default, which tracks the local-fsync
+ * tier (ADAPTIVE commit mode). Enterprise installations with primary replication enabled override this
+ * via {@link io.questdb.cairo.CairoEngine#setDurableAckRegistry} with an upload-pipeline-backed one.
  */
 public interface DurableAckRegistry {
 

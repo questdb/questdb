@@ -67,9 +67,8 @@ import java.io.Closeable;
 import java.util.concurrent.TimeUnit;
 
 public class WalPurgeJob extends SynchronizedJob implements Closeable {
-    // At most this many idle save point requests per purge pass, about four per apply worker at the default
-    // worker count: a burst (every table that went idle before a restart) spreads over passes instead of queueing
-    // ahead of the applies notified after it. A table not asked in one pass is asked in a later one.
+    // At most this many idle save point requests per purge pass, so a burst spreads over passes instead of
+    // queueing ahead of the applies notified after it. A table not asked in one pass is asked in a later one.
     public static final int IDLE_SAVE_POINT_REQUESTS_PER_PASS = 16;
     private static final Log LOG = LogFactory.getLog(WalPurgeJob.class);
     private final Path anchorPath = new Path();
@@ -742,18 +741,14 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
-    // An adaptive table keeps the WAL and the partition and column versions its older save point names. On a table
-    // that gets no further write, nothing else replaces that save point, so once the table has taken no save point
-    // for one interval, ask the apply job for one more at the current state: both generations then stand on it and
-    // the queued purges free the rest. Equal pins mean equal save points, since every _txn write moves the txn. A
-    // table whose save points both name its current state (its applied seqTxn and the txn its writer last
-    // committed, WAL transaction or not) asks nothing, so an idle table asks once per idle spell (twice when its
-    // last write left a tail with no save point). The time gate repeats in the apply job.
+    // An adaptive table keeps the WAL and the partition and column versions its older save point names. Once a
+    // table has taken no save point for one interval, ask the apply job for one more at the current state: both
+    // generations then stand on it and the queued purges free the rest. A table whose save points already both
+    // name its current state (applied seqTxn and the writer's last committed txn) asks nothing.
     //
-    // A pass asks at most IDLE_SAVE_POINT_REQUESTS_PER_PASS tables. The sweep visits tables in the same order at
-    // every pass, so a pass that reaches the cap makes the next one start after the last table it asked, and a
-    // pass that ends below the cap makes the next one start at the head again. Each eligible table is then asked
-    // within about two rounds of tables / cap passes, however many tables keep going idle.
+    // A pass asks at most IDLE_SAVE_POINT_REQUESTS_PER_PASS tables, rotating the sweep's start point so a
+    // capped pass resumes where the last left off and an uncapped one restarts at the head; every eligible
+    // table is asked within about two rounds.
     private void requestIdleSavePoint() {
         final long intervalMs = configuration.getAdaptiveEpochIntervalMs();
         if (intervalMs < 0
@@ -861,9 +856,7 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
         final long t = clock.getTicks();
         // Sweep the adaptive group commit's pending-flush registry on every pass, independent of the slower
-        // purge cadence. WalWriter.forceDurableIfPending flushes only when the oldest pending commit is at least
-        // one group window old, so an idle writer's last commit becomes durable about one window after it, with
-        // no further commit to trigger the flush. The sweep is cheap when nothing is pending.
+        // purge cadence, so an idle writer's last commit becomes durable about one window after it.
         boolean busy = false;
         final long groupWindowUs = configuration.getAdaptiveCommitGroupWindowUs();
         if (groupWindowUs > 0) {

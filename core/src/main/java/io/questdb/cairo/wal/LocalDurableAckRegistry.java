@@ -92,27 +92,16 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
         }
     }
 
-    /**
-     * Returns the highest locally-fdatasync'd seqTxn for the given table, {@link #TABLE_GONE} if
-     * the directory no longer resolves to a live table, or -1 if the table uses NOSYNC commit mode
-     * or has not yet committed a local-durable txn.
-     */
     @Override
     public long getLocalDurableSeqTxn(CharSequence tableDirName) {
         return resolveLocalDurableSeqTxn(engine, tableDirName);
     }
 
-    /**
-     * Returns -1: OSS has no upload pipeline.
-     */
     @Override
     public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
         return -1L;
     }
 
-    /**
-     * LOCAL is the only tier OSS offers, so the registry is enabled exactly when that tier is servable.
-     */
     @Override
     public boolean isEnabled() {
         return canServeLocalTier(engine);
