@@ -423,12 +423,12 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             assertQuery("""
                     SELECT SUM(i + 1.0) a, SUM(i + :d) b, SUM(i + :f) c, SUM(i + 1::DOUBLE) d,
                            SUM(i + -:d) e, SUM(i + -1::DOUBLE) f, SUM(x * y::INT) g, SUM(x * -y) h,
-                           SUM(x / 2) i, SUM(x % 7) j
+                           SUM(x / 2) i, SUM(x % 7) j, SUM(x * (y - 1)) k
                     FROM t
                     """)
                     .noLeakCheck().noRandomAccess().expectSize().returns("""
-                            a\tb\tc\td\te\tf\tg\th\ti\tj
-                            0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t2043016224\t-2043016224\t15000\t6
+                            a\tb\tc\td\te\tf\tg\th\ti\tj\tk
+                            0.0\t0.0\t0.0\t0.0\t0.0\t0.0\t2043016224\t-2043016224\t15000\t6\t2042986223
                             """);
         });
     }
