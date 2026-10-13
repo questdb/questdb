@@ -845,7 +845,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             frameRowCounts.add(frameRows);
             frameAddressCache.add(frameCount++, frame);
         }
-        reduceFramesLocally = rows < localReduceMaxRows;
+        reduceFramesLocally = rows < localReduceMaxRows && (!deferFrameAddresses || frameCount <= LOCAL_REDUCE_MAX_FRAMES);
         if (localReduceMaxRows > 0) {
             countFrameOpens(reduceFramesLocally);
         }

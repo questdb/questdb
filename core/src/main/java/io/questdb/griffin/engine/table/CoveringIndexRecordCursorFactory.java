@@ -108,6 +108,21 @@ import java.util.Arrays;
  * then reads that list.
  */
 public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
+    /**
+     * Tests: covered frames produced lean (see CoveringPageFrameCursor.fillFrameForKeyLean()), and
+     * the (key, partition) fills the lean production left to the covering cursor, since the last reset.
+     */
+    @TestOnly
+    public static long[] getLeanCoveredFramesForTesting() {
+        return new long[]{CoveringPageFrameCursor.leanFramesForTesting, CoveringPageFrameCursor.leanFallbacksForTesting};
+    }
+
+    @TestOnly
+    public static void resetLeanCoveredFramesForTesting() {
+        CoveringPageFrameCursor.leanFramesForTesting = 0;
+        CoveringPageFrameCursor.leanFallbacksForTesting = 0;
+    }
+
     // Above this many resolved keys the multi-key covering cursors merge the
     // per-key heads with an O(log N) heap poll (like HeapRowCursorFactory on the
     // non-covering path) instead of the linear O(N) min-scan; at or below it the
@@ -953,6 +968,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             checkHintPromise(frameCursor, resolvedKey == SymbolTable.VALUE_IS_NULL);
             singleKeyPageFrameCursor.resolvedKey = resolvedKey;
             singleKeyPageFrameCursor.of(frameCursor, configMaxRows, descending, executionContext.getMemoryTracker());
+            singleKeyPageFrameCursor.setLeanProduction(executionContext.getCairoEngine().getConfiguration().isSqlParallelFrameDispatchEnabled());
             return singleKeyPageFrameCursor;
         } catch (Throwable th) {
             Misc.free(frameCursor);
@@ -2250,6 +2266,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     private static abstract class CoveringPageFrameCursor implements TablePageFrameCursor {
         private static final int INITIAL_CAPACITY = 4096;
+        private static final int[] NO_KEYS = new int[0];
         // Identity sentinel returned by fillFrameForKeyCheap to mean "this layout is
         // MIXED / not metadata-resolvable -- fall back to the traverse", as distinct
         // from a genuine null ("(key, partition) exhausted"). Never escapes
@@ -2379,6 +2396,15 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected long cheapTotal;
         protected int pendingSymbolKey = -1;
         protected TableReader tableReader;
+        // With the frame dispatch switch on, a fresh forward single-key (key, partition) is
+        // produced without a covering cursor and without its boundary postings, see
+        // fillFrameForKeyLean(); the workers resolve what the frame needs when they decode it.
+        protected boolean leanProduction;
+        // tests: frames the lean production produced, and those it left to the cursor
+        @TestOnly
+        static volatile long leanFramesForTesting;
+        @TestOnly
+        static volatile long leanFallbacksForTesting;
 
         CoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -2742,6 +2768,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
          * materializes eagerly -- see {@code fillMergedFrame}.)
          */
         protected @Nullable PageFrame fillFrameForKey(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap, boolean cheapEligible) {
+            if (leanProduction && cheapEligible && pendingRowCursor == null) {
+                final PageFrame lean = fillFrameForKeyLean(rawSymbolKey, partitionIndex, rowLo, rowHi, rowCap);
+                if (lean != SENTINEL_FALLBACK) {
+                    return lean;
+                }
+                // MIXED, or a reader the lean path does not read: the covering cursor's way below
+                leanFallbacksForTesting++;
+            }
             // Open (or continue) the covering cursor. KEEPING this is load-bearing
             // even on the cheap path: getCursor -> reloadConditionally pre-extends
             // valueMem and openRequiredSidecars opens the sidecars, BOTH of which the
@@ -2780,6 +2814,107 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 clearCheapChunkState();
             }
             return fillFrameByTraverse(coveringCursor, rawSymbolKey, partitionIndex, rowCap);
+        }
+
+        /**
+         * The frame dispatch switch's production of a forward single-key (key, partition), on the
+         * query's thread: the partition's posting reader is prepared for the workers' detached
+         * cursors the way opening a covering cursor prepares it (reload, value memory, sidecars:
+         * {@link AbstractPostingIndexReader#warmForKeys}), without opening one, and the key is
+         * counted ({@code countMatchesClamped}); a chunk of the count becomes a metadata-only frame.
+         * The chunk's boundary postings, which {@link #fillFrameForKeyCheap} resolves here with two
+         * {@code selectKthMatch} calls, are not resolved: the frame's covered range runs from the
+         * chunk's first posting for a later chunk (one {@code selectKthMatch}), from the
+         * partition's first row for the first, and to the partition's end, and the worker that
+         * decodes the frame reads the frame's row count of the key's postings from there (see
+         * PageFrameMemoryPool.CoveringBuffers), which are the chunk's rows. Returns null when the
+         * (key, partition) is exhausted, {@link #SENTINEL_FALLBACK} when the reader is not a
+         * posting reader or the layout is MIXED: the caller then opens the covering cursor.
+         */
+        private @Nullable PageFrame fillFrameForKeyLean(int rawSymbolKey, int partitionIndex, long rowLo, long rowHi, int rowCap) {
+            final boolean resume = cheapChunkActive
+                    && pendingSymbolKey == rawSymbolKey
+                    && pendingPartitionIndex == partitionIndex;
+            final AbstractPostingIndexReader reader;
+            if (resume) {
+                reader = (AbstractPostingIndexReader) framePostingReader;
+            } else {
+                final IndexReader indexReader = tableReader.getIndexReader(partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
+                if (!(indexReader instanceof AbstractPostingIndexReader posting)) {
+                    return SENTINEL_FALLBACK;
+                }
+                reader = posting;
+                // what the covering cursor's open did for the workers' detached cursors
+                reader.warmForKeys(NO_KEYS, requiredIncludeIndices);
+                framePostingReader = reader;
+                framePostingCursorMinValue = rowLo;
+                pendingSymbolKey = rawSymbolKey;
+                pendingPartitionIndex = partitionIndex;
+            }
+            final int key = TableUtils.toIndexKey(rawSymbolKey);
+            final long clampedMax;
+            final long nullMax;
+            final long total;
+            final long chunkBase;
+            final long partitionRowLo;
+            if (resume) {
+                clampedMax = cheapClampedMax;
+                nullMax = cheapNullMax;
+                total = cheapTotal;
+                chunkBase = cheapChunkBase;
+                partitionRowLo = cheapRowLo;
+            } else {
+                // the bounds fillFrameForKeyCheap() and the covering cursor use, see there
+                final long callerHiInclusive = rowHi - 1;
+                final long entryMax = reader.getEntryMaxValue();
+                clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
+                nullMax = callerHiInclusive;
+                total = reader.countMatchesClamped(key, rowLo, nullMax, clampedMax);
+                if (total == Numbers.LONG_NULL) {
+                    clearCheapChunkState();
+                    return SENTINEL_FALLBACK;
+                }
+                chunkBase = 0;
+                partitionRowLo = rowLo;
+            }
+            final int count = (int) Math.min(rowCap, total - chunkBase);
+            if (count <= 0) {
+                clearCheapChunkState();
+                return null;
+            }
+            final long firstAbs;
+            if (chunkBase == 0) {
+                // no posting of the key precedes the first chunk's in the partition
+                firstAbs = partitionRowLo;
+            } else {
+                firstAbs = reader.selectKthMatch(key, partitionRowLo, nullMax, clampedMax, chunkBase);
+                if (firstAbs == Numbers.LONG_NULL) {
+                    clearCheapChunkState();
+                    return SENTINEL_FALLBACK;
+                }
+            }
+            if (chunkBase == 0) {
+                // as fillFrameForKeyCheap(): the per-key genLookup memo, before the readers freeze
+                reader.populateCacheForKey(key);
+            }
+            final long nextBase = chunkBase + count;
+            if (nextBase < total) {
+                cheapChunkActive = true;
+                cheapChunkBase = nextBase;
+                cheapClampedMax = clampedMax;
+                cheapNullMax = nullMax;
+                cheapRowLo = partitionRowLo;
+                cheapTotal = total;
+                pendingSymbolKey = rawSymbolKey;
+                pendingPartitionIndex = partitionIndex;
+                // the range ends at the partition's: the cheap resume reads nullMax as its end
+            } else {
+                clearCheapChunkState();
+            }
+            leanFramesForTesting++;
+            // the range: from the chunk's first posting (or the partition's first row) to the
+            // partition's end; the decode reads the frame's count of postings from its start
+            return finalizeFrame(count, partitionIndex, rawSymbolKey, firstAbs, nullMax + 1, false);
         }
 
         /**
@@ -3209,6 +3344,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
 
         abstract void resetIterationState();
+
+        void setLeanProduction(boolean leanProduction) {
+            this.leanProduction = leanProduction;
+        }
     }
 
     /**
