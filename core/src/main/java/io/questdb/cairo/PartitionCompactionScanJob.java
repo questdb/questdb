@@ -384,7 +384,10 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         final TxReader txFile = reader.getTxFile();
         final long srcNameTxn = txFile.getPartitionNameTxn(partitionIndex);
         final long writerTxn = readerGeometry.getWriterTxn(partitionIndex);
-        final long e = readerGeometry.getE(partitionIndex);
+        // Not E: the writer may MAKE-PLAIN this folder and TRIM-FILES its dead space while the copy runs - this
+        // reader's txn is at or past the record MAKE-PLAIN waits on - so map only as far as the live pieces reach,
+        // as TableReader#mappedRowCount does.
+        final long liveFileExtent = readerGeometry.getLiveFileExtent(partitionIndex);
         final int timestampType = reader.getMetadata().getTimestampType();
         final int partitionBy = reader.getPartitionedBy();
         final ColumnVersionReader cvr = reader.getColumnVersionReader();
@@ -408,7 +411,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
             final int tableRootLen = path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).size();
             TableUtils.setPathForNativePartition(path, timestampType, partitionBy, partitionTimestamp, srcNameTxn);
-            try (Frame sourceFrame = frameFactory.openRO(path, partitionTimestamp, reader.getMetadata(), cvr, e)) {
+            try (Frame sourceFrame = frameFactory.openRO(path, partitionTimestamp, reader.getMetadata(), cvr, liveFileExtent)) {
                 targetFrame.setKeepColumnsOpen(true);
                 sourceFrame.setKeepColumnsOpen(true);
                 rewriteRanges.clear();
@@ -590,14 +593,14 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     if (txFile.isPartitionComposite(partitionIndex)) {
                         readerGeometry.resolve(partitionIndex);
                         final int pieceCount = readerGeometry.getPieceCount(partitionIndex);
-                        // A composite folder's live rows stop short of its files, so it is opened at its
-                        // extent and its pieces appended one by one.
+                        // A composite folder's live rows stop short of its files, so it is opened at its live
+                        // extent and its pieces appended one by one. Not E: see buildCompactedComposite.
                         try (Frame sourceFrame = frameFactory.openRO(
                                 path,
                                 folderTimestamp,
                                 reader.getMetadata(),
                                 cvr,
-                                readerGeometry.getE(partitionIndex)
+                                readerGeometry.getLiveFileExtent(partitionIndex)
                         )) {
                             sourceFrame.setKeepColumnsOpen(true);
                             rewriteRanges.clear();

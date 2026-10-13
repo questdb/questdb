@@ -2083,6 +2083,115 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
+     * A sweep MERGE copies a logical partition whose front folder is MOVE-TAIL's leftover: composite, one piece at
+     * row 0, dead space above it. The sweep's reader pins a txn at or past that geometry record, which is outside the
+     * range MAKE-PLAIN waits on, so the writer is free to MAKE-PLAIN the front and TRIM-FILES its column files while
+     * the copy is in flight. The copy must therefore map the front only as far as its live pieces reach, like
+     * {@code TableReader#mappedRowCount}: mapping to E reads the var-size aux entry for row E-1 to size the data
+     * mapping, and that entry now sits past the end of the trimmed file - SIGBUS.
+     * <p>
+     * The hook is the staging directory's mkdirs, after the sweep took its reader and before it maps any source.
+     */
+    @Test
+    public void testScanMergeSurvivesMakePlainTrimmingTheFrontItCopies() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 16);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_HOT_COMMITS, 0);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+        node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+        final AtomicReference<Runnable> hook = new AtomicReference<>();
+        final AtomicInteger fired = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                final Runnable r = hook.get();
+                if (r != null
+                        && Utf8s.containsAscii(path, Files.SEPARATOR + "2024-01-01")
+                        && Utf8s.containsAscii(path, TableUtils.MERGING_DIR_MARKER)
+                        && fired.getAndIncrement() == 0) {
+                    // Before the directory exists: a writer opening inside the hook must not see it as abandoned.
+                    r.run();
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-01-01T00:00:00.000000Z"));
+            execute("CREATE TABLE x AS (SELECT x::INT i, ('v' || x)::STRING s," +
+                    " timestamp_sequence('2024-01-01', 1_000_000L) ts" +
+                    " FROM long_sequence(20_000)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1T");
+            for (int i = 0; i < 5; i++) {
+                execute("INSERT INTO x SELECT x::INT + 500_000 i, ('b' || x)::STRING s," +
+                        " timestamp_sequence('2024-01-01T05:00:00', 1_000_000L) ts FROM long_sequence(200)");
+                drainWalQueue();
+            }
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, Long.MAX_VALUE / 8);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_PIECE_THRESHOLD, 2);
+
+            final TableToken token = engine.verifyTableName("x");
+            final long day = MicrosFormatUtils.parseTimestamp("2024-01-01T00:00:00.000000Z");
+            // A pinned reader lets MOVE-TAIL run and keeps MAKE-PLAIN declining, so the front stays composite.
+            try (TableReader pinned = engine.getReader(token)) {
+                Assert.assertNotNull(pinned);
+                for (int i = 0; i < 6; i++) {
+                    execute("INSERT INTO x SELECT x::INT + 800_000 + " + (i * 10) + " i, 'c' s," +
+                            " timestamp_sequence('2024-03-0" + (1 + i) + "', 60_000_000L) ts FROM long_sequence(2)");
+                    drainWalQueue();
+                }
+            }
+            engine.releaseAllReaders();
+            final long expectedCount;
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue("front must be composite", tx.isPartitionComposite(0));
+                Assert.assertEquals(1, reader.getGeometry().getPieceCount(0));
+                Assert.assertTrue("MOVE-TAIL left no dead space", reader.getPartitionPhysicalRowCount(0) > tx.getPartitionSize(0));
+                Assert.assertEquals("MOVE-TAIL must leave a sibling split", day, tx.getLogicalPartitionTimestamp(tx.getPartitionTimestampByIndex(1)));
+                expectedCount = reader.size();
+            }
+            engine.releaseAllReaders();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT, "30m");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2024-04-01T00:00:00.000000Z"));
+            hook.set(() -> {
+                try {
+                    // Past the decline backoff, a commit elsewhere lets the writer MAKE-PLAIN the front.
+                    setCurrentMicros(currentMicros + 2 * Micros.MINUTE_MICROS);
+                    execute("INSERT INTO x SELECT x::INT + 900_000 i, 'd' s," +
+                            " timestamp_sequence('2024-03-20', 60_000_000L) ts FROM long_sequence(2)");
+                    drainWalQueue();
+                    try (TableReader reader = engine.getReader(token)) {
+                        Assert.assertFalse("the writer did not MAKE-PLAIN the front", reader.getTxFile().isPartitionComposite(0));
+                    }
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
+            });
+            // Plain folders use filesystem modification times, not the simulated clock.
+            final Clock pastTheSquashTimeout = () -> MicrosecondClockImpl.INSTANCE.getTicks() + 2 * Micros.HOUR_MICROS;
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, pastTheSquashTimeout)) {
+                job.run();
+            } finally {
+                hook.set(null);
+            }
+            Assert.assertEquals("the sweep did not MERGE the day", 1, fired.get());
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            assertQuery("SELECT count() c FROM x").noRandomAccess().expectSize().returns("c\n" + (expectedCount + 2) + "\n");
+        });
+    }
+
+    /**
      * Folding a whole split day is gated on {@code squash.idle.timeout}, not on the longer {@code idle.timeout}
      * that compacting one composite folder on its own waits for: a sweep between the two thresholds merges the day,
      * and one before the squash threshold does not.

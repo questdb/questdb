@@ -93,6 +93,11 @@ That is a claim about `TableReader` only. Writer-side consumers do size to `E` (
 txn they were dispatched at. A new consumer that sizes to `E` and runs concurrently with TRIM-FILES needs its
 own check.
 
+Holding a scoreboard txn is NOT enough off the writer thread: `PartitionCompactionScanJob`'s REWRITE and MERGE
+builds copy on a reader txn that can sit at or past the record MAKE-PLAIN checks, so the writer can trim under
+them. They open their source frames at `getLiveFileExtent`, like `TableReader`. Sized to `E`, a var-size column
+reads the aux entry for row `E-1` from a file TRIM-FILES has just cut, and faults.
+
 **Checkpoint.** A running CHECKPOINT sizes files by the `E` its `_txn` copy carries and reads them from the
 live root, so a checkpoint that copied the pre-lowering `E` must see files at least that long until it is
 released. It is also a pinned reader: `DatabaseCheckpointAgent` sets its in-progress flag, opens a reader per
