@@ -100,7 +100,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             assertQuery("SELECT percentile_cont(x, 0) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_cont\n1.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_cont\n1.0\n");
         });
     }
 
@@ -110,7 +112,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             assertQuery("SELECT percentile_cont(x, 1.0) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_cont\n100.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_cont\n100.0\n");
         });
     }
 
@@ -121,7 +125,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("INSERT INTO test VALUES (1.0), (2.0), (3.0), (4.0)");
             assertQuery("SELECT percentile_cont(x, 0.25) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_cont\n1.75\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_cont\n1.75\n");
         });
     }
 
@@ -131,7 +137,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             assertQuery("SELECT percentile_cont(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_cont\n50.5\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_cont\n50.5\n");
         });
     }
 
@@ -141,7 +149,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT cast(x AS FLOAT) x FROM long_sequence(100))");
             assertQuery("SELECT percentile_cont(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_cont\n50.5\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_cont\n50.5\n");
         });
     }
 
@@ -151,7 +161,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(1000))");
             assertQuery("SELECT percentile_cont(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_cont\n500.5\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_cont\n500.5\n");
         });
     }
 
@@ -162,7 +174,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("INSERT INTO test VALUES (1.0), (2.0), (3.0), (4.0)");
             assertQuery("SELECT percentile_cont(x, 0.75) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_cont
                             3.25
                             """);
@@ -176,7 +190,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("INSERT INTO test VALUES (1.0), (2.0), (3.0), (4.0), (5.0)");
             assertQuery("SELECT percentile_cont(x, 0.5), percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_cont\tpercentile_disc
                             3.0\t3.0
                             """);
@@ -193,7 +209,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             // percentile_disc(0.5): ceil(4 * 0.5) - 1 = 1, returns value at index 1 = 2.0
             assertQuery("SELECT percentile_cont(x, 0.5), percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_cont\tpercentile_disc
                             2.5\t2.0
                             """);
@@ -207,7 +225,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("INSERT INTO test VALUES (10.0), (20.0)");
             assertQuery("SELECT percentile_cont(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_cont\n15.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_cont\n15.0\n");
         });
     }
 
@@ -284,7 +304,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("INSERT INTO test VALUES (1.0), (-1.0)");
             assertQuery("SELECT percentile_cont(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_cont
                             0.0
                             """);
@@ -354,7 +376,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("INSERT INTO test VALUES (null), (null), (null)");
             assertQuery("SELECT percentile_cont(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_cont
                             null
                             """);
@@ -367,7 +391,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT 5.0 x FROM long_sequence(100))");
             assertQuery("SELECT percentile_cont(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_cont\n5.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_cont\n5.0\n");
         });
     }
 
@@ -379,7 +405,8 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
                     ")");
             assertQuery("SELECT category, percentile_cont(value, 0.5) FROM test GROUP BY category ORDER BY category")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize()
+                    .returns("""
                             category\tpercentile_cont
                             0\t6.0
                             1\t5.0
@@ -397,7 +424,8 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             // cat=1: 1, 3, 5, 7, 9 → 75th percentile position = 0.75 * 4 = 3.0 → index 3 → 7.0
             assertQuery("SELECT category, percentile_cont(value, 0.75) FROM test GROUP BY category ORDER BY category")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize()
+                    .returns("""
                             category\tpercentile_cont
                             0\t8.0
                             1\t7.0
@@ -411,7 +439,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test (x DOUBLE)");
             assertQuery("SELECT percentile_cont(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_cont
                             null
                             """);
@@ -425,7 +455,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("INSERT INTO test VALUES (1.0), (null), (null), (null)");
             assertQuery("SELECT percentile_cont(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_cont
                             1.0
                             """);
@@ -439,7 +471,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT 5.0 x FROM long_sequence(100))");
             assertQuery("SELECT percentile_cont(x, $1) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_cont\n5.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_cont\n5.0\n");
         });
     }
 
@@ -544,7 +578,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("INSERT INTO test VALUES (42.0)");
             assertQuery("SELECT percentile_cont(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_cont\n42.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_cont\n42.0\n");
         });
     }
 
@@ -555,7 +591,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute(txDml);
             assertQuery("SELECT percentile_cont(value, 0.95) FROM tx_traffic")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_cont
                             268.20624999999984
                             """);
@@ -568,7 +606,9 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT x::DOUBLE AS val, timestamp_sequence('2024-01-01T00:00:00', 3600000000L) ts FROM long_sequence(5)) TIMESTAMP(ts)");
             assertQuery("SELECT ts, percentile_cont(val, 0.5) FROM test SAMPLE BY 1h")
                     .noLeakCheck()
-                    .returnsOnce("ts\tpercentile_cont\n" +
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("ts\tpercentile_cont\n" +
                             "2024-01-01T00:00:00.000000Z\t1.0\n" +
                             "2024-01-01T01:00:00.000000Z\t2.0\n" +
                             "2024-01-01T02:00:00.000000Z\t3.0\n" +

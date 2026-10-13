@@ -101,7 +101,9 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             assertQuery("SELECT percentile_disc(x, 0) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n1.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n1.0\n");
         });
     }
 
@@ -111,7 +113,9 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             assertQuery("SELECT percentile_disc(x, 1.0) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n100.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n100.0\n");
         });
     }
 
@@ -121,7 +125,9 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n50.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n50.0\n");
         });
     }
 
@@ -131,7 +137,9 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT cast(x AS FLOAT) x FROM long_sequence(100))");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n50.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n50.0\n");
         });
     }
 
@@ -142,7 +150,9 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(1000))");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n500.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n500.0\n");
         });
     }
 
@@ -244,7 +254,9 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("INSERT INTO test VALUES (1.0), (-1.0)");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_disc
                             -1.0
                             """);
@@ -276,7 +288,9 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("INSERT INTO test VALUES (null), (null), (null)");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_disc
                             null
                             """);
@@ -289,7 +303,9 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT 5.0 x FROM long_sequence(100))");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n5.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n5.0\n");
         });
     }
 
@@ -301,7 +317,8 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
                     ")");
             assertQuery("SELECT category, percentile_disc(value, 0.5) FROM test GROUP BY category ORDER BY category")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize()
+                    .returns("""
                             category\tpercentile_disc
                             0\t6.0
                             1\t5.0
@@ -320,7 +337,8 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             // cat=2: 2, 5, 8, 11 → 50th percentile index = ceil(4*0.5)-1 = 1 → 5.0
             assertQuery("SELECT category, percentile_disc(value, 0.5) FROM test GROUP BY category ORDER BY category")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize()
+                    .returns("""
                             category\tpercentile_disc
                             0\t6.0
                             1\t4.0
@@ -341,7 +359,8 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             // cat=1: 1, 3, 5, 7, 9 (5 values) → 50th: ceil(5*0.5)-1 = 2 → 5.0
             assertQuery("SELECT category, percentile_disc(value, 0.5) FROM test GROUP BY category ORDER BY category")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize()
+                    .returns("""
                             category\tpercentile_disc
                             0\t6.0
                             1\t5.0
@@ -396,7 +415,9 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test (x DOUBLE)");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_disc
                             null
                             """);
@@ -496,7 +517,9 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("INSERT INTO test VALUES (1.0), (null), (null), (null)");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_disc
                             1.0
                             """);
@@ -530,7 +553,9 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute("CREATE TABLE test AS (SELECT 5.0 x FROM long_sequence(100))");
             assertQuery("SELECT percentile_disc(x, $1) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n5.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n5.0\n");
         });
     }
 
@@ -684,7 +709,9 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
             execute(txDml);
             assertQuery("SELECT percentile_disc(value, 0.95) FROM tx_traffic")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_disc
                             289.615
                             """);
