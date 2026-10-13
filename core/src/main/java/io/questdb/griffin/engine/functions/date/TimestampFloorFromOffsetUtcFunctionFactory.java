@@ -39,6 +39,11 @@ package io.questdb.griffin.engine.functions.date;
  * <p>
  * When no timezone is specified, this function behaves identically to
  * {@link TimestampFloorFromOffsetFunctionFactory}.
+ * <p>
+ * The engine emits this function as the GROUP BY key of the calendar-aligned
+ * SAMPLE BY rewrite and for a live view's ANCHOR DAILY with a time zone. Both
+ * pass an ordered timestamp, which the bucket cache in
+ * {@link TimestampFloorUtcBucketCachingFunction} relies on.
  */
 public class TimestampFloorFromOffsetUtcFunctionFactory extends AbstractTimestampFloorFromOffsetFunctionFactory {
     public static final String NAME = "timestamp_floor_utc";

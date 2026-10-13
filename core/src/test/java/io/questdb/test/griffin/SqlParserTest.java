@@ -5729,6 +5729,32 @@ public class SqlParserTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testExpressionAliasCastOfSubQuery() throws Exception {
+        // Regression: with alias expressions on (the production default), generateColumnAlias()
+        // prints the column through ExpressionNode.toSink(), whose cast branch read the token of
+        // a sub-query operand, which is null, and threw a NullPointerException. Each statement
+        // must fail with the positioned function resolution error instead, as it does with
+        // alias expressions off.
+        setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
+        assertSyntaxError(
+                "SELECT (SELECT 1)::STRING",
+                17,
+                "there is no matching function `cast` with the argument types: (CURSOR, STRING)"
+        );
+        assertSyntaxError(
+                "SELECT CAST((SELECT 1) AS STRING)",
+                7,
+                "there is no matching function `cast` with the argument types: (CURSOR, STRING)"
+        );
+        assertSyntaxError(
+                "SELECT a, (SELECT 'a')::STRING FROM xyz",
+                22,
+                "there is no matching function `cast` with the argument types: (CURSOR, STRING)",
+                modelOf("xyz").col("a", ColumnType.STRING)
+        );
+    }
+
+    @Test
     public void testExpressionAliasDots() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_COLUMN_ALIAS_EXPRESSION_ENABLED, "true");
         assertQuery(
@@ -13121,6 +13147,36 @@ public class SqlParserTest extends AbstractSqlParserTest {
                 "query is not allowed here",
                 modelOf("t").col("s", ColumnType.SYMBOL).timestamp("ts"),
                 modelOf("lookup").col("s", ColumnType.SYMBOL)
+        );
+    }
+
+    @Test
+    public void testSubQueryNotAllowedInPgCastType() throws Exception {
+        // The right-hand side of :: names a type. The function parser and the cast rewrites read
+        // it by its token, which a sub-query does not have.
+        assertSyntaxError("SELECT 1 :: (SELECT 1)", 13, "query is not allowed here");
+        assertSyntaxError("SELECT 1 :: INT :: (SELECT 1)", 20, "query is not allowed here");
+        assertSyntaxError("SELECT 1 :: (SELECT 1) :: INT", 13, "query is not allowed here");
+        assertSyntaxError("SELECT json_extract('{\"a\":1}', '$.a') :: (SELECT 1)", 42, "query is not allowed here");
+        // a declared value goes through the same rewrite
+        assertSyntaxError("DECLARE @x := 1 :: (SELECT 1) SELECT @x", 20, "query is not allowed here");
+    }
+
+    @Test
+    public void testSubQueryNotAllowedInSampleByFill() throws Exception {
+        // The optimiser and the code generator read FILL values by their tokens, which a
+        // sub-query does not have.
+        assertSyntaxError(
+                "SELECT ts, count() FROM t SAMPLE BY 12h FILL((SELECT 1))",
+                46,
+                "query is not allowed here",
+                modelOf("t").col("x", ColumnType.INT).timestamp("ts")
+        );
+        assertSyntaxError(
+                "SELECT ts, count(), sum(x) FROM t SAMPLE BY 12h FILL(PREV, (SELECT 1))",
+                60,
+                "query is not allowed here",
+                modelOf("t").col("x", ColumnType.INT).timestamp("ts")
         );
     }
 

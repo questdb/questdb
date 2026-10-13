@@ -82,4 +82,19 @@ public class CounterWithTwoLabelsImpl implements CounterWithTwoLabels {
         }
         PrometheusFormatUtils.appendNewLine(sink);
     }
+
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
+        for (int i = 0, n = labelValues0.length; i < n; i++) {
+            for (int j = 0, k = labelValues1.length; j < k; j++) {
+                visitor.visitLong(
+                        name,
+                        MetricType.COUNTER,
+                        labelValues0[i],
+                        labelValues1[j],
+                        counters[(i << shl) + j].longValue()
+                );
+            }
+        }
+    }
 }
