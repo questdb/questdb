@@ -558,6 +558,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public LowerCaseCharSequenceHashSet getAuditedDecls() {
+        return delegate.getAuditedDecls();
+    }
+
+    @Override
     public LowerCaseCharSequenceHashSet getOverridableDecls() {
         return delegate.getOverridableDecls();
     }
@@ -595,6 +600,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<ViewDefinition> getReferencedViews() {
         return delegate.getReferencedViews();
+    }
+
+    @Override
+    public ObjList<ViewAuditModel> getViewAudits() {
+        return delegate.getViewAudits();
     }
 
     @Override
@@ -1026,6 +1036,11 @@ public class QueryModelWrapper implements IQueryModel {
     @Override
     public ObjList<ExpressionNode> parseWhereClause() {
         throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void recordViewAudits(ObjList<ViewAuditModel> viewAudits) {
+        delegate.recordViewAudits(viewAudits);
     }
 
     @Override

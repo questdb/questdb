@@ -376,6 +376,13 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     ExpressionNode getOuterJoinExpressionClause();
 
+    /**
+     * Names of the DECLARE variables this model marked {@code AUDITED}, i.e. whose resolved value
+     * a read of an audited view records. Independent of {@link #getOverridableDecls()}: a variable
+     * that no caller can set still varies per execution when its default is not constant.
+     */
+    LowerCaseCharSequenceHashSet getAuditedDecls();
+
     LowerCaseCharSequenceHashSet getOverridableDecls();
 
     ObjList<ExpressionNode> getParsedWhere();
@@ -389,6 +396,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     int getRefCount(CharSequence alias);
 
     ObjList<ViewDefinition> getReferencedViews();
+
+    ObjList<ViewAuditModel> getViewAudits();
 
     // getQueryModel() is inherited from ExecutionModel with return type QueryModel
 
@@ -585,6 +594,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     ObjList<ExpressionNode> parseWhereClause();
 
     void recordViews(LowerCaseCharSequenceObjHashMap<ViewDefinition> viewDefinitions);
+
+    void recordViewAudits(ObjList<ViewAuditModel> viewAudits);
 
     void recordViews(ObjList<ViewDefinition> viewDefinitions);
 
