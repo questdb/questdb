@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -55,6 +56,7 @@ import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -287,6 +289,7 @@ public class RecordArrayTest extends AbstractCairoTest {
             metadata.add(new TableColumnMetadata("b", ColumnType.STRING));
             metadata.add(new TableColumnMetadata("v", ColumnType.VARCHAR));
             metadata.add(new TableColumnMetadata("c", ColumnType.VARCHAR));
+            metadata.add(new TableColumnMetadata("d", ColumnType.BINARY));
 
             ListColumnFilter filter = new ListColumnFilter();
             filter.add(1);
@@ -294,10 +297,17 @@ public class RecordArrayTest extends AbstractCairoTest {
             filter.add(3);
             filter.add(-4);
             filter.add(5);
+            filter.add(6);
 
-            // values of columns a, b and c, at record indexes 0, 2 and 4
+            // values of columns a, b and c, at record indexes 0, 2 and 4, and of column d
             final String[] values = new String[3];
+            final TestBinarySequence[] bin = new TestBinarySequence[1];
             final Record rec = new Record() {
+                @Override
+                public BinarySequence getBin(int col) {
+                    return bin[0];
+                }
+
                 @Override
                 public CharSequence getStrA(int col) {
                     return values[col / 2];
@@ -325,10 +335,12 @@ public class RecordArrayTest extends AbstractCairoTest {
                     values[0] = "a0";
                     values[1] = "b0";
                     values[2] = "c0";
+                    bin[0] = null;
                     final long row0 = chain.put(rec);
                     values[0] = "a1";
                     values[1] = null;
                     values[2] = "c1";
+                    bin[0] = new TestBinarySequence().of(new byte[]{1, 2, 3});
                     final long row1 = chain.put(rec);
 
                     array.setType(arrayType);
@@ -347,8 +359,8 @@ public class RecordArrayTest extends AbstractCairoTest {
                     }
                     TestUtils.assertEquals(
                             """
-                                    a0\t[1.5]\tb0\t\tc0
-                                    a1\t[2.5]\t\t\tc1
+                                    a0\t[1.5]\tb0\t\tc0\t
+                                    a1\t[2.5]\t\t\tc1\t00000000 01 02 03
                                     """,
                             AbstractCairoTest.sink
                     );
@@ -360,8 +372,8 @@ public class RecordArrayTest extends AbstractCairoTest {
                     }
                     TestUtils.assertEquals(
                             """
-                                    a1\t[2.5]\t\t\tc1
-                                    a0\t[1.5]\tb0\t\tc0
+                                    a1\t[2.5]\t\t\tc1\t00000000 01 02 03
+                                    a0\t[1.5]\tb0\t\tc0\t
                                     """,
                             AbstractCairoTest.sink
                     );

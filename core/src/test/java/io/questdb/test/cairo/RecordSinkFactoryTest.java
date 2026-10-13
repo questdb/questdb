@@ -901,6 +901,8 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             }
             addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, ColumnType.STRING);
             addCopiedColumn(columnTypes, columnFilter, skewIndex, expectedGetIndexes, expectedPutTypes, ColumnType.STRING);
+            addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, ColumnType.BINARY);
+            addCopiedColumn(columnTypes, columnFilter, skewIndex, expectedGetIndexes, expectedPutTypes, ColumnType.BINARY);
             addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, ColumnType.VARCHAR);
 
             final CairoConfiguration copierConfiguration = new CairoConfigurationWrapper(configuration) {

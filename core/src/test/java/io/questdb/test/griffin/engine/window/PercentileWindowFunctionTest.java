@@ -25,8 +25,15 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.engine.window.CachedWindowLightRecordCursorFactory;
+import io.questdb.griffin.engine.window.CachedWindowMapGroups;
+import io.questdb.griffin.engine.window.CachedWindowRecordCursorFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class PercentileWindowFunctionTest extends AbstractCairoTest {
@@ -99,6 +106,55 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiPercentileBeforeVarSizeColumnsMatchesScalarForm() throws Exception {
+        // A randomized cross-check over enough rows to grow the record chain many times. The
+        // array forms read every var-size column through the chain, behind their own output.
+        // The scalar forms take the light path, which reads the base cursor and builds no
+        // RecordSink, so the two agree only when every slot is in its own place.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT
+                            x id,
+                            CASE WHEN x % 11 = 0 THEN NULL ELSE rnd_double() * 100 END v,
+                            CASE WHEN x % 7 = 0 THEN NULL ELSE rnd_varchar('a', 'bb', 'ccc', 'dddd', 'eeeee') END k,
+                            rnd_str(1, 24, 3) s,
+                            rnd_varchar(1, 40, 3) u,
+                            rnd_bin(1, 32, 3) bin,
+                            rnd_double_array(1, 3, 8) arr
+                        FROM long_sequence(10_000)
+                    )
+                    """);
+            final String scalarForm = """
+                    SELECT
+                        percentile_disc(v, 0.5) OVER (PARTITION BY k) d50,
+                        percentile_cont(v, 0.9) OVER (PARTITION BY k) c90,
+                        id, k, s, u, bin, arr
+                    FROM t
+                    """;
+            // The optimizer lays the window model out in the order the outer projection
+            // names its columns, so the array outputs lead the chain only if d[1] and c[1]
+            // come first out here.
+            final String arrayForm = """
+                    SELECT d[1] d50, c[1] c90, id, k, s, u, bin, arr
+                    FROM (
+                        SELECT
+                            percentile_disc(v, ARRAY[0.5]) OVER (PARTITION BY k) d,
+                            percentile_cont(v, ARRAY[0.9]) OVER (PARTITION BY k) c,
+                            id, k, s, u, bin, arr
+                        FROM t
+                    )
+                    """;
+            assertWindowFactory(scalarForm, CachedWindowLightRecordCursorFactory.class, "d50,c90,id,k,s,u,bin,arr");
+            assertWindowFactory(arrayForm, CachedWindowRecordCursorFactory.class, "d,c,id,k,s,u,bin,arr");
+            for (int copierType = 0; copierType < 4; copierType++) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertSqlCursors(scalarForm, arrayForm);
+            }
+        });
+    }
+
+    @Test
     public void testMultiPercentileBeforeVarSizeColumnsWideTable() throws Exception {
         // Over 600 columns the chain's RecordSink no longer fits one method, so the default
         // configuration generates it in chunks. The array output must take its var-size slot
@@ -142,6 +198,95 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                         .noLeakCheck()
                         .expectSize()
                         .returns(windowLast);
+            }
+        });
+    }
+
+    @Test
+    public void testMultiPercentileBeforeVarSizeWindowInputs() throws Exception {
+        // The record chain feeds more than the projection: a window function's argument, the
+        // sort key of an ordered window function and the key of a fused Map group all read
+        // chain columns. Behind an array output whose slot the RecordSink did not step past,
+        // each of them read a neighbour's slot, NULL or a dangling pointer.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x DOUBLE, a VARCHAR, c VARCHAR, s STRING, b VARCHAR)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'g1', '1.5', 's1', 'h1'),
+                    (2.0, 'g1', '2.5', 's2', 'h2'),
+                    (10.0, 'g2', '10.5', null, 'h1'),
+                    (20.0, 'g2', null, 's4', null)
+                    """);
+            final String fused = """
+                    SELECT percentile_disc(x, ARRAY[0.5]) OVER () p,
+                    sum(x) OVER (PARTITION BY a) sx, avg(x) OVER (PARTITION BY a) ax, count(x) OVER (PARTITION BY a) cx,
+                    a
+                    FROM t
+                    """;
+            // sum, avg and count share one Map group, which reads its key a from the chain
+            assertMapGroupCount(fused, 1);
+            for (int copierType = 0; copierType < 4; copierType++) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertQuery("SELECT percentile_disc(c::DOUBLE, ARRAY[0.5]) OVER (PARTITION BY a) p, c FROM t")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p\tc
+                                [1.5]\t1.5
+                                [1.5]\t2.5
+                                [10.5]\t10.5
+                                [10.5]\t
+                                """);
+                // fixed-size window outputs on either side of the array output
+                assertQuery("""
+                        SELECT sum(x) OVER () s0, percentile_disc(x, ARRAY[0.5]) OVER (PARTITION BY b) p,
+                        max(x) OVER (PARTITION BY a) m, a, b
+                        FROM t
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                s0\tp\tm\ta\tb
+                                33.0\t[1.0]\t2.0\tg1\th1
+                                33.0\t[2.0]\t2.0\tg1\th2
+                                33.0\t[1.0]\t20.0\tg2\th1
+                                33.0\t[20.0]\t20.0\tg2\t
+                                """);
+                assertQuery(fused)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p\tsx\tax\tcx\ta
+                                [2.0]\t3.0\t1.5\t2\tg1
+                                [2.0]\t3.0\t1.5\t2\tg1
+                                [2.0]\t30.0\t15.0\t2\tg2
+                                [2.0]\t30.0\t15.0\t2\tg2
+                                """);
+                // the sort key of an ordered window function, through the encoded sort buffer
+                // and, with sorting off, through the comparator-driven one
+                for (int sortEnabled = 0; sortEnabled < 2; sortEnabled++) {
+                    setProperty(PropertyKey.CAIRO_SQL_ORDER_BY_SORT_ENABLED, sortEnabled == 1 ? "true" : "false");
+                    assertQuery("SELECT percentile_disc(x, ARRAY[0.5]) OVER () p, row_number() OVER (ORDER BY b, x) rn, b, x FROM t")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    p\trn\tb\tx
+                                    [2.0]\t2\th1\t1.0
+                                    [2.0]\t4\th2\t2.0
+                                    [2.0]\t3\th1\t10.0
+                                    [2.0]\t1\t\t20.0
+                                    """);
+                    assertQuery("SELECT percentile_disc(x, ARRAY[0.5]) OVER () p, row_number() OVER (ORDER BY s DESC, x) rn, s, x FROM t")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    p\trn\ts\tx
+                                    [2.0]\t3\ts1\t1.0
+                                    [2.0]\t2\ts2\t2.0
+                                    [2.0]\t4\t\t10.0
+                                    [2.0]\t1\ts4\t20.0
+                                    """);
+                }
             }
         });
     }
@@ -1526,5 +1671,53 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             5.0\t5.0
                             """);
         });
+    }
+
+    private static void assertMapGroupCount(String sql, int expected) throws Exception {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)
+        ) {
+            final CachedWindowMapGroups groups = windowFactoryOf(factory) instanceof CachedWindowRecordCursorFactory cached
+                    ? cached.getWindowMapGroups()
+                    : null;
+            Assert.assertNotNull("no window Map group was compiled", groups);
+            Assert.assertEquals(expected, groups.getStates().size());
+        }
+    }
+
+    private static void assertWindowFactory(
+            String sql,
+            Class<? extends RecordCursorFactory> expectedClass,
+            String expectedColumns
+    ) throws Exception {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = select(compiler, sql, sqlExecutionContext)
+        ) {
+            final RecordCursorFactory windowFactory = windowFactoryOf(factory);
+            Assert.assertEquals(expectedClass, windowFactory.getClass());
+            final RecordMetadata metadata = windowFactory.getMetadata();
+            final StringSink columns = new StringSink();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (i > 0) {
+                    columns.put(',');
+                }
+                columns.put(metadata.getColumnName(i));
+            }
+            Assert.assertEquals(expectedColumns, columns.toString());
+        }
+    }
+
+    private static RecordCursorFactory windowFactoryOf(RecordCursorFactory factory) {
+        // a projection wrapper can sit above the window factory
+        RecordCursorFactory root = factory;
+        while (root != null
+                && !(root instanceof CachedWindowRecordCursorFactory)
+                && !(root instanceof CachedWindowLightRecordCursorFactory)) {
+            root = root.getBaseFactory();
+        }
+        Assert.assertNotNull("no cached window factory in the tree", root);
+        return root;
     }
 }
