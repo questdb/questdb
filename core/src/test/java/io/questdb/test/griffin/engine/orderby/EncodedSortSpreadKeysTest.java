@@ -141,6 +141,53 @@ public class EncodedSortSpreadKeysTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCapacityHintMediumAfterHuge() throws Exception {
+        // A run of 70k rows after one of 4M: the entries grow from the 64K start a few times
+        // over, not to the 4M entries (64 MB light, more with the chain) the previous run held.
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table t as (select x::int i, rnd_double(0) d, " +
+                            "timestamp_sequence('2026-04-01', 10_000L) ts from long_sequence(4_000_000)) timestamp(ts) partition by day"
+            );
+            final String[] queries = {
+                    // light
+                    "select ts, d from t where i <= $1 order by d desc",
+                    // materialized
+                    "select ts, d from (select ts, d from t where i <= $1 union all select ts, d from t where i < 0) order by d",
+            };
+            for (String query : queries) {
+                try (io.questdb.cairo.sql.RecordCursorFactory factory = select(query)) {
+                    bindVariableService.clear();
+                    bindVariableService.setInt(0, 4_000_000);
+                    final long hugeGrowth = drainGrowth(factory);
+                    bindVariableService.clear();
+                    bindVariableService.setInt(0, 70_000);
+                    final long mediumGrowth = drainGrowth(factory);
+                    Assert.assertTrue(query + ": huge " + hugeGrowth, hugeGrowth >= 4_000_000L * 16);
+                    // 512K entries of 16 bytes (8 MB) and the chain's share for them (about 17 MB);
+                    // the previous run's full size is 64 MB light, 200 MB materialized
+                    Assert.assertTrue(query + ": medium " + mediumGrowth + ", huge " + hugeGrowth, mediumGrowth < 48L * 1024 * 1024);
+                    // and the hint still serves a huge run after a medium one
+                    bindVariableService.clear();
+                    bindVariableService.setInt(0, 4_000_000);
+                    Assert.assertTrue(query, drainGrowth(factory) >= 4_000_000L * 16);
+                }
+            }
+        });
+    }
+
+    // The native memory a cursor of the factory holds once it has sorted its rows.
+    private static long drainGrowth(io.questdb.cairo.sql.RecordCursorFactory factory) throws Exception {
+        final long before = io.questdb.std.Unsafe.getMemUsedByTag(io.questdb.std.MemoryTag.NATIVE_DEFAULT)
+                + io.questdb.std.Unsafe.getMemUsedByTag(io.questdb.std.MemoryTag.NATIVE_RECORD_CHAIN);
+        try (io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            Assert.assertTrue(cursor.hasNext());
+            return io.questdb.std.Unsafe.getMemUsedByTag(io.questdb.std.MemoryTag.NATIVE_DEFAULT)
+                    + io.questdb.std.Unsafe.getMemUsedByTag(io.questdb.std.MemoryTag.NATIVE_RECORD_CHAIN) - before;
+        }
+    }
+
+    @Test
     public void testMaterializedFromBlocksOnTestContext() throws Exception {
         assertMemoryLeak(() -> assertMaterializedFromBlocks(engine, sqlExecutionContext));
     }
