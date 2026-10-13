@@ -14335,8 +14335,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // never initializes var-size aux pointers, so a var-size output column would read
             // uninitialized offsets and crash. No window function returns a var-size type today;
             // this guard keeps the path safe if one is ever added.
+            // A base over a covering-index scan re-decodes a covered frame for each row read back
+            // by id, while its rows came from the filter's workers decoded: the full cache copies
+            // them instead.
             if (configuration.isSqlWindowCachedLightEnabled()
                     && base.recordCursorSupportsRandomAccess()
+                    && !readsCoveringScan(base)
                     && isAllGroupsEncodedEligible
                     && isAllWindowOutputFixedWidth) {
                 final IntList sourceMap = new IntList();
@@ -16845,6 +16849,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateSubQuery(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getNestedModel() != null;
         return generateQuery(model.getNestedModel(), executionContext, true);
+    }
+
+    // Whether the factory, or a base below it, is a covering-index scan.
+    private static boolean readsCoveringScan(RecordCursorFactory factory) {
+        for (int depth = 0; factory != null && depth < 16; depth++) {
+            if (factory instanceof CoveringIndexRecordCursorFactory) {
+                return true;
+            }
+            final RecordCursorFactory next = factory.getBaseFactory();
+            if (next == factory) {
+                return false;
+            }
+            factory = next;
+        }
+        return false;
     }
 
     /**

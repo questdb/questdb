@@ -2063,6 +2063,27 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                             writeSkippedVarOffsets(count);
                         }
                         count++;
+                        if (filteredRows != null && count < rowCount) {
+                            if (filteredPosition == filteredCount) {
+                                // past the last selected row: the rest read nothing
+                                writeSkippedVarOffsets(count, rowCount);
+                                count = rowCount;
+                                break;
+                            }
+                            // the rows up to the next selected one are passed in runs where the
+                            // cursor can tell them without decoding
+                            int gap = (int) (filteredRows.get(filteredPosition) - count);
+                            while (gap > 0) {
+                                final int more = crc.peekCoveredRun(gap);
+                                if (more <= 0) {
+                                    break;
+                                }
+                                crc.skipCoveredRun(more);
+                                writeSkippedVarOffsets(count, count + more);
+                                count += more;
+                                gap -= more;
+                            }
+                        }
                     }
                 }
                 if (count != rowCount) {
@@ -2503,6 +2524,19 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                 }
             }
             return selectedIncludeIndices;
+        }
+
+        // writeSkippedVarOffsets(int) for the rows [lo, hi)
+        private void writeSkippedVarOffsets(int lo, int hi) {
+            for (int q = 0, n = queryColCount(); q < n; q++) {
+                if (isColumnSelected[q]
+                        && (columnTypeTags[q] == ColumnType.STRING || columnTypeTags[q] == ColumnType.BINARY)) {
+                    final long pos = varDataPos[q];
+                    for (int row = lo; row < hi; row++) {
+                        Unsafe.putLong(colAddr[q] + (long) row * Long.BYTES, pos);
+                    }
+                }
+            }
         }
 
         private void writeSkippedVarOffsets(int row) {

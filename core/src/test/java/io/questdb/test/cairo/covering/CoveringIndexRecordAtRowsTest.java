@@ -26,15 +26,14 @@ package io.questdb.test.cairo.covering;
 
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.std.str.StringSink;
-import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 /**
- * A cursor that reads its base again by row id (a light window, a light sort) declares those rows
+ * A cursor that reads its base again by row id (a light sort) declares those rows
  * (setRecordAtRows), and a covered frame then decodes them alone rather than every row of every
- * INCLUDE column. Each query is compared with its scan plan; the decode counter proves the
- * declared-rows decode ran.
+ * INCLUDE column; a window over a covering scan caches its rows instead. Each query is compared
+ * with its scan plan; the decode counter proves the declared-rows decode ran.
  */
 public class CoveringIndexRecordAtRowsTest extends AbstractCoveringIndexQueryTest {
 
@@ -49,22 +48,46 @@ public class CoveringIndexRecordAtRowsTest extends AbstractCoveringIndexQueryTes
             // and rows after the index was built, with a NULL extreme
             execute("insert into q select (200_000_000_000L + x * 1_000_000L)::timestamp, 'A', 'P', "
                     + "case when x = 7 then null else (x % 500)::double end, -x, 'z' || x from long_sequence(5_000)");
-            final String[] queries = {
-                    // the shape of the NYSE TAQ query 58: a Min/Max Filter under a light window
+            // windows over a covering scan cache the rows the filter's workers decoded, rather than
+            // read them back by id
+            final String[] windows = {
+                    // the shape of the NYSE TAQ query 58: a Min/Max Filter under a window
                     "select * from (select ts, ex, v, l, vc, min(ts) over (partition by ex) mt from "
                             + "(select ts, ex, v, l, vc, min(v) over (partition by ex) mv from q where sym = 'A') where v = mv) where ts = mt",
                     "select ts, ex, v, l, vc, max(l) over (partition by ex) ml from (select ts, ex, v, l, vc from q where sym = 'A' and v > 990)",
-                    "select ts, ex, v, l, vc from q where sym = 'A' and v < 3 order by vc, ts",
             };
-            for (String query : queries) {
-                final String covered = query.replace("select ts, ex, v, l, vc", "select /*+ use_index */ ts, ex, v, l, vc");
-                final StringSink plan = new StringSink();
-                printSql("explain " + covered, plan);
-                TestUtils.assertContains(query, plan, "CoveringIndex");
-                final long before = PageFrameMemoryPool.getCoveredRowDecodeCount();
-                assertSameResult(covered, query.replace("select ts, ex, v, l, vc", "select /*+ no_index */ ts, ex, v, l, vc"));
-                Assert.assertTrue(query, PageFrameMemoryPool.getCoveredRowDecodeCount() > before);
+            for (String query : windows) {
+                final String covered = hinted(query, "use_index");
+                assertPlanContains(covered, "CoveringIndex");
+                assertPlanContains(covered, "CachedWindow");
+                assertPlanLacks(covered, "CachedWindowLight");
+                assertSameResult(covered, hinted(query, "no_index"));
             }
+            // a light sort reads its rows back by id: a covered frame decodes them alone
+            final String sort = "select ts, ex, v, l, vc from q where sym = 'A' and v < 3 order by vc, ts";
+            final String covered = hinted(sort, "use_index");
+            assertPlanContains(covered, "CoveringIndex");
+            final long before = PageFrameMemoryPool.getCoveredRowDecodeCount();
+            assertSameResult(covered, hinted(sort, "no_index"));
+            Assert.assertTrue(PageFrameMemoryPool.getCoveredRowDecodeCount() > before);
         });
+    }
+
+    private void assertPlanContains(String query, String fragment) throws Exception {
+        Assert.assertTrue(query, plan(query).contains(fragment));
+    }
+
+    private void assertPlanLacks(String query, String fragment) throws Exception {
+        Assert.assertFalse(query, plan(query).contains(fragment));
+    }
+
+    private String plan(String query) throws Exception {
+        final StringSink plan = new StringSink();
+        printSql("explain " + query, plan);
+        return plan.toString();
+    }
+
+    private static String hinted(String query, String hint) {
+        return query.replace("select ts, ex, v, l, vc", "select /*+ " + hint + " */ ts, ex, v, l, vc");
     }
 }
