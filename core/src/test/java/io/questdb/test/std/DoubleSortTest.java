@@ -174,6 +174,54 @@ public class DoubleSortTest {
     }
 
     @Test(timeout = LARGE_TEST_TIMEOUT_MS)
+    public void testSawtoothSubrangeFallsBackToHeapsort() throws Exception {
+        // The sawtooth sits at [lo, hi] with lo > 0, so the heapsort fallback must offset
+        // every heap index by lo. The period divides lo, so the pivots alias as in
+        // testSawtoothFallsBackToHeapsort.
+        final int n = LARGE_SIZE;
+        final int lo = 1000;
+        final int hi = lo + n - 1;
+        final int bufferSize = n + 2 * lo;
+        final double[] values = new double[bufferSize];
+        for (int i = 0; i < bufferSize; i++) {
+            values[i] = i >= lo && i <= hi ? i % 1000 : -1 - i;
+        }
+        final double[] expected = values.clone();
+        Arrays.sort(expected, lo, hi + 1);
+        assertMemoryLeak(() -> {
+            final long size = 8L * bufferSize;
+            final long ptr = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            try {
+                copyToNative(values, ptr);
+                long heapSortCallsBefore = DoubleSort.getHeapSortCallCountForTesting();
+                DoubleSort.sort(ptr, lo, hi);
+                Assert.assertTrue(DoubleSort.getHeapSortCallCountForTesting() > heapSortCallsBefore);
+                assertNativeEquals(expected, ptr, 0, bufferSize - 1);
+
+                final int k = lo + n / 2;
+                copyToNative(values, ptr);
+                heapSortCallsBefore = DoubleSort.getHeapSortCallCountForTesting();
+                DoubleSort.quickSelect(ptr, lo, hi, k);
+                Assert.assertTrue(DoubleSort.getHeapSortCallCountForTesting() > heapSortCallsBefore);
+                Assert.assertEquals(expected[k], Unsafe.getDouble(ptr + 8L * k), 0.0);
+                assertOutsideUntouched(values, ptr, lo, hi);
+
+                copyToNative(values, ptr);
+                heapSortCallsBefore = DoubleSort.getHeapSortCallCountForTesting();
+                final int[] indices = {lo, lo + n / 10, k, lo + 9 * (n / 10), hi};
+                DoubleSort.quickSelectMultiple(ptr, lo, hi, indices, 0, indices.length);
+                Assert.assertTrue(DoubleSort.getHeapSortCallCountForTesting() > heapSortCallsBefore);
+                for (int index : indices) {
+                    Assert.assertEquals("index " + index, expected[index], Unsafe.getDouble(ptr + 8L * index), 0.0);
+                }
+                assertOutsideUntouched(values, ptr, lo, hi);
+            } finally {
+                Unsafe.free(ptr, size, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test(timeout = LARGE_TEST_TIMEOUT_MS)
     public void testSineHumpLarge() throws Exception {
         double[] values = new double[LARGE_SIZE];
         for (int i = 0; i < LARGE_SIZE; i++) {

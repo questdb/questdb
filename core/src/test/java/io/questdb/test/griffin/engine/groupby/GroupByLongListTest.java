@@ -587,6 +587,90 @@ public class GroupByLongListTest extends AbstractCairoTest {
         });
     }
 
+    @Test(timeout = 30_000)
+    public void testQuickSelectNoHeapsortOnOrganPipeAndAllEqual() throws Exception {
+        // The ninther keeps organ-pipe splits balanced and three-way partitioning places
+        // all-equal input in one pass, so neither may exhaust the depth budget.
+        assertMemoryLeak(() -> {
+            final int n = 4_000_000;
+            final long[] expected = new long[n];
+            for (int i = 0; i < n; i++) {
+                expected[i] = i < n / 2 ? i : n - i;
+            }
+            Arrays.sort(expected);
+            final int[] indices = {0, n / 10, n / 2, 9 * (n / 10), n - 1};
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64 * 1024, Numbers.SIZE_1GB)) {
+                GroupByLongList list = new GroupByLongList(n, 0L);
+                list.setAllocator(allocator);
+                final long heapSortCallsBefore = GroupByLongList.getHeapSortCallCountForTesting();
+
+                addOrganPipe(list.of(0), n);
+                list.quickSelect(0, n - 1, n / 2);
+                Assert.assertEquals(expected[n / 2], list.getQuick(n / 2));
+
+                addOrganPipe(list.of(0), n);
+                list.quickSelectMultiple(0, n - 1, indices, 0, indices.length);
+                for (int index : indices) {
+                    Assert.assertEquals("index " + index, expected[index], list.getQuick(index));
+                }
+
+                list.of(0);
+                for (int i = 0; i < n; i++) {
+                    list.add(42);
+                }
+                list.quickSelect(0, n - 1, n / 2);
+                Assert.assertEquals(42, list.getQuick(n / 2));
+                list.quickSelectMultiple(0, n - 1, indices, 0, indices.length);
+                for (int index : indices) {
+                    Assert.assertEquals("index " + index, 42, list.getQuick(index));
+                }
+
+                Assert.assertEquals(heapSortCallsBefore, GroupByLongList.getHeapSortCallCountForTesting());
+            }
+        });
+    }
+
+    @Test(timeout = 30_000)
+    public void testQuickSelectSawtoothSubrangeFallsBackToHeapsort() throws Exception {
+        // The sawtooth sits at [lo, hi] with lo > 0, so the heapsort fallback must offset
+        // every heap index by lo. The period divides lo, so the pivots alias as in
+        // testQuickSelectSawtoothFallsBackToHeapsort.
+        assertMemoryLeak(() -> {
+            final int n = 4_000_000;
+            final int lo = 1000;
+            final int hi = lo + n - 1;
+            final int listSize = n + 2 * lo;
+            final long[] values = new long[listSize];
+            for (int i = 0; i < listSize; i++) {
+                values[i] = i >= lo && i <= hi ? i % 1000 : -1 - i;
+            }
+            final long[] expected = values.clone();
+            Arrays.sort(expected, lo, hi + 1);
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64 * 1024, Numbers.SIZE_1GB)) {
+                GroupByLongList list = new GroupByLongList(listSize, 0L);
+                list.setAllocator(allocator);
+
+                final int k = lo + n / 2;
+                addAll(list.of(0), values);
+                long heapSortCallsBefore = GroupByLongList.getHeapSortCallCountForTesting();
+                list.quickSelect(lo, hi, k);
+                Assert.assertTrue(GroupByLongList.getHeapSortCallCountForTesting() > heapSortCallsBefore);
+                Assert.assertEquals(expected[k], list.getQuick(k));
+                assertOutsideUntouched(list, values, lo, hi);
+
+                final int[] indices = {lo, lo + n / 10, k, lo + 9 * (n / 10), hi};
+                addAll(list.of(0), values);
+                heapSortCallsBefore = GroupByLongList.getHeapSortCallCountForTesting();
+                list.quickSelectMultiple(lo, hi, indices, 0, indices.length);
+                Assert.assertTrue(GroupByLongList.getHeapSortCallCountForTesting() > heapSortCallsBefore);
+                for (int index : indices) {
+                    Assert.assertEquals("index " + index, expected[index], list.getQuick(index));
+                }
+                assertOutsideUntouched(list, values, lo, hi);
+            }
+        });
+    }
+
     @Test
     public void testQuickSelectSizesAroundNintherThreshold() throws Exception {
         // every k and the full index set around the ninther threshold (128), with extreme values
@@ -634,6 +718,12 @@ public class GroupByLongListTest extends AbstractCairoTest {
         });
     }
 
+    private static void addAll(GroupByLongList list, long[] values) {
+        for (long v : values) {
+            list.add(v);
+        }
+    }
+
     private static void addOrganPipe(GroupByLongList list, int n) {
         for (int i = 0; i < n; i++) {
             list.add(i < n / 2 ? i : n - i);
@@ -650,6 +740,15 @@ public class GroupByLongListTest extends AbstractCairoTest {
         Assert.assertEquals(expected.length, list.size());
         for (int i = 0; i < expected.length; i++) {
             Assert.assertEquals("index " + i, expected[i], list.get(i));
+        }
+    }
+
+    private static void assertOutsideUntouched(GroupByLongList list, long[] values, int lo, int hi) {
+        Assert.assertEquals(values.length, list.size());
+        for (int i = 0; i < values.length; i++) {
+            if (i < lo || i > hi) {
+                Assert.assertEquals("index " + i, values[i], list.getQuick(i));
+            }
         }
     }
 }
