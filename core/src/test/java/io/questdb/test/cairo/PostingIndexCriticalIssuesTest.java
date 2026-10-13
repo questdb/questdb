@@ -50,6 +50,7 @@ import io.questdb.cairo.idx.PostingIndexWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
@@ -10928,6 +10929,11 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
                                     count = -1;
                                     sum = -1;
                                 }
+                            } catch (TableReferenceOutOfDateException e) {
+                                // a DROP PARTITION or an O3 commit landed between compile() and
+                                // getCursor(): the plan is stale, so compile again, as every user of
+                                // a cached plan does
+                                continue;
                             }
                             if (count < floor) {
                                 throw new AssertionError("protected-partition covered count fell below floor: " + count + " < " + floor);
