@@ -648,13 +648,15 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
         } catch (Throwable cleanupFailure) {
             suppressCleanupFailure(failure, cleanupFailure);
         }
+        // read before done(): a collected slot no longer carries its group size
+        final int taskFrames = reduceTask.getGroupSize();
         try {
             subSeq.done(cursor);
         } catch (Throwable cleanupFailure) {
             suppressCleanupFailure(failure, cleanupFailure);
         }
         try {
-            frameSequence.getReduceFinishedCounter().addAndGet(reduceTask.getGroupSize());
+            frameSequence.getReduceFinishedCounter().addAndGet(taskFrames);
         } catch (Throwable cleanupFailure) {
             suppressCleanupFailure(failure, cleanupFailure);
         }
@@ -699,10 +701,12 @@ public final class PageFrameReduceDispatcher implements FiberRuntimeConfiguratio
                     LOG.info().$("cancelling in-flight query, dispatcher is quiescing [frameSequenceId=")
                             .$(frameSequence.getId()).I$();
                 }
+                // read before done(): a collected slot no longer carries its group size
+                final int taskFrames = task.getGroupSize();
                 try {
                     subSeq.done(cursor);
                 } finally {
-                    frameSequence.getReduceFinishedCounter().addAndGet(task.getGroupSize());
+                    frameSequence.getReduceFinishedCounter().addAndGet(taskFrames);
                     signalProgress(frameSequence);
                 }
             } else {

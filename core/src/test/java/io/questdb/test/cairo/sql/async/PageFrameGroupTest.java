@@ -214,9 +214,9 @@ public class PageFrameGroupTest extends AbstractCairoTest {
     @Test
     public void testGroupTasksKeptAcrossExecutions() throws Exception {
         assertMemoryLeak(() -> {
-            // 32 hourly partitions of 21 rows: two groups, 30 group tasks
+            // 9 hourly partitions of 21 rows: one group, 8 group tasks, as many as a sequence keeps
             execute("create table k (x long, ts timestamp) timestamp(ts) partition by HOUR");
-            execute("insert into k select x, ((x - 1) * 3_600_000_000L / 21)::timestamp from long_sequence(672)");
+            execute("insert into k select x, ((x - 1) * 3_600_000_000L / 21)::timestamp from long_sequence(189)");
             setSwitch(false);
             final String query = "select * from k where x % 2 = 0";
             final String expected = print(engine, sqlExecutionContext, query);

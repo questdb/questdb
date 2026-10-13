@@ -205,6 +205,9 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
             if (cursor > -1) {
                 final PageFrameReduceTask task = queue.get(cursor);
                 final PageFrameSequence<?> frameSequence = task.getFrameSequence();
+                // read before done(): once the slot is released the collector may collect it, which
+                // resets the group size, and a counter short of the slot's frames hangs await()
+                final int taskFrames = task.getGroupSize();
                 final boolean isFiberSuspendable = SuspensionScope.isFiberMode() && Fiber.isMounted();
                 final SuspensionScope.CarrierScope suspensionScope = isFiberSuspendable
                         ? null
@@ -277,7 +280,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                             } finally {
                                 // Reduced counter has to be incremented only when we make
                                 // sure that the task is available for consumers. It counts frames.
-                                frameSequence.getReduceFinishedCounter().addAndGet(task.getGroupSize());
+                                frameSequence.getReduceFinishedCounter().addAndGet(taskFrames);
                                 if (dispatcher != null) {
                                     dispatcher.signalProgress(frameSequence);
                                 }

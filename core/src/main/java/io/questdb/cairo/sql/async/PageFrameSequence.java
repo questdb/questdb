@@ -75,9 +75,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private static final long GROUP_ROWS = 65_536;
     static final int MAX_GROUP_FRAMES = 16;
     // Group tasks a sequence keeps, cleared, from one execution to the next, so that a query that runs
-    // again does not allocate them again; the others are freed at reset. A cleared task holds well
-    // under 1 KiB of native memory.
-    private static final int RETAINED_GROUP_TASKS = 32;
+    // again does not allocate them again; the others are freed at reset. A cleared task holds its
+    // lists' initial capacities, about 2.3 KiB at the defaults. In-flight frames are capped by the
+    // filter dispatch limit, min(query workers, 32) by default, so 8 cover a pool of up to 9 workers.
+    private static final int RETAINED_GROUP_TASKS = 8;
     // tests: runs before a group task is allocated, see reserveGroupTasks()
     private static volatile Runnable groupTaskAllocationHook;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
