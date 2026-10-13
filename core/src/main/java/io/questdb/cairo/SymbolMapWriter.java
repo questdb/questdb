@@ -93,6 +93,7 @@ public class SymbolMapWriter implements Closeable, MapWriter {
      * Keeps the full-extent msync of the symbol char memory, which every caller outside {@link TableWriter}
      * wants: only a table column under {@link CommitMode#ADAPTIVE} may narrow it.
      */
+    @TestOnly
     public SymbolMapWriter(
             CairoConfiguration configuration,
             Path path,

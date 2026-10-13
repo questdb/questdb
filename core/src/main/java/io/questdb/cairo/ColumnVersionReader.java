@@ -49,6 +49,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     // Counts reads that found the selected area torn under a stable version and fell back to the other A/B
     // area. A healthy table keeps it at 0: a commit rewrites the whole _cv area and never changes a published
     // one in place. Tests read it; production logic does not.
+    @TestOnly
     static volatile long bodyChecksumFallbackCount = 0;
     public static final int BLOCK_SIZE = 4;
     public static final int BLOCK_SIZE_BYTES = BLOCK_SIZE * Long.BYTES;

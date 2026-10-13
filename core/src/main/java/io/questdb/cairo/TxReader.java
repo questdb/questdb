@@ -50,6 +50,7 @@ public class TxReader implements Closeable, Mutable {
     // Counts loads that found the selected area torn under a stable version and fell back to the other A/B
     // area. A healthy table keeps it at 0, including under the in-place writeTransientSymbolCount and
     // resetLag writes. Tests read it; production logic does not.
+    @TestOnly
     static volatile long bodyChecksumFallbackCount = 0;
     public static final long DEFAULT_PARTITION_TIMESTAMP = 0L;
     public static final long PARTITION_FLAGS_MASK = 0x7FFFF00000000000L;
