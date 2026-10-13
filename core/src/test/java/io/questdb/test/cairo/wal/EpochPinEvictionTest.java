@@ -31,6 +31,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxnScoreboardV2;
@@ -290,6 +291,12 @@ public class EpochPinEvictionTest extends AbstractCairoTest {
             execute(BASE_INSERT);
             drainWalQueue();
             final TableToken tt = engine.verifyTableName("x");
+            // The first writer after a restart writes a save point at the recovered cut unless every save point
+            // already covers it, and a failure there suspends the table until RESUME WAL. A save point it writes
+            // pins day 1 itself, so the recovery pin protects day 1 alone only when both save points name the cut.
+            try (TableWriter w = getWriter(tt)) {
+                w.advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
+            }
             execute(LATE_ROW_INSERT);
             drainWalQueue();
 

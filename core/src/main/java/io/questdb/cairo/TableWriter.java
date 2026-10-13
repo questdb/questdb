@@ -736,7 +736,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     && effectiveCommitMode == CommitMode.ADAPTIVE;
             setDirtyPartitionTracking(enrolledAdaptive && getFlushCommitMode() == CommitMode.ADAPTIVE);
             if (enrolledAdaptive && engine.getTableSequencerAPI().getTxnTracker(tableToken).isDurableEpochCompletionRequired()) {
-                completeDurableEpochAfter("writer open");
+                // Coverage of the cut the writer opens at, not progress: the cadence stays where it was, so the
+                // first apply batch after a restart still takes a save point past the rows it replays.
+                completeDurableEpochAfter("writer open", true);
             }
 
             // Replay any posting seal-purge intents a prior close spilled to a
@@ -6322,6 +6324,42 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long currentTableTxn = txWriter.getTxn();
         publishPendingPostingSealPurges(currentTableTxn);
         publishDeferredPostingSealPurges(currentTableTxn, false);
+    }
+
+    // A save point that keeps the cadence records the tracker's last save point time as its own. That time feeds
+    // only the cadence gate, so the apply job's next save point stays due when it was: after a restart the time
+    // is 0, and the first apply batch takes one.
+    private void completeDurableEpochAfter(CharSequence operation, boolean isCadenceKept) {
+        if (!defersPartitionMoves()) {
+            return;
+        }
+        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        tracker.setDurableEpochCompletionRequired(true);
+        final long txn = getTxn();
+        try {
+            // There are two generation slots. No new write is needed when all actual candidates already cover
+            // the effect; no pin (including a released target pin) is evidence that its file stopped existing.
+            for (int i = 0; i < 2 && !hasDurableEpochCoverage(txn); i++) {
+                final long epochTsMs = isCadenceKept ? tracker.getLastEpochTs() : configuration.getMicrosecondClock().getTicks() / 1000L;
+                if (!advanceDurableEpoch(epochTsMs, false)) {
+                    break;
+                }
+            }
+            if (!hasDurableEpochCoverage(txn)) {
+                throw CairoException.nonCritical().put("could not complete durable epoch after ").put(operation)
+                        .put("; retry the operation or RESUME WAL [table=").put(tableToken.getTableName()).put(']');
+            }
+            finishPendingDetaches();
+            tracker.setDurableEpochOwed(false);
+            tracker.setDurableEpochCompletionRequired(false);
+        } catch (Throwable e) {
+            tracker.setDurableEpochOwed(true);
+            if (engine.isDataSyncFailureFatal(e)) {
+                distressed = true;
+                engine.handleDataSyncFailure(e);
+            }
+            throw e;
+        }
     }
 
     private void configureAppendPosition() {
@@ -16404,35 +16442,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * an internal writer/sequencer contract, not the earlier acknowledgement of a command enqueued in the WAL.
      */
     public void completeDurableEpochAfter(CharSequence operation) {
-        if (!defersPartitionMoves()) {
-            return;
-        }
-        final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
-        tracker.setDurableEpochCompletionRequired(true);
-        final long txn = getTxn();
-        try {
-            // There are two generation slots. No new write is needed when all actual candidates already cover
-            // the effect; no pin (including a released target pin) is evidence that its file stopped existing.
-            for (int i = 0; i < 2 && !hasDurableEpochCoverage(txn); i++) {
-                if (!advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L, false)) {
-                    break;
-                }
-            }
-            if (!hasDurableEpochCoverage(txn)) {
-                throw CairoException.nonCritical().put("could not complete durable epoch after ").put(operation)
-                        .put("; retry the operation or RESUME WAL [table=").put(tableToken.getTableName()).put(']');
-            }
-            finishPendingDetaches();
-            tracker.setDurableEpochOwed(false);
-            tracker.setDurableEpochCompletionRequired(false);
-        } catch (Throwable e) {
-            tracker.setDurableEpochOwed(true);
-            if (engine.isDataSyncFailureFatal(e)) {
-                distressed = true;
-                engine.handleDataSyncFailure(e);
-            }
-            throw e;
-        }
+        completeDurableEpochAfter(operation, false);
     }
 
     // Header-valid older images are conservatively included even if their sections are damaged. At least one
