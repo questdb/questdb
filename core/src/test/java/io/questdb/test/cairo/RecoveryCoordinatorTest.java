@@ -1645,8 +1645,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 Assert.assertTrue("the sweep must reach the torn fallback below the epoch, " + combinations + " mixes",
                         fallbacksBelowEpoch > 0);
 
-                // The last mix left the table at the epoch cut; the WAL replays it to the full row count.
+                // The last mix left the table at the epoch cut; rebuild its pins before replay after the reboot.
                 engine.getTableSequencerAPI().resetForReboot(tt);
+                new RecoveryCoordinator(engine).recover();
                 drainWalQueue();
                 assertQuery("SELECT count() c, sum(v) s FROM torn")
                         .noRandomAccess()
@@ -2443,13 +2444,16 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 super.msync(addr, len, async);
             }
 
-            // The flush of the table's _txn comes after the replay has applied every transaction.
+            // Kill at the conversion's final replay flush, not at the recovered writer's earlier coverage flush.
             private void killIfArmed(String path) {
-                if (path.endsWith(io.questdb.std.Files.SEPARATOR + TableUtils.TXN_FILE_NAME) && armed.compareAndSet(true, false)) {
-                    try (Path p = new Path()) {
-                        markerAtKill.set(exists(p.of(markerPath.get()).$()));
+                if (path.endsWith(io.questdb.std.Files.SEPARATOR + TableUtils.TXN_FILE_NAME) && armed.get()) {
+                    try (Path p = new Path(); TxReader tx = new TxReader(this)) {
+                        tx.ofRO(p.of(path).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                        if (tx.unsafeLoadAll() && tx.getSeqTxn() == 7 && armed.compareAndSet(true, false)) {
+                            markerAtKill.set(exists(p.of(markerPath.get()).$()));
+                            throw new Error("simulated kill");
+                        }
                     }
-                    throw new Error("simulated kill");
                 }
             }
         };
@@ -3037,9 +3041,13 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 Assert.assertFalse("first cover must not expose the final artifact", epochArtifactExists(token, "2024-01-01", TableUtils.DETACHED_DIR_MARKER));
                 engine.releaseAllWriters();
                 try (TableWriter ignored = getWriter(token)) {
-                    Assert.assertFalse("reopen must not finalize from the newest pin alone", epochArtifactExists(token, "2024-01-01", TableUtils.DETACHED_DIR_MARKER));
+                    Assert.fail("reopen must complete the outstanding operation before returning a writer");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
                 }
-                Assert.assertEquals("reopen cannot secretly publish a second cover", 2, publications.get());
+                Assert.assertEquals("reopen attempts the missing cover", 3, publications.get());
+                Assert.assertFalse("failed reopen must not finalize from the newest pin alone", epochArtifactExists(token, "2024-01-01", TableUtils.DETACHED_DIR_MARKER));
+                Assert.assertEquals("failed construction must release its pool entry", 0, engine.getBusyWriterCount());
                 engine.releaseAllWriters();
                 engine.releaseAllReaders();
                 isFailing.set(false);
@@ -4331,6 +4339,14 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     final io.questdb.cairo.DurableEpochManifest.Candidate[] saved = io.questdb.cairo.DurableEpochManifest.loadCandidates(files, p, p.size(), tt.getTableId());
                     Assert.assertEquals("the live generation stays current", generation, saved[0].generation);
                     Assert.assertEquals(seqTxn, saved[0].epochSeqTxn);
+                    Assert.assertEquals(saved[0].epochTxn, tracker.getPinnedEpochTxn());
+                    Assert.assertEquals(saved.length > 1 ? saved[1].epochTxn : -1L, tracker.getOtherPinnedEpochTxn());
+                    try (TxnScoreboard scoreboard = engine.getTxnScoreboard(tt)) {
+                        for (io.questdb.cairo.DurableEpochManifest.Candidate cut : saved) {
+                            Assert.assertFalse("every recovered candidate must be pinned before replay",
+                                    scoreboard.isRangeAvailable(cut.epochTxn, cut.epochTxn + 1));
+                        }
+                    }
                 }
 
                 execute("INSERT INTO " + tableName + " VALUES ('2024-09-03T00:00:00.000000Z', 3)");

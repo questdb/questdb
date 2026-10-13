@@ -473,8 +473,8 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     /**
-     * Closes the table's cached sequencer and drops its {@link SeqTxnTracker}, so the next access reloads both
-     * from the transaction log on disk, as a freshly started engine does. A simulated crash can roll back a txn
+     * Closes the table's cached sequencer and drops its {@link SeqTxnTracker} and scoreboard. Recovery must run
+     * before replay to rebuild the save-point pins, as on a freshly started engine. A simulated crash can roll back a txn
      * that the open sequencer still counts in its in-memory {@code lastTxn}; through that sequencer,
      * {@link #forAllWalTables} would seed the tracker above the durable writer txn, and the apply job would wait
      * forever for a txn the WAL no longer has.
@@ -490,6 +490,8 @@ public class TableSequencerAPI implements QuietCloseable {
             seqRegistry.remove(dirName, sequencer);
         }
         purgeTxnTracker(dirName);
+        // A reboot also discards the old epoch reservations and the scoreboard's monotonic reader floor.
+        engine.getTxnScoreboardPool().remove(tableToken);
     }
 
     public void registerTable(int tableId, final TableStructure tableDescriptor, final TableToken tableToken) {
