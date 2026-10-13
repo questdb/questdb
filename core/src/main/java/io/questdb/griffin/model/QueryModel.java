@@ -144,14 +144,8 @@ public class QueryModel implements IQueryModel {
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
     private boolean isCteModel;
-    // SqlOptimiser.optimiseJoins() sets this when the order of the rows of the model's join chain cannot
-    // change the query result
-    private boolean isJoinOrderFree;
     private ExpressionNode lateralCountCoalesceGuard;
     private boolean isLateralCountCoalesceRequired;
-    // LateralJoinRewriter marks the join model that it adds to a LATERAL body for the distinct outer
-    // values, so that SqlOptimiser tells it from a table that a query aliases with the same prefix.
-    private boolean isLateralOuterRef;
     // LateralJoinRewriter marks the final lateral output so SqlOptimiser can hide
     // synthesized alignment columns after wildcard expansion assigns final aliases.
     private boolean isOuterRefWildcardExcluded;
@@ -472,7 +466,6 @@ public class QueryModel implements IQueryModel {
         isCteModel = false;
         isLateralCountCoalesceRequired = false;
         lateralCountCoalesceGuard = null;
-        isLateralOuterRef = false;
         isOuterRefWildcardExcluded = false;
         lateralCountTemplates.clear();
         modelType = ExecutionModel.QUERY;
@@ -510,7 +503,6 @@ public class QueryModel implements IQueryModel {
         overridableDecls.clear();
         orderDescendingByDesignatedTimestampOnly = false;
         forceBackwardScan = false;
-        isJoinOrderFree = false;
         hintsMap.clear();
         asOfJoinTolerance = null;
         horizonJoinContext.clear();
@@ -1360,11 +1352,6 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public boolean isJoinOrderFree() {
-        return isJoinOrderFree;
-    }
-
-    @Override
     public ExpressionNode getLateralCountCoalesceGuard() {
         return lateralCountCoalesceGuard;
     }
@@ -1372,10 +1359,6 @@ public class QueryModel implements IQueryModel {
     @Override
     public boolean isLateralCountCoalesceRequired() {
         return isLateralCountCoalesceRequired;
-    }
-
-    public boolean isLateralOuterRef() {
-        return isLateralOuterRef;
     }
 
     @Override
@@ -1819,11 +1802,6 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public void setJoinOrderFree(boolean isJoinOrderFree) {
-        this.isJoinOrderFree = isJoinOrderFree;
-    }
-
-    @Override
     public void setJoinType(int joinType) {
         this.joinType = joinType;
     }
@@ -1836,10 +1814,6 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setLateralCountCoalesceRequired(boolean isLateralCountCoalesceRequired) {
         this.isLateralCountCoalesceRequired = isLateralCountCoalesceRequired;
-    }
-
-    public void setLateralOuterRef(boolean isLateralOuterRef) {
-        this.isLateralOuterRef = isLateralOuterRef;
     }
 
     @Override

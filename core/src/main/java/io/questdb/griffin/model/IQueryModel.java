@@ -497,14 +497,6 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean isForceBackwardScan();
 
-    /**
-     * True when the order of the rows that the model's join chain streams cannot change the query
-     * result, see SqlOptimiser.optimiseJoins(). An INNER hash join may then swap its inputs by row count
-     * at run time, see HashJoinLightRecordCursorFactory.getCursor(), even though the join declares the
-     * master's designated timestamp.
-     */
-    boolean isJoinOrderFree();
-
     boolean isLateralCountCoalesceRequired();
 
     /**
@@ -625,8 +617,6 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setJoinCriteria(ExpressionNode joinCriteria);
 
     void setJoinKeywordPosition(int position);
-
-    void setJoinOrderFree(boolean isJoinOrderFree);
 
     void setJoinType(int joinType);
 
