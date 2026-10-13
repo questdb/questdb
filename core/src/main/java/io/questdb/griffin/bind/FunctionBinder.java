@@ -108,8 +108,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private final IntList argumentPositions = new IntList();
     private final IntList argumentTypes = new IntList();
     private final ObjList<BoundExpression> arguments = new ObjList<>();
-    private final ObjList<Function> callArguments = new ObjList<>();
-    private final IntList callPositions = new IntList();
+    private final ObjList<BoundExpression> callArguments;
+    private final ObjList<Function> callFunctions;
+    private final IntList callPositions;
     private final BindContext ctx;
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
@@ -117,22 +118,38 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private final ObjList<BoundExpression> expressionStack = new ObjList<>();
     private final ObjList<Function> functionStack = new ObjList<>();
     private final StringSink intervalSink = new StringSink();
-    private final StringSink intervalText = new StringSink();
-    private final LongList parsedIntervals = new LongList();
+    private final StringSink intervalText;
+    private final LongList parsedIntervals;
     private final IntList positionStack = new IntList();
     private final FunctionResolver resolver;
     private final SubqueryCompiler subqueryCompiler;
-    private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
+    private final PostOrderTreeTraversalAlgo traverseAlgo;
     private final ObjList<BoundExpression> unconstructed = new ObjList<>();
     private SqlExecutionContext sqlExecutionContext;
 
     /**
      * Allocates descriptions from the context's pools and hands built roots to its prepared functions.
      */
-    FunctionBinder(BindContext ctx, FunctionResolver resolver, SubqueryCompiler subqueryCompiler) {
+    FunctionBinder(
+            BindContext ctx,
+            FunctionResolver resolver,
+            SubqueryCompiler subqueryCompiler,
+            PostOrderTreeTraversalAlgo traverseAlgo,
+            ObjList<Function> callFunctions,
+            IntList callPositions,
+            ObjList<BoundExpression> callArguments,
+            StringSink intervalText,
+            LongList parsedIntervals
+    ) {
         this.ctx = ctx;
         this.resolver = resolver;
         this.subqueryCompiler = subqueryCompiler;
+        this.traverseAlgo = traverseAlgo;
+        this.callFunctions = callFunctions;
+        this.callPositions = callPositions;
+        this.callArguments = callArguments;
+        this.intervalText = intervalText;
+        this.parsedIntervals = parsedIntervals;
     }
 
     /**
@@ -218,6 +235,28 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             SqlExecutionContext executionContext
     ) throws SqlException {
         return bindRoot(null, name, position, args, input, null, ColumnType.UNDEFINED, executionContext);
+    }
+
+    @Override
+    public BoundExpression bindCall(CharSequence name, int position, OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
+        final BoundExpression bound = bindCall(name, position, callArguments, input, executionContext);
+        callArguments.clear();
+        return bound;
+    }
+
+    @Override
+    public BoundExpression bindCall(
+            CharSequence name,
+            int position,
+            BoundExpression left,
+            BoundExpression right,
+            OutputSchema input,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        callArguments.clear();
+        callArguments.add(left);
+        callArguments.add(right);
+        return bindCall(name, position, input, executionContext);
     }
 
     public BoundExpression bindGroupByExpression(
@@ -323,8 +362,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         argumentLeafMarks.clear();
         argumentPositions.clear();
         argumentTypes.clear();
-        callArguments.clear();
-        callPositions.clear();
         unconstructed.clear();
         sqlExecutionContext = null;
     }
@@ -358,6 +395,11 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         }
         validateNode(node);
         return true;
+    }
+
+    @Override
+    public ObjList<BoundExpression> getCallArguments() {
+        return callArguments;
     }
 
     @TestOnly
@@ -410,8 +452,10 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         final Function function;
         if (count == 0) {
             function = switch (node.type) {
-                case ExpressionNode.LITERAL ->
-                        isUnresolvedNoArgFunction(node) ? resolveCall(node, 0) : createColumn(node);
+                case ExpressionNode.LITERAL -> {
+                    final int index = findColumn(node, ctx.scope().expressionInput, ctx.scope().expressionInputAlias);
+                    yield index == -1 && resolver.findNoArgFunction(node.token) ? resolveCall(node, 0) : createColumn(node, index);
+                }
                 case ExpressionNode.BIND_VARIABLE -> createParameter(node);
                 case ExpressionNode.MEMBER_ACCESS -> captureConstant(new StrConstant(node.token), node.position, null);
                 case ExpressionNode.CONSTANT ->
@@ -624,7 +668,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             ExpressionNode node,
             CharSequence callName,
             int callPosition,
-            ObjList<? extends BoundExpression> callArguments,
+            ObjList<? extends BoundExpression> args,
             OutputSchema input,
             CharSequence inputAlias,
             int preferredType,
@@ -647,7 +691,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         final boolean isUpdateAssignment = scope.bindingRole == BindingRole.UPDATE_ASSIGNMENT;
         try {
             if (node == null) {
-                bindCallArguments(callName, callPosition, callArguments);
+                bindCallArguments(callName, callPosition, args);
             } else {
                 bindTree(node, executionContext);
             }
@@ -996,17 +1040,16 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         }
     }
 
-    private Function createColumn(ExpressionNode node) throws SqlException {
+    private Function createColumn(ExpressionNode node, int foundIndex) throws SqlException {
         final BindScope scope = ctx.scope();
         final OutputSchema input = scope.expressionInput;
-        final CharSequence inputAlias = scope.expressionInputAlias;
-        if (findColumn(node, input, inputAlias) == -1) {
+        if (foundIndex == -1) {
             final Function outer = createOuterColumn(node);
             if (outer != null) {
                 return outer;
             }
         }
-        final int index = resolveColumn(node, input, inputAlias);
+        final int index = checkColumn(node, foundIndex, input, scope.expressionInputAlias);
         final int type = input.getColumnType(index);
         final int columnId = input.getColumnId(index);
         final int mark = leafMark();
@@ -1028,7 +1071,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         scope.currentPreparation.isRebuildRequired = true;
         final CursorExpression cursor = nextCursor().of(subquery, node.position);
         final Function function = new CursorFunction(subquery.getOutputMetadata());
-        if (scope.timestampSubqueries.indexOf(node.queryModel) >= 0 && isTimestampConvertible(subquery.getRoot().getOutput(), scope.timestampSubqueryType)) {
+        if ((node.queryModel == scope.timestampFromSubquery || node.queryModel == scope.timestampToSubquery)
+                && isTimestampConvertible(subquery.getRoot().getOutput(), scope.timestampSubqueryType)) {
             push(nextCursor().ofTimestamp(cursor, scope.timestampSubqueryType,
                     BoundExpression.RUNTIME_CONSTANT | cursor.getFunctionFlags() & BoundExpression.STABLE_WITHIN_EXECUTION), leafMark());
             return new ScalarSubQueryTimestampFunction(function, node.position, scope.timestampSubqueryType);
@@ -1313,11 +1357,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 && IntervalExtractor.isStringLiteral(constant);
     }
 
-    private boolean isUnresolvedNoArgFunction(ExpressionNode node) {
-        final BindScope scope = ctx.scope();
-        return findColumn(node, scope.expressionInput, scope.expressionInputAlias) == -1 && resolver.findNoArgFunction(node.token);
-    }
-
     private boolean isWindowArgument(ExpressionNode node) {
         final ExpressionNode windowRoot = windowRoot();
         if (windowRoot == null) {
@@ -1539,7 +1578,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         ObjList<Function> args = null;
         IntList positions = null;
         if (count > 0) {
-            args = callArguments;
+            args = callFunctions;
             positions = callPositions;
             args.clear();
             args.setPos(count);
@@ -1916,6 +1955,23 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         return flags;
     }
 
+    /**
+     * The index {@link #findColumn} found for the column the node names, or the error of a column it did not find.
+     */
+    static int checkColumn(ExpressionNode node, int index, OutputSchema input, CharSequence inputAlias) throws SqlException {
+        if (index == OutputSchema.COLUMN_AMBIGUOUS) {
+            throw SqlException.ambiguousColumn(node.position, node.token);
+        }
+        if (index < 0) {
+            final int dot = Chars.indexOfLastUnquoted(node.token, '.');
+            if (dot > -1 && isUnknownQualifier(GenericLexer.unquote(node.token.subSequence(0, dot)), input, inputAlias)) {
+                throw SqlException.$(node.position, "Invalid table name or alias");
+            }
+            throw SqlException.invalidColumn(node.position, node.token);
+        }
+        return index;
+    }
+
     static int findColumn(ExpressionNode node, OutputSchema input, CharSequence inputAlias) {
         final CharSequence name = node.token;
         final int dot = Chars.indexOfLastUnquoted(name, '.');
@@ -1943,18 +1999,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     static int resolveColumn(ExpressionNode node, OutputSchema input, CharSequence inputAlias) throws SqlException {
-        final int index = findColumn(node, input, inputAlias);
-        if (index == OutputSchema.COLUMN_AMBIGUOUS) {
-            throw SqlException.ambiguousColumn(node.position, node.token);
-        }
-        if (index < 0) {
-            final int dot = Chars.indexOfLastUnquoted(node.token, '.');
-            if (dot > -1 && isUnknownQualifier(GenericLexer.unquote(node.token.subSequence(0, dot)), input, inputAlias)) {
-                throw SqlException.$(node.position, "Invalid table name or alias");
-            }
-            throw SqlException.invalidColumn(node.position, node.token);
-        }
-        return index;
+        return checkColumn(node, findColumn(node, input, inputAlias), input, inputAlias);
     }
 
     ConstantExpression constant(Function function, int position) {
@@ -2019,9 +2064,13 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      * True when the name does not resolve in the input but does in an enclosing lateral scope.
      */
     boolean isOuterColumn(ExpressionNode node, OutputSchema input, CharSequence inputAlias) {
-        if (node.type != ExpressionNode.LITERAL || findColumn(node, input, inputAlias) != -1) {
-            return false;
-        }
+        return node.type == ExpressionNode.LITERAL && findColumn(node, input, inputAlias) == -1 && isOuterScopeColumn(node);
+    }
+
+    /**
+     * True when the name resolves in an enclosing lateral scope.
+     */
+    boolean isOuterScopeColumn(ExpressionNode node) {
         final ObjList<OutputSchema> outerScopes = ctx.scope().outerScopes;
         for (int i = outerScopes.size() - 1; i > -1; i--) {
             if (findColumn(node, outerScopes.getQuick(i), null) > -1) {

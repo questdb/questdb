@@ -24,12 +24,8 @@
 
 package io.questdb.griffin.codegen;
 
-import io.questdb.griffin.FunctionInstantiator;
-import io.questdb.griffin.BoundExpressionRewriter;
-import io.questdb.griffin.InstantiatedIntervalBounds;
 import io.questdb.griffin.IntervalExtractor;
 import io.questdb.griffin.ParquetPushdownExtractor;
-import io.questdb.griffin.TableFunctionSources;
 import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
@@ -68,44 +64,35 @@ import java.io.Closeable;
  */
 final class GenerationFrame implements Closeable, Mutable {
     final IntList columnReferenceCounts = new IntList();
-    final BoundExpressionRewriter expressionRewriter;
-    final FunctionInstantiator functionInstantiator;
-    final TableFunctionSources functionSources;
-    final InstantiatedIntervalBounds intervalBounds;
+    final ObjList<BoundExpression> expressions = new ObjList<>();
+    final ObjList<Function> functions = new ObjList<>(2);
+    final IntList intListA = new IntList();
+    final IntList intListB = new IntList();
+    final IntList intListC = new IntList();
     final IntervalExtractor intervals;
     final JoinKeyLayout joinKeys;
-    final IntList keySlots = new IntList();
     final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     final LongList latestPrefixes = new LongList();
     final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     final ListColumnFilter listColumnFilterB = new ListColumnFilter();
-    final IntervalExtractor overrideIntervals;
-    final ObjList<Function> patternArguments = new ObjList<>(2);
-    final ObjList<BoundExpression> patternConjuncts = new ObjList<>();
-    final IntList patternPositions = new IntList(2);
-    final OutputSchema projectionScope = new OutputSchema();
     final GenericRecordMetadata projectionScopeMetadata = new GenericRecordMetadata();
-    final ParquetPushdownExtractor pushdown = new ParquetPushdownExtractor();
+    final ParquetPushdownExtractor pushdown = new ParquetPushdownExtractor(expressions, intListB);
+    final OutputSchema schema = new OutputSchema();
     final ObjList<RecordCursorFactory> setOperationHeads = new ObjList<>();
     final ObjList<LogicalPlan> setOperationPlans = new ObjList<>();
     final IntList sharedConsumerCounts = new IntList();
     final ObjList<RecordCursorFactory> sharedFactories = new ObjList<>();
     final ObjList<JoinInput> sharedSources = new ObjList<>();
     final ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
+    final BitSet symbolAsString = new BitSet();
     final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
-    final OutputSchema windowChainSchema = new OutputSchema();
-    final ArrayColumnTypes windowChainTypes = new ArrayColumnTypes();
-    final IntList windowDirections = new IntList();
+    final IntList windowFunctionPositions = new IntList();
     final ObjObjHashMap<IntList, ObjList<WindowFunction>> windowGroups = new ObjObjHashMap<>();
-    final ArrayColumnTypes windowKeyTypes = new ArrayColumnTypes();
     final ObjList<TableColumnMetadata> windowMetadata = new ObjList<>();
-    final IntList windowOrder = new IntList();
     final ObjList<TableColumnMetadata> windowOutputColumns = new ObjList<>();
     final WindowFactoryGenerator.WindowPartitionKeys windowPartitionKeys = new WindowFactoryGenerator.WindowPartitionKeys();
     final ObjList<WindowFunction> windowSpecFunctions = new ObjList<>();
     final ObjList<WindowMapSpec> windowSpecs = new ObjList<>();
-    final ObjList<BoundExpression> workerKeyExpressions = new ObjList<>();
-    final BitSet writeSymbolAsString = new BitSet();
     private final ObjList<PreparedFilter> preparedFilters = new ObjList<>();
     private final ObjList<TableColumnMetadata> projectionSlotColumns = new ObjList<>();
     Function limitHi;
@@ -120,39 +107,35 @@ final class GenerationFrame implements Closeable, Mutable {
             CairoConfiguration configuration,
             StringSink tmpSink,
             LongList tmpLongs,
-            BoundExpressionRewriter expressionRewriter,
-            FunctionInstantiator functionInstantiator,
-            TableFunctionSources functionSources
+            IntList symbolKeyFlags,
+            IntList masterSymbolColumns,
+            IntList slaveSymbolColumns
     ) {
-        this.expressionRewriter = expressionRewriter;
-        this.functionInstantiator = functionInstantiator;
-        this.functionSources = functionSources;
-        this.intervalBounds = new InstantiatedIntervalBounds(functionInstantiator);
         this.intervals = new IntervalExtractor(configuration, tmpSink, tmpLongs);
-        this.joinKeys = new JoinKeyLayout(listColumnFilterA, listColumnFilterB);
-        this.overrideIntervals = new IntervalExtractor(configuration, tmpSink, tmpLongs);
+        this.joinKeys = new JoinKeyLayout(listColumnFilterA, listColumnFilterB, keyTypes, intListA, intListB, symbolAsString,
+                symbolKeyFlags, masterSymbolColumns, slaveSymbolColumns);
     }
 
     @Override
     public void clear() {
         Throwable failure = Misc.clearBestEffort(null, intervals);
-        failure = Misc.clearBestEffort(failure, overrideIntervals);
-        keySlots.clear();
+        intListA.clear();
+        intListB.clear();
+        intListC.clear();
+        windowFunctionPositions.clear();
         keyTypes.clear();
         valueTypes.clear();
         listColumnFilterA.clear();
         listColumnFilterB.clear();
-        patternArguments.clear();
-        writeSymbolAsString.clear();
+        functions.clear();
+        symbolAsString.clear();
         joinKeys.clear();
         slaveTypes.clear();
         limitHi = null;
         limitLo = null;
         latestPrefixes.clear();
-        patternConjuncts.clear();
-        workerKeyExpressions.clear();
-        patternPositions.clear();
-        projectionScope.clear();
+        expressions.clear();
+        schema.clear();
         columnReferenceCounts.clear();
         sharedConsumerCounts.clear();
         sharedFactories.clear();
@@ -160,13 +143,8 @@ final class GenerationFrame implements Closeable, Mutable {
         setOperationHeads.clear();
         setOperationPlans.clear();
         projectionScopeMetadata.clear();
-        windowChainSchema.clear();
-        windowChainTypes.clear();
-        windowDirections.clear();
         windowGroups.clear();
-        windowKeyTypes.clear();
         windowMetadata.clear();
-        windowOrder.clear();
         windowOutputColumns.clear();
         windowPartitionKeys.clear();
         windowSpecFunctions.clear();

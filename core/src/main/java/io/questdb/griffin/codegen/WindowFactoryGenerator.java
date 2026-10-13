@@ -90,22 +90,26 @@ final class WindowFactoryGenerator {
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter;
-    private final ListColumnFilter indexColumnFilter = new ListColumnFilter();
-    private final StringSink nameSink = new StringSink();
+    private final FunctionInstantiator functionInstantiator;
+    private final StringSink nameSink;
     private final RecordComparatorCompiler recordComparatorCompiler;
 
     WindowFactoryGenerator(
             CairoConfiguration configuration,
             SqlCodeGenerator codeGenerator,
+            FunctionInstantiator functionInstantiator,
             BytecodeAssembler asm,
             EntityColumnFilter entityColumnFilter,
-            RecordComparatorCompiler recordComparatorCompiler
+            RecordComparatorCompiler recordComparatorCompiler,
+            StringSink nameSink
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
+        this.functionInstantiator = functionInstantiator;
         this.asm = asm;
         this.entityColumnFilter = entityColumnFilter;
         this.recordComparatorCompiler = recordComparatorCompiler;
+        this.nameSink = nameSink;
     }
 
     private static boolean isFreeName(CharSequence name, RecordMetadata metadata, @Nullable RecordMetadata reserved) {
@@ -121,7 +125,7 @@ final class WindowFactoryGenerator {
             return false;
         }
         final WindowFunction function = windowFactory.getSingleRowSelectingFunction();
-        final int columnIndex = filter.getInput().getOutput().getColumnIndexById(column.getColumnId());
+        final int columnIndex = filter.getChild().getOutput().getColumnIndexById(column.getColumnId());
         return function != null && columnIndex >= 0 && columnIndex == function.getColumnIndex()
                 && windowFactory.getMetadata().getColumnType(columnIndex) == ColumnType.BOOLEAN;
     }
@@ -373,7 +377,7 @@ final class WindowFactoryGenerator {
 
     RecordCursorFactory generateWindow(GenerationFrame frame, WindowPlan window, @Nullable ProjectPlan projection,
                                        SqlExecutionContext executionContext) throws SqlException {
-        final RecordCursorFactory base = codeGenerator.generate(frame, window.getInput(), executionContext);
+        final RecordCursorFactory base = codeGenerator.generate(frame, window.getChild(), executionContext);
         return generateWindow(frame, window, projection, base, executionContext);
     }
 
@@ -383,8 +387,7 @@ final class WindowFactoryGenerator {
      */
     RecordCursorFactory generateWindow(GenerationFrame frame, WindowPlan plan, @Nullable ProjectPlan projection, RecordCursorFactory base,
                                        SqlExecutionContext executionContext) throws SqlException {
-        final FunctionInstantiator instantiator = frame.functionInstantiator;
-        final OutputSchema input = plan.getInput().getOutput();
+        final OutputSchema input = plan.getChild().getOutput();
         if (projection != null && executionContext.isLiveViewCompile()) {
             base = renameWindowInput(base, input, projection);
         }
@@ -400,19 +403,38 @@ final class WindowFactoryGenerator {
             final int inputCount = inputMetadata.getColumnCount();
             final OutputSchema output = projection == null ? plan.getOutput() : projection.getOutput();
             final int outputCount = output.getColumnCount();
-            final IntList sources = new IntList(inputCount + plan.getFunctions().size());
+            final IntList sources = frame.intListC;
+            final IntList inputPositions = frame.intListA;
+            final IntList functionPositions = frame.windowFunctionPositions;
+            final OutputSchema windowOutput = plan.getOutput();
+            final int firstFunctionIndex = windowOutput.getColumnCount() - plan.getFunctionColumnIds().size();
+            sources.clear();
+            inputPositions.setAll(inputCount, -1);
+            functionPositions.setAll(plan.getFunctionColumnIds().size(), -1);
             for (int i = 0; i < outputCount; i++) {
                 final int columnId = projection == null ? output.getColumnId(i)
                         : ((ColumnExpression) projection.getExpressions().getQuick(i)).getColumnId();
                 final int inputIndex = input.getColumnIndexById(columnId);
-                sources.add(inputIndex >= 0 ? inputIndex : -plan.getFunctionColumnIds().indexOf(columnId, 0, plan.getFunctionColumnIds().size()) - 1);
+                if (inputIndex >= 0) {
+                    sources.add(inputIndex);
+                    if (inputPositions.getQuick(inputIndex) < 0) {
+                        inputPositions.setQuick(inputIndex, i);
+                    }
+                } else {
+                    final int function = windowOutput.getColumnIndexById(columnId) - firstFunctionIndex;
+                    sources.add(-function - 1);
+                    if (functionPositions.getQuick(function) < 0) {
+                        functionPositions.setQuick(function, i);
+                    }
+                }
             }
             for (int i = 0; i < inputCount; i++) {
-                if (sources.indexOf(i, 0, sources.size()) < 0) {
+                if (inputPositions.getQuick(i) < 0) {
+                    inputPositions.setQuick(i, sources.size());
                     sources.add(i);
                 }
             }
-            final OutputSchema chainSchema = frame.windowChainSchema;
+            final OutputSchema chainSchema = frame.schema;
             chainSchema.clear();
             final GenericRecordMetadata chainMetadata = new GenericRecordMetadata();
             final ObjList<TableColumnMetadata> outputColumns = frame.windowOutputColumns;
@@ -429,7 +451,7 @@ final class WindowFactoryGenerator {
                                 : new TableColumnMetadata(Chars.toString(name), column.getColumnType(), column.getIndexType(),
                                 column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
                     }
-                    if (sources.indexOf(source, 0, i) < 0) {
+                    if (inputPositions.getQuick(source) == i) {
                         chainMetadata.add(i, column);
                     } else {
                         chainMetadata.add(i, new TableColumnMetadata(uniqueName(column.getColumnName(), chainMetadata, inputMetadata),
@@ -451,10 +473,10 @@ final class WindowFactoryGenerator {
                             chainSchema.getColumnType(i), IndexType.NONE, 0, false, null));
                 }
             }
-            final ArrayColumnTypes keyTypes = frame.windowKeyTypes;
-            final ArrayColumnTypes chainTypes = frame.windowChainTypes;
-            final IntList order = frame.windowOrder;
-            final IntList directions = frame.windowDirections;
+            final ArrayColumnTypes keyTypes = frame.keyTypes;
+            final ArrayColumnTypes chainTypes = frame.valueTypes;
+            final IntList order = frame.intListA;
+            final IntList directions = frame.intListB;
             final ObjList<WindowMapSpec> specs = frame.windowSpecs;
             final ObjList<WindowFunction> specFunctions = frame.windowSpecFunctions;
             final ObjList<TableColumnMetadata> windowMetadata = frame.windowMetadata;
@@ -514,7 +536,7 @@ final class WindowFactoryGenerator {
                 if (spec.getPartitionBy().size() > 0) {
                     partitionFunctions = new ObjList<>(spec.getPartitionBy().size());
                     for (int k = 0; k < spec.getPartitionBy().size(); k++) {
-                        final Function function = instantiator.instantiate(spec.getPartitionBy().getQuick(k), bindSchema, bindMetadata, executionContext);
+                        final Function function = functionInstantiator.instantiate(spec.getPartitionBy().getQuick(k), bindSchema, bindMetadata, executionContext);
                         partitionFunctions.add(function);
                         // A live-view refresh reads WAL-segment-local symbol keys, so it partitions by the resolved string.
                         if (isLiveView && ColumnType.isSymbol(function.getType())) {
@@ -539,7 +561,7 @@ final class WindowFactoryGenerator {
                 final WindowMapSpec mapSpec;
                 try {
                     executionContext.configureWindowContext(partitionRecord, partitionSink, keyTypes, order.size() > 0,
-                            isOrderDismissed ? PhysicalProperties.scanDirection(plan.getInput()).factoryDirection()
+                            isOrderDismissed ? PhysicalProperties.scanDirection(plan.getChild()).factoryDirection()
                                     : RecordCursorFactory.SCAN_DIRECTION_OTHER,
                             order.size() == 0 ? -1 : spec.getOrderByPositions().getQuick(0),
                             spec.getFramingMode(),
@@ -547,7 +569,7 @@ final class WindowFactoryGenerator {
                             spec.getRowsHi(), spec.getRowsHiExprTimeUnit(), spec.getRowsHiExprPos(), spec.getRowsHiKindPos(),
                             spec.getExclusionKind(), spec.getExclusionKindPos(), bindMetadata.getTimestampIndex(),
                             inputMetadata.getTimestampType(), spec.isIgnoreNulls(), spec.getNullsDescPos());
-                    pendingWindow = instantiator.instantiateWindow(plan.getFunctions().getQuick(i), bindSchema, bindMetadata, executionContext);
+                    pendingWindow = functionInstantiator.instantiateWindow(plan.getFunctions().getQuick(i), bindSchema, bindMetadata, executionContext);
                     partitionFunctions = null;
                     mapSpec = WindowMapSpec.of(executionContext.getWindowContext(), spec.getPartitionBy(), order,
                             directions, isOrderDismissed, pendingWindow, bindSchema, bindMetadata);
@@ -558,7 +580,7 @@ final class WindowFactoryGenerator {
                 if (spec.isSubsampleKeepFlag()) {
                     function.markSubsampleKeepFlag();
                 }
-                final int outputIndex = sources.indexOf(-i - 1, 0, sources.size());
+                final int outputIndex = functionPositions.getQuick(i);
                 if (ParanoiaState.PLAN_PARANOIA_MODE) {
                     isStreamable &= (order.size() == 0 || isOrderDismissed) && function.getPassCount() == WindowFunction.ZERO_PASS;
                 }
@@ -596,7 +618,7 @@ final class WindowFactoryGenerator {
                             directions.setQuick(k, 1 - directions.getQuick(k));
                         }
                     }
-                    function.initRecordComparator(asm, recordComparatorCompiler, indexColumnFilter, bindMetadata, chainTypes, order,
+                    function.initRecordComparator(asm, recordComparatorCompiler, frame.listColumnFilterA, bindMetadata, chainTypes, order,
                             spec.getOrderByPositions(), orderNames, directions);
                 }
                 function.setColumnIndex(outputIndex);
@@ -657,7 +679,7 @@ final class WindowFactoryGenerator {
                 }
                 try {
                     rowsPlan = LiveViewCheckpointFunctionCompiler.rowsPlan(functions, descriptions, inputMetadata, configuration, asm,
-                            frame.windowPartitionKeys.of(instantiator, plan, sources, input, inputMetadata, executionContext));
+                            frame.windowPartitionKeys.of(functionInstantiator, plan, sources, input, inputMetadata, executionContext));
                 } finally {
                     frame.windowPartitionKeys.clear();
                 }
@@ -670,8 +692,10 @@ final class WindowFactoryGenerator {
                 rowsPlan = null;
                 return generateStreamingWindow(ownedBase, metadata, ownedFunctions, null, anchorable, rangePlan, ownedRowsPlan);
             }
-            final ListColumnFilter sourceFilter = new ListColumnFilter();
-            final ListColumnFilter copyFilter = new ListColumnFilter();
+            final ListColumnFilter sourceFilter = frame.listColumnFilterB;
+            final ListColumnFilter copyFilter = frame.listColumnFilterA;
+            sourceFilter.clear();
+            copyFilter.clear();
             final IntList indexes = new IntList();
             for (int i = 0, n = sources.size(); i < n; i++) {
                 final int source = sources.getQuick(i);

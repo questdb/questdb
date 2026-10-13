@@ -30,6 +30,7 @@ import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionInstantiator;
+import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -40,25 +41,33 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.JoinDependency;
 import io.questdb.griffin.plan.logical.JoinInput;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.Subquery;
+import io.questdb.griffin.plan.logical.UniqueColumnNames;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.IntSortedList;
+import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.str.StringSink;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Runs the semantics-preserving plan rewrites, each an {@link OptimiserPass}, in a fixed order. The optimiser owns
  * the plan-shaped temporary lists the passes share and the {@link OptimiserContext} of the query level being
- * rewritten, borrows the compiler's leaf temporaries (the column-id set and four index lists, which the
- * generators and join ordering use in windows no optimisation can run in), and hands them, with the
+ * rewritten, borrows the compiler's leaf temporaries (the column-id set, four index lists and the other scratch the
+ * binder and the generators use in windows no optimisation can run in), and hands them, with the
  * statement binder's plan-node pools, to each pass through its constructor.
  */
 public final class SqlOptimiser implements Mutable {
@@ -66,14 +75,19 @@ public final class SqlOptimiser implements Mutable {
     private final AggregateInputOrder aggregateInputOrder;
     private final OptimiserContext context;
     private final Decorrelation decorrelation;
+    private final JoinOrdering joinOrdering;
     private final OperatorPlanning operatorPlanning;
     private final ObjList<OptimiserPass> passes = new ObjList<>(10);
+    private final ColumnExpression tmpColumn = new ColumnExpression();
     private final ObjList<BoundExpression> tmpConjuncts = new ObjList<>();
-    private final ObjList<BoundExpression> tmpExpressions = new ObjList<>();
+    private final IntList tmpOrder = new IntList();
+    private final IntList tmpPairs = new IntList();
+    private final IntList tmpPending = new IntList();
     private final ObjList<LogicalPlan> tmpPlans = new ObjList<>();
-    private final OutputSchema tmpSchema = new OutputSchema();
+    private final ProjectPlan tmpProjection = new ProjectPlan();
     private final ObjList<JoinInput> tmpSteps = new ObjList<>();
     private final PlanVerifier verifier;
+    private final WindowCallMerge windowCallMerge;
 
     /**
      * Allocates plan nodes from the given pools, whose owner empties them once the optimised plan and
@@ -91,13 +105,25 @@ public final class SqlOptimiser implements Mutable {
             IntList tmpValues,
             IntList tmpKeys,
             IntList tmpSlaveKeys,
+            ObjList<BoundExpression> tmpExpressions,
+            OutputSchema tmpSchema,
+            StringSink intervalText,
+            LongList parsedIntervals,
+            IntIntHashMap substitution,
+            UniqueColumnNames takenNames,
+            OuterColumnReads outerColumnReads,
+            IntSortedList readyInputs,
+            ObjList<IntHashSet> joinChildren,
+            ObjectPool<IntHashSet> joinChildrenPool,
+            ObjList<JoinKind> joinTypes,
+            ObjList<JoinDependency> stagedDependencies,
             BoundExpressionRewriter rewriter,
             CallBinder callBinder,
             FunctionInstantiator instantiator,
             TableFunctionSources functionSources,
             PlanTables planTables
     ) {
-        context = new OptimiserContext(rewriter, callBinder, instantiator, functionSources, planNodes, planTables, tmpExpressions);
+        context = new OptimiserContext(rewriter, callBinder, instantiator, functionSources, planNodes, planTables);
         final ObjectPool<ColumnExpression> columns = planNodes.columns;
         final ObjectPool<ConstantExpression> constants = planNodes.constants;
         final ObjectPool<FilterPlan> filters = planNodes.filters;
@@ -105,41 +131,48 @@ public final class SqlOptimiser implements Mutable {
         final ObjectPool<ProjectPlan> projects = planNodes.projects;
         final ObjectPool<SortPlan> sorts = planNodes.sorts;
         decorrelation = new Decorrelation(context, planNodes, characterStore, tmpConjuncts, tmpIndexes, tmpValues,
-                tmpKeys, tmpPlans, tmpSchema, tmpSteps);
+                tmpKeys, tmpSlaveKeys, tmpOrder, tmpPending, tmpPairs, tmpPlans, tmpSchema, tmpSteps, substitution, takenNames, outerColumnReads);
         aggregateInputOrder = new AggregateInputOrder();
-        final FilterPushdown filterPushdown = new FilterPushdown(context, aggregateInputOrder, tmpExpressions, filters, columns, projects,
-                tmpIndexes, tmpValues, tmpConjuncts);
+        final FilterPushdown filterPushdown = new FilterPushdown(context, aggregateInputOrder, tmpExpressions, filters, columns, tmpProjection,
+                tmpColumn, tmpSlaveKeys, tmpIndexes, tmpValues, tmpConjuncts);
         final ColumnPruning columnPruning = new ColumnPruning(context, aggregateInputOrder, tmpExpressions, columns, projects, tmpIndexes, tmpValues,
                 columnIds, tmpPlans, tmpSchema);
         final ProjectionMerge projectionMerge = new ProjectionMerge(context);
-        final AggregateRewrite aggregateRewrite = new AggregateRewrite(context, projectionMerge, columns, projects, tmpKeys);
-        passes.add(new JoinOrdering(context, filters, new JoinOrderSolver(planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys),
-                tmpConjuncts));
-        passes.add(decorrelation);
+        final AggregateRewrite aggregateRewrite = new AggregateRewrite(context, projectionMerge, tmpProjection, tmpColumn, tmpKeys);
+        joinOrdering = new JoinOrdering(context, filters, new JoinOrderSolver(planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys, tmpKeys,
+                tmpOrder, tmpPending, readyInputs, joinChildren, joinChildrenPool, joinTypes, stagedDependencies), tmpConjuncts);
         // The endpoint LIMIT comes first so the later passes keep filters below it.
         passes.add(new TimestampEndpointLimit(constants, limits, sorts));
         passes.add(aggregateRewrite);
         passes.add(filterPushdown);
         // Window calls merge before pruning drops the columns a merge leaves unread.
-        passes.add(new WindowCallMerge(context, columns, projects, tmpPlans));
+        windowCallMerge = new WindowCallMerge(context, columns, tmpProjection, tmpPlans, tmpIndexes, substitution, tmpOrder, tmpPairs);
+        passes.add(windowCallMerge);
         passes.add(columnPruning);
         passes.add(projectionMerge);
         passes.add(new NegativeLimitReversal(constants, sorts, tmpIndexes, tmpPlans));
         passes.add(new OrderPlanning(functionFactoryCache, sorts));
-        operatorPlanning = new OperatorPlanning(configuration, context, tmpIndexes, tmpValues);
-        accessPathPlanning = new AccessPathPlanning(configuration, context, operatorPlanning);
-        verifier = ParanoiaState.PLAN_PARANOIA_MODE ? new PlanVerifier(tmpPlans, tmpSchema, columnIds, tmpSteps) : null;
+        operatorPlanning = new OperatorPlanning(configuration, context, tmpIndexes, tmpValues, tmpSteps);
+        accessPathPlanning = new AccessPathPlanning(configuration, context, operatorPlanning, tmpConjuncts, tmpExpressions, tmpKeys, tmpValues,
+                intervalText, parsedIntervals);
+        verifier = ParanoiaState.PLAN_PARANOIA_MODE
+                ? new PlanVerifier(tmpPlans, tmpSchema, columnIds, tmpSteps, tmpExpressions, tmpPairs) : null;
     }
 
     @Override
     public void clear() {
+        tmpColumn.clear();
         tmpConjuncts.clear();
         context.clear();
-        tmpExpressions.clear();
+        tmpOrder.clear();
+        tmpPairs.clear();
+        tmpPending.clear();
         tmpPlans.clear();
-        tmpSchema.clear();
+        tmpProjection.clear();
         tmpSteps.clear();
         aggregateInputOrder.clear();
+        joinOrdering.clear();
+        decorrelation.clear();
         Misc.clearObjList(passes);
     }
 
@@ -147,7 +180,8 @@ public final class SqlOptimiser implements Mutable {
      * Rewrites a bound plan. Plan nodes the optimiser allocates stay valid until the pool owner empties
      * them, so one instance serves a statement and all of its nested sub-query plans. New columns take ids
      * from the statement's sequence, which no column of any level uses. The passes read the execution context
-     * through the {@link OptimiserContext} this method resets.
+     * through the {@link OptimiserContext} this method resets. Join ordering rewrites the bound plan, decorrelation
+     * removes its dependent join steps, and every later pass rewrites a plan without them.
      */
     public LogicalPlan optimise(LogicalPlan root, SqlExecutionContext executionContext) throws SqlException {
         clear();
@@ -155,30 +189,32 @@ public final class SqlOptimiser implements Mutable {
         if (verifier != null) {
             verifier.verifyBound(root);
         }
-        LogicalPlan plan = root;
-        boolean hasDependentSteps = true;
+        LogicalPlan plan = joinOrdering.apply(root);
+        if (verifier != null) {
+            verifier.verifyBound(plan, joinOrdering.getName());
+            verifier.recordBarrierJoins(plan);
+        }
+        plan = decorrelation.apply(plan);
+        if (verifier != null) {
+            verifier.verifyDecorrelation(plan, decorrelation.getName());
+        }
+        decorrelation.releaseCarriers();
+        if (verifier != null) {
+            verifier.verify(plan, decorrelation.getName());
+        }
         for (int i = 0, n = passes.size(); i < n; i++) {
             final OptimiserPass pass = passes.getQuick(i);
-            if (verifier != null && pass.removesDependentSteps()) {
-                verifier.recordBarrierJoins(plan);
-            }
             plan = pass.apply(plan);
-            if (pass.removesDependentSteps()) {
-                if (verifier != null) {
-                    verifier.verifyDecorrelation(plan, pass.getName());
-                }
-                decorrelation.releaseCarriers();
-            }
-            hasDependentSteps &= !pass.removesDependentSteps();
             if (verifier != null) {
-                if (hasDependentSteps) {
-                    verifier.verifyBound(plan, pass.getName());
-                } else {
-                    verifier.verify(plan, pass.getName());
-                }
+                verifier.verify(plan, pass.getName());
             }
         }
         return plan;
+    }
+
+    @TestOnly
+    public long getWindowCallComparisonCount() {
+        return windowCallMerge.getCallComparisonCount();
     }
 
     /**

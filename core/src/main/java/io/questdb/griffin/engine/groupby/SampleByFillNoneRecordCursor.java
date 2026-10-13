@@ -91,7 +91,8 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            char samplingIntervalUnit
     ) {
         super(
                 configuration,
@@ -108,7 +109,8 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
                 sampleFromFunc,
                 sampleFromFuncPos,
                 sampleToFunc,
-                sampleToFuncPos
+                sampleToFuncPos,
+                samplingIntervalUnit
         );
         this.map = map;
         this.keyMapSink = keyMapSink;
@@ -262,6 +264,17 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
         }
     }
 
+    private void aggregateRow() {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
+        final MapValue value = key.createValue();
+        if (value.isNew()) {
+            groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
+        } else {
+            groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
+        }
+    }
+
     private void buildMap() {
         if (isMapBuildPending) {
             map.clear();
@@ -276,14 +289,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 adjustDstInFlight(timestamp - tzOffset);
-                final MapKey key = map.withKey();
-                keyMapSink.copy(baseRecord, key);
-                MapValue value = key.createValue();
-                if (value.isNew()) {
-                    groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
-                } else {
-                    groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
-                }
+                aggregateRow();
             } else {
                 // map value is conditional and only required when clock goes back
                 // we override base method for when this happens
@@ -425,7 +431,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
                     return true;
                 }
                 isEmittingGapKeys = false;
-                fillBucket = fillGrid.nextBucket(fillBucket);
+                fillBucket = fillGrid.nextBucket(fillBucket, peekNextTimestamp());
                 continue;
             }
             final long dataTs = peekNextTimestamp();
@@ -456,7 +462,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
                 return true;
             }
             hasFillData = false;
-            fillBucket = fillGrid.nextBucket(fillBucket);
+            fillBucket = fillGrid.nextBucket(fillBucket, peekNextTimestamp());
         }
         return nextValueFillBucket();
     }
@@ -514,27 +520,27 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
         fillMaxTimestamp = fillGrid.getMaxTimestamp();
     }
 
-    private void updateRetainedValue(MapKey key, long rowId) {
+    private void updateRetainedValue() {
+        final MapKey key = map.withKey();
+        keyMapSink.copy(baseRecord, key);
         MapValue value = key.findValue();
         if (value == null) {
             value = createRetainedValue(key);
         }
         if (value.getLong(BUCKET_SLOT) != bucketSeq) {
             value.putLong(BUCKET_SLOT, bucketSeq);
-            groupByFunctionsUpdater.updateNew(value, baseRecord, rowId);
+            groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
         } else {
-            groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId);
+            groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
         }
     }
 
     @Override
     protected void updateValueWhenClockMovesBack(MapValue value) {
-        final MapKey key = map.withKey();
-        keyMapSink.copy(baseRecord, key);
         if (isRetainingKeys) {
-            updateRetainedValue(key, rowId);
+            updateRetainedValue();
         } else {
-            super.updateValueWhenClockMovesBack(key.createValue());
+            aggregateRow();
         }
     }
 }

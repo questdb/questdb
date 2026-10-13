@@ -55,21 +55,21 @@ import static io.questdb.griffin.bind.TemporalJoinBinder.designateTimestampOffse
 
 final class OrderBinder implements Mutable {
     final ExpressionNode normalizedCount = ExpressionNode.FACTORY.newInstance();
+    final ObjList<ExpressionNode> selectExpressions;
     private final BindContext ctx;
     private final OutputSchema emptySchema;
     private final SampleByBinder sampleByBinder;
-    private final ObjList<ExpressionNode> selectExpressions = new ObjList<>();
 
-    OrderBinder(BindContext ctx, OutputSchema emptySchema, SampleByBinder sampleByBinder) {
+    OrderBinder(BindContext ctx, OutputSchema emptySchema, SampleByBinder sampleByBinder, ObjList<ExpressionNode> selectExpressions) {
         this.ctx = ctx;
         this.emptySchema = emptySchema;
         this.sampleByBinder = sampleByBinder;
+        this.selectExpressions = selectExpressions;
     }
 
     @Override
     public void clear() {
         normalizedCount.clear();
-        selectExpressions.clear();
     }
 
     private static boolean isRepeatedColumn(ProjectPlan project, int columnId) {
@@ -122,7 +122,7 @@ final class OrderBinder implements Mutable {
             int index = orderProjectionIndex(order, project.getOutput(), visibleCount);
             if (index >= 0 && hasComputedProjection(project) && order.type == ExpressionNode.LITERAL
                     && project.getExpressions().getQuick(index) instanceof ColumnExpression column) {
-                final OutputSchema projectInput = project.getInput().getOutput();
+                final OutputSchema projectInput = project.getChild().getOutput();
                 final int inputIndex = projectInput.getColumnIndexById(column.getColumnId());
                 if (inputIndex < 0 || !Chars.equalsIgnoreCase(order.token, projectInput.getColumnName(inputIndex))) {
                     sort.markAliasedKey();
@@ -185,7 +185,7 @@ final class OrderBinder implements Mutable {
         }
         final ProjectPlan sortInput = ordering == null ? project : ordering;
         final OutputSchema output = sortInput.getOutput();
-        final OutputSchema projectInput = project.getInput().getOutput();
+        final OutputSchema projectInput = project.getChild().getOutput();
         final int timestampIndex = projectInput.getTimestampIndex();
         if (timestampIndex >= 0) {
             final int timestampId = projectInput.getColumnId(timestampIndex);
@@ -249,7 +249,7 @@ final class OrderBinder implements Mutable {
     }
 
     private void designateTimestamp(ProjectPlan project, int orderedProjectionIndex) {
-        final OutputSchema input = project.getInput().getOutput();
+        final OutputSchema input = project.getChild().getOutput();
         final OutputSchema output = project.getOutput();
         // Projection keeps fresh output identities; timestamp designation maps through
         // its explicit column references.
@@ -300,8 +300,8 @@ final class OrderBinder implements Mutable {
         if (left.type != ExpressionNode.LITERAL || right.type != ExpressionNode.LITERAL || left.isWildcard() || right.isWildcard()) {
             return false;
         }
-        final OutputSchema input = aggregate.getInput() instanceof WindowPlan
-                ? ctx.windowBindingScope(aggregate.getInput().getOutput()) : aggregate.getInput().getOutput();
+        final OutputSchema input = aggregate.getChild() instanceof WindowPlan
+                ? ctx.windowBindingScope(aggregate.getChild().getOutput()) : aggregate.getChild().getOutput();
         return isSameColumn(left, right, input, source);
     }
 
@@ -320,7 +320,7 @@ final class OrderBinder implements Mutable {
      */
     private int orderedTimestampIndex(ProjectPlan project, QueryModel source) throws SqlException {
         final BindScope scope = ctx.scope();
-        final OutputSchema input = project.getInput().getOutput();
+        final OutputSchema input = project.getChild().getOutput();
         final int inputTimestampIndex = input.getTimestampIndex();
         if (inputTimestampIndex < 0) {
             return -1;
@@ -549,7 +549,7 @@ final class OrderBinder implements Mutable {
         if (source.getOrderBy().size() == 0) {
             return designateTimestamp(project);
         }
-        final SortPlan sort = ctx.planNodes.sorts.next().of(project.getInput(), source.getOrderByPosition());
+        final SortPlan sort = ctx.planNodes.sorts.next().of(project.getChild(), source.getOrderByPosition());
         for (int i = 0, n = source.getOrderBy().size(); i < n; i++) {
             final ExpressionNode order = source.getOrderBy().getQuick(i);
             final int projectionIndex = orderProjectionIndex(order, project.getOutput(), project.getExpressions().size());
@@ -565,7 +565,7 @@ final class OrderBinder implements Mutable {
             addSortKey(sort, sourcePlan.getOutput(), index, source.getOrderByDirection().getQuick(i), order.position);
         }
         sort.deriveOutput();
-        if (sort.getInput() instanceof WindowPlan window) {
+        if (sort.getChild() instanceof WindowPlan window) {
             window.markSelectOrdered();
         }
         project.replaceInput(0, sort);
@@ -652,7 +652,7 @@ final class OrderBinder implements Mutable {
     }
 
     LogicalPlan projectBeforeDeclaredOrder(LogicalPlan input) {
-        if (!(input instanceof ProjectPlan project) || !(project.getInput() instanceof SortPlan sort) || project.hasTimestampDeclaration()) {
+        if (!(input instanceof ProjectPlan project) || !(project.getChild() instanceof SortPlan sort) || project.hasTimestampDeclaration()) {
             return input;
         }
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
@@ -671,8 +671,8 @@ final class OrderBinder implements Mutable {
             final int index = LogicalPlans.projectedColumnIndex(project, sort.getColumnIds().getQuick(i));
             sort.getColumnIds().setQuick(i, project.getOutput().getColumnId(index));
         }
-        project.replaceInput(0, sort.getInput());
-        project.getOutput().setTimestampIndex(LogicalPlans.projectedColumnIndex(project, project.getInput().getOutput().getTimestampColumnId()));
+        project.replaceInput(0, sort.getChild());
+        project.getOutput().setTimestampIndex(LogicalPlans.projectedColumnIndex(project, project.getChild().getOutput().getTimestampColumnId()));
         sort.replaceInput(0, project);
         return sort;
     }

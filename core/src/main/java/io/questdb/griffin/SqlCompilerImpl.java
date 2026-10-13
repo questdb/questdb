@@ -116,21 +116,28 @@ import io.questdb.griffin.model.RenameTableModel;
 import io.questdb.griffin.model.WindowExpression;
 import io.questdb.griffin.optimiser.SqlOptimiser;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.JoinDependency;
+import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.Subquery;
+import io.questdb.griffin.plan.logical.UniqueColumnNames;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.log.LogRecord;
 import io.questdb.mp.continuation.SuspensionScope;
 import io.questdb.std.BytecodeAssembler;
+import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FlyweightMessageContainer;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
+import io.questdb.std.IntSortedList;
+import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
@@ -199,7 +206,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final SqlBinder binder;
     private final BlockFileWriter blockFileWriter;
     private final CharacterStore characterStore;
-    private final ObjList<CharSequence> columnNames = new ObjList<>();
     private final ViewCompilerExecutionContext compileViewContext;
     private final CharSequenceObjHashMap<String> dropAllTablesFailures = new CharSequenceObjHashMap<>();
     private final OutputSchema emptySchema = new OutputSchema();
@@ -218,8 +224,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final MessageBus messageBus;
     private final NonDeterministicCalls nonDeterministicCalls = new NonDeterministicCalls();
     private final SqlOptimiser optimiser;
+    private final OuterColumnReads outerColumnReads = new OuterColumnReads();
     private final SqlParser parser;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
+    private final GenericRecordMetadata partitionWhereMetadata = new GenericRecordMetadata();
     private final PlanNodePools planNodePools;
     private final PlanTables planTables = new PlanTables();
     private final PreparedFunctions preparedFunctions;
@@ -249,21 +257,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final ObjList<BoundExpression> tmpArguments = new ObjList<>(2);
+    private final ObjList<BoundExpression> tmpExpressions = new ObjList<>();
+    private final IntList tmpFunctionPositions = new IntList();
+    private final ObjList<Function> tmpFunctions = new ObjList<>();
+    private final IntIntHashMap tmpIdMap = new IntIntHashMap();
     private final IntHashSet tmpIds = new IntHashSet();
     private final IntList tmpIndexes = new IntList();
+    private final ObjList<IntHashSet> tmpJoinChildren = new ObjList<>();
+    private final ObjectPool<IntHashSet> tmpJoinChildrenPool;
+    private final ObjList<JoinDependency> tmpJoinDependencies = new ObjList<>();
+    private final ObjList<JoinKind> tmpJoinTypes = new ObjList<>();
+    private final LongList tmpLongs = new LongList();
     private final IntList tmpMasterKeys = new IntList();
+    private final ObjList<CharSequence> tmpNames = new ObjList<>();
+    private final ObjList<ExpressionNode> tmpNodes = new ObjList<>();
     private final IntList tmpPositions = new IntList(2);
+    private final IntSortedList tmpReadyInputs = new IntSortedList();
     private final OutputSchema tmpScope = new OutputSchema();
     private final StringSink tmpSink = new StringSink();
     private final IntList tmpSlaveKeys = new IntList();
+    private final CharSequenceHashSet tmpTokens = new CharSequenceHashSet();
+    private final UniqueColumnNames tmpUniqueNames = new UniqueColumnNames();
     private final IntList tmpValues = new IntList();
-    private final UpdateTarget updateTarget = new UpdateTarget();
+    private final PostOrderTreeTraversalAlgo traversalAlgo = new PostOrderTreeTraversalAlgo();
+    private final UpdateTarget updateTarget = new UpdateTarget(tmpNames);
     private final VacuumColumnVersions vacuumColumnVersions;
-    private final ObjList<CharSequence> views = new ObjList<>();
     protected CharSequence sqlText;
     private boolean closed = false;
-    // Helper var used to pass back count in cases it can't be done via method result.
-    private long insertCount;
     //determines how compiler parses query text
     //true - compiler treats whole input as single query and doesn't stop on ';'. Default mode.
     //false - compiler treats input as list of statements and stops processing statement on ';'. Used in batch processing.
@@ -290,6 +310,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             final int modelPoolCapacity = configuration.getSqlModelPoolCapacity();
             this.queryModelPool = new ObjectPool<>(QueryModel.FACTORY, modelPoolCapacity, modelPoolCapacity);
             this.planNodePools = new PlanNodePools(configuration);
+            this.tmpJoinChildrenPool = new ObjectPool<>(IntHashSet::new, 4, planNodePools.maxRetainedJoinContexts);
             final int windowColumnPoolCapacity = configuration.getWindowColumnPoolCapacity();
             ObjectPool<WindowExpression> windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, windowColumnPoolCapacity, windowColumnPoolCapacity);
             this.compiledQuery = new CompiledQueryImpl(engine);
@@ -301,16 +322,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
             this.functionResolver = new FunctionResolver(configuration, engine.getFunctionFactoryCache());
-            this.functionParser = new FunctionParser(configuration, functionResolver);
-            final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
+            this.functionParser = new FunctionParser(configuration, functionResolver, traversalAlgo, tmpFunctions, tmpFunctionPositions);
             this.preparedFunctions = new PreparedFunctions(expressionPoolCapacity);
             this.functionSources = new TableFunctionSources(functionParser, planNodePools);
             this.expressionRewriter = newExpressionRewriter(functionParser);
             this.functionInstantiator = newFunctionInstantiator(functionParser);
-            this.joinGraphBuilder = new JoinGraphBuilder(planNodePools, tmpIds);
+            this.joinGraphBuilder = new JoinGraphBuilder(planNodePools, tmpIds, tmpMasterKeys, tmpSlaveKeys, tmpReadyInputs, tmpJoinChildren,
+                    tmpJoinChildrenPool, tmpJoinTypes, tmpJoinDependencies);
             this.codeGenerator = new SqlCodeGenerator(configuration, functionResolver, characterStore, asm,
                     entityColumnFilter, emptySchema, planTables, expressionRewriter, functionInstantiator, functionSources,
-                    tmpSink, tmpIds, tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys);
+                    tmpSink, tmpLongs, tmpIds, tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys);
             this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
             registerKeywordBasedExecutors();
@@ -326,7 +347,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     windowExpressionPool,
                     queryColumnPool,
                     queryModelPool,
-                    postOrderTreeTraversalAlgo
+                    traversalAlgo,
+                    tmpTokens,
+                    tmpNodes,
+                    tmpNames,
+                    tmpPositions
             );
 
             alterOperationBuilder = createAlterOperationBuilder();
@@ -338,7 +363,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             compileViewContext = new ViewCompilerExecutionContext(engine, 1);
             binder = newBinder(functionParser, scopes, expressionRewriter, functionInstantiator);
             optimiser = new SqlOptimiser(configuration, characterStore, engine.getFunctionFactoryCache(), planNodePools, tmpIds, tmpIndexes, tmpValues,
-                    tmpMasterKeys, tmpSlaveKeys, expressionRewriter, binder.getCallBinder(), functionInstantiator, functionSources, planTables);
+                    tmpMasterKeys, tmpSlaveKeys, tmpExpressions, tmpScope, tmpSink, tmpLongs, tmpIdMap, tmpUniqueNames, outerColumnReads,
+                    tmpReadyInputs, tmpJoinChildren, tmpJoinChildrenPool, tmpJoinTypes, tmpJoinDependencies, expressionRewriter,
+                    binder.getCallBinder(), functionInstantiator, functionSources, planTables);
         } catch (Throwable th) {
             close();
             throw th;
@@ -714,6 +741,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @TestOnly
     public int getViewLexerMaxPoolCapacity() {
         return parser.getViewLexerMaxPoolCapacity();
+    }
+
+    @TestOnly
+    public long getWindowCallComparisonCount() {
+        return optimiser.getWindowCallComparisonCount();
     }
 
     @TestOnly
@@ -1504,11 +1536,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             TableRecordMetadata tableMetadata,
             int columnIndex
     ) throws SqlException {
-        columnNames.clear();
+        tmpNames.clear();
         if (columnName != null) {
-            columnNames.add(columnName);
+            tmpNames.add(columnName);
         }
-        executionContext.getSecurityContext().authorizeAlterTableAlterSymbolCapacity(tableToken, columnNames);
+        executionContext.getSecurityContext().authorizeAlterTableAlterSymbolCapacity(tableToken, tmpNames);
 
         final int existingColumnType = tableMetadata.getColumnType(columnIndex);
         if (!ColumnType.isSymbol(existingColumnType)) {
@@ -1648,9 +1680,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         // Authorize against the indexed column only. Covering INCLUDE columns
         // are not part of the ADD INDEX privilege; passing them here would let
         // an enterprise ACL conflate INDEX and READ permissions.
-        columnNames.clear();
-        columnNames.add(columnName);
-        executionContext.getSecurityContext().authorizeAlterTableAddIndex(tableToken, columnNames);
+        tmpNames.clear();
+        tmpNames.add(columnName);
+        executionContext.getSecurityContext().authorizeAlterTableAddIndex(tableToken, tmpNames);
         rejectAddIndexOnColdPartitions(executionContext, tableToken, tableNamePosition);
         compiledQuery.ofAlter(alterOperationBuilder.build());
     }
@@ -1856,7 +1888,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     designatedTimestampColumnName = tableMetadata.getColumnName(tsIndex);
                 }
                 if (designatedTimestampColumnName != null) {
-                    GenericRecordMetadata metadata = new GenericRecordMetadata();
+                    final GenericRecordMetadata metadata = partitionWhereMetadata;
+                    metadata.clear();
                     metadata.add(new TableColumnMetadata(designatedTimestampColumnName, tableMetadata.getTimestampType(), null));
                     Function function = bindStatementExpression(expr, metadata, ColumnType.UNDEFINED, executionContext);
                     try {
@@ -2467,7 +2500,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         failure = Misc.clearBestEffort(failure, dropOperationBuilder);
         failure = Misc.clearBestEffort(failure, functionParser);
         failure = Misc.clearBestEffort(failure, compiledQuery);
-        failure = Misc.clearBestEffort(failure, columnNames);
+        failure = Misc.clearBestEffort(failure, tmpFunctions);
+        failure = Misc.clearBestEffort(failure, tmpJoinChildren);
+        failure = Misc.clearBestEffort(failure, tmpJoinChildrenPool);
+        failure = Misc.clearBestEffort(failure, tmpNames);
         CairoException.rethrowCleanupFailure(failure);
     }
 
@@ -3051,8 +3087,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                                 } else if (!IndexType.isPosting(indexType)) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "INCLUDE is only supported for POSTING index type");
                                 }
-                                coveringColumnNames = new ObjList<>();
-                                coveringColumnPositions = new IntList();
+                                coveringColumnNames = tmpNames;
+                                coveringColumnNames.clear();
+                                coveringColumnPositions = tmpPositions;
+                                coveringColumnPositions.clear();
                                 tok = expectToken(lexer, "'('");
                                 if (!Chars.equals(tok, '(')) {
                                     throw SqlException.$(lexer.lastTokenPosition(), "'(' expected");
@@ -4437,11 +4475,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw SqlException.$(lexer.getPosition(), "EOF expected");
             }
 
-            columnNames.clear();
+            tmpNames.clear();
             if (columnName != null) {
-                columnNames.add(columnName);
+                tmpNames.add(columnName);
             }
-            executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
+            executionContext.getSecurityContext().authorizeTableReindex(tableToken, tmpNames);
             if (!executionContext.isValidationOnly()) {
                 indexBuilder.reindex(partition, columnName);
             }
@@ -4896,9 +4934,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     /**
-     * Sets insertCount to number of copied rows.
+     * Returns the number of copied rows.
      */
-    private void copyTableDataAndUnlock(
+    private long copyTableDataAndUnlock(
             SqlExecutionContext context,
             TableToken tableToken,
             boolean isWalEnabled,
@@ -4930,7 +4968,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             RecordMetadata writerMetadata = writerAPI.getMetadata();
             entityColumnFilter.of(writerMetadata.getColumnCount());
-            this.insertCount = copyTableData(
+            return copyTableData(
                     context,
                     cursor,
                     cursorMetadata,
@@ -4968,6 +5006,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return;
         }
 
+        final ObjList<CharSequence> views = tmpNames;
         views.clear();
         SqlUtil.collectAllTableAndViewNames(queryModel, views, true);
         for (int i = 0, n = views.size(); i < n; i++) {
@@ -5199,7 +5238,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
                 final TableToken tableToken;
                 if (createTableOp.getSelectText() != null) {
-                    this.insertCount = -1;
                     final int position = createTableOp.getTableNamePosition();
                     RecordCursorFactory newFactory = null;
                     RecordCursor newCursor;
@@ -5231,6 +5269,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         }
                     }
 
+                    final long insertCount;
                     try (
                             RecordCursorFactory factory = newFactory;
                             RecordCursor cursor = newCursor
@@ -5255,7 +5294,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             );
 
                             try {
-                                copyTableDataAndUnlock(
+                                insertCount = copyTableDataAndUnlock(
                                         executionContext,
                                         tableToken,
                                         createTableOp.isWalEnabled(),
@@ -5909,8 +5948,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private SqlBinder newBinder(FunctionParser parser, BindScopeStack scopes, BoundExpressionRewriter rewriter, FunctionInstantiator instantiator) {
         return new SqlBinder(configuration, parser, subqueryCompiler, scopes, sqlNodePool, characterStore, planNodePools, planTables,
-                preparedFunctions, functionSources, rewriter, instantiator, joinGraphBuilder, updateTarget, emptySchema, tmpArguments,
-                tmpPositions, tmpScope, tmpIndexes, tmpSink);
+                preparedFunctions, functionSources, rewriter, instantiator, joinGraphBuilder, updateTarget, emptySchema, traversalAlgo,
+                tmpArguments, tmpPositions, tmpScope, tmpFunctions, tmpFunctionPositions, tmpExpressions, tmpSink, tmpLongs, outerColumnReads,
+                tmpIds, tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys, tmpNodes, tmpTokens, tmpIdMap, tmpUniqueNames);
     }
 
     private BoundExpressionRewriter newExpressionRewriter(FunctionParser parser) {

@@ -66,19 +66,6 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testInnerWherePartitionsConjunctsAndPrunesBothSources() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            assertOptimised("SELECT l.id lid,r.id rid FROM lp_join_push_l l JOIN lp_join_push_r r ON l.k=r.k "
-                            + "WHERE l.id IN (1,2,3) AND r.id>0 AND l.v>0 AND r.k<4 AND l.v<r.v ORDER BY lid,rid", """
-                            lid	rid
-                            1	11
-                            """,
-                    1, 1, false, true, false);
-        });
-    }
-
-    @Test
     public void testInnerOnPartitionsConjunctsWithoutDuplicatingResidual() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -96,6 +83,19 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
                             3	13
                             """,
                     1, 1, false, false, false);
+        });
+    }
+
+    @Test
+    public void testInnerWherePartitionsConjunctsAndPrunesBothSources() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertOptimised("SELECT l.id lid,r.id rid FROM lp_join_push_l l JOIN lp_join_push_r r ON l.k=r.k "
+                            + "WHERE l.id IN (1,2,3) AND r.id>0 AND l.v>0 AND r.k<4 AND l.v<r.v ORDER BY lid,rid", """
+                            lid	rid
+                            1	11
+                            """,
+                    1, 1, false, true, false);
         });
     }
 
@@ -173,6 +173,34 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterConjunctsReachEverySourceOfOrderedInnerRegion() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            final String sql = "SELECT lid,rid,xid FROM (SELECT l.id lid,r.id rid,x.id xid "
+                    + "FROM lp_join_push_l l JOIN lp_join_push_r r ON l.k=r.k "
+                    + "JOIN lp_join_push_l x ON r.k=x.k) q "
+                    + "WHERE lid>0 AND rid>0 AND xid>0 ORDER BY lid,rid,xid";
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
+                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                final JoinPlan join = findJoin(compiler.getPlanForTesting());
+                Assert.assertNotNull(join);
+                Assert.assertEquals(3, join.getOrderedInputs().size());
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(1, countFilters(join.inputAt(i)));
+                    assertPrunedInputs(join.inputAt(i));
+                }
+                assertPhysicalFilterCount(factory, 3);
+                assertRowsOnly(factory, """
+                        lid	rid	xid
+                        1	11	1
+                        2	12	2
+                        3	13	3
+                        """);
+            }
+        });
+    }
+
+    @Test
     public void testSeparatedTimestampTermsReachOneNativeIntervalFilter() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -245,34 +273,6 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
         });
     }
 
-    @Test
-    public void testOuterConjunctsReachEverySourceOfOrderedInnerRegion() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            final String sql = "SELECT lid,rid,xid FROM (SELECT l.id lid,r.id rid,x.id xid "
-                    + "FROM lp_join_push_l l JOIN lp_join_push_r r ON l.k=r.k "
-                    + "JOIN lp_join_push_l x ON r.k=x.k) q "
-                    + "WHERE lid>0 AND rid>0 AND xid>0 ORDER BY lid,rid,xid";
-            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
-                 RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                final JoinPlan join = findJoin(compiler.getPlanForTesting());
-                Assert.assertNotNull(join);
-                Assert.assertEquals(3, join.getOrderedInputs().size());
-                for (int i = 0; i < 3; i++) {
-                    Assert.assertEquals(1, countFilters(join.inputAt(i)));
-                    assertPrunedInputs(join.inputAt(i));
-                }
-                assertPhysicalFilterCount(factory, 3);
-                assertRowsOnly(factory, """
-                        lid	rid	xid
-                        1	11	1
-                        2	12	2
-                        3	13	3
-                        """);
-            }
-        });
-    }
-
     private static void assertExpressionColumns(BoundExpression expression, OutputSchema input) {
         if (expression instanceof ColumnExpression column) {
             Assert.assertTrue(input.getColumnIndexById(column.getColumnId()) >= 0);
@@ -283,9 +283,42 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
         }
     }
 
-    private void assertOptimised(String sql, String expected, int masterFilters, int slaveFilters, boolean hasOnResidual,
-                                 boolean hasPostResidual, boolean hasIntervals) throws Exception {
-        assertOptimised(sql, expected, masterFilters, slaveFilters, hasOnResidual, hasPostResidual, hasIntervals, -1);
+    private static void assertPrunedInputs(LogicalPlan plan) {
+        Assert.assertEquals(-1, plan.getOutput().getColumnIndexQuiet("unused"));
+        if (plan instanceof FilterPlan) {
+            final FilterPlan filter = (FilterPlan) plan;
+            assertExpressionColumns(filter.getPredicate(), filter.getChild().getOutput());
+        }
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            assertPrunedInputs(plan.inputAt(i));
+        }
+    }
+
+    private static int countFilters(LogicalPlan plan) {
+        int count = plan instanceof FilterPlan ? 1 : 0;
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            count += countFilters(plan.inputAt(i));
+        }
+        return count;
+    }
+
+    private static JoinPlan findJoin(LogicalPlan plan) {
+        if (plan instanceof JoinPlan) {
+            return (JoinPlan) plan;
+        }
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            final JoinPlan join = findJoin(plan.inputAt(i));
+            if (join != null) {
+                return join;
+            }
+        }
+        return null;
+    }
+
+    private void assertIntervalPlan(RecordCursorFactory factory) {
+        final TextPlanSink plan = new TextPlanSink();
+        plan.of(factory, sqlExecutionContext);
+        TestUtils.assertContains(plan.getSink(), "Interval forward scan");
     }
 
     private void assertOptimised(String sql, String expected, int masterFilters, int slaveFilters, boolean hasOnResidual,
@@ -311,10 +344,9 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
         }
     }
 
-    private void assertIntervalPlan(RecordCursorFactory factory) {
-        final TextPlanSink plan = new TextPlanSink();
-        plan.of(factory, sqlExecutionContext);
-        TestUtils.assertContains(plan.getSink(), "Interval forward scan");
+    private void assertOptimised(String sql, String expected, int masterFilters, int slaveFilters, boolean hasOnResidual,
+                                 boolean hasPostResidual, boolean hasIntervals) throws Exception {
+        assertOptimised(sql, expected, masterFilters, slaveFilters, hasOnResidual, hasPostResidual, hasIntervals, -1);
     }
 
     private void assertPhysicalFilterCount(RecordCursorFactory factory, int expectedCount) {
@@ -329,25 +361,6 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
         Assert.assertEquals(plan.getSink().toString(), expectedCount, count);
     }
 
-    private static void assertPrunedInputs(LogicalPlan plan) {
-        Assert.assertEquals(-1, plan.getOutput().getColumnIndexQuiet("unused"));
-        if (plan instanceof FilterPlan) {
-            final FilterPlan filter = (FilterPlan) plan;
-            assertExpressionColumns(filter.getPredicate(), filter.getInput().getOutput());
-        }
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            assertPrunedInputs(plan.inputAt(i));
-        }
-    }
-
-    private static int countFilters(LogicalPlan plan) {
-        int count = plan instanceof FilterPlan ? 1 : 0;
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            count += countFilters(plan.inputAt(i));
-        }
-        return count;
-    }
-
     private void createRows() throws Exception {
         execute("CREATE TABLE lp_join_push_l(id INT,k INT,v INT,unused LONG,ts TIMESTAMP) TIMESTAMP(ts)");
         execute("CREATE TABLE lp_join_push_r(id INT,k INT,v INT,unused LONG,ts TIMESTAMP) TIMESTAMP(ts)");
@@ -360,18 +373,5 @@ public class JoinFilterPushdownTest extends AbstractCairoTest {
                 INSERT INTO lp_join_push_r VALUES
                 (11,1,11,1,'2020-01-01'),(12,2,5,2,'2020-01-02'),(13,3,null,3,'2020-01-03')
                 """);
-    }
-
-    private static JoinPlan findJoin(LogicalPlan plan) {
-        if (plan instanceof JoinPlan) {
-            return (JoinPlan) plan;
-        }
-        for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            final JoinPlan join = findJoin(plan.inputAt(i));
-            if (join != null) {
-                return join;
-            }
-        }
-        return null;
     }
 }

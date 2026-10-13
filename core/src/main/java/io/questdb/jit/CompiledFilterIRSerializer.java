@@ -229,6 +229,7 @@ public class CompiledFilterIRSerializer implements Mutable {
     private final ObjIntHashMap<BoundExpression> containsFloatCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
     // Memoizes containsNarrowIntegerValue() for the current predicate. See arithExprTypeCache.
     private final ObjIntHashMap<BoundExpression> containsNarrowIntCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
+    private final TypesObserver detectorTypesObserver = new TypesObserver();
     // Leaf nodes (column / bind variable / constant) a comparison or IN pairing must sign-extend
     // to i64 for the current predicate. Holds node references, compared by identity.
     // See markWidthSemantics.
@@ -295,16 +296,8 @@ public class CompiledFilterIRSerializer implements Mutable {
     private final PredicateContext predicateContext = new PredicateContext();
     // Memoizes requiresWideLaneArithmetic() for the current predicate. See arithExprTypeCache.
     private final ObjIntHashMap<BoundExpression> requiresWideLaneArithCache = new ObjIntHashMap<>(16, 0.5, NOT_CACHED);
-    // Scratch state for sortPredicates(), reused across filters so ordering a chain allocates nothing
-    // on the compile path: the priority of each predicate (getPredicatePriority walks the subtree, so
-    // it is computed once per predicate rather than once per comparison), the per-priority bucket
-    // offsets, and the reordered chain the sort writes back.
-    private final IntList predicatePriorities;
-    private final IntList predicatePriorityOffsets;
     private final ScalarModeDetector scalarModeDetector = new ScalarModeDetector();
     private final StringSink sink;
-    private final ObjList<BoundExpression> sortedPredicates = new ObjList<>();
-    private final IntList traverseIndexes = new IntList();
     private final ObjList<BoundExpression> traverseNodes = new ObjList<>();
     // Operand type codes of the IR walks in hasUnharmonisedOperandWidths() and
     // ensureOnlyVarSizeHeaderChecks(), mirroring the value stack the backend builds while it emits
@@ -366,30 +359,28 @@ public class CompiledFilterIRSerializer implements Mutable {
             StringSink sink,
             IntList typeStack,
             IntList orderingRewindBindVarSizes,
-            IntList predicatePriorities,
-            IntList predicatePriorityOffsets,
             LongList tmpLongs
     ) {
         this.characterStore = characterStore;
         this.sink = sink;
         this.typeStack = typeStack;
         this.orderingRewindBindVarSizes = orderingRewindBindVarSizes;
-        this.predicatePriorities = predicatePriorities;
-        this.predicatePriorityOffsets = predicatePriorityOffsets;
         this.tmpLongs = tmpLongs;
     }
 
     @TestOnly
     public CompiledFilterIRSerializer() {
-        this(new CharacterStore(64, 16), new StringSink(), new IntList(), new IntList(), new IntList(), new IntList(), new LongList());
+        this(new CharacterStore(64, 16), new StringSink(), new IntList(), new IntList(), new LongList());
     }
 
     @Override
     public void clear() {
         memory = null;
+        executionContext = null;
         input = null;
         metadata = null;
         pageFrameCursor = null;
+        bindVarFunctions = null;
         forceScalarMode = false;
         hasEmittedWideLaneConversion = false;
         hasI64WidenArithConstant = false;
@@ -425,7 +416,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         intWidthNullElements.clear();
         i64WidenLeaves.clear();
         narrowKeptConstants.clear();
-        traverseIndexes.clear();
+        typeStack.clear();
         traverseNodes.clear();
     }
 
@@ -443,6 +434,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         this.input = input;
         this.pageFrameCursor = pageFrameCursor;
         this.bindVarFunctions = bindVarFunctions;
+        typeStack.clear();
         return this;
     }
 
@@ -617,6 +609,7 @@ public class CompiledFilterIRSerializer implements Mutable {
     private void traverse(BoundExpression node, Visitor visitor) throws SqlException {
         // Iterative: under -ea every NumericException the walk throws fills in the whole call
         // stack, so recursion made long AND chains quadratic. Re-entrant calls work above base.
+        final IntList traverseIndexes = typeStack;
         final int base = traverseNodes.size();
         try {
             while (traverseNodes.size() > base || node != null) {
@@ -1335,25 +1328,10 @@ public class CompiledFilterIRSerializer implements Mutable {
      * @throws SqlException thrown when IR serialization failed.
      */
     public int serialize(BoundExpression predicate, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
-        constantTokens.clear();
         if (!hasJitShape(predicate)) {
             throw SqlException.position(predicate.getPosition()).put("unsupported JIT filter expression");
         }
         final BoundExpression node = resolve(predicate);
-        // Reset the per-element IN-key width override: the serializer instance is reused across
-        // filters, and a throw mid-IN (JIT fallback) could otherwise leave it stale for the next one.
-        hasEmittedWideLaneConversion = false;
-        hasPendingWidthChangingI64Constant = false;
-        columnFreeComparisonNode = null;
-        unwidenableIntCmpFloatNode = null;
-        // Same reason: a throw between an ordering node's descend() and its visit() takes the whole
-        // filter to the Java fallback and leaves its watermark on the stack.
-        orderingRewindBindVarSizes.clear();
-        orderingRewindNodes.clear();
-        orderingRewindOffsets.clear();
-        // Same reason again: the slots this memo names belong to the bindVarFunctions list the
-        // CALLER owns, and that list is re-created per filter.
-        bindVarIndexes.clear();
         isWideLaneMode = !forceScalar && isWideLaneEligible(node) && requiresWideLane(node);
         // Detect if scalar mode is guaranteed by checking for mixed column sizes.
         // Short-circuit optimizations (including IN() short-circuit) only work correctly
@@ -2332,11 +2310,11 @@ public class CompiledFilterIRSerializer implements Mutable {
     }
 
     /**
-     * Computes the priority of each predicate once, into {@link #predicatePriorities}, so that
+     * Computes the priority of each predicate once, into {@code predicatePriorities}, so that
      * {@link #sortPredicates(ObjList, boolean)} reads a pre-computed int per predicate instead of
      * re-walking its subtree.
      */
-    private void computePredicatePriorities(ObjList<BoundExpression> predicates) {
+    private void computePredicatePriorities(ObjList<BoundExpression> predicates, IntList predicatePriorities) {
         predicatePriorities.clear();
         for (int i = 0, n = predicates.size(); i < n; i++) {
             final int priority = getPredicatePriority(predicates.getQuick(i));
@@ -2620,38 +2598,41 @@ public class CompiledFilterIRSerializer implements Mutable {
         return left / right;
     }
 
-    private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
-        Function varFunction;
-
+    /**
+     * The zero-based index an indexed bind variable token names, or -1 for a named one.
+     */
+    private static int bindVariableIndex(int position, CharSequence token) throws SqlException {
         if (token.charAt(0) == ':') {
-            // name bind variable case
-            Function bindFunction = getBindVariableService().getFunction(token);
-            if (bindFunction == null) {
-                throw SqlException.position(position).put("failed to find function for bind variable: ").put(token);
-            }
-            varFunction = new NamedParameterLinkFunction(Chars.toString(token), bindFunction.getType());
-        } else {
-            // indexed bind variable case
-            try {
-                final int variableIndex = Numbers.parseInt(token, 1, token.length());
-                if (variableIndex < 1) {
-                    throw SqlException.$(position, "invalid bind variable index [value=").put(variableIndex).put(']');
-                }
-                Function bindFunction = getBindVariableService().getFunction(variableIndex - 1);
-                if (bindFunction == null) {
-                    throw SqlException.position(position).put("failed to find function for bind variable: ").put(token);
-                }
-                varFunction = new IndexedParameterLinkFunction(
-                        variableIndex - 1,
-                        bindFunction.getType(),
-                        position);
-
-            } catch (NumericException e) {
-                throw SqlException.$(position, "invalid bind variable index [value=").put(token).put(']');
-            }
+            return -1;
         }
+        try {
+            final int variableIndex = Numbers.parseInt(token, 1, token.length());
+            if (variableIndex < 1) {
+                throw SqlException.$(position, "invalid bind variable index [value=").put(variableIndex).put(']');
+            }
+            return variableIndex - 1;
+        } catch (NumericException e) {
+            throw SqlException.$(position, "invalid bind variable index [value=").put(token).put(']');
+        }
+    }
 
-        return varFunction;
+    private Function bindVariable(int position, CharSequence token, int index) throws SqlException {
+        final BindVariableService bindVariableService = getBindVariableService();
+        final Function bindFunction = index < 0 ? bindVariableService.getFunction(token) : bindVariableService.getFunction(index);
+        if (bindFunction == null) {
+            throw SqlException.position(position).put("failed to find function for bind variable: ").put(token);
+        }
+        return bindFunction;
+    }
+
+    private int bindVariableType(int position, CharSequence token) throws SqlException {
+        return bindVariable(position, token, bindVariableIndex(position, token)).getType();
+    }
+
+    private Function getBindVariableFunction(int position, CharSequence token) throws SqlException {
+        final int index = bindVariableIndex(position, token);
+        final int type = bindVariable(position, token, index).getType();
+        return index < 0 ? new NamedParameterLinkFunction(Chars.toString(token), type) : new IndexedParameterLinkFunction(index, type, position);
     }
 
     private BindVariableService getBindVariableService() throws SqlException {
@@ -3865,7 +3846,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         if (isArithmeticOperation(node) || isUnaryMinus) {
             final boolean isFloatLong = isFloatActive
                     && (isFloatUnderLong || arithExprType(node) == I8_TYPE);
-            final WidthCtx childCtx = new WidthCtx(isFloatActive, isFloatLong);
+            final WidthCtx childCtx = WidthCtx.of(isFloatActive, isFloatLong);
             final int exprType = arithExprType(node);
             if (isUnaryMinus) {
                 markWidthSemanticsOperand(rhs(node), exprType, childCtx);
@@ -3927,9 +3908,9 @@ public class CompiledFilterIRSerializer implements Mutable {
                 }
                 markIntCmpFloatOperand(key, element);
                 markIntCmpFloatOperand(element, key);
-                markWidthSemantics(element, new WidthCtx(isFloatActive, isPairLong));
+                markWidthSemantics(element, WidthCtx.of(isFloatActive, isPairLong));
             }
-            markWidthSemantics(key, new WidthCtx(isFloatActive, false));
+            markWidthSemantics(key, WidthCtx.of(isFloatActive, false));
             return;
         }
 
@@ -3992,7 +3973,7 @@ public class CompiledFilterIRSerializer implements Mutable {
                 }
             }
         }
-        final WidthCtx cmpCtx = new WidthCtx(isFloatActive, isCmpLong);
+        final WidthCtx cmpCtx = WidthCtx.of(isFloatActive, isCmpLong);
         markWidthSemantics(lhs(node), cmpCtx);
         markWidthSemantics(rhs(node), cmpCtx);
         for (int i = 0, n = argCount(node); i < n; i++) {
@@ -4220,7 +4201,7 @@ public class CompiledFilterIRSerializer implements Mutable {
             hasI64WidenArithConstant = true;
             isFloatChildActive = false;
         }
-        markWidthSemantics(child, new WidthCtx(isFloatChildActive, isFloatUnderLong));
+        markWidthSemantics(child, WidthCtx.of(isFloatChildActive, isFloatUnderLong));
     }
 
     /**
@@ -4671,9 +4652,7 @@ public class CompiledFilterIRSerializer implements Mutable {
                 return;
             }
 
-            Function varFunction = getBindVariableFunction(node.getPosition(), token(node));
-
-            final int columnType = varFunction.getType();
+            final int columnType = bindVariableType(node.getPosition(), token(node));
             // Treat string bind variable to be of the symbol type
             if (columnType == ColumnType.STRING) {
                 // We're going to backfill this variable later since we may
@@ -4692,7 +4671,7 @@ public class CompiledFilterIRSerializer implements Mutable {
                         .put(ColumnType.nameOf(columnTypeTag));
             }
 
-            bindVarFunctions.add(varFunction);
+            bindVarFunctions.add(getBindVariableFunction(node.getPosition(), token(node)));
             int index = bindVarFunctions.size() - 1;
             bindVarIndexes.put(node, index);
             putOperand(VAR, typeCode, index);
@@ -5839,7 +5818,10 @@ public class CompiledFilterIRSerializer implements Mutable {
      */
     private void sortPredicates(ObjList<BoundExpression> predicates, boolean isInverted) {
         final int n = predicates.size();
-        computePredicatePriorities(predicates);
+        final IntList predicatePriorities = typeStack;
+        final IntList predicatePriorityOffsets = orderingRewindBindVarSizes;
+        final ObjList<BoundExpression> sortedPredicates = traverseNodes;
+        computePredicatePriorities(predicates, predicatePriorities);
 
         // Count the predicates per priority, then turn the counts into the offset at which each
         // bucket starts. Buckets run in ascending priority, or descending when inverted.
@@ -5874,6 +5856,8 @@ public class CompiledFilterIRSerializer implements Mutable {
             predicates.setQuick(i, sortedPredicates.getQuick(i));
         }
         sortedPredicates.clear();
+        predicatePriorities.clear();
+        predicatePriorityOffsets.clear();
     }
 
     /**
@@ -6179,10 +6163,6 @@ public class CompiledFilterIRSerializer implements Mutable {
             return sizes[F4_INDEX] != 0 || sizes[F8_INDEX] != 0;
         }
 
-        public boolean hasI4() {
-            return sizes[I4_INDEX] != 0;
-        }
-
         public boolean hasI8() {
             return sizes[I8_INDEX] != 0;
         }
@@ -6284,11 +6264,9 @@ public class CompiledFilterIRSerializer implements Mutable {
      * preserve the full long product and diverge.
      */
     private class NarrowI64WidenDetector implements Visitor, Mutable {
-        private final TypesObserver typesObserver = new TypesObserver();
-
         @Override
         public void clear() {
-            typesObserver.clear();
+            detectorTypesObserver.clear();
         }
 
         @Override
@@ -6302,7 +6280,7 @@ public class CompiledFilterIRSerializer implements Mutable {
                 case LITERAL: {
                     int columnIndex = columnIndex(node);
                     if (columnIndex != -1) {
-                        typesObserver.observe(columnTypeCode(ColumnType.tagOf(metadata.getColumnType(columnIndex))));
+                        detectorTypesObserver.observe(columnTypeCode(ColumnType.tagOf(metadata.getColumnType(columnIndex))));
                     }
                     break;
                 }
@@ -6315,7 +6293,7 @@ public class CompiledFilterIRSerializer implements Mutable {
                     if (bindFunction != null) {
                         int typeCode = bindVariableTypeCode(ColumnType.tagOf(bindFunction.getType()));
                         if (typeCode != UNDEFINED_CODE) {
-                            typesObserver.observe(typeCode);
+                            detectorTypesObserver.observe(typeCode);
                         }
                     }
                     break;
@@ -6325,7 +6303,7 @@ public class CompiledFilterIRSerializer implements Mutable {
                     // source is a literal (e.g. c7 + 0.5) reports one.
                     int typeCode = floatConstantTypeCode(token(node));
                     if (typeCode != UNDEFINED_CODE) {
-                        typesObserver.observe(typeCode);
+                        detectorTypesObserver.observe(typeCode);
                     }
                     break;
                 }
@@ -6333,7 +6311,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         }
 
         boolean hasFloat() {
-            return typesObserver.hasFloat();
+            return detectorTypesObserver.hasFloat();
         }
     }
 
@@ -6467,7 +6445,7 @@ public class CompiledFilterIRSerializer implements Mutable {
                         hasFloatInPredicate = false;
                     }
                     // One top-down pass installs every per-comparison leaf-promotion mark.
-                    markWidthSemantics(node, new WidthCtx(hasFloatInPredicate, false));
+                    markWidthSemantics(node, WidthCtx.of(hasFloatInPredicate, false));
                 }
                 if (topLevelBooleanColumn) {
                     columnType = ColumnType.BOOLEAN;
@@ -6509,9 +6487,8 @@ public class CompiledFilterIRSerializer implements Mutable {
         }
 
         private void handleBindVariable(BoundExpression node) throws SqlException {
-            Function varFunction = getBindVariableFunction(node.getPosition(), token(node));
             // We treat bind variables as columns here for the sake of simplicity
-            final int columnType = varFunction.getType();
+            final int columnType = bindVariableType(node.getPosition(), token(node));
             int columnTypeTag = ColumnType.tagOf(columnType);
             // Treat string bind variable to be of a symbol type
             if (columnTypeTag == ColumnType.STRING) {
@@ -6706,11 +6683,9 @@ public class CompiledFilterIRSerializer implements Mutable {
      * which sets exec_hint to EXEC_HINT_MIXED_SIZE_TYPE, forcing the scalar code path.
      */
     private class ScalarModeDetector implements Visitor, Mutable {
-        private final TypesObserver typesObserver = new TypesObserver();
-
         @Override
         public void clear() {
-            typesObserver.clear();
+            detectorTypesObserver.clear();
         }
 
         @Override
@@ -6727,13 +6702,13 @@ public class CompiledFilterIRSerializer implements Mutable {
                 if (columnIndex != -1) {
                     int columnType = metadata.getColumnType(columnIndex);
                     int typeCode = columnTypeCode(ColumnType.tagOf(columnType));
-                    typesObserver.observe(typeCode);
+                    detectorTypesObserver.observe(typeCode);
                 }
             }
         }
 
         boolean hasMixedSizes() {
-            return typesObserver.hasMixedSizes();
+            return detectorTypesObserver.hasMixedSizes();
         }
     }
 
@@ -6745,12 +6720,23 @@ public class CompiledFilterIRSerializer implements Mutable {
      * in one value keeps the recursive signatures to two parameters instead of eight adjacent booleans.
      */
     private static final class WidthCtx {
+        private static final WidthCtx FLOAT_ACTIVE = new WidthCtx(true, false);
+        private static final WidthCtx FLOAT_ACTIVE_UNDER_LONG = new WidthCtx(true, true);
+        private static final WidthCtx FLOAT_INACTIVE = new WidthCtx(false, false);
+        private static final WidthCtx FLOAT_INACTIVE_UNDER_LONG = new WidthCtx(false, true);
         final boolean isFloatActive;
         final boolean isFloatUnderLong;
 
-        WidthCtx(boolean isFloatActive, boolean isFloatUnderLong) {
+        private WidthCtx(boolean isFloatActive, boolean isFloatUnderLong) {
             this.isFloatActive = isFloatActive;
             this.isFloatUnderLong = isFloatUnderLong;
+        }
+
+        static WidthCtx of(boolean isFloatActive, boolean isFloatUnderLong) {
+            if (isFloatActive) {
+                return isFloatUnderLong ? FLOAT_ACTIVE_UNDER_LONG : FLOAT_ACTIVE;
+            }
+            return isFloatUnderLong ? FLOAT_INACTIVE_UNDER_LONG : FLOAT_INACTIVE;
         }
     }
 }

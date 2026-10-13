@@ -226,31 +226,21 @@ public final class WindowExpression extends QueryColumn {
             ObjectPool<WindowExpression> windowExpressionPool,
             ObjectPool<ExpressionNode> expressionNodePool
     ) {
-        WindowExpression dst = windowExpressionPool.next();
-        dst.of(getAlias(), ExpressionNode.deepClone(expressionNodePool, getAst()));
-        dst.setIncludeIntoWildcard(isIncludeIntoWildcard());
-        dst.copySpecFrom(this, expressionNodePool);
-        dst.ignoreNulls = this.ignoreNulls;
-        dst.nullsDescPos = this.nullsDescPos;
-        dst.baseWindowName = this.baseWindowName;
-        dst.baseWindowNamePosition = this.baseWindowNamePosition;
-        dst.windowName = this.windowName;
-        dst.windowNamePosition = this.windowNamePosition;
-        dst.resolvedWindowName = this.resolvedWindowName;
-        dst.resolvedWindowAnchored = this.resolvedWindowAnchored;
-        dst.anchorKind = this.anchorKind;
-        dst.anchorExpression = ExpressionNode.deepClone(expressionNodePool, anchorExpression);
-        dst.anchorDailyTimeUs = this.anchorDailyTimeUs;
-        dst.anchorDailyTimeZone = this.anchorDailyTimeZone;
-        dst.anchorPosition = this.anchorPosition;
-        dst.subsampleKeepFlag = this.subsampleKeepFlag;
-        dst.pendingSubsample = ExpressionNode.deepClone(expressionNodePool, pendingSubsample);
-        dst.hasSubsampleSourceTimestamp = hasSubsampleSourceTimestamp;
-        dst.subsamplePosition = subsamplePosition;
+        final WindowExpression dst = copySpec(windowExpressionPool, expressionNodePool, ExpressionNode.deepClone(expressionNodePool, getAst()));
         if (dst.getAst() != null) {
             dst.getAst().windowExpression = dst;
         }
         return dst;
+    }
+
+    /**
+     * A copy of the window with its own specification over the same window call.
+     */
+    public WindowExpression deepCloneSpec(
+            ObjectPool<WindowExpression> windowExpressionPool,
+            ObjectPool<ExpressionNode> expressionNodePool
+    ) {
+        return copySpec(windowExpressionPool, expressionNodePool, getAst());
     }
 
     public long getAnchorDailyTimeUs() {
@@ -570,6 +560,35 @@ public final class WindowExpression extends QueryColumn {
         dst.windowNamePosition = windowNamePosition;
         dst.resolvedWindowName = resolvedWindowName;
         dst.resolvedWindowAnchored = resolvedWindowAnchored;
+        return dst;
+    }
+
+    private WindowExpression copySpec(
+            ObjectPool<WindowExpression> windowExpressionPool,
+            ObjectPool<ExpressionNode> expressionNodePool,
+            ExpressionNode ast
+    ) {
+        final WindowExpression dst = windowExpressionPool.next();
+        dst.of(getAlias(), ast);
+        dst.setIncludeIntoWildcard(isIncludeIntoWildcard());
+        dst.copySpecFrom(this, expressionNodePool);
+        dst.ignoreNulls = this.ignoreNulls;
+        dst.nullsDescPos = this.nullsDescPos;
+        dst.baseWindowName = this.baseWindowName;
+        dst.baseWindowNamePosition = this.baseWindowNamePosition;
+        dst.windowName = this.windowName;
+        dst.windowNamePosition = this.windowNamePosition;
+        dst.resolvedWindowName = this.resolvedWindowName;
+        dst.resolvedWindowAnchored = this.resolvedWindowAnchored;
+        dst.anchorKind = this.anchorKind;
+        dst.anchorExpression = ExpressionNode.deepClone(expressionNodePool, anchorExpression);
+        dst.anchorDailyTimeUs = this.anchorDailyTimeUs;
+        dst.anchorDailyTimeZone = this.anchorDailyTimeZone;
+        dst.anchorPosition = this.anchorPosition;
+        dst.subsampleKeepFlag = this.subsampleKeepFlag;
+        dst.pendingSubsample = ExpressionNode.deepClone(expressionNodePool, pendingSubsample);
+        dst.hasSubsampleSourceTimestamp = hasSubsampleSourceTimestamp;
+        dst.subsamplePosition = subsamplePosition;
         return dst;
     }
 }

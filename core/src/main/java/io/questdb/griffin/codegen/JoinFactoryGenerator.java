@@ -49,6 +49,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
@@ -150,32 +151,40 @@ final class JoinFactoryGenerator {
     private final StringSink conditionSink;
     private final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter;
+    private final BoundExpressionRewriter expressionRewriter;
     private final FilterFactoryGenerator filterGenerator;
     private final FunctionFactoryCache functionFactoryCache;
+    private final FunctionInstantiator functionInstantiator;
     private final IntHashSet intHashSet;
     private final PageFrameReduceTaskFactory reduceTaskFactory;
-    private final IntList slaveValueIndexes = new IntList();
+    private final IntList slaveValueIndexes;
 
     JoinFactoryGenerator(
             CairoConfiguration configuration,
             SqlCodeGenerator codeGenerator,
             FilterFactoryGenerator filterGenerator,
+            FunctionInstantiator functionInstantiator,
+            BoundExpressionRewriter expressionRewriter,
             FunctionFactoryCache functionFactoryCache,
             BytecodeAssembler asm,
             EntityColumnFilter entityColumnFilter,
             PageFrameReduceTaskFactory reduceTaskFactory,
             StringSink conditionSink,
-            IntHashSet intHashSet
+            IntHashSet intHashSet,
+            IntList slaveValueIndexes
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
         this.filterGenerator = filterGenerator;
+        this.functionInstantiator = functionInstantiator;
+        this.expressionRewriter = expressionRewriter;
         this.functionFactoryCache = functionFactoryCache;
         this.asm = asm;
         this.entityColumnFilter = entityColumnFilter;
         this.reduceTaskFactory = reduceTaskFactory;
         this.conditionSink = conditionSink;
         this.intHashSet = intHashSet;
+        this.slaveValueIndexes = slaveValueIndexes;
     }
 
     private static FunctionExpression findWindowJoinSymbolEquality(BoundExpression predicate, OutputSchema scope, RecordMetadata metadata, int splitIndex) {
@@ -1015,7 +1024,6 @@ final class JoinFactoryGenerator {
             CharSequence masterAlias,
             RecordCursorFactory master,
             RecordCursorFactory slave,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
         JoinRecordMetadata metadata = null;
@@ -1045,7 +1053,7 @@ final class JoinFactoryGenerator {
                     slaveMetadata, isMarkout || !PlanToFactoryRules.isMasterTimestampKept(step) ? -1 : masterMetadata.getTimestampIndex());
             final BoundExpression onResidual = step.getOnResidual();
             if (onResidual != null) {
-                onFilter = instantiator.instantiate(onResidual, step.getOutput(), metadata, executionContext);
+                onFilter = functionInstantiator.instantiate(onResidual, step.getOutput(), metadata, executionContext);
             }
             if (isMarkout) {
                 final JoinRecordMetadata ownedMetadata = metadata;
@@ -1103,7 +1111,7 @@ final class JoinFactoryGenerator {
                 // INNER residual ON gates matched pairs, together with the post-join filter.
                 // Outer residual ON is owned by the join and must run before unmatched rows are NULL-extended.
                 if (postJoinFilter != null) {
-                    final BoundExpression predicate = frame.expressionRewriter.combineConjunction(onResidual, postJoinFilter, onResidual.getPosition());
+                    final BoundExpression predicate = expressionRewriter.combineConjunction(onResidual, postJoinFilter, onResidual.getPosition());
                     postJoinFilter = null;
                     final Function residualFilter = onFilter;
                     onFilter = null;
@@ -1151,7 +1159,7 @@ final class JoinFactoryGenerator {
             final JoinInput step = ordered.getQuick(i);
             if (step.getJoinType() == JoinKind.UNNEST) {
                 master = generateUnnest(step.getUnnest(), masterOutput, master,
-                        masterAlias, step.getBindingAlias(), frame.functionInstantiator, executionContext);
+                        masterAlias, step.getBindingAlias(), executionContext);
                 if (step.getPostJoinFilter() != null) {
                     master = filterGenerator.generatePostJoin(frame, step, step.getPostJoinFilter(), master, executionContext);
                 }
@@ -1185,7 +1193,7 @@ final class JoinFactoryGenerator {
                                 executionContext);
                 case SPLICE -> generateSplice(frame, step, masterOutput, masterAlias, master, slave, executionContext);
                 default ->
-                        generate(frame, step, masterOutput, masterAlias, master, slave, frame.functionInstantiator, executionContext);
+                        generate(frame, step, masterOutput, masterAlias, master, slave, executionContext);
             };
             masterOutput = step.getOutput();
             masterAlias = null;
@@ -1886,7 +1894,6 @@ final class JoinFactoryGenerator {
             RecordCursorFactory masterFactory,
             CharSequence masterAlias,
             CharSequence unnestAlias,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
         ObjList<Function> functions = new ObjList<>(spec.getExpressions().size());
@@ -1894,7 +1901,7 @@ final class JoinFactoryGenerator {
             final RecordMetadata metadata = masterFactory.getMetadata();
             for (int i = 0; i < spec.getExpressions().size(); i++) {
                 final BoundExpression expression = spec.getExpressions().getQuick(i);
-                final Function function = instantiator.instantiate(expression, input, metadata, executionContext);
+                final Function function = functionInstantiator.instantiate(expression, input, metadata, executionContext);
                 functions.add(function);
             }
             final RecordCursorFactory ownedMaster = masterFactory;
@@ -1958,7 +1965,6 @@ final class JoinFactoryGenerator {
             @Nullable PreparedFilter stolenFilter,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final FunctionInstantiator instantiator = frame.functionInstantiator;
         final ArrayColumnTypes valueTypes = frame.valueTypes;
         final WindowJoinStep step = plan.getSteps().getQuick(stepIndex);
         JoinRecordMetadata joinMetadata = null;
@@ -1984,10 +1990,10 @@ final class JoinFactoryGenerator {
                 hi = WindowContextImpl.toTimestampUnits(masterTimestampType, hi, step.getHiTimeUnit(), step.getHiPosition(), "end");
             }
             if (step.getLoExpression() != null) {
-                windowLoFunc = instantiator.instantiate(step.getLoExpression(), step.getMasterScope(), masterMetadata, executionContext);
+                windowLoFunc = functionInstantiator.instantiate(step.getLoExpression(), step.getMasterScope(), masterMetadata, executionContext);
             }
             if (step.getHiExpression() != null) {
-                windowHiFunc = instantiator.instantiate(step.getHiExpression(), step.getMasterScope(), masterMetadata, executionContext);
+                windowHiFunc = functionInstantiator.instantiate(step.getHiExpression(), step.getMasterScope(), masterMetadata, executionContext);
             }
             assert isDynamicWindow || hi >= lo * -1;
 
@@ -1998,7 +2004,7 @@ final class JoinFactoryGenerator {
             final ObjList<FunctionExpression> aggregates = step.getAggregates();
             groupByFunctions = new ObjList<>(aggregates.size());
             instantiateWindowJoinAggregates(aggregates, scope, joinMetadata, groupByFunctions,
-                    valueTypes, instantiator, executionContext);
+                    valueTypes, functionInstantiator, executionContext);
             final GenericRecordMetadata innerMetadata = windowJoinInnerMetadata(plan, stepIndex, masterMetadata, joinMetadata, groupByFunctions);
             GenericRecordMetadata outerMetadata = innerMetadata;
             IntList columnIndex = null;
@@ -2017,11 +2023,11 @@ final class JoinFactoryGenerator {
                     final int right = scope.getColumnIndexById(((ColumnExpression) equality.argumentAt(1)).getColumnId());
                     leftSymbolIndex = Math.min(left, right);
                     rightSymbolIndex = Math.max(left, right) - splitIndex;
-                    filter = frame.expressionRewriter.removeConjunct(filter, equality);
+                    filter = expressionRewriter.removeConjunct(filter, equality);
                 }
             }
             if (filter != null) {
-                joinFilter = instantiator.instantiate(filter, scope, joinMetadata, executionContext);
+                joinFilter = functionInstantiator.instantiate(filter, scope, joinMetadata, executionContext);
                 if (joinFilter.isConstant()) {
                     joinFilter.init(null, executionContext);
                 }
@@ -2081,7 +2087,7 @@ final class JoinFactoryGenerator {
                 boolean isWorkersAdopted = false;
                 try {
                     if (stolenFilter != null) {
-                        filterGenerator.prepareParallel(stolenFilter, master, instantiator, executionContext);
+                        filterGenerator.prepareParallel(frame, stolenFilter, master, executionContext);
                         masterFilter = stolenFilter.getFilter();
                         masterFilterUsedColumnIndexes = stolenFilter.getColumns();
                         workerMasterFilters = stolenFilter.getWorkers();
@@ -2092,13 +2098,13 @@ final class JoinFactoryGenerator {
                     master.changePageFrameSizes(configuration.getSqlSmallPageFrameMinRows(), configuration.getSqlSmallPageFrameMaxRows());
                     if (workerCount > 0) {
                         workerJoinFilters = joinFilter == null ? null
-                                : instantiator.instantiateWorkers(filter, scope, joinMetadata, joinFilter, workerCount, executionContext);
-                        workerGroupByFunctions = instantiator.instantiateWorkerAggregates(
+                                : functionInstantiator.instantiateWorkers(filter, scope, joinMetadata, joinFilter, workerCount, executionContext);
+                        workerGroupByFunctions = functionInstantiator.instantiateWorkerAggregates(
                                 aggregates, scope, joinMetadata, groupByFunctions, workerCount, executionContext);
                         if (leftSymbolIndex == -1) {
-                            workerLoFuncs = windowLoFunc == null ? null : instantiator.instantiateWorkers(step.getLoExpression(), step.getMasterScope(),
+                            workerLoFuncs = windowLoFunc == null ? null : functionInstantiator.instantiateWorkers(step.getLoExpression(), step.getMasterScope(),
                                     master.getMetadata(), windowLoFunc, workerCount, executionContext);
-                            workerHiFuncs = windowHiFunc == null ? null : instantiator.instantiateWorkers(step.getHiExpression(), step.getMasterScope(),
+                            workerHiFuncs = windowHiFunc == null ? null : functionInstantiator.instantiateWorkers(step.getHiExpression(), step.getMasterScope(),
                                     master.getMetadata(), windowHiFunc, workerCount, executionContext);
                         }
                     }

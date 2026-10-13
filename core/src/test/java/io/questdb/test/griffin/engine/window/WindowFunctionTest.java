@@ -665,21 +665,21 @@ public class WindowFunctionTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("create table tab (ts TIMESTAMP, d DATE) timestamp(ts)");
             execute("insert into tab values ('2024-01-01T00:00:00.000000Z', '2024-01-02T00:00:00.000Z')");
-            assertQuery("SELECT typeOf(lead(ts, 0) OVER ()) lead_ts_type, typeOf(lead(d, 0) OVER ()) lead_d_type FROM tab")
+            assertQuery("SELECT lead(ts, 0) OVER () lead_ts, typeOf(lead(ts, 0) OVER ()) lead_ts_type, lead(d, 0) OVER () lead_d, typeOf(lead(d, 0) OVER ()) lead_d_type FROM tab")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                            lead_ts_type\tlead_d_type
-                            TIMESTAMP\tDATE
+                            lead_ts\tlead_ts_type\tlead_d\tlead_d_type
+                            2024-01-01T00:00:00.000000Z\tTIMESTAMP\t2024-01-02T00:00:00.000Z\tDATE
                             """);
-            assertQuery("SELECT typeOf(lag(ts, 0) OVER ()) lag_ts_type, typeOf(lag(d, 0) OVER ()) lag_d_type FROM tab")
+            assertQuery("SELECT lag(ts, 0) OVER () lag_ts, typeOf(lag(ts, 0) OVER ()) lag_ts_type, lag(d, 0) OVER () lag_d, typeOf(lag(d, 0) OVER ()) lag_d_type FROM tab")
                     .noRandomAccess()
                     .expectSize()
                     .noLeakCheck()
                     .returns("""
-                            lag_ts_type\tlag_d_type
-                            TIMESTAMP\tDATE
+                            lag_ts\tlag_ts_type\tlag_d\tlag_d_type
+                            2024-01-01T00:00:00.000000Z\tTIMESTAMP\t2024-01-02T00:00:00.000Z\tDATE
                             """);
         });
     }
@@ -20009,6 +20009,20 @@ public class WindowFunctionTest extends AbstractCairoTest {
                         2024-01-01T00:00:00.000000Z\t3\t3.0
                         2024-01-01T00:00:01.000000Z\t5\t8.0
                         2024-01-01T00:00:02.000000Z\t7\t12.0
+                        """);
+    }
+
+    @Test
+    public void testWindowArgumentReadsWindowAliasNextToComputedColumn() throws Exception {
+        assertQuery("SELECT x + 1 AS y, sum(x) OVER () AS s, lag(s) OVER () AS l FROM t")
+                .ddl("CREATE TABLE t AS (SELECT x, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(3)) TIMESTAMP(ts) PARTITION BY DAY")
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        y\ts\tl
+                        2\t6.0\tnull
+                        3\t6.0\t6.0
+                        4\t6.0\t6.0
                         """);
     }
 

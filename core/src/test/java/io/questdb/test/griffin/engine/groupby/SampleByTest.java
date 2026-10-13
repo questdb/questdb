@@ -5815,6 +5815,97 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByDstFallBackRepeatedHourOverSampleByCursor() throws Exception {
+        // The repeated hour of a fall-back collapses into the bucket before it: every row of it, including the
+        // first row after the transition, aggregates once and in row order.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE fa1 (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO fa1 VALUES
+                    ('2024-10-26T21:15:00.000000Z', 'A', 1),
+                    ('2024-10-27T00:30:00.000000Z', 'A', 2),
+                    ('2024-10-27T00:40:00.000000Z', 'B', 7),
+                    ('2024-10-27T01:10:00.000000Z', 'D', 5),
+                    ('2024-10-27T01:30:00.000000Z', 'B', 3),
+                    ('2024-10-27T01:40:00.000000Z', 'C', 6),
+                    ('2024-10-27T01:50:00.000000Z', 'B', 8),
+                    ('2024-10-27T05:00:00.000000Z', 'B', 4)
+                    """);
+            assertQuery("SELECT ts, sym, sum(v), first(v), last(v), count() FROM (SELECT * FROM fa1) SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum\tfirst\tlast\tcount
+                            2024-10-26T21:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
+                            2024-10-27T00:00:00.000000Z\tA\t2.0\t2.0\t2.0\t1
+                            2024-10-27T00:00:00.000000Z\tB\t18.0\t7.0\t8.0\t3
+                            2024-10-27T00:00:00.000000Z\tD\t5.0\t5.0\t5.0\t1
+                            2024-10-27T00:00:00.000000Z\tC\t6.0\t6.0\t6.0\t1
+                            2024-10-27T05:00:00.000000Z\tB\t4.0\t4.0\t4.0\t1
+                            """);
+            assertQuery("SELECT ts, sum(v), first(v), last(v), count() FROM (SELECT * FROM fa1) SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum\tfirst\tlast\tcount
+                            2024-10-26T21:00:00.000000Z\t1.0\t1.0\t1.0\t1
+                            2024-10-27T00:00:00.000000Z\t31.0\t2.0\t8.0\t6
+                            2024-10-27T05:00:00.000000Z\t4.0\t4.0\t4.0\t1
+                            """);
+            execute("CREATE TABLE fa2 (ts TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO fa2 VALUES
+                    ('2024-10-26T21:15:00.000000Z', 'A', 1),
+                    ('2024-10-27T00:40:00.000000Z', 'B', 7),
+                    ('2024-10-27T01:10:00.000000Z', 'B', 3),
+                    ('2024-10-27T01:20:00.000000Z', 'B', 8),
+                    ('2024-10-27T05:00:00.000000Z', 'B', 4)
+                    """);
+            assertQuery("SELECT ts, sym, sum(v), first(v), last(v), count() FROM (SELECT * FROM fa2) SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum\tfirst\tlast\tcount
+                            2024-10-26T21:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
+                            2024-10-27T00:00:00.000000Z\tB\t18.0\t7.0\t8.0\t3
+                            2024-10-27T05:00:00.000000Z\tB\t4.0\t4.0\t4.0\t1
+                            """);
+            assertQuery("SELECT ts, sum(v), first(v), last(v), count() FROM (SELECT * FROM fa2) SAMPLE BY 1h ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsum\tfirst\tlast\tcount
+                            2024-10-26T21:00:00.000000Z\t1.0\t1.0\t1.0\t1
+                            2024-10-27T00:00:00.000000Z\t18.0\t7.0\t8.0\t3
+                            2024-10-27T05:00:00.000000Z\t4.0\t4.0\t4.0\t1
+                            """);
+            assertQuery("SELECT ts, sym, sum(v), first(v), last(v), count() FROM (SELECT * FROM fa2) SAMPLE BY 2h FILL(PREV) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsym\tsum\tfirst\tlast\tcount
+                            2024-10-26T20:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
+                            2024-10-26T20:00:00.000000Z\tB\tnull\tnull\tnull\tnull
+                            2024-10-26T22:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
+                            2024-10-26T22:00:00.000000Z\tB\tnull\tnull\tnull\tnull
+                            2024-10-27T00:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
+                            2024-10-27T00:00:00.000000Z\tB\t18.0\t7.0\t8.0\t3
+                            2024-10-27T02:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
+                            2024-10-27T02:00:00.000000Z\tB\t18.0\t7.0\t8.0\t3
+                            2024-10-27T04:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
+                            2024-10-27T04:00:00.000000Z\tB\t18.0\t7.0\t8.0\t3
+                            2024-10-27T05:00:00.000000Z\tA\t1.0\t1.0\t1.0\t1
+                            2024-10-27T05:00:00.000000Z\tB\t4.0\t4.0\t4.0\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleByDstForwardShift() throws Exception {
         // N.B.: See `testSampleByDstForwardShiftData` for raw data before grouping.
 

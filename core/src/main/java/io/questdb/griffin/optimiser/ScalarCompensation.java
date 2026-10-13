@@ -76,7 +76,7 @@ final class ScalarCompensation implements Mutable {
     private final IntList carrierColumnIds = new IntList();
     private final DecorrelationContext ctx;
     private final DecorrelationDomains domains;
-    private final ObjList<BoundExpression> hoistedConjuncts = new ObjList<>();
+    private final ObjList<BoundExpression> hoistedConjuncts;
     private final ObjList<JoinInput> markedInputs = new ObjList<>();
     private final IntList markerColumnIds = new IntList();
     private final ConjunctTest uncompensatedConjuncts = this::keepsUncompensatedConjunct;
@@ -84,9 +84,10 @@ final class ScalarCompensation implements Mutable {
     private BoundExpression pendingConjuncts;
     private ProjectPlan scalarProjection;
 
-    ScalarCompensation(DecorrelationContext ctx, DecorrelationDomains domains) {
+    ScalarCompensation(DecorrelationContext ctx, DecorrelationDomains domains, ObjList<BoundExpression> hoistedConjuncts) {
         this.ctx = ctx;
         this.domains = domains;
+        this.hoistedConjuncts = hoistedConjuncts;
     }
 
     @Override
@@ -99,7 +100,6 @@ final class ScalarCompensation implements Mutable {
         consumerRemap.clear();
         drivenInputs.clear();
         drivenScalars.clear();
-        hoistedConjuncts.clear();
         markedInputs.clear();
         markerColumnIds.clear();
         scalarAggregates.clear();
@@ -121,7 +121,7 @@ final class ScalarCompensation implements Mutable {
             if (call.argumentAt(side) instanceof ColumnExpression column && isIntegerConstant(call.argumentAt(1 - side))) {
                 final int index = scalar.getOutput().getColumnIndexById(column.getColumnId());
                 if (index > -1 && scalar.getExpressions().getQuick(index) instanceof ColumnExpression count
-                        && isZeroOnEmptyColumn(count.getColumnId(), (AggregatePlan) scalar.getInput())) {
+                        && isZeroOnEmptyColumn(count.getColumnId(), (AggregatePlan) scalar.getChild())) {
                     return side;
                 }
             }
@@ -237,7 +237,7 @@ final class ScalarCompensation implements Mutable {
         final BoundExpression expression = project.getExpressions().getQuick(index);
         final AggregatePlan aggregate = scalarAggregateBelow(project);
         if (aggregate == null) {
-            return expression instanceof ColumnExpression column && scalarCountIndex(project.getInput(), column.getColumnId()) > -1
+            return expression instanceof ColumnExpression column && scalarCountIndex(project.getChild(), column.getColumnId()) > -1
                     ? zeroCoalesce(ctx.planNodes.columns.next().of(project.getOutput().getColumnId(index), column.getDataType(), column.getPosition()), input)
                     : null;
         }
@@ -287,7 +287,7 @@ final class ScalarCompensation implements Mutable {
      */
     private boolean isScalarCount(int index) {
         final BoundExpression expression = scalarProjection.getExpressions().getQuick(index);
-        return expression instanceof ColumnExpression column && isZeroOnEmptyColumn(column.getColumnId(), (AggregatePlan) scalarProjection.getInput());
+        return expression instanceof ColumnExpression column && isZeroOnEmptyColumn(column.getColumnId(), (AggregatePlan) scalarProjection.getChild());
     }
 
     private boolean isWrappedScalarColumn(BoundExpression expression, LogicalPlan input) {
@@ -584,7 +584,7 @@ final class ScalarCompensation implements Mutable {
                     ctx.substitution.put(keyId, input.getMasterKeyColumnIds().getQuick(i));
                 }
             }
-            scalarAggregate = (AggregatePlan) scalar.getInput();
+            scalarAggregate = (AggregatePlan) scalar.getChild();
             final OutputSchema output = scalar.getOutput();
             for (int i = 0, n = output.getColumnCount(); i < n; i++) {
                 if (!output.isVisible(i)) {
@@ -687,7 +687,7 @@ final class ScalarCompensation implements Mutable {
      * of the join reads its columns; null otherwise.
      */
     ProjectPlan drivenScalar(JoinPlan join, JoinInput input) {
-        if (!(input.getInput() instanceof ProjectPlan project) || !(project.getInput() instanceof AggregatePlan aggregate)
+        if (!(input.getInput() instanceof ProjectPlan project) || !(project.getChild() instanceof AggregatePlan aggregate)
                 || !isImplicitlyKeyedByOuterColumns(aggregate) || input.getPostJoinFilter() != null
                 || input.getJoinType() != JoinKind.CROSS && (input.getJoinType() != JoinKind.INNER && input.getJoinType() != JoinKind.LEFT_OUTER
                 || input.getMasterKeyColumnIds().size() > 0 || !isTrue(input.getOnResidual()))) {
@@ -805,7 +805,7 @@ final class ScalarCompensation implements Mutable {
      * block, and selects only its aggregates.
      */
     boolean isScalarProjection(ProjectPlan project) {
-        if (!(project.getInput() instanceof AggregatePlan aggregate) || !isImplicitlyKeyedByOuterColumns(aggregate)
+        if (!(project.getChild() instanceof AggregatePlan aggregate) || !isImplicitlyKeyedByOuterColumns(aggregate)
                 || !ctx.outerColumnReads.isReadBy(project, ctx.tmpColumnIds)) {
             return false;
         }
@@ -851,7 +851,7 @@ final class ScalarCompensation implements Mutable {
     }
 
     AggregatePlan scalarAggregateBelow(ProjectPlan project) {
-        LogicalPlan input = project.getInput();
+        LogicalPlan input = project.getChild();
         while (input instanceof SortPlan || input instanceof FillPlan) {
             input = input.inputAt(0);
         }
@@ -893,7 +893,7 @@ final class ScalarCompensation implements Mutable {
         if (!(body instanceof ProjectPlan top)) {
             return null;
         }
-        LogicalPlan node = top.getInput();
+        LogicalPlan node = top.getChild();
         FilterPlan filter = null;
         while (!(node instanceof ProjectPlan project && isScalarProjection(project))) {
             if (filter == null && node instanceof FilterPlan f) {
@@ -908,7 +908,7 @@ final class ScalarCompensation implements Mutable {
             return null;
         }
         for (int i = 0, n = top.getExpressions().size(); i < n; i++) {
-            if (top.getOutput().isVisible(i) && !isWrappedScalarColumn(top.getExpressions().getQuick(i), top.getInput())) {
+            if (top.getOutput().isVisible(i) && !isWrappedScalarColumn(top.getExpressions().getQuick(i), top.getChild())) {
                 return null;
             }
         }
@@ -922,7 +922,7 @@ final class ScalarCompensation implements Mutable {
     ProjectPlan zeroRejectingScalar(LogicalPlan body) {
         LogicalPlan node = body;
         while (node.inputCount() == 1 && !(node instanceof JoinPlan)) {
-            if (node instanceof FilterPlan filter && filter.getInput() instanceof ProjectPlan project && isScalarProjection(project)
+            if (node instanceof FilterPlan filter && filter.getChild() instanceof ProjectPlan project && isScalarProjection(project)
                     && rejectsZeroCount(filter.getPredicate(), project)) {
                 return project;
             }

@@ -71,13 +71,13 @@ final class DecorrelationContext implements Mutable {
     final LogicalPlanCopier copier;
     final IntList mappedColumnIds;
     final IntList mappedOuterIds;
-    final IntList masterOuterIds = new IntList();
+    final IntList masterOuterIds;
     final IntIntHashMap outerAliases = new IntIntHashMap();
-    final OuterColumnReads outerColumnReads = new OuterColumnReads();
+    final OuterColumnReads outerColumnReads;
     final PlanNodePools planNodes;
     final IntList tmpColumnIds;
-    final IntIntHashMap substitution = new IntIntHashMap();
-    private final UniqueColumnNames takenNames = new UniqueColumnNames();
+    final IntIntHashMap substitution;
+    private final UniqueColumnNames takenNames;
     private final OutputSchema tmpSchema;
     private IntList columnIdSink;
     private IntList readIds;
@@ -109,8 +109,12 @@ final class DecorrelationContext implements Mutable {
             IntList tmpColumnIds,
             IntList mappedOuterIds,
             IntList mappedColumnIds,
+            IntList masterOuterIds,
             ObjList<LogicalPlan> chain,
-            OutputSchema tmpSchema
+            OutputSchema tmpSchema,
+            IntIntHashMap substitution,
+            UniqueColumnNames takenNames,
+            OuterColumnReads outerColumnReads
     ) {
         this.context = context;
         this.planNodes = planNodes;
@@ -118,9 +122,13 @@ final class DecorrelationContext implements Mutable {
         this.tmpColumnIds = tmpColumnIds;
         this.mappedOuterIds = mappedOuterIds;
         this.mappedColumnIds = mappedColumnIds;
+        this.masterOuterIds = masterOuterIds;
         this.chain = chain;
         this.tmpSchema = tmpSchema;
-        this.copier = new LogicalPlanCopier(context, planNodes);
+        this.substitution = substitution;
+        this.takenNames = takenNames;
+        this.outerColumnReads = outerColumnReads;
+        this.copier = new LogicalPlanCopier(context, planNodes, substitution);
     }
 
     @Override
@@ -128,12 +136,7 @@ final class DecorrelationContext implements Mutable {
         releaseCarriers();
         chainOuterIds.clear();
         copier.clear();
-        mappedColumnIds.clear();
-        mappedOuterIds.clear();
-        masterOuterIds.clear();
         outerAliases.clear();
-        substitution.clear();
-        tmpColumnIds.clear();
         carrierSequence = 0;
         master = null;
         masterLimit = 0;

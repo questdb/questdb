@@ -56,6 +56,24 @@ final class PhysicalChoiceVerifier {
     private PhysicalChoiceVerifier() {
     }
 
+    private static boolean isBounded(SortPlan.Algorithm algorithm) {
+        return algorithm == SortPlan.Algorithm.LIMITED || algorithm == SortPlan.Algorithm.PRESORTED_LIMITED || isTopK(algorithm);
+    }
+
+    private static boolean isLinear(JoinInput step) {
+        return (step.getHints() & JoinInput.HINT_ASOF_LINEAR) != 0;
+    }
+
+    private static boolean isScanLimited(LogicalPlan plan, LimitPlan limit) {
+        final ScanPlan scan = (ScanPlan) LogicalPlans.skipProjects(plan).inputAt(0);
+        return scan.getLimitLo() == limit.getLo() && scan.getLimitHi() == limit.getHi();
+    }
+
+    private static boolean isTopK(SortPlan.Algorithm algorithm) {
+        return algorithm == SortPlan.Algorithm.LONG_TOP_K || algorithm == SortPlan.Algorithm.PARALLEL_TOP_K
+                || algorithm == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K;
+    }
+
     static String aggregate(AggregatePlan aggregate, boolean isPlanned) {
         final AggregatePlan.Algorithm algorithm = aggregate.getAlgorithm();
         final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
@@ -67,7 +85,7 @@ final class PhysicalChoiceVerifier {
         final boolean isValid = hasChoice && switch (algorithm) {
             case VECTORISED -> !isHorizon && PlanToFactoryRules.hasVectorShape(aggregate);
             case PARALLEL_STOLEN_FILTER ->
-                    PlanToFactoryRules.stolenFilter(isHorizon ? ((HorizonJoinPlan) aggregate.getInput()).getMaster()
+                    PlanToFactoryRules.stolenFilter(isHorizon ? ((HorizonJoinPlan) aggregate.getChild()).getMaster()
                             : PlanToFactoryRules.aggregateBase(aggregate)) != null;
             case PARALLEL, SERIAL -> true;
         };
@@ -134,10 +152,10 @@ final class PhysicalChoiceVerifier {
         if (application == null) {
             return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
-        final LogicalPlan limited = limit.getInput();
+        final LogicalPlan limited = limit.getChild();
         final SortPlan sort = LogicalPlans.hasSortUnderStableProjects(limited) ? (SortPlan) LogicalPlans.skipProjects(limited) : null;
-        final boolean isInput = OperatorPlanning.isInputLimit(sort != null ? sort.getInput() : limited);
-        if ((application == LimitPlan.Application.INPUT) != isInput || isInput && !isScanLimited(sort != null ? sort.getInput() : limited, limit)) {
+        final boolean isInput = OperatorPlanning.isInputLimit(sort != null ? sort.getChild() : limited);
+        if ((application == LimitPlan.Application.INPUT) != isInput || isInput && !isScanLimited(sort != null ? sort.getChild() : limited, limit)) {
             return PlanVerifier.LIMIT_APPLICATION;
         }
         final SortPlan.Algorithm algorithm = sort != null ? sort.getAlgorithm() : null;
@@ -221,23 +239,5 @@ final class PhysicalChoiceVerifier {
         return step.isNullExtending() || algorithm == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER
                 && (index > 0 || PlanToFactoryRules.stolenFilter(windowJoin.getMaster()) == null)
                 ? PlanVerifier.WINDOW_JOIN_ALGORITHM : null;
-    }
-
-    private static boolean isBounded(SortPlan.Algorithm algorithm) {
-        return algorithm == SortPlan.Algorithm.LIMITED || algorithm == SortPlan.Algorithm.PRESORTED_LIMITED || isTopK(algorithm);
-    }
-
-    private static boolean isLinear(JoinInput step) {
-        return (step.getHints() & JoinInput.HINT_ASOF_LINEAR) != 0;
-    }
-
-    private static boolean isScanLimited(LogicalPlan plan, LimitPlan limit) {
-        final ScanPlan scan = (ScanPlan) LogicalPlans.skipProjects(plan).inputAt(0);
-        return scan.getLimitLo() == limit.getLo() && scan.getLimitHi() == limit.getHi();
-    }
-
-    private static boolean isTopK(SortPlan.Algorithm algorithm) {
-        return algorithm == SortPlan.Algorithm.LONG_TOP_K || algorithm == SortPlan.Algorithm.PARALLEL_TOP_K
-                || algorithm == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K;
     }
 }

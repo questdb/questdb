@@ -4873,7 +4873,7 @@ public class SubsampleTest extends AbstractCairoTest {
         // the base boolean. The plan must retain the separate Filter + CachedWindowLight.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (price DOUBLE, ts TIMESTAMP, flag BOOLEAN) TIMESTAMP(ts)");
-            final String sql = "SELECT ts, price FROM (SELECT ts, price, flag, m4(ts, price, 8) OVER (ORDER BY ts) keep FROM t) WHERE flag";
+            final String sql = "SELECT ts, price, keep FROM (SELECT ts, price, flag, m4(ts, price, 8) OVER (ORDER BY ts) keep FROM t) WHERE flag";
             // expected a separate Filter on the base boolean; must not fuse a base-boolean filter
             assertQuery(sql).assertsPlanContaining("Filter filter: flag");
             assertQuery(sql).assertsPlanNotContaining("CachedWindowLightSelect");

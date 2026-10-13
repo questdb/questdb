@@ -4075,6 +4075,54 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveredBinaryAndArrayIncludesReadSideBySide() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t_pair (
+                        ts TIMESTAMP,
+                        sym SYMBOL INDEX TYPE POSTING INCLUDE (b1, b2, a1, a2),
+                        b1 BINARY,
+                        b2 BINARY,
+                        a1 DOUBLE[],
+                        a2 DOUBLE[]
+                    ) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL
+                    """);
+            execute("""
+                    INSERT INTO t_pair
+                    SELECT x::TIMESTAMP, 'A', b, CASE WHEN x % 2 = 0 THEN b ELSE rnd_bin(1, 4, 0) END,
+                           ARRAY[x::DOUBLE, 1.0], CASE WHEN x % 2 = 0 THEN ARRAY[x::DOUBLE, 1.0] ELSE ARRAY[2.0, x::DOUBLE, 3.0] END
+                    FROM (SELECT x, rnd_bin(8, 8, 0) b FROM long_sequence(100))
+                    """);
+            engine.releaseAllWriters();
+
+            assertQuery("SELECT b1 = b2 eb, a1 = a2 ea, a1, a2 FROM t_pair WHERE sym = 'A' LIMIT 4")
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            eb\tea\ta1\ta2
+                            false\tfalse\t[1.0,1.0]\t[2.0,1.0,3.0]
+                            true\ttrue\t[2.0,1.0]\t[2.0,1.0]
+                            false\tfalse\t[3.0,1.0]\t[2.0,3.0,3.0]
+                            true\ttrue\t[4.0,1.0]\t[4.0,1.0]
+                            """);
+            // The memoized x copies its bytes on the first byte read, after b2 has been read.
+            assertQuery("""
+                    SELECT count() FROM (
+                        SELECT length(x) l, base64(b2, 100) s2, base64(x, 100) s, base64(b1, 100) s1
+                        FROM (SELECT CASE WHEN rnd_boolean() THEN b1 END x, b1, b2 FROM t_pair WHERE sym = 'A')
+                    ) WHERE l > 0 AND s2 IS NOT NULL AND s <> s1
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .noLeakCheck()
+                    .withPlanContaining("memoize(case([rnd_boolean(),b1]))", "CoveringIndex")
+                    .returns("count\n0\n");
+        });
+    }
+
+    @Test
     public void testCoveredFloatAndBinLenDirectRead() throws Exception {
         assertMemoryLeak(() -> {
             try (Path path = new Path().of(configuration.getDbRoot())) {

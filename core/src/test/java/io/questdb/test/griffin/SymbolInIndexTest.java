@@ -561,6 +561,25 @@ public class SymbolInIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonAsciiVarcharKeysMatchStringSpelling() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows(false);
+            execute("INSERT INTO lp_in VALUES (101,11,'中文','X','eleven','2020-01-02T00:00:08')");
+            final ObjList<String> predicates = new ObjList<>("s IN ('中文'::VARCHAR,'中文','中'::VARCHAR,'中')",
+                    "s IN ('中文'::VARCHAR,'A') AND s!='中文'", "s='中文'::VARCHAR AND s IN ('中文','B')",
+                    "s IN ('中文','B') AND s IN ('中文'::VARCHAR)");
+            final ObjList<String> predicatesRows = new ObjList<>("id\n9\n11\n", "id\n1\n4\n5\n", "id\n11\n", "id\n11\n");
+            final String singleKey = "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Frame forward scan on: lp_in";
+            final ObjList<String> shapes = new ObjList<>(
+                    "SelectedRecord > FilterOnValues > Table-order scan > Index forward scan on: s > Index forward scan on: s > Frame forward scan on: lp_in",
+                    singleKey, singleKey, singleKey);
+            for (int i = 0; i < predicates.size(); i++) {
+                assertIndex("SELECT id FROM lp_in WHERE " + predicates.getQuick(i), "", shapes.getQuick(i), predicatesRows.getQuick(i));
+            }
+        });
+    }
+
+    @Test
     public void testIntersectionsAndExclusions() throws Exception {
         assertMemoryLeak(() -> {
             createRows(false);

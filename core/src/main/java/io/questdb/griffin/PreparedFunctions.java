@@ -207,7 +207,7 @@ public final class PreparedFunctions implements Mutable {
             }
         }
         describe(entry, replacement);
-        if (!entry.isRelocatable(projection.getInput().getOutput(), null)) {
+        if (!entry.isRelocatable(projection.getChild().getOutput(), null)) {
             entry.isRebuildRequired = true;
         }
     }

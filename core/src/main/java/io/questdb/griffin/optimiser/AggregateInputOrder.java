@@ -95,8 +95,8 @@ final class AggregateInputOrder implements Mutable {
     private LogicalPlan removeAggregateInputOrder(LogicalPlan plan) {
         switch (plan) {
             case SortPlan sort -> {
-                return LogicalPlans.skipProjects(sort.getInput()) instanceof WindowPlan
-                        ? plan : removeAggregateInputOrder(sort.getInput());
+                return LogicalPlans.skipProjects(sort.getChild()) instanceof WindowPlan
+                        ? plan : removeAggregateInputOrder(sort.getChild());
             }
             case WindowPlan window -> {
                 for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
@@ -104,7 +104,7 @@ final class AggregateInputOrder implements Mutable {
                         return plan;
                     }
                 }
-                final LogicalPlan input = window.getInput();
+                final LogicalPlan input = window.getChild();
                 final LogicalPlan replacement = removeAggregateInputOrder(input);
                 if (replacement.getOutput().getTimestampColumnId() == input.getOutput().getTimestampColumnId()) {
                     window.replaceInput(0, replacement);
@@ -113,7 +113,7 @@ final class AggregateInputOrder implements Mutable {
             }
             case FilterPlan filter -> {
                 if (LogicalPlans.isOrderIndependent(filter.getPredicate())) {
-                    filter.replaceInput(0, removeAggregateInputOrder(filter.getInput()));
+                    filter.replaceInput(0, removeAggregateInputOrder(filter.getChild()));
                 }
                 return plan;
             }
@@ -128,7 +128,7 @@ final class AggregateInputOrder implements Mutable {
                 }
                 if (replaceWithUnorderedInput(project)) {
                     project.getOutput().setTimestampIndex(-1);
-                    final int replacementTimestampId = project.getInput().getOutput().getTimestampColumnId();
+                    final int replacementTimestampId = project.getChild().getOutput().getTimestampColumnId();
                     for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
                         if (project.getExpressions().getQuick(i) instanceof ColumnExpression column
                                 && column.getColumnId() == replacementTimestampId) {
@@ -151,7 +151,7 @@ final class AggregateInputOrder implements Mutable {
      * Returns whether the input or its designated timestamp changed.
      */
     private boolean replaceWithUnorderedInput(ProjectPlan project) {
-        final LogicalPlan input = project.getInput();
+        final LogicalPlan input = project.getChild();
         final int timestampId = input.getOutput().getTimestampColumnId();
         final LogicalPlan replacement = removeAggregateInputOrder(input);
         project.replaceInput(0, replacement);
@@ -168,7 +168,7 @@ final class AggregateInputOrder implements Mutable {
 
     void removeInputOrder(AggregatePlan aggregate) {
         if (isUnorderedAggregate(aggregate) && orderedBranchAggregates.indexOf(aggregate) < 0) {
-            aggregate.replaceInput(0, removeAggregateInputOrder(aggregate.getInput()));
+            aggregate.replaceInput(0, removeAggregateInputOrder(aggregate.getChild()));
         }
     }
 }

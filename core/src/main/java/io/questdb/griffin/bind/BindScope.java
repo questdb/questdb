@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.bind;
 
+import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PreparedFunctions;
@@ -42,37 +43,42 @@ import io.questdb.griffin.plan.logical.Subquery;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjObjHashMap;
 
 /**
  * The binding state of one nesting depth: what the query binding at that depth holds while a sub-query of it binds
  * one depth deeper, namely the column-id counter and the scope facts of its query blocks, the block lists its area
  * binders fill and read across expression binding, and the state of the expression {@link FunctionBinder} binds
- * now. {@link BindScopeStack} keeps one per depth; the binder services read the current one. Lists of two areas
- * whose windows never overlap within a depth are one list under two names: a block binds its windows before its
- * aggregation, DISTINCT and cursor columns, and a PIVOT names its keys and combinations outside both.
+ * now. {@link BindScopeStack} keeps one per depth; the binder services read the current one. Lists of areas whose
+ * windows never overlap within a depth are one list under several names: a block binds its join conditions, then its
+ * windows, then its aggregation, DISTINCT and cursor columns, each starting from an empty list; a PIVOT and a WINDOW
+ * JOIN bind their keys, aggregates and combinations outside windows; no substitution spans the cursor columns;
+ * only a block without windows translates its projection's aliases; a block looks up its SELECT aliases outside the
+ * binding of its windows' self references and the translation of its aliases; and its window calls bind before its
+ * projection reads earlier aliases.
  */
 public final class BindScope implements Mutable {
-    final ObjList<ExpressionNode> aggregateNodes = new ObjList<>();
+    final ObjList<ExpressionNode> aggregateNodes;
     final ObjList<ExpressionNode> aggregateOrderExpressions;
     final IntList aggregateProjectionIndexes;
     final ObjList<ExpressionNode> aggregateSelectExpressions;
     final LowerCaseCharSequenceIntHashMap aliasSequences = new LowerCaseCharSequenceIntHashMap();
     final LowerCaseCharSequenceHashSet aliases = new LowerCaseCharSequenceHashSet();
     final IntHashSet ambiguousTimestampColumnIds = new IntHashSet();
-    final ObjList<ColumnExpression> cursorColumns = new ObjList<>();
+    final ObjList<ColumnExpression> cursorColumns;
     final ObjList<CharSequence> cursorNames;
-    final ObjList<ExpressionNode> cursorNodes = new ObjList<>();
+    final ObjList<ExpressionNode> cursorNodes;
     final IntList cursorProjectionSources;
     final IntList cursorSourceIndexes;
-    final ObjList<ExpressionNode> cursorSources;
+    final ObjList<ExpressionNode> cursorSources = new ObjList<>();
     final ObjList<BoundExpression> fillBindings = new ObjList<>();
-    final ObjList<ExpressionNode> groupingNodes = new ObjList<>();
+    final ObjList<ExpressionNode> groupingNodes;
     final ObjList<QueryModel> hintAliasModels = new ObjList<>();
     final ObjList<CharSequence> hintAliases = new ObjList<>();
     final IntHashSet intrinsicTimestampColumnIds = new IntHashSet();
@@ -84,36 +90,26 @@ public final class BindScope implements Mutable {
     /**
      * Per join input, the residual of its outer ON clause, pending binding.
      */
-    final ObjList<ExpressionNode> joinOnNodes = new ObjList<>();
-    final ObjList<ExpressionNode> joinResidualNodes = new ObjList<>();
-    final IntList joinResidualOrigins = new IntList();
+    final ObjList<ExpressionNode> joinOnNodes;
+    final ObjList<ExpressionNode> joinResidualNodes;
+    final IntList joinResidualOrigins;
     final IntHashSet keySubqueryColumnIds = new IntHashSet();
     final IntList orderOutputIndexes = new IntList();
-    /**
-     * Ids of the outer columns every binding at this depth resolved, in resolution order and with repeats; a caller
-     * reads the range its own binding appended.
-     */
     final IntList outerColumnIds = new IntList();
     final ObjList<OutputSchema> outerScopes = new ObjList<>();
     final ObjList<CharSequence> pivotForAliases = new ObjList<>();
     final IntList pivotIndexes;
     final ObjList<CharSequence> pivotKeyAliases;
     final IntList pivotKeyIndexes;
-    /**
-     * The dateadd calls the binding root's and_offset rewrite wraps the timestamp column in.
-     */
+     //The dateadd calls the binding root's and_offset rewrite wraps the timestamp column in.
     final ObjList<ExpressionNode> projectedOffsets = new ObjList<>();
     final IntList projectionAliasIndexes = new IntList();
     final OutputSchema referenceScope = new OutputSchema();
+    final LowerCaseCharSequenceIntHashMap selectAliasIndexes;
     final IntList sourceProjectionIndexes = new IntList();
     final ObjList<ColumnExpression> substitutionColumns = new ObjList<>();
     final ObjList<ExpressionNode> substitutionNodes = new ObjList<>();
-    /**
-     * Models of the SAMPLE BY range bounds that are scalar sub-queries; each binds as a runtime-constant timestamp
-     * of {@link #timestampSubqueryType}. Binding may clone the bound's node, so the model identifies it.
-     */
-    final ObjList<QueryModel> timestampSubqueries = new ObjList<>();
-    final TranslatingAliases translatingAliases = new TranslatingAliases();
+    final TranslatingAliases translatingAliases;
     final IntHashSet translatingCopyIds = new IntHashSet();
     final ObjList<ExpressionNode> windowAliasCopies = new ObjList<>();
     final IntList windowAliasCopyColumns = new IntList();
@@ -122,29 +118,28 @@ public final class BindScope implements Mutable {
     final ObjList<ExpressionNode> windowAliasReferences = new ObjList<>();
     final ObjList<ExpressionNode> windowAliasResolutions = new ObjList<>();
     final OutputSchema windowBindingSchema = new OutputSchema();
+    final OutputSchema windowCallScope;
     final IntList windowColumnIds = new IntList();
-    final ObjList<ExpressionNode> windowCopies = new ObjList<>();
-    final ObjList<ExpressionNode> windowCopyOrigins = new ObjList<>();
-    final IntList windowJoinAggregateSteps = new IntList();
+    final IntList windowJoinAggregateSteps;
     final ObjList<PivotBinder.WindowJoinPivotAggregate> windowJoinPivotAggregates = new ObjList<>();
+    final ArrayColumnTypes windowKeyTypes = new ArrayColumnTypes();
     final ObjList<WindowSpec> windowLevelSpecs = new ObjList<>();
     final IntList windowLevels = new IntList();
     final ObjList<CharSequence> windowNames = new ObjList<>();
+    /**
+     * The index in {@link #windowNodes} of the window node each window call occurrence binds as.
+     */
+    final ObjIntHashMap<ExpressionNode> windowNodeIndexes = new ObjIntHashMap<>();
     final ObjList<ExpressionNode> windowNodes = new ObjList<>();
+    /**
+     * The window call, as written in the query, that each bound copy of a window call stands for.
+     */
+    final ObjObjHashMap<ExpressionNode, ExpressionNode> windowOccurrences = new ObjObjHashMap<>();
     final ObjList<ExpressionNode> windowOrderExpressions = new ObjList<>();
-    /**
-     * Per window call, the first of its ORDER BY expressions that is not a column, otherwise null.
-     */
-    final ObjList<ExpressionNode> windowOrderViolations = new ObjList<>();
     final ObjList<ExpressionNode> windowSelectExpressions = new ObjList<>();
+    final ObjIntHashMap<ExpressionNode> windowSelectIndexes = new ObjIntHashMap<>();
     final LowerCaseCharSequenceIntHashMap windowSelfReferences = new LowerCaseCharSequenceIntHashMap();
-    final LongList withinPrefixes = new LongList();
-    private final IntList aggregateHashes = new IntList();
-    /**
-     * Per plan aggregate of the block being bound, by its index in {@link GroupingPlan#getAggregates()} rather than in
-     * {@link #aggregateNodes}, the integer literal {@code k} of a {@code sum(c op k)} or {@code sum(k op c)} the binder
-     * bound as {@code sum(c)} pending normalisation, otherwise null. The plan methods below change both lists together.
-     */
+    private final IntList aggregateHashes;
     private final ObjList<ConstantExpression> pendingSumLiterals = new ObjList<>();
     FunctionBinder.BindingRole bindingRole;
     ExpressionNode bindingRoot;
@@ -154,26 +149,41 @@ public final class BindScope implements Mutable {
     PreparedFunctions.Entry currentPreparation;
     OutputSchema expressionInput;
     CharSequence expressionInputAlias;
+    boolean hasWithin;
     boolean isInsideJoin;
     QueryModel namedWindowScope;
     IntHashSet nativeTimestampIds;
     int nestedWindowPosition;
     ObjList<ColumnExpression> replacementColumns;
     ObjList<ExpressionNode> replacementNodes;
+    QueryModel timestampFromSubquery;
     int timestampSubqueryType;
+    QueryModel timestampToSubquery;
+    LogicalPlan windowCallScopeInput;
     LogicalPlan windowInput;
 
     public BindScope() {
+        aggregateHashes = windowAliasIds;
+        aggregateNodes = windowAliasResolutions;
         aggregateOrderExpressions = windowAliasCopies;
         aggregateProjectionIndexes = windowLevels;
         aggregateSelectExpressions = windowAliasReferences;
+        cursorColumns = substitutionColumns;
         cursorNames = windowNames;
+        cursorNodes = substitutionNodes;
         cursorProjectionSources = windowAliasCopyColumns;
         cursorSourceIndexes = windowAliasReferenceColumns;
-        cursorSources = windowCopyOrigins;
+        groupingNodes = windowNodes;
+        joinOnNodes = windowNodes;
+        joinResidualNodes = substitutionNodes;
+        joinResidualOrigins = windowColumnIds;
         pivotIndexes = projectionAliasIndexes;
         pivotKeyAliases = windowNames;
         pivotKeyIndexes = sourceProjectionIndexes;
+        selectAliasIndexes = windowSelfReferences;
+        translatingAliases = new TranslatingAliases(joinNativeTimestampIds, windowColumnIds, windowSelfReferences);
+        windowCallScope = referenceScope;
+        windowJoinAggregateSteps = windowColumnIds;
     }
 
     @Override
@@ -182,18 +192,13 @@ public final class BindScope implements Mutable {
         aliasSequences.clear();
         aliases.clear();
         ambiguousTimestampColumnIds.clear();
-        cursorColumns.clear();
-        cursorNodes.clear();
+        cursorSources.clear();
         fillBindings.clear();
-        groupingNodes.clear();
         hintAliasModels.clear();
         hintAliases.clear();
         intrinsicTimestampColumnIds.clear();
         joinDerivedEqualities.clear();
         joinNativeTimestampIds.clear();
-        joinOnNodes.clear();
-        joinResidualNodes.clear();
-        joinResidualOrigins.clear();
         keySubqueryColumnIds.clear();
         orderOutputIndexes.clear();
         outerColumnIds.clear();
@@ -205,7 +210,6 @@ public final class BindScope implements Mutable {
         sourceProjectionIndexes.clear();
         substitutionColumns.clear();
         substitutionNodes.clear();
-        timestampSubqueries.clear();
         translatingAliases.clear();
         translatingCopyIds.clear();
         windowAliasCopies.clear();
@@ -216,19 +220,20 @@ public final class BindScope implements Mutable {
         windowAliasResolutions.clear();
         windowBindingSchema.clear();
         windowColumnIds.clear();
-        windowCopies.clear();
-        windowCopyOrigins.clear();
-        windowJoinAggregateSteps.clear();
         windowJoinPivotAggregates.clear();
+        windowKeyTypes.clear();
         windowLevelSpecs.clear();
         windowLevels.clear();
         windowNames.clear();
+        windowNodeIndexes.clear();
         windowNodes.clear();
+        if (windowOccurrences.size() > 0) {
+            windowOccurrences.clear();
+        }
         windowOrderExpressions.clear();
-        windowOrderViolations.clear();
         windowSelectExpressions.clear();
+        windowSelectIndexes.clear();
         windowSelfReferences.clear();
-        withinPrefixes.clear();
         bindingRole = null;
         bindingRoot = null;
         boundLowerBound = null;
@@ -237,13 +242,17 @@ public final class BindScope implements Mutable {
         currentPreparation = null;
         expressionInput = null;
         expressionInputAlias = null;
+        hasWithin = false;
         isInsideJoin = false;
         namedWindowScope = null;
         nativeTimestampIds = null;
         nestedWindowPosition = 0;
         replacementColumns = null;
         replacementNodes = null;
+        timestampFromSubquery = null;
         timestampSubqueryType = 0;
+        timestampToSubquery = null;
+        windowCallScopeInput = null;
         windowInput = null;
     }
 
@@ -345,15 +354,20 @@ public final class BindScope implements Mutable {
      * Projection aliases: the first reference to a column fixes its alias.
      */
     static final class TranslatingAliases implements Mutable {
-        private final IntHashSet columnIds = new IntHashSet();
-        private final IntList inputColumnIds = new IntList();
+        private final IntHashSet columnIds;
+        private final IntList inputColumnIds;
         private final LowerCaseCharSequenceHashSet names = new LowerCaseCharSequenceHashSet();
-        private final LowerCaseCharSequenceIntHashMap sequences = new LowerCaseCharSequenceIntHashMap();
+        private final LowerCaseCharSequenceIntHashMap sequences;
+
+        private TranslatingAliases(IntHashSet columnIds, IntList inputColumnIds, LowerCaseCharSequenceIntHashMap sequences) {
+            this.columnIds = columnIds;
+            this.inputColumnIds = inputColumnIds;
+            this.sequences = sequences;
+        }
 
         @Override
         public void clear() {
             columnIds.clear();
-            inputColumnIds.clear();
             names.clear();
             sequences.clear();
         }

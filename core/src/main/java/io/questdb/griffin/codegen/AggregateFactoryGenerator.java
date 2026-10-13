@@ -108,20 +108,32 @@ final class AggregateFactoryGenerator {
     private final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter;
     private final FilterFactoryGenerator filterGenerator;
+    private final FunctionInstantiator functionInstantiator;
     private final ObjList<JoinKeyLayout> horizonKeys = new ObjList<>();
+    private final IntList masterSymbolColumns;
+    private final IntList slaveSymbolColumns;
+    private final IntList symbolKeyFlags;
 
     AggregateFactoryGenerator(
             CairoConfiguration configuration,
             SqlCodeGenerator codeGenerator,
             FilterFactoryGenerator filterGenerator,
+            FunctionInstantiator functionInstantiator,
             BytecodeAssembler asm,
-            EntityColumnFilter entityColumnFilter
+            EntityColumnFilter entityColumnFilter,
+            IntList symbolKeyFlags,
+            IntList masterSymbolColumns,
+            IntList slaveSymbolColumns
     ) {
         this.codeGenerator = codeGenerator;
         this.filterGenerator = filterGenerator;
+        this.functionInstantiator = functionInstantiator;
         this.configuration = configuration;
         this.asm = asm;
         this.entityColumnFilter = entityColumnFilter;
+        this.symbolKeyFlags = symbolKeyFlags;
+        this.masterSymbolColumns = masterSymbolColumns;
+        this.slaveSymbolColumns = slaveSymbolColumns;
     }
 
     /**
@@ -155,7 +167,7 @@ final class AggregateFactoryGenerator {
     ) throws SqlException {
         instantiateAggregates(plan, inputMetadata, instantiator, executionContext, aggregates, recordFunctions, valueTypes);
         layOutColumnKeys(plan, inputMetadata, recordFunctions, keyTypes, valueTypes, columnFilter, keySlots);
-        final OutputSchema input = plan.getInput().getOutput();
+        final OutputSchema input = plan.getChild().getOutput();
         final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final BoundExpression key = keys.getQuick(i);
@@ -181,7 +193,7 @@ final class AggregateFactoryGenerator {
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             final String name = Chars.toString(output.getColumnName(i));
             if (i < keys.size() && keys.getQuick(i) instanceof ColumnExpression column) {
-                final int index = plan.getInput().getOutput().getColumnIndexById(column.getColumnId());
+                final int index = plan.getChild().getOutput().getColumnIndexById(column.getColumnId());
                 metadata.add(Chars.equals(name, input.getColumnName(index)) ? input.getColumnMetadata(index)
                         : new TableColumnMetadata(name, output.getColumnType(i), input.getColumnIndexType(index),
                         input.getIndexValueBlockCapacity(index), input.isSymbolTableStatic(index), input.getMetadata(index)));
@@ -204,7 +216,7 @@ final class AggregateFactoryGenerator {
             IntList keySlots,
             ObjList<Function> functions
     ) throws SqlException {
-        final OutputSchema input = plan.getInput().getOutput();
+        final OutputSchema input = plan.getChild().getOutput();
         final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
         functions.setPos(recordFunctions.size());
         for (int i = 0, n = plan.getAggregates().size(); i < n; i++) {
@@ -238,14 +250,14 @@ final class AggregateFactoryGenerator {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
-        final ObjList<BoundExpression> functionKeys = frame.workerKeyExpressions;
+        final ObjList<BoundExpression> functionKeys = frame.expressions;
         functionKeys.clear();
         for (int i = 0, n = keys.size(); i < n; i++) {
             if (!(keys.getQuick(i) instanceof ColumnExpression)) {
                 functionKeys.add(keys.getQuick(i));
             }
         }
-        return instantiator.instantiateWorkerFunctions(functionKeys, plan.getInput().getOutput(), inputMetadata, keyFunctions,
+        return instantiator.instantiateWorkerFunctions(functionKeys, plan.getChild().getOutput(), inputMetadata, keyFunctions,
                 executionContext.getSharedQueryWorkerCount(), executionContext);
     }
 
@@ -253,7 +265,6 @@ final class AggregateFactoryGenerator {
             GenerationFrame frame,
             AggregatePlan plan,
             RecordCursorFactory base,
-            FunctionInstantiator instantiator,
             @Nullable PreparedFilter stolenFilter,
             SqlExecutionContext executionContext
     ) throws SqlException {
@@ -273,8 +284,8 @@ final class AggregateFactoryGenerator {
             keyTypes.clear();
             valueTypes.clear();
             columnFilter.clear();
-            assemble(plan, base.getMetadata(), instantiator, executionContext, aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes, columnFilter,
-                    frame.keySlots);
+            assemble(plan, base.getMetadata(), functionInstantiator, executionContext, aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes,
+                    columnFilter, frame.intListA);
             final GenericRecordMetadata metadata = metadata(plan, base.getMetadata(), recordFunctions);
             final int sharedConsumerCount = plan.getSharedConsumerCount();
             if (sharedConsumerCount > 0) {
@@ -282,7 +293,7 @@ final class AggregateFactoryGenerator {
                 for (int i = 0; i < sharedConsumerCount; i++) {
                     final ObjList<Function> functions = new ObjList<>(recordFunctions.size());
                     sharedRecordFunctions.add(functions);
-                    sharedRecordFunctions(plan, base.getMetadata(), instantiator, executionContext, recordFunctions, frame.keySlots, functions);
+                    sharedRecordFunctions(plan, base.getMetadata(), functionInstantiator, executionContext, recordFunctions, frame.intListA, functions);
                 }
             }
             final boolean isParallel = plan.getAlgorithm() != null && plan.getAlgorithm() != AggregatePlan.Algorithm.SERIAL;
@@ -292,11 +303,11 @@ final class AggregateFactoryGenerator {
             }
             final PreparedFilter filter = isParallel ? stolenFilter : null;
             if (isParallel) {
-                workerAggregates = instantiator.instantiateWorkerAggregates(plan.getAggregates(), plan.getInput().getOutput(), base.getMetadata(), aggregates,
-                        executionContext.getSharedQueryWorkerCount(), executionContext);
-                workerKeys = workerKeys(frame, plan, keyFunctions, base.getMetadata(), instantiator, executionContext);
+                workerAggregates = functionInstantiator.instantiateWorkerAggregates(plan.getAggregates(), plan.getChild().getOutput(), base.getMetadata(),
+                        aggregates, executionContext.getSharedQueryWorkerCount(), executionContext);
+                workerKeys = workerKeys(frame, plan, keyFunctions, base.getMetadata(), functionInstantiator, executionContext);
                 if (filter != null) {
-                    filterGenerator.prepareParallel(filter, base, instantiator, executionContext);
+                    filterGenerator.prepareParallel(frame, filter, base, executionContext);
                 }
             }
             final CompiledFilter compiledFilter = filter != null ? filter.getCompiledFilter() : null;
@@ -380,7 +391,7 @@ final class AggregateFactoryGenerator {
         final RecordCursorFactory primary = frame.sharedFactories.getQuick(entry);
         final RecordMetadata primaryMetadata = primary.getMetadata();
         final OutputSchema sourceOutput = source.getSourceOutput();
-        final OutputSchema input = aggregate.getInput().getOutput();
+        final OutputSchema input = aggregate.getChild().getOutput();
         if (sourceOutput.getColumnCount() != primaryMetadata.getColumnCount()) {
             return null;
         }
@@ -410,7 +421,7 @@ final class AggregateFactoryGenerator {
         final RecordCursorFactory factory;
         try {
             final RecordCursorFactory leaf = codeGenerator.generateSource(frame, PlanToFactoryRules.aggregateBase(aggregate), prepared, executionContext);
-            factory = generateFunctions(frame, aggregate, leaf, frame.functionInstantiator, prepared, executionContext);
+            factory = generateFunctions(frame, aggregate, leaf, prepared, executionContext);
         } catch (Throwable th) {
             frame.popPreparedFilter(th);
             throw th;
@@ -419,7 +430,7 @@ final class AggregateFactoryGenerator {
         return factory;
     }
 
-    private RecordCursorFactory generateVector(AggregatePlan plan, RecordCursorFactory base, SqlExecutionContext executionContext) {
+    private RecordCursorFactory generateVector(GenerationFrame frame, AggregatePlan plan, RecordCursorFactory base, SqlExecutionContext executionContext) {
         ObjList<VectorAggregateFunction> functions = null;
         boolean isAdopted = false;
         try {
@@ -430,9 +441,10 @@ final class AggregateFactoryGenerator {
             final int keyType = keyExpression.getDataType();
             final int keyKind = keyExpression instanceof FunctionExpression
                     ? ColumnType.getTimestampDriver(key.getDataType()).getGKKHourInt() : VectorAggregateFunction.GKK_VANILLA_INT;
-            final OutputSchema input = plan.getInput().getOutput();
+            final OutputSchema input = plan.getChild().getOutput();
             final int keyIndex = input.getColumnIndexById(key.getColumnId());
-            final ArrayColumnTypes types = new ArrayColumnTypes();
+            final ArrayColumnTypes types = frame.keyTypes;
+            types.clear();
             types.add(keyType);
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
             final OutputSchema output = plan.getOutput();
@@ -442,7 +454,8 @@ final class AggregateFactoryGenerator {
                         IndexType.NONE, 0, base.getMetadata().isSymbolTableStatic(keyIndex), null)
                         : new TableColumnMetadata(Chars.toString(output.getColumnName(i)), output.getColumnType(i)));
             }
-            final IntList symbolIndexes = new IntList();
+            final IntList symbolIndexes = frame.intListA;
+            symbolIndexes.clear();
             if (keyType == ColumnType.SYMBOL) {
                 symbolIndexes.setAll(output.getColumnCount(), -1);
                 symbolIndexes.setQuick(0, keyIndex);
@@ -475,7 +488,7 @@ final class AggregateFactoryGenerator {
         if (step.getMasterKeyColumnIds().size() == 0) {
             return null;
         }
-        final JoinKeyLayout keys = new JoinKeyLayout();
+        final JoinKeyLayout keys = new JoinKeyLayout(symbolKeyFlags, masterSymbolColumns, slaveSymbolColumns);
         JoinFactoryGenerator.resolveKeys(masterOutput, step.getMasterKeyColumnIds(), keys.masterIndexes);
         JoinFactoryGenerator.resolveKeys(step.getInput().getOutput(), step.getSlaveKeyColumnIds(), keys.slaveIndexes);
         if (slaveCrossIndex != null) {
@@ -510,7 +523,7 @@ final class AggregateFactoryGenerator {
         if (PhysicalProperties.supportsSharedCursors(headPlan) != PhysicalProperties.Capability.YES) {
             return false;
         }
-        LogicalPlan leaf = aggregate.getInput();
+        LogicalPlan leaf = aggregate.getChild();
         if (!(SqlCodeGenerator.unwrapColumnProjections(leaf) instanceof SetOperationPlan)) {
             return false;
         }
@@ -571,7 +584,7 @@ final class AggregateFactoryGenerator {
             ObjList<Function> recordFunctions,
             ArrayColumnTypes valueTypes
     ) throws SqlException {
-        final OutputSchema input = plan.getInput().getOutput();
+        final OutputSchema input = plan.getChild().getOutput();
         final int keyCount = plan.getGroupingExpressions().size();
         recordFunctions.setPos(plan.getOutput().getColumnCount());
         for (int i = 0, n = plan.getAggregates().size(); i < n; i++) {
@@ -601,7 +614,7 @@ final class AggregateFactoryGenerator {
             ListColumnFilter columnFilter,
             IntList keySlots
     ) {
-        final OutputSchema input = plan.getInput().getOutput();
+        final OutputSchema input = plan.getChild().getOutput();
         final ObjList<BoundExpression> keys = plan.getGroupingExpressions();
         final int bucketColumnId = plan instanceof SampleByPlan sample ? sample.getTimestampColumnId() : -1;
         keySlots.setAll(keys.size(), -1);
@@ -631,7 +644,6 @@ final class AggregateFactoryGenerator {
             GenerationFrame frame,
             AggregatePlan plan,
             RecordCursorFactory base,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
         boolean isAdopted = false;
@@ -661,10 +673,10 @@ final class AggregateFactoryGenerator {
             }
             if (plan.getAlgorithm() == AggregatePlan.Algorithm.VECTORISED) {
                 isAdopted = true;
-                return generateVector(plan, base, executionContext);
+                return generateVector(frame, plan, base, executionContext);
             }
             isAdopted = true;
-            return generateFunctions(frame, plan, base, instantiator, null, executionContext);
+            return generateFunctions(frame, plan, base, null, executionContext);
         } catch (Throwable th) {
             if (!isAdopted) {
                 Misc.free(base, th);
@@ -675,7 +687,7 @@ final class AggregateFactoryGenerator {
 
     RecordCursorFactory generateAggregate(GenerationFrame frame, AggregatePlan aggregate, SqlExecutionContext executionContext) throws SqlException {
         if (PlanToFactoryRules.aggregateFactory(aggregate) == PlanToFactoryRules.AggregateFactory.HORIZON) {
-            return generateHorizonJoin(frame, aggregate, (HorizonJoinPlan) aggregate.getInput(), executionContext);
+            return generateHorizonJoin(frame, aggregate, (HorizonJoinPlan) aggregate.getChild(), executionContext);
         }
         if (aggregate.getAlgorithm() == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER) {
             return generateStolenFilterGroupBy(frame, aggregate, executionContext);
@@ -683,19 +695,19 @@ final class AggregateFactoryGenerator {
         RecordCursorFactory shared = generateSharedInput(frame, aggregate);
         if (shared == null && prepareSharedHead(frame, aggregate)) {
             try {
-                shared = codeGenerator.generate(frame, aggregate.getInput(), executionContext);
+                shared = codeGenerator.generate(frame, aggregate.getChild(), executionContext);
             } finally {
                 frame.sharedHeadTarget = null;
             }
         }
         final RecordCursorFactory base = shared != null ? shared : codeGenerator.generate(frame, PlanToFactoryRules.aggregateBase(aggregate), executionContext);
-        return generate(frame, aggregate, base, frame.functionInstantiator, executionContext);
+        return generate(frame, aggregate, base, executionContext);
     }
 
     RecordCursorFactory generateDistinct(GenerationFrame frame, DistinctPlan distinct, LimitPlan limitAdvice, SqlExecutionContext executionContext) throws SqlException {
         // DISTINCT keeps its input order. A downstream sort must not turn the
         // timestamp-specialized factory's forward input into a backward scan.
-        final RecordCursorFactory base = codeGenerator.generate(frame, distinct.getInput(), executionContext);
+        final RecordCursorFactory base = codeGenerator.generate(frame, distinct.getChild(), executionContext);
         if (limitAdvice == null || isTimeSeriesDistinct(base)) {
             return generateDistinct(base, null, null);
         }
@@ -794,7 +806,6 @@ final class AggregateFactoryGenerator {
             ObjList<PreparedFilter> slaveFilters,
             ObjList<RecordMetadata> slaveMetadatas,
             ObjList<IntList> slaveCrossIndexes,
-            FunctionInstantiator instantiator,
             @Nullable PreparedFilter stolenFilter,
             SqlExecutionContext executionContext
     ) throws SqlException {
@@ -831,8 +842,8 @@ final class AggregateFactoryGenerator {
             keyTypes.clear();
             valueTypes.clear();
             columnFilter.clear();
-            assemble(plan, innerMetadata, instantiator, executionContext,
-                    aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes, columnFilter, frame.keySlots);
+            assemble(plan, innerMetadata, functionInstantiator, executionContext,
+                    aggregates, keyFunctions, recordFunctions, keyTypes, valueTypes, columnFilter, frame.intListA);
             final GenericRecordMetadata metadata = metadata(plan, innerMetadata, recordFunctions);
             final boolean isParallel = plan.getAlgorithm() != null && plan.getAlgorithm() != AggregatePlan.Algorithm.SERIAL;
             if (ParanoiaState.PLAN_PARANOIA_MODE && isParallel != (executionContext.isParallelHorizonJoinEnabled()
@@ -842,11 +853,11 @@ final class AggregateFactoryGenerator {
             }
             final PreparedFilter filter = isParallel ? stolenFilter : null;
             if (isParallel) {
-                workerAggregates = instantiator.instantiateWorkerAggregates(plan.getAggregates(), plan.getInput().getOutput(), innerMetadata, aggregates,
-                        executionContext.getSharedQueryWorkerCount(), executionContext);
-                workerKeys = workerKeys(frame, plan, keyFunctions, innerMetadata, instantiator, executionContext);
+                workerAggregates = functionInstantiator.instantiateWorkerAggregates(plan.getAggregates(), plan.getChild().getOutput(), innerMetadata,
+                        aggregates, executionContext.getSharedQueryWorkerCount(), executionContext);
+                workerKeys = workerKeys(frame, plan, keyFunctions, innerMetadata, functionInstantiator, executionContext);
                 if (filter != null) {
-                    filterGenerator.prepareParallel(filter, master, instantiator, executionContext);
+                    filterGenerator.prepareParallel(frame, filter, master, executionContext);
                     filter.getColumns().add(masterMetadata.getTimestampIndex());
                 }
             }
@@ -863,7 +874,7 @@ final class AggregateFactoryGenerator {
             return generateHorizonJoin(horizon, master, slaves, slaveFilters, slaveMetadatas, slaveCrossIndexes, innerMetadata,
                     metadata, columnFilter, keyTypes, valueTypes, aggregates, workerAggregates, keyFunctions, workerKeys,
                     recordFunctions, compiledFilter, bindVariableMemory, bindVariables, filterFunction, filterIndexes,
-                    workerFilters, instantiator, isParallel, executionContext);
+                    workerFilters, isParallel, executionContext);
         } catch (Throwable th) {
             if (!isAdopted) {
                 closeWorkers(workerAggregates, th);
@@ -900,7 +911,7 @@ final class AggregateFactoryGenerator {
                 throw th;
             }
             factory = generateHorizonJoin(frame, aggregate, horizon, master, slaves, slaveFilters, slaveMetadatas, slaveCrossIndexes,
-                    frame.functionInstantiator, prepared, executionContext);
+                    prepared, executionContext);
         } catch (Throwable th) {
             for (int i = slaveFilters.size() - 1; i >= 0; i--) {
                 frame.popPreparedFilter(slaveFilters.getQuick(i), th);
@@ -941,7 +952,6 @@ final class AggregateFactoryGenerator {
             Function filter,
             IntHashSet filterColumnIndexes,
             ObjList<Function> workerFilters,
-            FunctionInstantiator instantiator,
             boolean isParallel,
             SqlExecutionContext executionContext
     ) throws SqlException {
@@ -967,7 +977,7 @@ final class AggregateFactoryGenerator {
                 for (int s = 0; s < slaveCount; s++) {
                     final PreparedFilter slaveFilter = slaveFilters.getQuick(s);
                     if (slaveFilter != null) {
-                        slaveFilter.setWorkers(instantiator.instantiateWorkers(slaveFilter.getPredicate(), slaveFilter.getInput(),
+                        slaveFilter.setWorkers(functionInstantiator.instantiateWorkers(slaveFilter.getPredicate(), slaveFilter.getInput(),
                                 slaves.getQuick(s).getMetadata(), slaveFilter.getFilter(), workerCount, executionContext));
                     }
                 }

@@ -65,16 +65,16 @@ final class JoinBinder implements Mutable {
     private final SqlBinder binder;
     private final CairoConfiguration configuration;
     private final BindContext ctx;
-    private final IntList deferredJoinInputs = new IntList();
-    private final ObjList<ExpressionNode> forwardJoinReferences = new ObjList<>();
-    private final IntList forwardLeftJoinInputs = new IntList();
+    private final IntList deferredJoinInputs;
+    private final IntList forwardLeftJoinInputs;
     private final IntList inputModels = new IntList();
     private final JoinGraphBuilder joinGraphBuilder;
     private final LateralBinder lateralBinder;
     private final IntList lateralDependencyInputs = new IntList();
     private final IntList lateralDependencyParents = new IntList();
-    private final IntList nonEquiNullingJoinInputs = new IntList();
-    private final IntList nullingJoinBoundaries = new IntList();
+    private final IntList nonEquiNullingJoinInputs;
+    private final IntList nullingJoinBoundaries;
+    private ExpressionNode firstForwardJoinReference;
     private boolean isForwardInnerFiltered;
     private boolean isForwardLeftKeyFiltered;
     private ExpressionNode rejectedTerms;
@@ -85,26 +85,30 @@ final class JoinBinder implements Mutable {
             SqlBinder binder,
             CairoConfiguration configuration,
             LateralBinder lateralBinder,
-            JoinGraphBuilder joinGraphBuilder
+            JoinGraphBuilder joinGraphBuilder,
+            IntList deferredJoinInputs,
+            IntList forwardLeftJoinInputs,
+            IntList nonEquiNullingJoinInputs,
+            IntList nullingJoinBoundaries
     ) {
         this.ctx = ctx;
         this.binder = binder;
         this.configuration = configuration;
         this.lateralBinder = lateralBinder;
         this.joinGraphBuilder = joinGraphBuilder;
+        this.deferredJoinInputs = deferredJoinInputs;
+        this.forwardLeftJoinInputs = forwardLeftJoinInputs;
+        this.nonEquiNullingJoinInputs = nonEquiNullingJoinInputs;
+        this.nullingJoinBoundaries = nullingJoinBoundaries;
     }
 
     @Override
     public void clear() {
-        deferredJoinInputs.clear();
-        forwardJoinReferences.clear();
-        forwardLeftJoinInputs.clear();
         inputModels.clear();
         joinGraphBuilder.clear();
         lateralDependencyInputs.clear();
         lateralDependencyParents.clear();
-        nonEquiNullingJoinInputs.clear();
-        nullingJoinBoundaries.clear();
+        firstForwardJoinReference = null;
         isForwardInnerFiltered = false;
         isForwardLeftKeyFiltered = false;
         rejectedTerms = null;
@@ -548,7 +552,7 @@ final class JoinBinder implements Mutable {
             scope.joinOnNodes.clear();
             scope.joinResidualNodes.clear();
             scope.joinResidualOrigins.clear();
-            forwardJoinReferences.clear();
+            firstForwardJoinReference = null;
         }
     }
 
@@ -880,7 +884,9 @@ final class JoinBinder implements Mutable {
                 if (!isDeferred) {
                     throw new IllegalStateException("forward ON reference outside a deferred join");
                 }
-                forwardJoinReferences.add(expression);
+                if (firstForwardJoinReference == null) {
+                    firstForwardJoinReference = expression;
+                }
             }
             joinGraphBuilder.addOrderingConstraint(source, origin);
         }
@@ -906,7 +912,7 @@ final class JoinBinder implements Mutable {
         scope.joinOnNodes.clear();
         scope.joinOnNodes.setPos(join.getInputs().size());
         deferredJoinInputs.clear();
-        forwardJoinReferences.clear();
+        firstForwardJoinReference = null;
         if (!isForwardLeftKeyFiltered) {
             forwardLeftJoinInputs.clear();
         }
@@ -1034,10 +1040,10 @@ final class JoinBinder implements Mutable {
                 isForwardLeftKeyFiltered = wasForwardLeftKeyFiltered;
             }
         }
-        if (forwardJoinReferences.size() == 0) {
+        if (firstForwardJoinReference == null) {
             throw new IllegalStateException("cyclic join dependencies without a forward ON reference");
         }
-        throw forwardJoinReference(forwardJoinReferences.getQuick(0));
+        throw forwardJoinReference(firstForwardJoinReference);
     }
 
     private void collectJoinTimestampScopes(ExpressionNode expression, JoinPlan join, int lastInput) throws SqlException {

@@ -76,7 +76,6 @@ final class JoinOrdering implements OptimiserPass {
 
     @Override
     public void clear() {
-        placed.clear();
         solver.clear();
         readJoin = null;
     }

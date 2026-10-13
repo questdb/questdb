@@ -336,16 +336,11 @@ final class SampleByBinder {
      */
     private void markTimestampSubqueries(QueryModel source, int timestampType) {
         final BindScope scope = ctx.scope();
-        scope.timestampSubqueries.clear();
         scope.timestampSubqueryType = timestampType;
         final ExpressionNode from = source.getSampleByFrom();
-        if (from != null && from.type == ExpressionNode.QUERY) {
-            scope.timestampSubqueries.add(from.queryModel);
-        }
+        scope.timestampFromSubquery = from != null && from.type == ExpressionNode.QUERY ? from.queryModel : null;
         final ExpressionNode to = source.getSampleByTo();
-        if (to != null && to.type == ExpressionNode.QUERY) {
-            scope.timestampSubqueries.add(to.queryModel);
-        }
+        scope.timestampToSubquery = to != null && to.type == ExpressionNode.QUERY ? to.queryModel : null;
     }
 
     private ExpressionNode sampleByComparison(OutputSchema input, CharSequence operator, ExpressionNode bound) {
@@ -407,7 +402,7 @@ final class SampleByBinder {
                 if (project.hasTimestampDeclaration()) {
                     return output.getTimestampColumnId();
                 }
-                final int inputId = subsampleTimestamp(project.getInput());
+                final int inputId = subsampleTimestamp(project.getChild());
                 for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
                     if (project.getExpressions().getQuick(i) instanceof ColumnExpression column
                             && column.isDirectReference() && column.getColumnId() == inputId) {
@@ -417,7 +412,7 @@ final class SampleByBinder {
                 return -1;
             }
             case AggregatePlan aggregate -> {
-                final int inputId = subsampleTimestamp(aggregate.getInput());
+                final int inputId = subsampleTimestamp(aggregate.getChild());
                 for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
                     if (aggregate.getGroupingExpressions().getQuick(i) instanceof ColumnExpression column
                             && column.isDirectReference() && column.getColumnId() == inputId) {
@@ -1031,7 +1026,7 @@ final class SampleByBinder {
 
     void validateSampleByTimezone(SampleByPlan plan, SqlExecutionContext executionContext) throws SqlException {
         if (plan.getTimezone() instanceof ConstantExpression timezone && CommonUtils.isSubDayUnit(plan.getPeriodUnit())) {
-            final OutputSchema input = plan.getInput().getOutput();
+            final OutputSchema input = plan.getChild().getOutput();
             final int timestampType = input.getColumnType(input.getColumnIndexById(plan.getTimestampColumnId()));
             try (Function zone = ctx.functionInstantiator.instantiate(timezone, emptySchema, executionContext)) {
                 final CharSequence name = zone.getStrA(null);

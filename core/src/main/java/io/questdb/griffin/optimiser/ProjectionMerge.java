@@ -50,9 +50,7 @@ import io.questdb.std.ObjList;
  * an aggregate.
  */
 final class ProjectionMerge implements OptimiserPass {
-    private final PlanRewriter columnProjectCollapses = this::collapseColumnProject;
-    private final OptimiserContext context;
-
+    private final OptimiserContext context;    private final PlanRewriter columnProjectCollapses = this::collapseColumnProject;
     ProjectionMerge(OptimiserContext context) {
         this.context = context;
     }
@@ -74,7 +72,7 @@ final class ProjectionMerge implements OptimiserPass {
         if (!(input instanceof ProjectPlan inner) || !LogicalPlans.isColumnProjection(inner) || inner.hasTimestampDeclaration()) {
             return null;
         }
-        final OutputSchema innerInput = inner.getInput().getOutput();
+        final OutputSchema innerInput = inner.getChild().getOutput();
         if (innerInput.hasColumnQualifiers()) {
             return null;
         }
@@ -89,7 +87,7 @@ final class ProjectionMerge implements OptimiserPass {
     }
 
     private static boolean isCompleteColumnPermutation(ProjectPlan project) {
-        final OutputSchema input = project.getInput().getOutput();
+        final OutputSchema input = project.getChild().getOutput();
         final int count = project.getExpressions().size();
         if (project.hasTimestampDeclaration() || count != input.getColumnCount() || !LogicalPlans.isColumnProjection(project)) {
             return false;
@@ -116,7 +114,7 @@ final class ProjectionMerge implements OptimiserPass {
      * with this one.
      */
     private static boolean isSortableBelow(ProjectPlan project, SortPlan sort) {
-        final LogicalPlan input = project.getInput();
+        final LogicalPlan input = project.getChild();
         if (!(input instanceof AggregatePlan || input instanceof FillPlan)
                 || sort.isMarkoutHorizon() || project.hasTimestampDeclaration() || !LogicalPlans.isColumnProjection(project)
                 || LogicalPlans.hasRepeatedColumn(project)) {
@@ -172,7 +170,7 @@ final class ProjectionMerge implements OptimiserPass {
         for (int i = 0, n = ids.size(); i < n; i++) {
             ids.setQuick(i, ((ColumnExpression) project.getExpressions().getQuick(project.getOutput().getColumnIndexById(ids.getQuick(i)))).getColumnId());
         }
-        sort.replaceInput(0, project.getInput());
+        sort.replaceInput(0, project.getChild());
         project.replaceInput(0, sort);
         if (sort.getOutput().getTimestampIndex() >= 0) {
             project.getOutput().setTimestampIndex(LogicalPlans.projectedColumnIndex(project, ids.getQuick(0)));
@@ -187,7 +185,7 @@ final class ProjectionMerge implements OptimiserPass {
         if (project.hasUpdateConversions() || project.hasPrunedComputedColumns()) {
             return;
         }
-        final ProjectPlan inner = absorbableProject(project.getInput());
+        final ProjectPlan inner = absorbableProject(project.getChild());
         if (inner == null) {
             return;
         }
@@ -199,14 +197,14 @@ final class ProjectionMerge implements OptimiserPass {
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             project.getExpressions().setQuick(i, context.getRewriter().remapColumns(project.getExpressions().getQuick(i), inner));
         }
-        project.replaceInput(0, inner.getInput());
+        project.replaceInput(0, inner.getChild());
     }
 
     /**
      * An aggregate reads the input of a column projection beneath it directly.
      */
     private void absorbColumnProject(AggregatePlan aggregate) {
-        final ProjectPlan inner = absorbableProject(aggregate.getInput());
+        final ProjectPlan inner = absorbableProject(aggregate.getChild());
         if (inner == null) {
             return;
         }
@@ -235,7 +233,7 @@ final class ProjectionMerge implements OptimiserPass {
                 sharedIds.setQuick(i, ((ColumnExpression) inner.getExpressions().getQuick(index)).getColumnId());
             }
         }
-        aggregate.replaceInput(0, inner.getInput());
+        aggregate.replaceInput(0, inner.getChild());
     }
 
     private LogicalPlan collapseColumnProject(LogicalPlan plan) throws SqlException {
@@ -248,38 +246,38 @@ final class ProjectionMerge implements OptimiserPass {
         }
         if (!LogicalPlans.isColumnProjection(project)) {
             absorbColumnProject(project);
-            if (project.getInput() instanceof SortPlan sort
+            if (project.getChild() instanceof SortPlan sort
                     && !project.hasTimestampDeclaration()
-                    && sort.getInput() instanceof JoinPlan
+                    && sort.getChild() instanceof JoinPlan
                     && !sort.isMarkoutHorizon()
                     && LogicalPlans.projectsSortKeys(project, sort)) {
                 return sortOverProject(project, sort);
             }
             return plan;
         }
-        if (project.getInput() instanceof SortPlan sort) {
-            LogicalPlan input = sort.getInput();
+        if (project.getChild() instanceof SortPlan sort) {
+            LogicalPlan input = sort.getChild();
             while (input instanceof ProjectPlan permutation && isCompleteColumnPermutation(permutation)) {
-                input = permutation.getInput();
+                input = permutation.getChild();
             }
             if (isCompleteColumnPermutation(project) && input instanceof AggregatePlan aggregate
                     && aggregate.getGroupingExpressions().size() > 0
-                    || (input instanceof JoinPlan || sort.getInput() instanceof WindowPlan)
+                    || (input instanceof JoinPlan || sort.getChild() instanceof WindowPlan)
                     && !sort.isMarkoutHorizon() && LogicalPlans.projectsSortKeys(project, sort)) {
                 return sortOverProject(project, sort);
             }
-            if (sort.getInput() instanceof ProjectPlan grouped && isSortableBelow(grouped, sort)) {
+            if (sort.getChild() instanceof ProjectPlan grouped && isSortableBelow(grouped, sort)) {
                 project.replaceInput(0, sortBelowProject(sort, grouped));
             }
         }
         while (true) {
-            LogicalPlan input = project.getInput();
+            LogicalPlan input = project.getChild();
             // LIMIT observes rows and order, not a pure column mapping. Preserve
             // its position while composing projections on either side of it.
             LimitPlan boundary = null;
             while (input instanceof LimitPlan limit) {
                 boundary = limit;
-                input = limit.getInput();
+                input = limit.getChild();
             }
             if (!(input instanceof ProjectPlan inner) || !LogicalPlans.isColumnProjection(inner)) {
                 return project;
@@ -322,10 +320,10 @@ final class ProjectionMerge implements OptimiserPass {
             // schema exactly. Order-sensitive rules have finished, so a declaration
             // boundary can now merge without changing its observable metadata.
             if (boundary == null) {
-                project.replaceInput(0, inner.getInput());
+                project.replaceInput(0, inner.getChild());
             } else {
-                boundary.replaceInput(0, inner.getInput());
-                LogicalPlans.deriveLimits(project.getInput());
+                boundary.replaceInput(0, inner.getChild());
+                LogicalPlans.deriveLimits(project.getChild());
             }
         }
     }
@@ -334,7 +332,7 @@ final class ProjectionMerge implements OptimiserPass {
         for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
             sort.getColumnIds().setQuick(i, project.getOutput().getColumnId(LogicalPlans.projectedUncastColumnIndex(project, sort.getColumnIds().getQuick(i))));
         }
-        project.replaceInput(0, sort.getInput());
+        project.replaceInput(0, sort.getChild());
         sort.replaceInput(0, project.rewriteBottomUp(columnProjectCollapses));
         return sort;
     }
@@ -406,6 +404,8 @@ final class ProjectionMerge implements OptimiserPass {
             expressions.setQuick(i, index >= 0 && !(innerExpressions.getQuick(index) instanceof ColumnExpression)
                     ? innerExpressions.getQuick(index) : context.getRewriter().remapColumns(expression, inner));
         }
-        project.replaceInput(0, inner.getInput());
+        project.replaceInput(0, inner.getChild());
     }
+
+
 }

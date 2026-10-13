@@ -58,7 +58,7 @@ public final class SortPlan extends ForwardingPlan {
      */
     @Override
     public int derivedTimestampIndex() {
-        final OutputSchema input = getInput().getOutput();
+        final OutputSchema input = getChild().getOutput();
         final int firstIndex = columnIds.size() > 0 ? input.getColumnIndexById(columnIds.getQuick(0)) : -1;
         return firstIndex >= 0 && ColumnType.isTimestamp(input.getColumnType(firstIndex)) ? firstIndex : -1;
     }

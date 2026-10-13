@@ -46,4 +46,26 @@ public interface CallBinder {
             OutputSchema input,
             SqlExecutionContext executionContext
     ) throws SqlException;
+
+    /**
+     * Binds the call over {@link #getCallArguments()}, which it then empties.
+     */
+    BoundExpression bindCall(CharSequence name, int position, OutputSchema input, SqlExecutionContext executionContext) throws SqlException;
+
+    /**
+     * Binds the call over the two arguments.
+     */
+    BoundExpression bindCall(
+            CharSequence name,
+            int position,
+            BoundExpression left,
+            BoundExpression right,
+            OutputSchema input,
+            SqlExecutionContext executionContext
+    ) throws SqlException;
+
+    /**
+     * The arguments the next {@link #bindCall(CharSequence, int, OutputSchema, SqlExecutionContext)} binds.
+     */
+    ObjList<BoundExpression> getCallArguments();
 }

@@ -185,7 +185,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
                     RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()
             ) {
                 final ProjectPlan project = find(compiler.getPlanForTesting(), ProjectPlan.class);
-                Assert.assertTrue(project.getInput() instanceof JoinPlan);
+                Assert.assertTrue(project.getChild() instanceof JoinPlan);
                 Assert.assertTrue(PlanToFactoryRules.isIdentityProjection(project));
                 Assert.assertTrue(factory.getBaseFactory() instanceof SelectedRecordCursorFactory);
             }
@@ -877,7 +877,7 @@ public class PhysicalPropertiesTest extends AbstractCairoTest {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             try (UpdateOperation ignore = compiler.compile(sql, sqlExecutionContext).getUpdateOperation()) {
                 final FilterPlan filter = find(compiler.getPlanForTesting(), FilterPlan.class);
-                Assert.assertEquals(expected, ((ScanPlan) filter.getInput()).isWalClientUpdate());
+                Assert.assertEquals(expected, ((ScanPlan) filter.getChild()).isWalClientUpdate());
                 Assert.assertEquals(!expected, PlanToFactoryRules.isFusedFilter(filter));
             }
         }

@@ -103,9 +103,9 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
     private final CairoConfiguration configuration;
     private final LowerCaseCharSequenceObjHashMap<CreateTableColumnModel> createColumnModelMap = new LowerCaseCharSequenceObjHashMap<>();
     private final boolean deferred;
+    private final StringSink intervalSink = new StringSink();
     private final int periodDelay;
     private final char periodDelayUnit;
-    private final StringSink intervalSink = new StringSink();
     private final int refreshType;
     private final String sqlText;
     private final String timeZone;
@@ -547,7 +547,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     if (aggregate.hasExplicitGrouping()) {
                         return null;
                     }
-                    plan = aggregate.getInput();
+                    plan = aggregate.getChild();
                 }
                 case ProjectPlan _, FilterPlan _, SortPlan _, LimitPlan _, DistinctPlan _, WindowPlan _, FillPlan _ ->
                         plan = plan.inputAt(0);
@@ -562,7 +562,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
      * Whether the SAMPLE BY buckets a table directly, rather than a joined source or a sub-query.
      */
     private static boolean isDirectTableSampleBy(GroupingPlan sampleBy) {
-        LogicalPlan input = sampleBy.getInput();
+        LogicalPlan input = sampleBy.getChild();
         while (input instanceof FilterPlan || input instanceof LatestByPlan) {
             input = input.inputAt(0);
         }
@@ -583,7 +583,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
             case ProjectPlan _, FilterPlan _, SortPlan _, LimitPlan _, DistinctPlan _, WindowPlan _, FillPlan _ ->
                     plan.inputAt(0);
             case AggregatePlan aggregate ->
-                    aggregate.hasExplicitGrouping() || aggregate.hasSampleByBucket() ? null : aggregate.getInput();
+                    aggregate.hasExplicitGrouping() || aggregate.hasSampleByBucket() ? null : aggregate.getChild();
             default -> null;
         };
     }
@@ -616,10 +616,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                 case ProjectPlan project -> {
                     final BoundExpression expression = project.getExpressions().getQuick(project.getOutput().getColumnIndexById(id));
                     if (!(expression instanceof ColumnExpression column)) {
-                        return readsAggregate(project.getInput(), expression);
+                        return readsAggregate(project.getChild(), expression);
                     }
                     id = column.getColumnId();
-                    plan = project.getInput();
+                    plan = project.getChild();
                 }
                 case GroupingPlan grouping -> {
                     final int index = grouping.getOutput().getColumnIndexById(id);
@@ -631,10 +631,10 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                     }
                     final BoundExpression key = grouping.getGroupingExpressions().getQuick(index);
                     if (!(key instanceof ColumnExpression column)) {
-                        return readsAggregate(grouping.getInput(), key);
+                        return readsAggregate(grouping.getChild(), key);
                     }
                     id = column.getColumnId();
-                    plan = grouping.getInput();
+                    plan = grouping.getChild();
                 }
                 case SetOperationPlan operation -> {
                     id = operation.getLeft().getOutput().getColumnId(operation.getOutput().getColumnIndexById(id));
@@ -663,7 +663,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
      * select expressions that do compute over the bucket.
      */
     private static FunctionExpression sampleByBucket(AggregatePlan aggregate) {
-        final int timestampId = aggregate.getInput().getOutput().getTimestampColumnId();
+        final int timestampId = aggregate.getChild().getOutput().getTimestampColumnId();
         final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
         for (int i = 0, n = keys.size(); i < n; i++) {
             if (keys.getQuick(i) instanceof FunctionExpression call
@@ -698,7 +698,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
         if (!(expression instanceof ColumnExpression column) || column.isCast()) {
             return null;
         }
-        LogicalPlan input = project.getInput();
+        LogicalPlan input = project.getChild();
         while (input instanceof SortPlan || input instanceof LimitPlan || input instanceof FillPlan) {
             input = input.inputAt(0);
         }
@@ -728,7 +728,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         return null;
                     }
                     id = column.getColumnId();
-                    plan = project.getInput();
+                    plan = project.getChild();
                 }
                 case GroupingPlan grouping -> {
                     final int index = grouping.getOutput().getColumnIndexById(id);
@@ -748,7 +748,7 @@ public class CreateMatViewOperationImpl implements CreateMatViewOperation {
                         return null;
                     }
                     id = column.getColumnId();
-                    plan = grouping.getInput();
+                    plan = grouping.getChild();
                 }
                 case SetOperationPlan operation -> {
                     final int index = operation.getOutput().getColumnIndexById(id);

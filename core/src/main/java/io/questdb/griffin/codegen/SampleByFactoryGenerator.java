@@ -94,29 +94,40 @@ import static io.questdb.griffin.SqlKeywords.*;
 final class SampleByFactoryGenerator {
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
-    private final IntList columnIndexes = new IntList();
+    private final IntList columnIndexes;
     private final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter;
-    private final IntList firstLastKinds = new IntList();
-    private final IntList firstLastPositions = new IntList();
+    private final IntList firstLastKinds;
+    private final IntList firstLastPositions;
+    private final FunctionInstantiator functionInstantiator;
     private final FunctionResolver functionResolver;
-    private final IntList groupByFunctionPositions = new IntList();
+    private final IntList groupByFunctionPositions;
     private final SortFactoryGenerator sortGenerator;
 
     SampleByFactoryGenerator(
             CairoConfiguration configuration,
             SqlCodeGenerator codeGenerator,
             FunctionResolver functionResolver,
+            FunctionInstantiator functionInstantiator,
             BytecodeAssembler asm,
             EntityColumnFilter entityColumnFilter,
-            SortFactoryGenerator sortGenerator
+            SortFactoryGenerator sortGenerator,
+            IntList columnIndexes,
+            IntList firstLastKinds,
+            IntList firstLastPositions,
+            IntList groupByFunctionPositions
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
         this.functionResolver = functionResolver;
+        this.functionInstantiator = functionInstantiator;
         this.asm = asm;
         this.entityColumnFilter = entityColumnFilter;
         this.sortGenerator = sortGenerator;
+        this.columnIndexes = columnIndexes;
+        this.firstLastKinds = firstLastKinds;
+        this.firstLastPositions = firstLastPositions;
+        this.groupByFunctionPositions = groupByFunctionPositions;
     }
 
     private static void assignUndefinedType(Function func, int type, SqlExecutionContext context) throws SqlException {
@@ -251,7 +262,8 @@ final class SampleByFactoryGenerator {
             }
 
             // SYMBOL columns are stored as INT in the keysMap.
-            final ArrayColumnTypes mapKeyTypes = new ArrayColumnTypes();
+            final ArrayColumnTypes mapKeyTypes = frame.keyTypes;
+            mapKeyTypes.clear();
             for (int i = 0, n = keyColIndices.size(); i < n; i++) {
                 int col = keyColIndices.getQuick(i);
                 int colType = groupByMetadata.getColumnType(col);
@@ -264,7 +276,8 @@ final class SampleByFactoryGenerator {
 
             // populateMapValueTypes owns the fixed-width value header layout so
             // slot indices stay in sync with the cursor's constants.
-            final ArrayColumnTypes mapValueTypes = new ArrayColumnTypes();
+            final ArrayColumnTypes mapValueTypes = frame.valueTypes;
+            mapValueTypes.clear();
             SampleByFillRecordCursorFactory.populateMapValueTypes(mapValueTypes);
 
             // Cached prev-value slots, allocated per unique non-key FILL_PREV
@@ -325,7 +338,8 @@ final class SampleByFactoryGenerator {
 
             RecordSink keySink = null;
             if (keyColIndices.size() > 0 && !isSampleBySource) {
-                final ListColumnFilter keyColFilter = new ListColumnFilter();
+                final ListColumnFilter keyColFilter = frame.listColumnFilterB;
+                keyColFilter.clear();
                 for (int i = 0, n = keyColIndices.size(); i < n; i++) {
                     keyColFilter.add(keyColIndices.getQuick(i) + 1); // 1-based
                 }
@@ -462,6 +476,7 @@ final class SampleByFactoryGenerator {
             RecordCursorFactory base,
             GenericRecordMetadata projectionMetadata,
             TimestampSampler timestampSampler,
+            char samplingIntervalUnit,
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             int timestampIndex,
@@ -561,7 +576,8 @@ final class SampleByFactoryGenerator {
                             sampleFromFunc,
                             sampleFromFuncPos,
                             sampleToFunc,
-                            sampleToFuncPos
+                            sampleToFuncPos,
+                            samplingIntervalUnit
                     );
                 }
 
@@ -586,7 +602,8 @@ final class SampleByFactoryGenerator {
                         sampleFromFunc,
                         sampleFromFuncPos,
                         sampleToFunc,
-                        sampleToFuncPos
+                        sampleToFuncPos,
+                        samplingIntervalUnit
                 );
             }
 
@@ -616,7 +633,8 @@ final class SampleByFactoryGenerator {
                     sampleFromFunc,
                     sampleFromFuncPos,
                     sampleToFunc,
-                    sampleToFuncPos
+                    sampleToFuncPos,
+                    samplingIntervalUnit
             );
         } catch (Throwable th) {
             if (!isTransferred) {
@@ -643,10 +661,9 @@ final class SampleByFactoryGenerator {
             int targetType,
             OutputSchema input,
             RecordMetadata metadata,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final Function fill = instantiator.instantiate(value, input, metadata, executionContext);
+        final Function fill = functionInstantiator.instantiate(value, input, metadata, executionContext);
         if (fill.getType() == targetType || !ColumnType.isArray(targetType)) {
             return fill;
         }
@@ -664,7 +681,6 @@ final class SampleByFactoryGenerator {
             RecordCursorFactory groupByFactory,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final FunctionInstantiator instantiator = frame.functionInstantiator;
         ObjList<Function> values = null;
         ObjList<Function> constants = null;
         Function from = null;
@@ -675,22 +691,23 @@ final class SampleByFactoryGenerator {
         try {
             final RecordMetadata metadata = groupByFactory.getMetadata();
             final int entryCount = plan.getTargetColumnIds().size();
-            values = new ObjList<>(entryCount);
+            values = frame.functions;
+            values.clear();
             values.setPos(entryCount);
             for (int i = 0; i < entryCount; i++) {
                 if (plan.getModes().getQuick(i) == FillPlan.FILL_VALUE) {
                     final int targetType = metadata.getColumnType(input.getColumnIndexById(plan.getTargetColumnIds().getQuick(i)));
-                    values.setQuick(i, instantiateFillValue(plan.getValues().getQuick(i), targetType, input, metadata, instantiator, executionContext));
+                    values.setQuick(i, instantiateFillValue(plan.getValues().getQuick(i), targetType, input, metadata, executionContext));
                 }
             }
             final int timestampIndex = input.getColumnIndexById(plan.getTimestampColumnId());
             final int timestampType = metadata.getColumnType(timestampIndex);
             final TimestampDriver driver = getTimestampDriver(timestampType);
             from = plan.getFrom() == null ? driver.getTimestampConstantNull()
-                    : instantiator.instantiate(plan.getFrom(), input, metadata, executionContext);
+                    : functionInstantiator.instantiate(plan.getFrom(), input, metadata, executionContext);
             assignUndefinedType(from, timestampType, executionContext);
             to = plan.getTo() == null ? driver.getTimestampConstantNull()
-                    : instantiator.instantiate(plan.getTo(), input, metadata, executionContext);
+                    : functionInstantiator.instantiate(plan.getTo(), input, metadata, executionContext);
             assignUndefinedType(to, timestampType, executionContext);
             final int intervalEnd = TimestampSamplerFactory.findPositiveIntervalEndIndex(plan.getPeriodToken(), plan.getPeriodPosition(), "sample");
             final long interval = TimestampSamplerFactory.parsePositiveInterval(plan.getPeriodToken(), intervalEnd,
@@ -698,11 +715,11 @@ final class SampleByFactoryGenerator {
             final char unit = plan.getPeriodToken().charAt(intervalEnd);
             final TimestampSampler sampler = TimestampSamplerFactory.getInstance(driver, interval, unit, plan.getPeriodPosition());
             if (plan.getTimezone() != null) {
-                timezone = instantiator.instantiate(plan.getTimezone(), input, metadata, executionContext);
+                timezone = functionInstantiator.instantiate(plan.getTimezone(), input, metadata, executionContext);
                 assignUndefinedType(timezone, STRING, executionContext);
             }
-            offset = plan.getOffset() == null ? StrConstant.NULL
-                    : instantiator.instantiate(plan.getOffset(), input, metadata, executionContext);
+            offset = plan.getOffset() == null || plan.getFrom() != null && plan.getAlgorithm() == FillPlan.Algorithm.SAMPLE_BY_ROWS ? StrConstant.NULL
+                    : functionInstantiator.instantiate(plan.getOffset(), input, metadata, executionContext);
             assignUndefinedType(offset, STRING, executionContext);
 
             final int columnCount = metadata.getColumnCount();
@@ -785,7 +802,6 @@ final class SampleByFactoryGenerator {
             RecordCursorFactory base,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final FunctionInstantiator instantiator = frame.functionInstantiator;
         Function timezone = null;
         Function offset = null;
         Function from = null;
@@ -794,23 +810,23 @@ final class SampleByFactoryGenerator {
         ObjList<Function> fillConstants = null;
         boolean isTransferred = false;
         try {
-            final OutputSchema input = plan.getInput().getOutput();
+            final OutputSchema input = plan.getChild().getOutput();
             final RecordMetadata baseMetadata = base.getMetadata();
             timezone = plan.getTimezone() == null ? StrConstant.NULL
-                    : instantiator.instantiate(plan.getTimezone(), input, baseMetadata, executionContext);
+                    : functionInstantiator.instantiate(plan.getTimezone(), input, baseMetadata, executionContext);
             assignUndefinedType(timezone, STRING, executionContext);
             offset = plan.getOffset() == null ? StrConstant.NULL
-                    : instantiator.instantiate(plan.getOffset(), input, baseMetadata, executionContext);
+                    : functionInstantiator.instantiate(plan.getOffset(), input, baseMetadata, executionContext);
             assignUndefinedType(offset, STRING, executionContext);
             final int timestampIndex = plan.isTimestampRequired()
                     ? baseMetadata.getTimestampIndex() : input.getColumnIndexById(plan.getTimestampColumnId());
             final int timestampType = baseMetadata.getColumnType(timestampIndex);
             final TimestampDriver driver = getTimestampDriver(timestampType);
             from = plan.getFrom() == null ? driver.getTimestampConstantNull()
-                    : instantiator.instantiate(plan.getFrom(), input, baseMetadata, executionContext);
+                    : functionInstantiator.instantiate(plan.getFrom(), input, baseMetadata, executionContext);
             assignUndefinedType(from, timestampType, executionContext);
             to = plan.getTo() == null ? driver.getTimestampConstantNull()
-                    : instantiator.instantiate(plan.getTo(), input, baseMetadata, executionContext);
+                    : functionInstantiator.instantiate(plan.getTo(), input, baseMetadata, executionContext);
             assignUndefinedType(to, timestampType, executionContext);
             if (plan.getTimezone() != null && CommonUtils.isSubDayUnit(plan.getPeriodUnit())) {
                 final CharSequence zone = timezone.getStrA(null);
@@ -836,24 +852,21 @@ final class SampleByFactoryGenerator {
             final ObjList<GroupByFunction> aggregates = new ObjList<>(calls.size());
             final OutputSchema output = plan.getOutput();
             records = new ObjList<>(output.getColumnCount());
-            AggregateFactoryGenerator.instantiateAggregates(plan, baseMetadata, instantiator, executionContext, aggregates, records, valueTypes);
-            AggregateFactoryGenerator.layOutColumnKeys(plan, baseMetadata, records, keyTypes, valueTypes, listColumnFilterA, frame.keySlots);
+            AggregateFactoryGenerator.instantiateAggregates(plan, baseMetadata, functionInstantiator, executionContext, aggregates, records, valueTypes);
+            AggregateFactoryGenerator.layOutColumnKeys(plan, baseMetadata, records, keyTypes, valueTypes, listColumnFilterA, frame.intListA);
             final int fillCount = plan.getFillTokens().size();
             fillConstants = new ObjList<>(fillCount);
             fillConstants.setPos(fillCount);
             for (int k = 0, n = Math.min(fillCount, aggregates.size()); k < n; k++) {
                 final BoundExpression value = plan.getFillValues().getQuick(k);
                 if (value != null) {
-                    fillConstants.setQuick(k, instantiateFillValue(value, aggregates.getQuick(k).getType(), input, baseMetadata, instantiator, executionContext));
+                    fillConstants.setQuick(k, instantiateFillValue(value, aggregates.getQuick(k).getType(), input, baseMetadata, executionContext));
                 }
             }
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
             int symbolKeyIndex = -1;
             boolean isFirstLast = plan.getFillMode() == SampleByPlan.FILL_NONE;
             final IntList firstLastIndexes = columnIndexes;
-            final IntList firstLastKinds = this.firstLastKinds;
-            final IntList firstLastPositions = this.firstLastPositions;
-            final IntList groupByFunctionPositions = this.groupByFunctionPositions;
             firstLastIndexes.clear();
             firstLastKinds.clear();
             firstLastPositions.clear();
@@ -897,7 +910,7 @@ final class SampleByFactoryGenerator {
                 firstLastPositions.add(call.getPosition());
             }
             isTransferred = true;
-            return generateSampleByFactory(frame, plan.getAlgorithm(), base, metadata, sampler, aggregates, records,
+            return generateSampleByFactory(frame, plan.getAlgorithm(), base, metadata, sampler, plan.getPeriodUnit(), aggregates, records,
                     timestampIndex, timestampType, plan.getFillTokens(), fillConstants,
                     firstLastIndexes, isFirstLast, firstLastKinds, firstLastPositions, groupByFunctionPositions, symbolKeyIndex,
                     timezone, plan.getTimezonePosition(), offset, plan.getOffsetPosition(),

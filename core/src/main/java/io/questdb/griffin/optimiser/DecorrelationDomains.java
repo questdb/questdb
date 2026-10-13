@@ -50,9 +50,9 @@ final class DecorrelationDomains implements Mutable {
     final ObjList<JoinInput> decorrelatedSteps;
     final IntList domainOuterIds = new IntList();
     private final DecorrelationContext ctx;
-    private final ConjunctTest nonDomainConjuncts = this::keepsNonDomainConjunct;
     int domainSequence;
     private JoinInput domainStep;
+    private final ConjunctTest nonDomainConjuncts = this::keepsNonDomainConjunct;
 
     /**
      * {@code decorrelatedSteps} is the optimiser's temporary step list, which the owner empties before decorrelation starts.
@@ -107,7 +107,7 @@ final class DecorrelationDomains implements Mutable {
 
     private void shareMasterSource(AggregatePlan domain, JoinInput source) {
         final OutputSchema sourceOutput = source.getSourceOutput();
-        final OutputSchema output = domain.getInput().getOutput();
+        final OutputSchema output = domain.getChild().getOutput();
         if (source.getUnnest() != null || sourceOutput.getColumnCount() != output.getColumnCount()) {
             return;
         }

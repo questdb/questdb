@@ -39,6 +39,7 @@ import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.TimestampFunction;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.datetime.CommonUtils;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCursor {
@@ -47,6 +48,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     protected final ObjList<Function> recordFunctions;
     protected final int timestampIndex;
     private final GroupByAllocator allocator;
+    private final char samplingIntervalUnit;
     protected RecordCursor baseCursor;
     protected Record baseRecord;
     protected SqlExecutionCircuitBreaker circuitBreaker;
@@ -77,7 +79,8 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            char samplingIntervalUnit
     ) {
         super(
                 timestampSampler,
@@ -93,6 +96,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         );
         this.timestampIndex = timestampIndex;
         this.recordFunctions = recordFunctions;
+        this.samplingIntervalUnit = samplingIntervalUnit;
         this.groupByFunctions = groupByFunctions;
         this.groupByFunctionsUpdater = groupByFunctionsUpdater;
         // Lazy variant: the allocator's chunk index is not allocated until the
@@ -125,6 +129,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         baseRecord = baseCursor.getRecord();
         prevDst = Long.MIN_VALUE;
         parseParams(baseCursor, executionContext);
+        topTzOffset = tzOffset;
         topNextDst = nextDstUtc;
         circuitBreaker = executionContext.getCircuitBreaker();
         // Consult the breaker at open, so an empty base scan (whose row loops never run) stays cancellable.
@@ -169,6 +174,12 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         sampleLocalEpoch += (newTzOffset - tzOffset);
         nextSampleLocalEpoch = sampleLocalEpoch;
         tzOffset = newTzOffset;
+    }
+
+    // SampleByFactoryGenerator hands sub-day strides their FROM in UTC and longer strides in local time.
+    private long localFrom(long from) {
+        final long timestamp = timestampDriver.from(from, sampleFromFuncType);
+        return CommonUtils.isSubDayUnit(samplingIntervalUnit) ? timestamp + tzOffset : timestamp;
     }
 
     protected long adjustDst(long timestamp, @Nullable MapValue mapValue, long nextSampleTimestamp) {
@@ -235,7 +246,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             // FROM-TO may apply to align to calendar queries, fixing the lower bound.
             if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
                 from = sampleFromFunc.getTimestamp(null);
-                timestampSampler.setStart(from != Long.MIN_VALUE ? timestampDriver.from(from, sampleFromFuncType) + tzOffset : 0);
+                timestampSampler.setStart(from != Long.MIN_VALUE ? localFrom(from) : 0);
             } else {
                 timestampSampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0);
             }
@@ -245,7 +256,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         topNextDst = nextDstUtc;
         if (from != Long.MIN_VALUE) {
             // set the top epoch to be the lower limit
-            topLocalEpoch = timestampSampler.round(timestampDriver.from(from, sampleFromFuncType) + tzOffset);
+            topLocalEpoch = timestampSampler.round(localFrom(from));
             // set current epoch to be the floor of the starting timestamp
             localEpoch = timestampSampler.round(timestamp + tzOffset);
         } else {
@@ -310,7 +321,7 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
     }
 
     protected void updateValueWhenClockMovesBack(MapValue value) {
-        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId);
+        groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
     }
 
     protected class TimestampFunc extends TimestampFunction implements Function {

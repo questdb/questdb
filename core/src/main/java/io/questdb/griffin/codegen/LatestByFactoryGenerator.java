@@ -67,8 +67,6 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
-import static io.questdb.cairo.ColumnType.*;
-
 /**
  * Builds LATEST BY factories: the keyed latest-row scans over a table and the latest-row
  * selection over a derived input.
@@ -77,18 +75,15 @@ final class LatestByFactoryGenerator {
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
-    private final IntList latestByColumnIndexes;
 
     LatestByFactoryGenerator(
             CairoConfiguration configuration,
             SqlCodeGenerator codeGenerator,
-            BytecodeAssembler asm,
-            IntList latestByColumnIndexes
+            BytecodeAssembler asm
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
         this.asm = asm;
-        this.latestByColumnIndexes = latestByColumnIndexes;
     }
 
     /**
@@ -323,45 +318,26 @@ final class LatestByFactoryGenerator {
      * Generates LATEST BY over a derived input; a table scan input takes the keyed scan path instead.
      */
     RecordCursorFactory generateLatestBy(GenerationFrame frame, LatestByPlan latest, SqlExecutionContext executionContext) throws SqlException {
-        final LogicalPlan input = latest.getInput();
+        final LogicalPlan input = latest.getChild();
         // LATEST BY locates its timestamp by position; a declaration alone adds nothing.
         final RecordCursorFactory base = codeGenerator.generate(frame, PlanToFactoryRules.latestByBase(latest), executionContext);
         final OutputSchema schema = input.getOutput();
-        final int timestampIndex = schema.getColumnIndexById(latest.getTimestampColumnId());
-        final IntList keyIndexes = latestByColumnIndexes;
+        final ArrayColumnTypes keyTypes = frame.keyTypes;
+        final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
         try {
-            keyIndexes.clear();
+            final RecordMetadata metadata = base.getMetadata();
+            keyTypes.clear();
+            listColumnFilterA.clear();
             for (int i = 0, n = latest.getKeyColumnIds().size(); i < n; i++) {
-                keyIndexes.add(schema.getColumnIndexById(latest.getKeyColumnIds().getQuick(i)));
+                final int index = schema.getColumnIndexById(latest.getKeyColumnIds().getQuick(i));
+                keyTypes.add(metadata.getColumnType(index));
+                listColumnFilterA.add(index + 1);
             }
         } catch (Throwable th) {
             Misc.free(base, th);
             throw th;
         }
-        return generateLatestBy(frame, base, timestampIndex, keyIndexes, latest.getAlgorithm());
-    }
-
-    /**
-     * Consumes the source; column indexes are borrowed only during construction.
-     */
-    RecordCursorFactory generateLatestBy(GenerationFrame frame, RecordCursorFactory factory, int timestampIndex, IntList keyIndexes,
-                                         LatestByPlan.Algorithm algorithm) {
-        final ArrayColumnTypes keyTypes = frame.keyTypes;
-        final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
-        try {
-            final RecordMetadata metadata = factory.getMetadata();
-            keyTypes.clear();
-            listColumnFilterA.clear();
-            for (int i = 0, n = keyIndexes.size(); i < n; i++) {
-                final int index = keyIndexes.getQuick(i);
-                keyTypes.add(metadata.getColumnType(index));
-                listColumnFilterA.add(index + 1);
-            }
-        } catch (Throwable th) {
-            Misc.free(factory, th);
-            throw th;
-        }
-        return generateLatestByPrepared(frame, factory, timestampIndex, algorithm);
+        return generateLatestByPrepared(frame, base, schema.getColumnIndexById(latest.getTimestampColumnId()), latest.getAlgorithm());
     }
 
     /**
@@ -376,7 +352,7 @@ final class LatestByFactoryGenerator {
             @Transient TableReader reader,
             IntList columnIndexes,
             IntList columnSizeShifts,
-            IntList keyIndexes,
+            IntList keyColumnIds,
             @Nullable Function filter,
             ObjList<Function> keys,
             ObjList<Function> excludedKeys,
@@ -389,8 +365,8 @@ final class LatestByFactoryGenerator {
             final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
             keyTypes.clear();
             listColumnFilterA.clear();
-            for (int i = 0, n = keyIndexes.size(); i < n; i++) {
-                final int index = keyIndexes.getQuick(i);
+            for (int i = 0, n = keyColumnIds.size(); i < n; i++) {
+                final int index = scan.getOutput().getColumnIndexById(keyColumnIds.getQuick(i));
                 keyTypes.add(queryMetadata.getColumnType(index));
                 listColumnFilterA.add(index + 1);
             }
@@ -401,7 +377,7 @@ final class LatestByFactoryGenerator {
             Misc.freeObjList(excludedKeys, th);
             throw th;
         }
-        final int keyIndex = keyIndexes.size() == 0 ? -1 : keyIndexes.getQuick(0);
+        final int keyIndex = keyColumnIds.size() == 0 ? -1 : scan.getOutput().getColumnIndexById(keyColumnIds.getQuick(0));
         final boolean isBackupSuppressed = scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING);
         return switch (scan.getAccessPath()) {
             case LATEST_BY_VALUE ->

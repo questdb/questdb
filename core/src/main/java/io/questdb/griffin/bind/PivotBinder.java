@@ -72,7 +72,7 @@ final class PivotBinder implements Mutable {
     private final BindContext ctx;
     private final JoinBinder joinBinder;
     private final StringSink pivotValueSink;
-    private final CharSequenceHashSet pivotValues = new CharSequenceHashSet();
+    private final CharSequenceHashSet pivotValues;
     private final SubqueryCompiler subqueryCompiler;
     private final TemporalJoinBinder temporalJoinBinder;
     private final WindowBinder windowBinder;
@@ -87,6 +87,7 @@ final class PivotBinder implements Mutable {
             AggregateBinder aggregateBinder,
             JoinBinder joinBinder,
             StringSink pivotValueSink,
+            CharSequenceHashSet pivotValues,
             SubqueryCompiler subqueryCompiler
     ) {
         this.ctx = ctx;
@@ -98,12 +99,12 @@ final class PivotBinder implements Mutable {
         this.aggregateBinder = aggregateBinder;
         this.joinBinder = joinBinder;
         this.pivotValueSink = pivotValueSink;
+        this.pivotValues = pivotValues;
         this.subqueryCompiler = subqueryCompiler;
     }
 
     @Override
     public void clear() {
-        pivotValues.clear();
         windowJoinPivotAggregatePool.clear();
     }
 
@@ -159,7 +160,7 @@ final class PivotBinder implements Mutable {
             return;
         }
         bindScope.pivotKeyIndexes.add(grouped.getGroupingExpressions().size());
-        final OutputSchema scope = grouped.getInput().getOutput();
+        final OutputSchema scope = grouped.getChild().getOutput();
         final BoundExpression bound;
         final int index;
         if (key.type == ExpressionNode.LITERAL) {

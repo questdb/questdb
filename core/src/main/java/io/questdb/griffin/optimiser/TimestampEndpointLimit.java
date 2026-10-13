@@ -78,7 +78,7 @@ final class TimestampEndpointLimit implements OptimiserPass {
     private void limitInput(AggregatePlan aggregate) {
         final FunctionExpression call = aggregate.getAggregates().getQuick(0);
         final int position = call.getPosition();
-        LogicalPlan input = aggregate.getInput();
+        LogicalPlan input = aggregate.getChild();
         if (LogicalPlans.isTimestampEndpointBackward(call)) {
             final SortPlan sort = sorts.next().of(input, position);
             sort.getColumnIds().add(input.getOutput().getTimestampColumnId());

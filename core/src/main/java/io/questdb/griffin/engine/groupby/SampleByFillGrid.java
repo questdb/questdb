@@ -60,6 +60,7 @@ final class SampleByFillGrid {
     private final Function tzFunc;
     private final int tzFuncPos;
     private long calendarOffset;
+    private long firstRowTimestamp;
     private long fromTs;
     private boolean hasExplicitTo;
     private long maxTimestamp;
@@ -111,6 +112,7 @@ final class SampleByFillGrid {
      * grid is unbounded.
      */
     long firstBucket(long firstTs) {
+        firstRowTimestamp = firstTs;
         final boolean currentBucketIsFirstTs = (fromTs == Numbers.LONG_NULL || firstTs < fromTs);
         long bucket = currentBucketIsFirstTs ? firstTs : fromTs;
         if (calendarOffset != 0 && fromTs == Numbers.LONG_NULL) {
@@ -186,6 +188,17 @@ final class SampleByFillGrid {
 
     long nextBucket(long bucketTimestamp) {
         return timestampSampler.nextTimestamp(bucketTimestamp);
+    }
+
+    /**
+     * Returns the bucket after the given one over a SAMPLE BY source, which re-rounds its
+     * buckets after a DST transition: from the first row on, a step stops at the source's
+     * next row, LONG_NULL when no row is left.
+     */
+    long nextBucket(long bucketTimestamp, long nextRowTimestamp) {
+        final long next = timestampSampler.nextTimestamp(bucketTimestamp);
+        return bucketTimestamp >= firstRowTimestamp && nextRowTimestamp > bucketTimestamp && nextRowTimestamp < next
+                ? nextRowTimestamp : next;
     }
 
     void of(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {

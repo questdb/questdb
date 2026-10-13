@@ -190,8 +190,9 @@ public class SqlParser {
     private final ObjectPool<InsertModel> insertModelPool;
     // The views parseDeclaredQuery() takes off viewsBeingCompiled while it parses a copy, to put
     // back when the copy's parse returns.
-    private final ObjList<CharSequence> parkedViewsBeingCompiled = new ObjList<>();
+    private final ObjList<CharSequence> parkedViewsBeingCompiled;
     private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
+    private final IntList pivotAliasPositions = new IntList();
     private final ObjectPool<PivotForColumn> pivotQueryColumnPool;
     // The PIVOT ... FOR ... IN (SELECT ...) sub-queries parsed inside the audited views whose
     // bodies the parser is expanding: each still lacks the audits of the views around it.
@@ -213,14 +214,13 @@ public class SqlParser {
     private final PostOrderTreeTraversalAlgo.Visitor rewriteJsonExtractCastRef = this::rewriteJsonExtractCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgCastRef = this::rewritePgCast;
     private final PostOrderTreeTraversalAlgo.Visitor rewritePgNumericRef = this::rewritePgNumeric;
-    private final ObjList<ExpressionNode> splicedArgs = new ObjList<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
-    private final IntList tableNamePositions = new IntList();
+    private final IntList tableNamePositions;
     private final LowerCaseCharSequenceHashSet tableNames = new LowerCaseCharSequenceHashSet();
     // The declared sub-queries whose parsed model a read has taken; every later read parses a copy.
     private final ObjList<ExpressionNode> takenDeclaredQueries = new ObjList<>();
-    private final CharSequenceHashSet tempCharSequenceSet = new CharSequenceHashSet();
-    private final ObjList<ExpressionNode> tempExprNodes = new ObjList<>();
+    private final CharSequenceHashSet tempCharSequenceSet;
+    private final ObjList<ExpressionNode> tempExprNodes;
     private final PostOrderTreeTraversalAlgo.Visitor rewriteCaseRef = this::rewriteCase;
     private final LowerCaseCharSequenceObjHashMap<WithClauseModel> topLevelWithModel = new LowerCaseCharSequenceObjHashMap<>();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
@@ -295,7 +295,11 @@ public class SqlParser {
             ObjectPool<WindowExpression> windowExpressionPool,
             ObjectPool<QueryColumn> queryColumnPool,
             ObjectPool<QueryModel> queryModelPool,
-            PostOrderTreeTraversalAlgo traversalAlgo
+            PostOrderTreeTraversalAlgo traversalAlgo,
+            CharSequenceHashSet tempCharSequenceSet,
+            ObjList<ExpressionNode> tempExprNodes,
+            ObjList<CharSequence> parkedViewsBeingCompiled,
+            IntList tableNamePositions
     ) {
         this.cairoEngine = cairoEngine;
         this.configuration = cairoEngine.getConfiguration();
@@ -322,6 +326,10 @@ public class SqlParser {
         final int pivotColumnPoolCapacity = configuration.getPivotColumnPoolCapacity();
         this.pivotQueryColumnPool = new ObjectPool<>(PivotForColumn.FACTORY, pivotColumnPoolCapacity, pivotColumnPoolCapacity);
         this.traversalAlgo = traversalAlgo;
+        this.tempCharSequenceSet = tempCharSequenceSet;
+        this.tempExprNodes = tempExprNodes;
+        this.parkedViewsBeingCompiled = parkedViewsBeingCompiled;
+        this.tableNamePositions = tableNamePositions;
         this.characterStore = characterStore;
         final int viewLexerPoolCapacity = configuration.getViewLexerPoolCapacity();
         this.viewAuditModelPool = new ObjectPool<>(ViewAuditModel.FACTORY, viewLexerPoolCapacity, viewLexerPoolCapacity);
@@ -1075,7 +1083,6 @@ public class SqlParser {
         pivotSubQueryModelsInAuditedView.clear();
         viewAuditModelPool.clear();
         viewsBeingCompiled.clear();
-        parkedViewsBeingCompiled.clear();
         auditedViewDepth = 0;
         viewExpansionDepth = 0;
         viewReferencePosition = 0;
@@ -6368,12 +6375,13 @@ public class SqlParser {
 
         // Parse aggregate functions.
         FunctionFactoryCache functionFactoryCache = cairoEngine.getFunctionFactoryCache();
-        pivotAliasMap.clear();
         do {
             model.addPivotGroupByColumn(parsePivotAggregateColumn(lexer, model, functionFactoryCache, sqlParserCallback));
             tok = optTok(lexer);
         } while (tok != null && isNotForKeyword(tok) && isComma(tok));
 
+        pivotAliasMap.clear();
+        aliasSequenceMap.clear();
         ObjList<QueryColumn> pivotGroupByCols = model.getPivotGroupByColumns();
         boolean hasNoAlias = false;
         for (int i = 0, n = pivotGroupByCols.size(); i < n; i++) {
@@ -6434,60 +6442,76 @@ public class SqlParser {
                 pivotForColumn.setSelectSubqueryExpr(expr);
                 expectTok(lexer, ')');
             } else {
-                tempCharSequenceSet.clear();
-                pivotAliasMap.clear();
-                aliasSequenceMap.clear();
-                do {
-                    ExpressionNode expr = expr(lexer, model, sqlParserCallback);
-                    if (expr == null) {
-                        throw SqlException.$(lexer.lastTokenPosition(), "missing constant");
-                    }
-                    CharacterStoreEntry entry = characterStore.newEntry();
-                    expr.toSink(entry);
-                    CharSequence exprName = entry.toImmutable();
-                    final int index = tempCharSequenceSet.keyIndex(exprName);
-                    if (index < 0) {
-                        throw SqlException.$(expr.position, "duplicate value in PIVOT IN list: ").put(exprName);
-                    }
-                    tempCharSequenceSet.addAtWithBorrowed(index, exprName);
-
-                    CharSequence nextTok = tok(lexer, "',' or ')'");
-                    CharSequence alias;
-                    if (isNotForKeyword(nextTok) && columnAliasStop.excludes(nextTok)) {
-                        assertNotDot(lexer, nextTok);
-                        if (isAsKeyword(nextTok)) {
-                            nextTok = tok(lexer, "alias");
-                            SqlKeywords.assertNameIsQuotedOrNotAKeyword(nextTok, lexer.lastTokenPosition());
-                            CharSequence aliasTok = GenericLexer.immutableOf(nextTok);
-                            validateIdentifier(lexer, aliasTok);
-                            alias = unquote(aliasTok);
+                final int aliasPositionsLo = pivotAliasPositions.size();
+                try {
+                    do {
+                        ExpressionNode expr = expr(lexer, model, sqlParserCallback);
+                        if (expr == null) {
+                            throw SqlException.$(lexer.lastTokenPosition(), "missing constant");
+                        }
+                        CharSequence nextTok = tok(lexer, "',' or ')'");
+                        CharSequence alias = null;
+                        if (isNotForKeyword(nextTok) && columnAliasStop.excludes(nextTok)) {
+                            assertNotDot(lexer, nextTok);
+                            if (isAsKeyword(nextTok)) {
+                                nextTok = tok(lexer, "alias");
+                                SqlKeywords.assertNameIsQuotedOrNotAKeyword(nextTok, lexer.lastTokenPosition());
+                                CharSequence aliasTok = GenericLexer.immutableOf(nextTok);
+                                validateIdentifier(lexer, aliasTok);
+                                alias = unquote(aliasTok);
+                            } else {
+                                validateIdentifier(lexer, nextTok);
+                                SqlKeywords.assertNameIsQuotedOrNotAKeyword(nextTok, lexer.lastTokenPosition());
+                                alias = GenericLexer.immutableOf(unquote(nextTok));
+                            }
                         } else {
-                            validateIdentifier(lexer, nextTok);
-                            SqlKeywords.assertNameIsQuotedOrNotAKeyword(nextTok, lexer.lastTokenPosition());
-                            alias = GenericLexer.immutableOf(unquote(nextTok));
+                            lexer.unparseLast();
                         }
-                        if (!pivotAliasMap.add(alias)) {
-                            throw SqlException.$(lexer.lastTokenPosition(), "duplicate alias in PIVOT IN list: ").put(alias);
-                        }
-                    } else {
-                        lexer.unparseLast();
-                        alias = SqlUtil.createExprColumnAlias(
-                                characterStore,
-                                unquote(exprName),
-                                pivotAliasMap,
-                                aliasSequenceMap,
-                                configuration.getColumnAliasGeneratedMaxSize(),
-                                true
-                        );
-                        pivotAliasMap.add(alias);
+                        pivotForColumn.addValue(expr, alias);
+                        pivotAliasPositions.add(lexer.lastTokenPosition());
+                        tok = tok(lexer, "constant list");
+                    } while (isComma(tok));
+
+                    if (!isRightParen(tok)) {
+                        throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
                     }
 
-                    pivotForColumn.addValue(expr, alias);
-                    tok = tok(lexer, "constant list");
-                } while (isComma(tok));
+                    tempCharSequenceSet.clear();
+                    pivotAliasMap.clear();
+                    aliasSequenceMap.clear();
+                    final ObjList<ExpressionNode> values = pivotForColumn.getValueList();
+                    final ObjList<CharSequence> aliases = pivotForColumn.getValueAliases();
+                    for (int i = 0, n = values.size(); i < n; i++) {
+                        final ExpressionNode expr = values.getQuick(i);
+                        CharacterStoreEntry entry = characterStore.newEntry();
+                        expr.toSink(entry);
+                        CharSequence exprName = entry.toImmutable();
+                        final int index = tempCharSequenceSet.keyIndex(exprName);
+                        if (index < 0) {
+                            throw SqlException.$(expr.position, "duplicate value in PIVOT IN list: ").put(exprName);
+                        }
+                        tempCharSequenceSet.addAtWithBorrowed(index, exprName);
 
-                if (!isRightParen(tok)) {
-                    throw SqlException.position(lexer.lastTokenPosition()).put("')' expected");
+                        final CharSequence alias = aliases.getQuick(i);
+                        if (alias != null) {
+                            if (!pivotAliasMap.add(alias)) {
+                                throw SqlException.$(pivotAliasPositions.getQuick(aliasPositionsLo + i), "duplicate alias in PIVOT IN list: ").put(alias);
+                            }
+                        } else {
+                            final CharSequence generatedAlias = SqlUtil.createExprColumnAlias(
+                                    characterStore,
+                                    unquote(exprName),
+                                    pivotAliasMap,
+                                    aliasSequenceMap,
+                                    configuration.getColumnAliasGeneratedMaxSize(),
+                                    true
+                            );
+                            pivotAliasMap.add(generatedAlias);
+                            aliases.setQuick(i, generatedAlias);
+                        }
+                    }
+                } finally {
+                    pivotAliasPositions.setPos(aliasPositionsLo);
                 }
             }
 
@@ -8216,7 +8240,7 @@ public class SqlParser {
         }
         // Reused rather than allocated per splice: spliceValueLists finishes a child subtree, this
         // call included, before it starts the parent's, and nothing here re-enters the parser.
-        final ObjList<ExpressionNode> spliced = splicedArgs;
+        final ObjList<ExpressionNode> spliced = tempExprNodes;
         spliced.clear();
         for (int i = 0; i < n; i++) {
             final ExpressionNode arg = n == 2 ? (i == 0 ? node.rhs : node.lhs) : node.args.getQuick(i);
@@ -8386,7 +8410,6 @@ public class SqlParser {
     private void validateMatViewQuery(QueryModel model, String baseTableName) throws SqlException {
         for (QueryModel m = model; m != null; m = m.getNestedModel()) {
             tableNames.clear();
-            tableNamePositions.clear();
             SqlUtil.collectAllTableNames(m, tableNames, null);
             final boolean baseTableQueried = tableNames.contains(baseTableName);
             final int queriedTableCount = tableNames.size();
@@ -8576,8 +8599,6 @@ public class SqlParser {
         idleViewLexers.clear();
         viewLexers.clear();
         digit = 1;
-        traversalAlgo.clear();
-        tempCharSequenceSet.clear();
         aliasMap.clear();
         aliasSequenceMap.clear();
         pivotAliasMap.clear();

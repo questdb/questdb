@@ -58,24 +58,6 @@ import org.junit.Test;
 
 public class LogicalPlanTest {
     @Test
-    public void testBooleanBindingClassificationKeepsOverridesSeparate() throws Exception {
-        FunctionFactoryDescriptor overload = new FunctionFactoryDescriptor(new AndFunctionFactory());
-        Assert.assertTrue(overload.isAnd());
-        Assert.assertFalse(overload.isOr());
-        overload = new FunctionFactoryDescriptor(new OrFunctionFactory());
-        Assert.assertFalse(overload.isAnd());
-        Assert.assertTrue(overload.isOr());
-        overload = new FunctionFactoryDescriptor(new AndFunctionFactory() {
-        });
-        Assert.assertFalse(overload.isAnd());
-        Assert.assertFalse(overload.isOr());
-        overload = new FunctionFactoryDescriptor(new OrFunctionFactory() {
-        });
-        Assert.assertFalse(overload.isAnd());
-        Assert.assertFalse(overload.isOr());
-    }
-
-    @Test
     public void testAggregatePoolResetPreservesBorrowedExpressionAndInput() throws Exception {
         final ObjectPool<AggregatePlan> aggregates = new ObjectPool<>(AggregatePlan.FACTORY, 1);
         final ScanPlan source = scan();
@@ -100,7 +82,7 @@ public class LogicalPlanTest {
 
         final ScanPlan replacement = scan();
         aggregate.replaceInput(0, replacement);
-        Assert.assertSame(replacement, aggregate.getInput());
+        Assert.assertSame(replacement, aggregate.getChild());
         Assert.assertThrows(IndexOutOfBoundsException.class, () -> aggregate.replaceInput(1, source));
         aggregates.clear();
         Assert.assertSame(aggregate, aggregates.next());
@@ -110,12 +92,30 @@ public class LogicalPlanTest {
         Assert.assertEquals(11, key.getColumnId());
         Assert.assertSame(output, aggregate.getOutput());
         Assert.assertEquals(0, output.getColumnCount());
-        Assert.assertNull(aggregate.getInput());
+        Assert.assertNull(aggregate.getChild());
         Assert.assertEquals(-1, aggregate.getPosition());
         Assert.assertEquals(1, source.getOutput().getColumnCount());
         Assert.assertSame(overload, count.getOverload());
         Assert.assertEquals(ColumnType.LONG, count.getDataType());
         Assert.assertEquals(7, count.getPosition());
+    }
+
+    @Test
+    public void testBooleanBindingClassificationKeepsOverridesSeparate() throws Exception {
+        FunctionFactoryDescriptor overload = new FunctionFactoryDescriptor(new AndFunctionFactory());
+        Assert.assertTrue(overload.isAnd());
+        Assert.assertFalse(overload.isOr());
+        overload = new FunctionFactoryDescriptor(new OrFunctionFactory());
+        Assert.assertFalse(overload.isAnd());
+        Assert.assertTrue(overload.isOr());
+        overload = new FunctionFactoryDescriptor(new AndFunctionFactory() {
+        });
+        Assert.assertFalse(overload.isAnd());
+        Assert.assertFalse(overload.isOr());
+        overload = new FunctionFactoryDescriptor(new OrFunctionFactory() {
+        });
+        Assert.assertFalse(overload.isAnd());
+        Assert.assertFalse(overload.isOr());
     }
 
     @Test
@@ -131,7 +131,7 @@ public class LogicalPlanTest {
 
         first.clear();
         Assert.assertTrue(first instanceof FilterPlan);
-        Assert.assertNull(first.getInput());
+        Assert.assertNull(first.getChild());
         Assert.assertNull(first.getPredicate());
         Assert.assertEquals(0, first.getOutput().getColumnCount());
         Assert.assertSame(source, second.inputAt(0));
@@ -143,7 +143,7 @@ public class LogicalPlanTest {
 
         final ScanPlan replacement = scan();
         second.replaceInput(0, replacement);
-        Assert.assertSame(replacement, second.getInput());
+        Assert.assertSame(replacement, second.getChild());
         Assert.assertEquals(1, source.getOutput().getColumnCount());
         Assert.assertThrows(IndexOutOfBoundsException.class, () -> second.replaceInput(1, source));
         Assert.assertThrows(IndexOutOfBoundsException.class, () -> source.inputAt(0));
@@ -272,14 +272,14 @@ public class LogicalPlanTest {
         Assert.assertEquals(-1, scan.getPosition());
         Assert.assertSame(expressions, project.getExpressions());
         Assert.assertEquals(0, expressions.size());
-        Assert.assertNull(project.getInput());
+        Assert.assertNull(project.getChild());
         Assert.assertSame(sortColumns, sort.getColumnIds());
         Assert.assertSame(directions, sort.getDirections());
         Assert.assertEquals(0, sortColumns.size());
         Assert.assertEquals(0, directions.size());
         Assert.assertNull(limit.getLo());
         Assert.assertNull(limit.getHi());
-        Assert.assertNull(limit.getInput());
+        Assert.assertNull(limit.getChild());
         Assert.assertEquals(-1, column.getColumnId());
         Assert.assertEquals(ColumnType.UNDEFINED, column.getDataType());
         Assert.assertEquals(-1, column.getPosition());

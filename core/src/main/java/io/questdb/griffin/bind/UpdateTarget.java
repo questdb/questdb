@@ -33,16 +33,23 @@ import io.questdb.std.ObjList;
  * table columns its SET clause assigns, in assignment order.
  */
 public final class UpdateTarget implements Mutable {
-    private final ObjList<CharSequence> columnNames = new ObjList<>();
+    private final ObjList<CharSequence> columnNames;
     private long metadataVersion;
     private int tableId;
     private CharSequence tableName;
     private int tablePosition;
     private TableToken tableToken;
 
+    /**
+     * Records the assigned columns in {@code columnNames}, which no one else writes while the UPDATE binds and
+     * authorizes.
+     */
+    public UpdateTarget(ObjList<CharSequence> columnNames) {
+        this.columnNames = columnNames;
+    }
+
     @Override
     public void clear() {
-        columnNames.clear();
         metadataVersion = 0;
         tableId = 0;
         tableName = null;

@@ -51,16 +51,18 @@ final class CorrelationKeys implements Mutable {
     final IntList deferredColumnIds = new IntList();
     final ObjList<JoinInput> deferredInputs = new ObjList<>();
     final IntList deferredOuterIds = new IntList();
-    final IntList droppedEqualities = new IntList();
+    final IntList droppedEqualities;
     private final DecorrelationContext ctx;
-    private final IntList readOuterIds = new IntList();
+    private final IntList readOuterIds;
     private final ConjunctTest undroppedConjuncts = conjunct -> !isDroppedEquality(conjunct);
     private JoinInput keyedInput;
     private JoinPlan keyedJoin;
     private final ConjunctTest unkeyedConjuncts = conjunct -> !extractKey(keyedJoin, keyedInput, conjunct);
 
-    CorrelationKeys(DecorrelationContext ctx) {
+    CorrelationKeys(DecorrelationContext ctx, IntList droppedEqualities, IntList readOuterIds) {
         this.ctx = ctx;
+        this.droppedEqualities = droppedEqualities;
+        this.readOuterIds = readOuterIds;
     }
 
     @Override
@@ -68,8 +70,6 @@ final class CorrelationKeys implements Mutable {
         deferredColumnIds.clear();
         deferredInputs.clear();
         deferredOuterIds.clear();
-        droppedEqualities.clear();
-        readOuterIds.clear();
         keyedInput = null;
         keyedJoin = null;
     }

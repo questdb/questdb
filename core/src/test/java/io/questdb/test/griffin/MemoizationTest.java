@@ -37,9 +37,13 @@ import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.functions.DoubleFunction;
+import io.questdb.std.BinarySequence;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -224,6 +228,80 @@ public class MemoizationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVolatileBinaryLengthNullnessAndContentDescribeOneSample() throws Exception {
+        assertMemoryLeak(() -> {
+            final String source = "(SELECT rnd_bin(1, 1_024, 2) b FROM long_sequence(1_000))";
+            assertRowsAndMemoizers("SELECT count() FROM (SELECT length(b) l, base64(b, 2_048) s FROM " + source + ")"
+                    + " WHERE CASE WHEN l = -1 THEN s IS NOT NULL ELSE s IS NULL OR length(s) <> (l + 2) / 3 * 4 END", "count\n0\n", 1);
+            assertRowsAndMemoizers("SELECT count() FROM (SELECT base64(b, 2_048) s, length(b) l FROM " + source + ")"
+                    + " WHERE CASE WHEN s IS NULL THEN l <> -1 ELSE length(s) <> (l + 2) / 3 * 4 END", "count\n0\n", 1);
+            assertRowsAndMemoizers("SELECT count() FROM (SELECT b IS NULL n, length(b) l, base64(b, 2_048) s1, base64(b, 2_048) s2 FROM " + source + ")"
+                    + " WHERE s1 <> s2 OR (s1 IS NULL) <> n OR n <> (l = -1)", "count\n0\n", 1);
+
+            final ByteCountingRnd rnd = new ByteCountingRnd();
+            sqlExecutionContext.setRandom(rnd);
+            try (RecordCursorFactory factory = select("SELECT length(b) l, b IS NULL n, b, base64(b, 3) p, base64(b, 2_048) s FROM " + source);
+                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                assertMemoizerCount(factory, 1);
+                final Record record = cursor.getRecord();
+                final StringSink encoded = new StringSink();
+                int nullCount = 0;
+                while (cursor.hasNext()) {
+                    final long generated = rnd.byteCount;
+                    final long length = record.getLong(0);
+                    final boolean isNull = record.getBool(1);
+                    final BinarySequence bin = record.getBin(2);
+                    Assert.assertEquals(generated, rnd.byteCount);
+                    Assert.assertEquals(length == -1, isNull);
+                    if (isNull) {
+                        nullCount++;
+                        Assert.assertNull(bin);
+                        Assert.assertNull(record.getStrA(3));
+                        Assert.assertNull(record.getStrA(4));
+                    } else {
+                        Assert.assertEquals(length, bin.length());
+                        final String prefix = record.getStrA(3).toString();
+                        Assert.assertEquals(generated + Math.min(3, length), rnd.byteCount);
+                        final CharSequence s = record.getStrA(4);
+                        Assert.assertEquals(generated + length, rnd.byteCount);
+                        Assert.assertTrue(Chars.startsWith(s, prefix));
+                        encoded.clear();
+                        Chars.base64Encode(bin, 2_048, encoded);
+                        TestUtils.assertEquals(encoded, s);
+                        Assert.assertEquals(length, record.getLong(0));
+                        Assert.assertEquals(generated + length, rnd.byteCount);
+                    }
+                }
+                Assert.assertTrue(nullCount > 0);
+            } finally {
+                sqlExecutionContext.setRandom(null);
+            }
+        });
+    }
+
+    @Test
+    public void testVolatileBinaryReadForLengthAndNullnessGeneratesNoPayload() throws Exception {
+        assertMemoryLeak(() -> {
+            final ByteCountingRnd rnd = new ByteCountingRnd();
+            sqlExecutionContext.setRandom(rnd);
+            try {
+                final StringSink expected = new StringSink();
+                expected.put("column\n");
+                for (int i = 0; i < 10_000; i++) {
+                    expected.put("131072\n");
+                }
+                assertRowsAndMemoizers("SELECT length(b) + length(b) FROM (SELECT rnd_bin(65_536, 65_536, 0) b FROM long_sequence(10_000))",
+                        expected.toString(), 1);
+                assertRowsAndMemoizers("SELECT count() FROM (SELECT b IS NULL n, length(b) l FROM (SELECT rnd_bin(65_536, 65_536, 2) b FROM long_sequence(1_000)))"
+                        + " WHERE n <> (l = -1)", "count\n0\n", 1);
+                Assert.assertEquals(0, rnd.byteCount);
+            } finally {
+                sqlExecutionContext.setRandom(null);
+            }
+        });
+    }
+
+    @Test
     public void testVolatileValueOfEveryTypeReadTwiceIsEvaluatedOnce() throws Exception {
         assertMemoryLeak(() -> {
             final String[][] cases = {
@@ -303,6 +381,16 @@ public class MemoizationTest extends AbstractCairoTest {
         sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
         execute("CREATE TABLE lp_memo(id INT,d DOUBLE)");
         execute("INSERT INTO lp_memo VALUES (1,3.0),(2,1.0),(3,2.0),(4,null)");
+    }
+
+    private static final class ByteCountingRnd extends Rnd {
+        private long byteCount;
+
+        @Override
+        public byte nextByte() {
+            byteCount++;
+            return super.nextByte();
+        }
     }
 
     private static final class TrackingDouble extends DoubleFunction {

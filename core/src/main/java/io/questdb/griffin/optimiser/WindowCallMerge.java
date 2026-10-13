@@ -31,6 +31,7 @@ import io.questdb.griffin.plan.logical.BindVariableExpression;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.ForwardingPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -40,33 +41,46 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.Chars;
+import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Computes identical window calls once. A call merges into an equal earlier call of its window, or of a
  * window beneath it whose result reaches it, when both read the same values under the same
  * specification and neither evaluates a volatile function; its consumers then read the earlier result.
  */
-final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor {
+final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor, ExpressionVisitor {
     private final ObjList<LogicalPlan> ancestors;
+    private final IntIntHashMap callHeads;
+    private final IntList callNext;
     private final ObjectPool<ColumnExpression> columns;
     private final OptimiserContext context;
-    private final ObjectPool<ProjectPlan> projects;
+    private final IntList keptIndexes;
+    private final IntList lowerCallIndexes;
+    private final ObjList<WindowPlan> lowerWindows = new ObjList<>();
+    private final IntIntHashMap mergedIds = new IntIntHashMap();
+    private final ProjectPlan renaming;
+    private long callComparisonCount;
     private LogicalPlan redirectConsumer;
-    private int redirectedColumnId;
-    private int replacementId;
 
-    WindowCallMerge(OptimiserContext context, ObjectPool<ColumnExpression> columns, ObjectPool<ProjectPlan> projects, ObjList<LogicalPlan> ancestors) {
+    WindowCallMerge(OptimiserContext context, ObjectPool<ColumnExpression> columns, ProjectPlan renaming, ObjList<LogicalPlan> ancestors,
+                    IntList keptIndexes, IntIntHashMap callHeads, IntList callNext, IntList lowerCallIndexes) {
         this.context = context;
         this.columns = columns;
-        this.projects = projects;
+        this.renaming = renaming;
         this.ancestors = ancestors;
+        this.keptIndexes = keptIndexes;
+        this.callHeads = callHeads;
+        this.callNext = callNext;
+        this.lowerCallIndexes = lowerCallIndexes;
     }
 
     @Override
@@ -77,8 +91,14 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor {
 
     @Override
     public void clear() {
-        ancestors.clear();
+        lowerWindows.clear();
+        callComparisonCount = 0;
         redirectConsumer = null;
+    }
+
+    @TestOnly
+    public long getCallComparisonCount() {
+        return callComparisonCount;
     }
 
     @Override
@@ -87,13 +107,31 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor {
     }
 
     @Override
+    public int visit(BoundExpression expression) {
+        return expression instanceof ColumnExpression column && mergedIds.keyIndex(column.getColumnId()) < 0 ? TreeWalk.STOP : TreeWalk.CONTINUE;
+    }
+
+    @Override
     public int visitColumnId(int columnId, int position) {
-        return columnId == redirectedColumnId ? replacementId : columnId;
+        final int equalId = mergedIds.get(columnId);
+        return equalId < 0 ? columnId : equalId;
     }
 
     @Override
     public BoundExpression visitExpression(BoundExpression expression) {
-        return redirectReads(expression, redirectConsumer, redirectedColumnId, replacementId);
+        if (expression.walk(this)) {
+            return expression;
+        }
+        if (renaming.getChild() == null) {
+            final LogicalPlan input = redirectConsumer.inputAt(0);
+            final OutputSchema output = input.getOutput();
+            renaming.of(input, redirectConsumer.getPosition());
+            renaming.getOutput().copyFrom(output);
+            for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+                renaming.getExpressions().add(columns.next().of(visitColumnId(output.getColumnId(i), -1), output.getColumnType(i), redirectConsumer.getPosition()));
+            }
+        }
+        return context.getRewriter().remapColumns(expression, renaming);
     }
 
     /**
@@ -116,6 +154,49 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor {
             }
             plan = plan.inputAt(0);
         }
+    }
+
+    /**
+     * A hash that agrees with {@link #isSameCall} and {@link #isSameSpec}: calls that merge hash equally.
+     */
+    private static int hashCall(FunctionExpression call, WindowSpec spec) {
+        int hash = hashCall(call);
+        hash = 31 * hash + spec.getFramingMode();
+        hash = 31 * hash + Long.hashCode(spec.getRowsLo());
+        hash = 31 * hash + Long.hashCode(spec.getRowsHi());
+        hash = 31 * hash + spec.getRowsLoExprTimeUnit();
+        hash = 31 * hash + spec.getRowsHiExprTimeUnit();
+        hash = 31 * hash + spec.getExclusionKind();
+        hash = 31 * hash + (spec.isIgnoreNulls() ? 1 : 0);
+        hash = 31 * hash + (spec.isSubsampleKeepFlag() ? 1 : 0);
+        for (int i = 0, n = spec.getOrderByDirections().size(); i < n; i++) {
+            hash = 31 * hash + spec.getOrderByDirections().getQuick(i).ordinal();
+        }
+        for (int i = 0, n = spec.getPartitionBy().size(); i < n; i++) {
+            hash = 31 * hash + hashExpression(spec.getPartitionBy().getQuick(i));
+        }
+        return hash;
+    }
+
+    private static int hashCall(FunctionExpression call) {
+        int hash = System.identityHashCode(call.getOverload());
+        hash = 31 * hash + call.getFunctionFlags();
+        hash = 31 * hash + (call.isProjectedOffset() ? 1 : 0);
+        hash = 31 * hash + (call.isSetOperation() ? 1 : 0);
+        for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+            hash = 31 * hash + hashExpression(call.argumentAt(i));
+        }
+        return hash;
+    }
+
+    private static int hashExpression(BoundExpression expression) {
+        return 31 * expression.getDataType() + switch (expression) {
+            case ColumnExpression column -> 2 * column.getColumnId() + (column.isCast() ? 1 : 0);
+            case ConstantExpression constant -> constant.valueHash();
+            case BindVariableExpression variable -> variable.getName() == null ? 0 : Chars.hashCode(variable.getName());
+            case FunctionExpression call -> hashCall(call);
+            default -> 0;
+        };
     }
 
     private static boolean isSameCall(FunctionExpression call, FunctionExpression other) {
@@ -194,13 +275,6 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor {
         return true;
     }
 
-    private static void removeColumn(OutputSchema output, int columnId) {
-        final int index = output.getColumnIndexById(columnId);
-        if (index >= 0) {
-            output.remove(index);
-        }
-    }
-
     /**
      * The consumers of a window result, from the window's parent up to the first projection or
      * aggregate, which defines its own columns. Returns the number of such ancestors, or -1 when one of
@@ -221,62 +295,113 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor {
         return -1;
     }
 
-    private int findEqualCall(WindowPlan window, int index) {
+    /**
+     * The result of the equal call of the window at the lowest index, or else of the first equal call beneath it, or -1.
+     * A candidate below the window's call count is its call at that index; one above it is a call beneath the window.
+     */
+    private int findEqualCall(WindowPlan window, int index, int hash) {
         final FunctionExpression call = window.getFunctions().getQuick(index);
         final WindowSpec spec = window.getSpecs().getQuick(index);
-        if (LogicalPlans.isVolatile(call)) {
-            return -1;
-        }
-        final LogicalPlan scope = window.getInput();
-        for (int i = 0; i < index; i++) {
-            if (isSameCall(call, window.getFunctions().getQuick(i)) && isSameSpec(spec, window.getSpecs().getQuick(i), scope)) {
-                return window.getFunctionColumnIds().getQuick(i);
+        final LogicalPlan scope = window.getChild();
+        final int count = window.getFunctions().size();
+        int equal = -1;
+        for (int candidate = callHeads.get(hash); candidate >= 0; candidate = callNext.getQuick(candidate)) {
+            callComparisonCount++;
+            final WindowPlan owner = candidate < count ? window : lowerWindows.getQuick(candidate - count);
+            final int ownerIndex = candidate < count ? candidate : lowerCallIndexes.getQuick(candidate - count);
+            if ((equal < 0 || candidate < equal) && isSameCall(call, owner.getFunctions().getQuick(ownerIndex))
+                    && isSameSpec(spec, owner.getSpecs().getQuick(ownerIndex), scope)) {
+                equal = candidate;
             }
         }
+        if (equal < 0) {
+            return -1;
+        }
+        return equal < count ? window.getFunctionColumnIds().getQuick(equal)
+                : lowerWindows.getQuick(equal - count).getFunctionColumnIds().getQuick(lowerCallIndexes.getQuick(equal - count));
+    }
+
+    private void indexCall(int candidate, int hash) {
+        final int keyIndex = callHeads.keyIndex(hash);
+        callNext.setQuick(candidate, keyIndex < 0 ? callHeads.valueAt(keyIndex) : -1);
+        callHeads.putAt(keyIndex, hash, candidate);
+    }
+
+    /**
+     * Indexes the non-volatile calls of the windows beneath the window whose results reach it.
+     */
+    private void indexLowerCalls(WindowPlan window) {
+        if (callHeads.size() > 0) {
+            callHeads.clear();
+        }
+        lowerWindows.clear();
+        lowerCallIndexes.clear();
+        final LogicalPlan scope = window.getChild();
         for (LogicalPlan plan = scope; plan instanceof ProjectPlan || plan instanceof WindowPlan; plan = plan.inputAt(0)) {
             if (plan instanceof WindowPlan lower) {
                 for (int i = 0, n = lower.getFunctions().size(); i < n; i++) {
-                    final int columnId = lower.getFunctionColumnIds().getQuick(i);
-                    if (scope.getOutput().getColumnIndexById(columnId) >= 0 && isSameCall(call, lower.getFunctions().getQuick(i))
-                            && isSameSpec(spec, lower.getSpecs().getQuick(i), scope)) {
-                        return columnId;
+                    if (scope.getOutput().getColumnIndexById(lower.getFunctionColumnIds().getQuick(i)) >= 0
+                            && !LogicalPlans.isVolatile(lower.getFunctions().getQuick(i))) {
+                        lowerWindows.add(lower);
+                        lowerCallIndexes.add(i);
                     }
                 }
             }
         }
-        return -1;
+        final int count = window.getFunctions().size();
+        callNext.setPos(count + lowerWindows.size());
+        for (int i = 0, n = lowerWindows.size(); i < n; i++) {
+            final WindowPlan lower = lowerWindows.getQuick(i);
+            final int lowerIndex = lowerCallIndexes.getQuick(i);
+            indexCall(count + i, hashCall(lower.getFunctions().getQuick(lowerIndex), lower.getSpecs().getQuick(lowerIndex)));
+        }
     }
 
     private void mergeEqualCalls(WindowPlan window) {
-        for (int i = 0; i < window.getFunctions().size(); i++) {
-            final int columnId = window.getFunctionColumnIds().getQuick(i);
-            final int equalId = findEqualCall(window, i);
-            final int consumerCount = equalId < 0 ? -1 : consumerCount(columnId);
-            if (consumerCount < 0) {
+        if (mergedIds.size() > 0) {
+            mergedIds.clear();
+        }
+        indexLowerCalls(window);
+        int consumerCount = -1;
+        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
+            final FunctionExpression call = window.getFunctions().getQuick(i);
+            if (LogicalPlans.isVolatile(call)) {
                 continue;
             }
-            for (int k = ancestors.size() - consumerCount, n = ancestors.size(); k < n; k++) {
-                redirectReads(ancestors.getQuick(k), columnId, equalId);
+            final int hash = hashCall(call, window.getSpecs().getQuick(i));
+            final int equalId = findEqualCall(window, i, hash);
+            if (equalId >= 0) {
+                final int columnId = window.getFunctionColumnIds().getQuick(i);
+                final int count = consumerCount(columnId);
+                if (count >= 0) {
+                    consumerCount = count;
+                    mergedIds.put(columnId, equalId);
+                    continue;
+                }
             }
-            window.getFunctions().remove(i);
-            window.getSpecs().remove(i);
-            window.getFunctionColumnIds().removeIndex(i);
-            removeColumn(window.getOutput(), columnId);
-            for (int k = ancestors.size() - 1, lo = ancestors.size() - consumerCount; k >= lo; k--) {
+            indexCall(i, hash);
+        }
+        if (mergedIds.size() > 0) {
+            final int lo = ancestors.size() - consumerCount;
+            for (int k = lo, n = ancestors.size(); k < n; k++) {
+                redirectReads(ancestors.getQuick(k));
+            }
+            removeMergedCalls(window);
+            removeMergedColumns(window.getOutput());
+            for (int k = ancestors.size() - 1; k >= lo; k--) {
                 switch (ancestors.getQuick(k)) {
                     case ForwardingPlan forwarding -> forwarding.deriveOutput();
-                    case WindowPlan consumer -> removeColumn(consumer.getOutput(), columnId);
+                    case WindowPlan consumer -> removeMergedColumns(consumer.getOutput());
                     default -> {
                     }
                 }
             }
-            i--;
         }
         if (window.getFunctions().size() == 0 && ancestors.size() > 0) {
             final LogicalPlan parent = ancestors.getLast();
             for (int i = 0, n = parent.inputCount(); i < n; i++) {
                 if (parent.inputAt(i) == window) {
-                    parent.replaceInput(i, window.getInput());
+                    parent.replaceInput(i, window.getChild());
                 }
             }
         }
@@ -298,10 +423,9 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor {
         }
     }
 
-    private void redirectReads(LogicalPlan consumer, int columnId, int replacementId) {
+    private void redirectReads(LogicalPlan consumer) {
         redirectConsumer = consumer;
-        redirectedColumnId = columnId;
-        this.replacementId = replacementId;
+        renaming.clear();
         try {
             consumer.visitReads(this);
         } finally {
@@ -309,17 +433,34 @@ final class WindowCallMerge implements OptimiserPass, PlanExpressionVisitor {
         }
     }
 
-    private BoundExpression redirectReads(BoundExpression expression, LogicalPlan consumer, int columnId, int replacementId) {
-        if (!LogicalPlans.readsColumn(expression, columnId)) {
-            return expression;
+    private void removeMergedCalls(WindowPlan window) {
+        final ObjList<FunctionExpression> functions = window.getFunctions();
+        final ObjList<WindowSpec> specs = window.getSpecs();
+        final IntList columnIds = window.getFunctionColumnIds();
+        final int count = functions.size();
+        int kept = 0;
+        for (int i = 0; i < count; i++) {
+            final int columnId = columnIds.getQuick(i);
+            if (mergedIds.keyIndex(columnId) > -1) {
+                functions.setQuick(kept, functions.getQuick(i));
+                specs.setQuick(kept, specs.getQuick(i));
+                columnIds.setQuick(kept++, columnId);
+            }
         }
-        final OutputSchema input = consumer.inputAt(0).getOutput();
-        final ProjectPlan renaming = projects.next().of(consumer.inputAt(0), consumer.getPosition());
-        renaming.getOutput().copyFrom(input);
-        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
-            final int id = input.getColumnId(i);
-            renaming.getExpressions().add(columns.next().of(id == columnId ? replacementId : id, input.getColumnType(i), consumer.getPosition()));
+        functions.remove(kept, count - 1);
+        specs.remove(kept, count - 1);
+        columnIds.setPos(kept);
+    }
+
+    private void removeMergedColumns(OutputSchema output) {
+        keptIndexes.clear();
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            if (mergedIds.keyIndex(output.getColumnId(i)) > -1) {
+                keptIndexes.add(i);
+            }
         }
-        return context.getRewriter().remapColumns(expression, renaming);
+        if (keptIndexes.size() < output.getColumnCount()) {
+            output.retain(keptIndexes);
+        }
     }
 }

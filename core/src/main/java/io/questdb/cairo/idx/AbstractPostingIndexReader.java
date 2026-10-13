@@ -2237,8 +2237,6 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     protected abstract class AbstractCoveringCursor implements CoveringRowCursor {
-        protected final BorrowedArray arrayView = new BorrowedArray();
-        protected final DirectBinarySequence binView = new DirectBinarySequence();
         protected final LongList currentGenSidecarOffsets = new LongList();
         protected final DirectString stringViewA = new DirectString();
         protected final DirectString stringViewB = new DirectString();
@@ -2269,6 +2267,8 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         protected int sealedGenKeyCount;
         protected int sidecarOrdinal;
         protected int sidecarStrideKeyStart;
+        private final ObjList<BorrowedArray> arrayViews = new ObjList<>();
+        private final ObjList<DirectBinarySequence> binViews = new ObjList<>();
         private long[] colCacheAddrs;
         private long[] colCacheBlockAddrs;
         private int[] colCacheCapacities;
@@ -2534,6 +2534,20 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             return total;
         }
 
+        private BorrowedArray arrayView(int includeIdx) {
+            if (arrayViews.getQuiet(includeIdx) == null) {
+                arrayViews.extendAndSet(includeIdx, new BorrowedArray());
+            }
+            return arrayViews.getQuick(includeIdx);
+        }
+
+        private DirectBinarySequence binView(int includeIdx) {
+            if (binViews.getQuiet(includeIdx) == null) {
+                binViews.extendAndSet(includeIdx, new DirectBinarySequence());
+            }
+            return binViews.getQuick(includeIdx);
+        }
+
         private CharSequence decompressFsstStr(MemoryMR mem, long blockBase, int count, int ordinal, int includeIdx, DirectString view, boolean longOffsets) {
             if (isFsstChunkUnavailable(mem, blockBase, count, ordinal, includeIdx, longOffsets)) {
                 return null;
@@ -2786,8 +2800,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 long lo = Unsafe.getLong(offsBase + (long) chunkOrdinal * Long.BYTES);
                 long hi = Unsafe.getLong(offsBase + (long) (chunkOrdinal + 1) * Long.BYTES);
                 if (lo == hi) {
-                    arrayView.ofNull();
-                    return arrayView;
+                    final BorrowedArray array = arrayView(includeIdx);
+                    array.ofNull();
+                    return array;
                 }
                 dataAddr = fsstDstAddrs[includeIdx] + lo;
                 dataLen = (int) (hi - lo);
@@ -2796,8 +2811,9 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 long lo = readVarBlockOffset(offsetsAddr, ordinal, longOffsets);
                 long hi = readVarBlockOffset(offsetsAddr, ordinal + 1, longOffsets);
                 if (lo == hi) {
-                    arrayView.ofNull();
-                    return arrayView;
+                    final BorrowedArray array = arrayView(includeIdx);
+                    array.ofNull();
+                    return array;
                 }
                 long dataBase = blockBase + 4 + varBlockOffsetsSize(count, longOffsets);
                 dataAddr = mem.addressOf(dataBase + lo);
@@ -2813,7 +2829,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             }
             int valueSize = cardinality * elemSize;
             long valuePtr = dataAddr + dataLen - valueSize;
-            return arrayView.of(columnType, dataAddr, valuePtr, valueSize);
+            return arrayView(includeIdx).of(columnType, dataAddr, valuePtr, valueSize);
         }
 
         private BinarySequence getVarSidecarBin(int includeIdx) {
@@ -2854,7 +2870,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 if (len < 0) {
                     return null;
                 }
-                return binView.of(valAddr + Long.BYTES, len);
+                return binView(includeIdx).of(valAddr + Long.BYTES, len);
             }
 
             long offsetsAddr = mem.addressOf(blockBase + 4);
@@ -2869,7 +2885,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
             if (len < 0) {
                 return null;
             }
-            return binView.of(dataAddr + Long.BYTES, len);
+            return binView(includeIdx).of(dataAddr + Long.BYTES, len);
         }
 
         private long getVarSidecarBinLen(int includeIdx) {

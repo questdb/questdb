@@ -39,6 +39,22 @@ import org.junit.Test;
 
 public class SetFilterPushdownTest extends AbstractCairoTest {
     @Test
+    public void testAliasesThreeBranchesAndConjunctResidualKeepTheirScopes() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            final String source = "(SELECT id,ta time FROM lp_sp_a UNION ALL SELECT id,tb other FROM lp_sp_b"
+                    + " UNION ALL SELECT id,ta changed FROM lp_sp_a)";
+            assertRowsAndIntervalScans("SELECT id FROM " + source + " WHERE time>='2024-01-03T00:00:00.000000Z' AND id<5 ORDER BY id",
+                    "id\n3\n3\n3\n3\n4\n4\n", 3);
+            assertRowsAndIntervalScans("SELECT id FROM " + source + " WHERE time='2024-01-02T00:00:00.000000Z'"
+                            + " OR time='2024-01-04T00:00:00.000000Z' ORDER BY id",
+                    "id\n2\n2\n2\n2\n2\n5\n", 3);
+            assertLogicalResidual("SELECT id FROM " + source + " WHERE id>3 ORDER BY id",
+                    "id\n4\n4\n5\n", 1);
+        });
+    }
+
+    @Test
     public void testAllSetOperationsKeepTupleAndDuplicateSemantics() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -54,22 +70,6 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
                         + " SELECT tb other,id FROM lp_sp_b) WHERE time>='2024-01-02T00:00:00.000000Z' ORDER BY id";
                 assertRowsAndIntervalScans(sql, expected.getQuick(i), 2);
             }
-        });
-    }
-
-    @Test
-    public void testAliasesThreeBranchesAndConjunctResidualKeepTheirScopes() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            final String source = "(SELECT id,ta time FROM lp_sp_a UNION ALL SELECT id,tb other FROM lp_sp_b"
-                    + " UNION ALL SELECT id,ta changed FROM lp_sp_a)";
-            assertRowsAndIntervalScans("SELECT id FROM " + source + " WHERE time>='2024-01-03T00:00:00.000000Z' AND id<5 ORDER BY id",
-                    "id\n3\n3\n3\n3\n4\n4\n", 3);
-            assertRowsAndIntervalScans("SELECT id FROM " + source + " WHERE time='2024-01-02T00:00:00.000000Z'"
-                            + " OR time='2024-01-04T00:00:00.000000Z' ORDER BY id",
-                    "id\n2\n2\n2\n2\n2\n5\n", 3);
-            assertLogicalResidual("SELECT id FROM " + source + " WHERE id>3 ORDER BY id",
-                    "id\n4\n4\n5\n", 1);
         });
     }
 
@@ -91,26 +91,6 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
             final String setLimit = "SELECT id FROM (SELECT ts,id FROM lp_sp_events UNION ALL SELECT ts,id FROM lp_sp_plain LIMIT 1)"
                     + " WHERE hour(ts)>0 ORDER BY id";
             assertRowsAndIntervalScans(setLimit, "id\n", 0);
-        });
-    }
-
-    @Test
-    public void testPrecisionAndNullCastsDistributeIntoBranches() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE lp_sp_micro (ts TIMESTAMP,id INT) TIMESTAMP(ts)");
-            execute("CREATE TABLE lp_sp_nano (ts TIMESTAMP_NS,id INT) TIMESTAMP(ts)");
-            execute("INSERT INTO lp_sp_micro VALUES ('2024-01-01T00:00:00',1),('2024-01-01T01:00:00',2)");
-            execute("INSERT INTO lp_sp_nano VALUES ('2024-01-01T00:00:00',3),('2024-01-01T02:00:00',4)");
-            final String mixed = "SELECT id FROM (SELECT ts,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_nano)"
-                    + " WHERE hour(ts)>0 ORDER BY id";
-            assertRowsAndIntervalScans(mixed, "id\n2\n4\n", 0);
-            assertLogicalResidual(mixed, "id\n2\n4\n", 0);
-            final String nulls = " FROM (SELECT ts,id FROM lp_sp_micro UNION ALL SELECT null ts,id FROM lp_sp_nano)"
-                    + " WHERE hour(ts)>0 ORDER BY id";
-            assertRowsAndIntervalScans("SELECT ts,id" + nulls, "ts\tid\n2024-01-01T01:00:00.000000Z\t2\n", 0);
-            assertLogicalResidual("SELECT id" + nulls, "id\n2\n", 0);
-            assertRowsAndIntervalScans("SELECT id FROM (SELECT ts,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_nano)"
-                    + " WHERE ts>'2024-01-01T00:00:00.000000000Z' ORDER BY id", "id\n2\n4\n", 2);
         });
     }
 
@@ -156,6 +136,26 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPrecisionAndNullCastsDistributeIntoBranches() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_sp_micro (ts TIMESTAMP,id INT) TIMESTAMP(ts)");
+            execute("CREATE TABLE lp_sp_nano (ts TIMESTAMP_NS,id INT) TIMESTAMP(ts)");
+            execute("INSERT INTO lp_sp_micro VALUES ('2024-01-01T00:00:00',1),('2024-01-01T01:00:00',2)");
+            execute("INSERT INTO lp_sp_nano VALUES ('2024-01-01T00:00:00',3),('2024-01-01T02:00:00',4)");
+            final String mixed = "SELECT id FROM (SELECT ts,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_nano)"
+                    + " WHERE hour(ts)>0 ORDER BY id";
+            assertRowsAndIntervalScans(mixed, "id\n2\n4\n", 0);
+            assertLogicalResidual(mixed, "id\n2\n4\n", 0);
+            final String nulls = " FROM (SELECT ts,id FROM lp_sp_micro UNION ALL SELECT null ts,id FROM lp_sp_nano)"
+                    + " WHERE hour(ts)>0 ORDER BY id";
+            assertRowsAndIntervalScans("SELECT ts,id" + nulls, "ts\tid\n2024-01-01T01:00:00.000000Z\t2\n", 0);
+            assertLogicalResidual("SELECT id" + nulls, "id\n2\n", 0);
+            assertRowsAndIntervalScans("SELECT id FROM (SELECT ts,id FROM lp_sp_micro UNION ALL SELECT ts,id FROM lp_sp_nano)"
+                    + " WHERE ts>'2024-01-01T00:00:00.000000000Z' ORDER BY id", "id\n2\n4\n", 2);
+        });
+    }
+
+    @Test
     public void testRetainedBranchPredicatesSurviveCompilerReuseAndParameterRebind() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -191,11 +191,20 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
     }
 
     private static int countSetResiduals(LogicalPlan plan) {
-        int count = plan instanceof FilterPlan filter && filter.getInput() instanceof SetOperationPlan ? 1 : 0;
+        int count = plan instanceof FilterPlan filter && filter.getChild() instanceof SetOperationPlan ? 1 : 0;
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             count += countSetResiduals(plan.inputAt(i));
         }
         return count;
+    }
+
+    private void assertLogicalResidual(String sql, String expected, int expectedResiduals) throws Exception {
+        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
+                Assert.assertEquals(expectedResiduals, countSetResiduals(compiler.getPlanForTesting()));
+                assertRowsOnly(factory, expected);
+            }
+        }
     }
 
     private void assertRowsAndIntervalScans(String sql, String expected, int intervalScans) throws Exception {
@@ -214,15 +223,6 @@ public class SetFilterPushdownTest extends AbstractCairoTest {
             Assert.assertEquals(sql + "\n" + sink.getSink(), intervalScans, count);
         } finally {
             sqlExecutionContext.setJitMode(jitMode);
-        }
-    }
-
-    private void assertLogicalResidual(String sql, String expected, int expectedResiduals) throws Exception {
-        try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
-            try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
-                Assert.assertEquals(expectedResiduals, countSetResiduals(compiler.getPlanForTesting()));
-                assertRowsOnly(factory, expected);
-            }
         }
     }
 

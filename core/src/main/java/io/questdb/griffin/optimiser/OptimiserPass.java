@@ -48,11 +48,4 @@ interface OptimiserPass extends Mutable {
      * The name an invariant failure after the pass reports.
      */
     String getName();
-
-    /**
-     * True when the plan the pass returns holds no dependent join step, which every later pass then preserves.
-     */
-    default boolean removesDependentSteps() {
-        return false;
-    }
 }

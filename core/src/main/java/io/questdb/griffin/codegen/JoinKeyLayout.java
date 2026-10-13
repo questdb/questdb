@@ -48,32 +48,50 @@ import static io.questdb.cairo.ColumnType.*;
  * key sinks apply so that both sides write every key with its map key type.
  */
 final class JoinKeyLayout implements Mutable {
-    final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+    final ArrayColumnTypes keyTypes;
     final ListColumnFilter masterColumns;
-    final IntList masterIndexes = new IntList();
+    final IntList masterIndexes;
     final ListColumnFilter slaveColumns;
-    final IntList slaveIndexes = new IntList();
+    final IntList slaveIndexes;
     private final BitSet masterStringAsVarchar = new BitSet();
-    private final BitSet masterSymbolAsString = new BitSet();
-    private final IntList masterSymbolColumns = new IntList();
+    private final BitSet masterSymbolAsString;
+    private final IntList masterSymbolColumns;
     private final BitSet masterTimestampAsNanos = new BitSet();
     private final BitSet slaveStringAsVarchar = new BitSet();
     private final BitSet slaveSymbolAsString = new BitSet();
-    private final IntList slaveSymbolColumns = new IntList();
+    private final IntList slaveSymbolColumns;
     private final BitSet slaveTimestampAsNanos = new BitSet();
-    private final IntList symbolKeyFlags = new IntList();
+    private final IntList symbolKeyFlags;
     RecordSink masterSink;
     int[] masterSymbolKeys;
     RecordSink slaveSink;
     int[] slaveSymbolKeys;
 
-    JoinKeyLayout() {
-        this(new ListColumnFilter(), new ListColumnFilter());
+    JoinKeyLayout(IntList symbolKeyFlags, IntList masterSymbolColumns, IntList slaveSymbolColumns) {
+        this(new ListColumnFilter(), new ListColumnFilter(), new ArrayColumnTypes(), new IntList(), new IntList(), new BitSet(),
+                symbolKeyFlags, masterSymbolColumns, slaveSymbolColumns);
     }
 
-    JoinKeyLayout(ListColumnFilter slaveColumns, ListColumnFilter masterColumns) {
+    JoinKeyLayout(
+            ListColumnFilter slaveColumns,
+            ListColumnFilter masterColumns,
+            ArrayColumnTypes keyTypes,
+            IntList masterIndexes,
+            IntList slaveIndexes,
+            BitSet masterSymbolAsString,
+            IntList symbolKeyFlags,
+            IntList masterSymbolColumns,
+            IntList slaveSymbolColumns
+    ) {
         this.slaveColumns = slaveColumns;
         this.masterColumns = masterColumns;
+        this.keyTypes = keyTypes;
+        this.masterIndexes = masterIndexes;
+        this.slaveIndexes = slaveIndexes;
+        this.masterSymbolAsString = masterSymbolAsString;
+        this.symbolKeyFlags = symbolKeyFlags;
+        this.masterSymbolColumns = masterSymbolColumns;
+        this.slaveSymbolColumns = slaveSymbolColumns;
     }
 
     @Override
@@ -89,9 +107,6 @@ final class JoinKeyLayout implements Mutable {
         slaveStringAsVarchar.clear();
         slaveSymbolAsString.clear();
         slaveTimestampAsNanos.clear();
-        masterSymbolColumns.clear();
-        slaveSymbolColumns.clear();
-        symbolKeyFlags.clear();
         clearSinks();
     }
 

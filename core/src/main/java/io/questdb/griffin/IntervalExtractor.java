@@ -59,28 +59,34 @@ import io.questdb.std.str.StringSink;
 public final class IntervalExtractor implements Mutable {
     private static final int MAX_SPECULATIVE_SCALAR_BOUND_DEPTH = 4;
     private final CairoConfiguration configuration;
+    private final Interval interval;
     private final StringSink intervalText;
-    private final Interval intervalValue = new Interval();
     private final RuntimeIntervalModelBuilder intervals = new RuntimeIntervalModelBuilder() {
         @Override
         protected Function compileTickExpr(CharSequence seq, int lo, int lim, int position) throws SqlException {
             return bounds.compileTickExpr(ColumnType.getTimestampDriver(timestampType), configuration, seq, lo, lim, position);
         }
     };
-    private final Interval inverted = new Interval();
+    private final boolean isNestedOffset;
     private final LongList parsedIntervals;
     private IntervalAnalysis analysis;
     private IntervalBoundSource bounds;
     private boolean isBoundSpeculationAllowed;
     private boolean isIntrinsicFalse;
-    private boolean isNestedOffset;
     private IntervalExtractor offsetIntervals;
     private int timestampType;
 
     public IntervalExtractor(CairoConfiguration configuration, StringSink intervalText, LongList parsedIntervals) {
+        this(configuration, intervalText, parsedIntervals, new Interval(), false);
+    }
+
+    private IntervalExtractor(CairoConfiguration configuration, StringSink intervalText, LongList parsedIntervals, Interval interval,
+                              boolean isNestedOffset) {
         this.configuration = configuration;
         this.intervalText = intervalText;
         this.parsedIntervals = parsedIntervals;
+        this.interval = interval;
+        this.isNestedOffset = isNestedOffset;
     }
 
     /**
@@ -633,12 +639,12 @@ public final class IntervalExtractor implements Mutable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         if (bound instanceof ConstantExpression constant) {
-            final Interval interval = ColumnType.getTimestampDriver(timestampType)
-                    .fixInterval(intervalValue.of(constant.getLongValue(), constant.getIntervalHi()), constant.getDataType());
+            final Interval fixed = ColumnType.getTimestampDriver(timestampType)
+                    .fixInterval(interval.of(constant.getLongValue(), constant.getIntervalHi()), constant.getDataType());
             if (negated) {
-                intervals.subtractInterval(interval.getLo(), interval.getHi());
+                intervals.subtractInterval(fixed.getLo(), fixed.getHi());
             } else {
-                intervals.intersect(interval.getLo(), interval.getHi());
+                intervals.intersect(fixed.getLo(), fixed.getHi());
             }
         } else if ((bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0) {
             final Function function = bounds.instantiate(bound, input, executionContext);
@@ -727,21 +733,21 @@ public final class IntervalExtractor implements Mutable {
             if (parsedIntervals.size() != 2) {
                 return predicate;
             }
-            inverted.of(parsedIntervals.getQuick(0), parsedIntervals.getQuick(1));
+            interval.of(parsedIntervals.getQuick(0), parsedIntervals.getQuick(1));
             final int soundness;
             try {
-                soundness = bounds.invertMonotonic(predicate.argumentAt(0), head, inverted);
+                soundness = bounds.invertMonotonic(predicate.argumentAt(0), head, interval);
             } catch (CairoException e) {
                 return predicate;
             }
             if (soundness == MonotonicTimestampFunction.NONE) {
                 return predicate;
             }
-            if (inverted.getLo() > inverted.getHi()) {
+            if (interval.getLo() > interval.getHi()) {
                 intersectEmpty();
                 return null;
             }
-            intervals.intersect(inverted.getLo(), inverted.getHi());
+            intervals.intersect(interval.getLo(), interval.getHi());
             return soundness == MonotonicTimestampFunction.EXACT ? null : predicate;
         } catch (Throwable th) {
             failure = th;
@@ -805,21 +811,21 @@ public final class IntervalExtractor implements Mutable {
                 hiFunction = hi == lo ? loFunction : boundFunction(hi, input, executionContext);
             }
             if (loFunction == null && hiFunction == null) {
-                inverted.of(isBetween ? Math.min(loValue, hiValue) : loValue,
+                interval.of(isBetween ? Math.min(loValue, hiValue) : loValue,
                         isBetween ? Math.max(loValue, hiValue) : hiValue);
-                final int soundness = bounds.invertMonotonic(operand, head, inverted);
+                final int soundness = bounds.invertMonotonic(operand, head, interval);
                 if (soundness == MonotonicTimestampFunction.NONE) {
                     return predicate;
                 }
-                if (inverted.getLo() > inverted.getHi()) {
+                if (interval.getLo() > interval.getHi()) {
                     intersectEmpty();
                     return null;
                 }
-                intervals.intersect(inverted.getLo(), inverted.getHi());
+                intervals.intersect(interval.getLo(), interval.getHi());
                 return soundness == MonotonicTimestampFunction.EXACT ? null : predicate;
             }
-            inverted.of(Long.MIN_VALUE, Long.MAX_VALUE);
-            if (bounds.invertMonotonic(operand, head, inverted) == MonotonicTimestampFunction.NONE) {
+            interval.of(Long.MIN_VALUE, Long.MAX_VALUE);
+            if (bounds.invertMonotonic(operand, head, interval) == MonotonicTimestampFunction.NONE) {
                 return predicate;
             }
             final Function inverter = bounds.newMonotonicInverter(
@@ -885,10 +891,9 @@ public final class IntervalExtractor implements Mutable {
             return predicate;
         }
         if (offsetIntervals == null) {
-            offsetIntervals = new IntervalExtractor(configuration, intervalText, parsedIntervals);
+            offsetIntervals = new IntervalExtractor(configuration, intervalText, parsedIntervals, interval, true);
         }
         final IntervalExtractor source = offsetIntervals;
-        source.isNestedOffset = true;
         final BoundExpression residual;
         try {
             residual = source.extract(rewriter.unwrapProjectedOffsets(predicate), timestampColumnId, timestampType,
@@ -1105,7 +1110,7 @@ public final class IntervalExtractor implements Mutable {
     private void verifyAnalysis(BoundExpression predicate, int timestampColumnId, int timestampType, int depth,
                                 BoundExpressionRewriter rewriter, BoundExpression residual) {
         if (analysis == null) {
-            analysis = new IntervalAnalysis(configuration);
+            analysis = new IntervalAnalysis(configuration, intervalText, parsedIntervals);
         }
         try {
             analysis.analyse(predicate, timestampColumnId, timestampType, depth, rewriter);
@@ -1129,5 +1134,9 @@ public final class IntervalExtractor implements Mutable {
 
     RuntimeIntervalModelBuilder getIntervals() {
         return intervals;
+    }
+
+    int getTimestampType() {
+        return timestampType;
     }
 }

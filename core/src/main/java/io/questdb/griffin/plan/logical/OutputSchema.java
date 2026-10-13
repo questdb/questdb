@@ -169,9 +169,9 @@ public final class OutputSchema implements Mutable {
     @Override
     public void clear() {
         columnIds.clear();
-        columnMetadata.clear();
-        columnNames.clear();
-        columnQualifiers.clear();
+        truncate(columnMetadata, 0);
+        truncate(columnNames, 0);
+        truncate(columnQualifiers, 0);
         columnTypes.clear();
         columnFlags.clear();
         idIndexedCount = 0;
@@ -390,9 +390,9 @@ public final class OutputSchema implements Mutable {
             columnFlags.setQuick(i, columnFlags.getQuick(count + i));
         }
         columnIds.setPos(n);
-        columnMetadata.setPos(n);
-        columnNames.setPos(n);
-        columnQualifiers.setPos(n);
+        truncate(columnMetadata, n);
+        truncate(columnNames, n);
+        truncate(columnQualifiers, n);
         columnTypes.setPos(n);
         columnFlags.setPos(n);
         idIndexedCount = 0;
@@ -435,6 +435,11 @@ public final class OutputSchema implements Mutable {
             throw new IndexOutOfBoundsException("timestamp column index: " + index);
         }
         timestampIndex = index;
+    }
+
+    private static void truncate(ObjList<?> list, int size) {
+        list.set(size, list.size(), null);
+        list.setPos(size);
     }
 
     /**

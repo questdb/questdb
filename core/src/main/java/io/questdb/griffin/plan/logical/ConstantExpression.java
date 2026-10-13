@@ -144,6 +144,23 @@ public final class ConstantExpression extends BoundExpression {
                 || value instanceof Utf8Sequence text && that.value instanceof Utf8Sequence other && Utf8s.equals(text, other));
     }
 
+    /**
+     * A hash of the value that agrees with {@link #isSameValue}: constants of the same value hash equally.
+     */
+    public int valueHash() {
+        int hash = 31 * getDataType() + Long.hashCode(longValue);
+        hash = 31 * hash + Long.hashCode(hh);
+        hash = 31 * hash + Long.hashCode(hl);
+        hash = 31 * hash + Long.hashCode(lh);
+        if (value instanceof CharSequence text) {
+            return 31 * hash + Chars.hashCode(text);
+        }
+        if (value instanceof Utf8Sequence text) {
+            return 31 * hash + Utf8s.hashCode(text);
+        }
+        return hash;
+    }
+
     public ConstantExpression markLiteral() {
         isLiteral = true;
         return this;

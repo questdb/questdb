@@ -147,17 +147,16 @@ public final class PlanVerifier {
     public static final String WINDOW_JOIN_SHAPE = "window join output is not the master columns followed by the step aggregates";
     public static final String WINDOW_OUTPUT = "window output is not input columns followed by its function columns";
     public static final String WINDOW_SHAPE = "window functions, specs and column ids differ in length";
-    private final ObjList<BoundExpression> checkedExpressions = new ObjList<>();
-    private final IntList checkedReadIds = new IntList();
+    private final ObjList<BoundExpression> checkedExpressions;
+    private final IntList checkedReadIds;
     private final IntHashSet columnIds;
-    private final DecorrelationVerifier decorrelation = new DecorrelationVerifier();
-    private final IntHashSet expressionIdentities = new IntHashSet();
-    private final ExpressionVisitor expressionNodes = this::expressionNode;
+    private final DecorrelationVerifier decorrelation;
+    private final IntHashSet expressionIdentities;
     private final OutputSchema joinScope;
     private final OccurrenceCounter occurrences = new OccurrenceCounter();
     private final ObjList<JoinInput> outerInputs;
+    private final IntList readIds = new IntList();
     private final ReadEnumerator readEnumerator = new ReadEnumerator();
-    private final PlanVisitor sharedSources = this::sharedSource;
     private final ObjList<LogicalPlan> visited;
     private int aliasCount;
     private OutputSchema aliasScope;
@@ -169,15 +168,28 @@ public final class PlanVerifier {
     private String pass;
     private LogicalPlan root;
     private String site;
+    private final ExpressionVisitor expressionNodes = this::expressionNode;
+    private final PlanVisitor sharedSources = this::sharedSource;
 
     /**
      * Borrows temporary lists from the optimiser: the verifier runs between stages and leaves every structure empty.
      */
-    PlanVerifier(ObjList<LogicalPlan> visited, OutputSchema joinScope, IntHashSet columnIds, ObjList<JoinInput> outerInputs) {
+    PlanVerifier(
+            ObjList<LogicalPlan> visited,
+            OutputSchema joinScope,
+            IntHashSet columnIds,
+            ObjList<JoinInput> outerInputs,
+            ObjList<BoundExpression> checkedExpressions,
+            IntList checkedReadIds
+    ) {
         this.visited = visited;
         this.joinScope = joinScope;
         this.columnIds = columnIds;
+        this.expressionIdentities = columnIds;
         this.outerInputs = outerInputs;
+        this.checkedExpressions = checkedExpressions;
+        this.checkedReadIds = checkedReadIds;
+        this.decorrelation = new DecorrelationVerifier(outerInputs, checkedReadIds, readIds);
     }
 
     /**
@@ -185,7 +197,7 @@ public final class PlanVerifier {
      */
     @TestOnly
     public static PlanVerifier newStandalone() {
-        return new PlanVerifier(new ObjList<>(), new OutputSchema(), new IntHashSet(), new ObjList<>());
+        return new PlanVerifier(new ObjList<>(), new OutputSchema(), new IntHashSet(), new ObjList<>(), new ObjList<>(), new IntList());
     }
 
     /**
@@ -258,27 +270,6 @@ public final class PlanVerifier {
             pass = null;
             node = null;
         }
-    }
-
-    /**
-     * The failure of an invariant at {@code node}, with the plan {@code root} printed after it.
-     */
-    static AssertionError failure(String invariant, int columnId, String site, LogicalPlan node, String pass, LogicalPlan root) {
-        final StringBuilder message = new StringBuilder(invariant);
-        if (columnId >= 0) {
-            message.append(" [column id ").append(columnId).append(']');
-        }
-        if (site != null) {
-            message.append(" in ").append(site);
-        }
-        message.append(" at ").append(node.getClass().getSimpleName()).append(" position ").append(node.getPosition())
-                .append(" after ").append(pass);
-        try {
-            message.append('\n').append(new LogicalPlanPrinter().print(root));
-        } catch (Throwable ignore) {
-            // the plan is being reported as broken; a print failure must not hide the invariant
-        }
-        return new AssertionError(message.toString());
     }
 
     private static boolean sameColumns(OutputSchema output, OutputSchema input) {
@@ -448,7 +439,7 @@ public final class PlanVerifier {
         if (fill.getModes().size() != count || fill.getValues().size() != count) {
             fail(FILL_SHAPE);
         }
-        final OutputSchema input = fill.getInput().getOutput();
+        final OutputSchema input = fill.getChild().getOutput();
         site = "fill targets";
         resolveAll(input, fill.getTargetColumnIds());
         site = "fill sources";
@@ -475,7 +466,7 @@ public final class PlanVerifier {
      */
     private void forwards(ForwardingPlan plan, String timestampInvariant) {
         final OutputSchema output = plan.getOutput();
-        final OutputSchema input = plan.getInput().getOutput();
+        final OutputSchema input = plan.getChild().getOutput();
         final int n = output.getColumnCount();
         if (n != input.getColumnCount()) {
             fail(OUTPUT_FORWARDING);
@@ -504,7 +495,7 @@ public final class PlanVerifier {
         if (keyCount + values.size() != output.getColumnCount()) {
             fail(AGGREGATE_SHAPE);
         }
-        final OutputSchema input = aggregate.getInput().getOutput();
+        final OutputSchema input = aggregate.getChild().getOutput();
         site = "grouping keys";
         for (int i = 0; i < keyCount; i++) {
             final BoundExpression key = keys.getQuick(i);
@@ -699,7 +690,7 @@ public final class PlanVerifier {
     private void latestBy(LatestByPlan latest) {
         forwards(latest, OUTPUT_TIMESTAMP);
         failIfViolated(PhysicalChoiceVerifier.latestBy(latest, isAccessPathRequired));
-        final OutputSchema input = latest.getInput().getOutput();
+        final OutputSchema input = latest.getChild().getOutput();
         site = "LATEST BY keys";
         resolveAll(input, latest.getKeyColumnIds());
         final int timestampId = latest.getTimestampColumnId();
@@ -789,7 +780,7 @@ public final class PlanVerifier {
                 if (filter.getPredicate() == null) {
                     fail(EXPRESSION_NULL);
                 }
-                predicate(filter.getInput().getOutput(), filter.getPredicate());
+                predicate(filter.getChild().getOutput(), filter.getPredicate());
                 failIfViolated(PhysicalChoiceVerifier.filter(filter, isAccessPathRequired));
             }
             case ProjectPlan project -> project(project);
@@ -830,7 +821,7 @@ public final class PlanVerifier {
         if (expressions.size() != output.getColumnCount()) {
             fail(PROJECT_SHAPE);
         }
-        final OutputSchema input = project.getInput().getOutput();
+        final OutputSchema input = project.getChild().getOutput();
         final boolean hasUpdateConversions = project.hasUpdateConversions();
         // a column may read an earlier column of the same projection by alias, unless the projection converts UPDATE columns
         for (int i = 0, n = expressions.size(); i < n; i++) {
@@ -842,7 +833,7 @@ public final class PlanVerifier {
         }
         requestedColumn(project.getRequestedOrderColumnId(), output);
         requestedOrder(project.getRequestedOrder(), output);
-        if (project.isTimestampDropped() && (!(project.getInput() instanceof WindowJoinPlan) || LogicalPlans.isColumnOnlyProjection(project))) {
+        if (project.isTimestampDropped() && (!(project.getChild() instanceof WindowJoinPlan) || LogicalPlans.isColumnOnlyProjection(project))) {
             fail(PROJECT_TIMESTAMP_DROP);
         }
     }
@@ -858,12 +849,11 @@ public final class PlanVerifier {
      */
     private void reads(LogicalPlan plan) {
         readEnumerator.expressionCount = 0;
-        readEnumerator.readIds.clear();
+        readIds.clear();
         plan.visitReads(readEnumerator);
         if (readEnumerator.expressionCount != checkedExpressions.size()) {
             fail(READ_UNCHECKED);
         }
-        final IntList readIds = readEnumerator.readIds;
         if (readIds.size() != checkedReadIds.size()) {
             fail(READ_UNCHECKED);
         }
@@ -993,7 +983,7 @@ public final class PlanVerifier {
         if (window.getSpecs().size() != count || window.getFunctionColumnIds().size() != count) {
             fail(WINDOW_SHAPE);
         }
-        final OutputSchema input = window.getInput().getOutput();
+        final OutputSchema input = window.getChild().getOutput();
         for (int i = 0; i < count; i++) {
             final FunctionExpression call = functions.getQuick(i);
             site = "window functions";
@@ -1096,6 +1086,27 @@ public final class PlanVerifier {
         joinScope.clear();
     }
 
+    /**
+     * The failure of an invariant at {@code node}, with the plan {@code root} printed after it.
+     */
+    static AssertionError failure(String invariant, int columnId, String site, LogicalPlan node, String pass, LogicalPlan root) {
+        final StringBuilder message = new StringBuilder(invariant);
+        if (columnId >= 0) {
+            message.append(" [column id ").append(columnId).append(']');
+        }
+        if (site != null) {
+            message.append(" in ").append(site);
+        }
+        message.append(" at ").append(node.getClass().getSimpleName()).append(" position ").append(node.getPosition())
+                .append(" after ").append(pass);
+        try {
+            message.append('\n').append(new LogicalPlanPrinter().print(root));
+        } catch (Throwable ignore) {
+            // the plan is being reported as broken; a print failure must not hide the invariant
+        }
+        return new AssertionError(message.toString());
+    }
+
     private static final class OccurrenceCounter implements ExpressionVisitor {
         private int matchCount;
         private BoundExpression target;
@@ -1119,7 +1130,6 @@ public final class PlanVerifier {
     }
 
     private final class ReadEnumerator implements PlanExpressionVisitor {
-        private final IntList readIds = new IntList();
         private int expressionCount;
 
         @Override

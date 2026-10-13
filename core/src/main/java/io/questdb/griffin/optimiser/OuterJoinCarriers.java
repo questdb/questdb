@@ -60,21 +60,21 @@ final class OuterJoinCarriers implements Mutable {
     private final DecorrelationDomains domains;
     private final IntIntHashMap forwardedIds = new IntIntHashMap();
     private final CorrelationKeys keys;
-    private final IntList slaveIds = new IntList();
+    private final IntList slaveIds;
     private int markerId;
     private int slaveMarkerId;
 
-    OuterJoinCarriers(DecorrelationContext ctx, DecorrelationDomains domains, CorrelationKeys keys) {
+    OuterJoinCarriers(DecorrelationContext ctx, DecorrelationDomains domains, CorrelationKeys keys, IntList slaveIds) {
         this.ctx = ctx;
         this.domains = domains;
         this.keys = keys;
+        this.slaveIds = slaveIds;
     }
 
     @Override
     public void clear() {
         carrierIds.clear();
         forwardedIds.clear();
-        slaveIds.clear();
         markerId = -1;
         slaveMarkerId = -1;
     }
@@ -116,7 +116,7 @@ final class OuterJoinCarriers implements Mutable {
         slaveMarkerId = -1;
         if (isMarked) {
             ctx.context.getCallArguments().clear();
-            final FunctionExpression marker = (FunctionExpression) ctx.context.bindCall("count", position, domain.getInput().getOutput());
+            final FunctionExpression marker = (FunctionExpression) ctx.context.bindCall("count", position, domain.getChild().getOutput());
             domain.getAggregates().add(marker);
             slaveMarkerId = ctx.context.newColumnId();
             domain.getOutput().add(slaveMarkerId, markerName(), marker.getDataType(), false);

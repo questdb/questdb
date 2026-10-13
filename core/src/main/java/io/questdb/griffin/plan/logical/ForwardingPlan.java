@@ -35,7 +35,7 @@ public abstract sealed class ForwardingPlan extends UnaryPlan
 
     public final void deriveOutput() {
         final OutputSchema output = getOutput();
-        output.copyFrom(getInput().getOutput());
+        output.copyFrom(getChild().getOutput());
         output.setTimestampIndex(derivedTimestampIndex());
     }
 
@@ -44,7 +44,7 @@ public abstract sealed class ForwardingPlan extends UnaryPlan
      * node orders or fills by another column.
      */
     public int derivedTimestampIndex() {
-        return getInput().getOutput().getTimestampIndex();
+        return getChild().getOutput().getTimestampIndex();
     }
 
     @Override

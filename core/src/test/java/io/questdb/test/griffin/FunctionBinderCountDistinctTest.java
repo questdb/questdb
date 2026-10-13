@@ -59,11 +59,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
-import static io.questdb.test.griffin.FunctionBindingHarness.binary;
-import static io.questdb.test.griffin.FunctionBindingHarness.call;
-import static io.questdb.test.griffin.FunctionBindingHarness.metadata;
-import static io.questdb.test.griffin.FunctionBindingHarness.parser;
-import static io.questdb.test.griffin.FunctionBindingHarness.unary;
+import static io.questdb.test.griffin.FunctionBindingHarness.*;
 
 
 public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
@@ -147,8 +143,8 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
                 final BoundExpression firstCopy = binder.copyRemappedColumns(expression, left);
                 final BoundExpression secondCopy = binder.copyRemappedColumns(expression, right);
                 Assert.assertEquals(1, constructions.size());
-                try (Function first = binder.instantiate(firstCopy, left.getInput().getOutput(), sqlExecutionContext);
-                     Function second = binder.instantiate(secondCopy, right.getInput().getOutput(), sqlExecutionContext);
+                try (Function first = binder.instantiate(firstCopy, left.getChild().getOutput(), sqlExecutionContext);
+                     Function second = binder.instantiate(secondCopy, right.getChild().getOutput(), sqlExecutionContext);
                      Function retained = binder.instantiate(expression, original, sqlExecutionContext)) {
                     Assert.assertSame(constructions.getQuick(0), retained);
                     Assert.assertNotSame(first, second);
@@ -366,25 +362,19 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
         }
 
         @Override
-        public int getInt(int col) {
-            Assert.assertEquals(index, col);
-            return value == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) value;
-        }
-
-        @Override
         public int getIPv4(int col) {
             Assert.assertEquals(index, col);
             return value == Numbers.LONG_NULL ? Numbers.IPv4_NULL : (int) value;
         }
 
         @Override
-        public long getLong(int col) {
+        public int getInt(int col) {
             Assert.assertEquals(index, col);
-            return value;
+            return value == Numbers.LONG_NULL ? Numbers.INT_NULL : (int) value;
         }
 
         @Override
-        public long getLong128Lo(int col) {
+        public long getLong(int col) {
             Assert.assertEquals(index, col);
             return value;
         }
@@ -396,6 +386,18 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
         }
 
         @Override
+        public long getLong128Lo(int col) {
+            Assert.assertEquals(index, col);
+            return value;
+        }
+
+        @Override
+        public void getLong256(int col, CharSink<?> sink) {
+            Assert.assertEquals(index, col);
+            long256.toSink(sink);
+        }
+
+        @Override
         public Long256 getLong256A(int col) {
             Assert.assertEquals(index, col);
             return long256;
@@ -404,12 +406,6 @@ public class FunctionBinderCountDistinctTest extends AbstractCairoTest {
         @Override
         public Long256 getLong256B(int col) {
             return getLong256A(col);
-        }
-
-        @Override
-        public void getLong256(int col, CharSink<?> sink) {
-            Assert.assertEquals(index, col);
-            long256.toSink(sink);
         }
 
         @Override

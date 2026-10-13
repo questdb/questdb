@@ -582,7 +582,7 @@ final class SetOperationFactoryGenerator {
             };
             final ArrayColumnTypes keyTypes = frame.keyTypes;
             final ArrayColumnTypes valueTypes = frame.valueTypes;
-            final BitSet writeSymbolAsString = frame.writeSymbolAsString;
+            final BitSet writeSymbolAsString = frame.symbolAsString;
             keyTypes.clear();
             valueTypes.clear();
             writeSymbolAsString.clear();

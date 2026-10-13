@@ -25,6 +25,7 @@
 package io.questdb.griffin.bind;
 
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
@@ -34,6 +35,7 @@ import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.PlanTables;
+import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.PreparedFunctions;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
@@ -55,11 +57,13 @@ import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
+import io.questdb.std.str.StringSink;
 
 /**
  * The binding context the compiler's binder services share: the statement's pools and preparations, the expression
@@ -73,7 +77,7 @@ public final class BindContext implements Mutable {
     final FunctionFactoryCache functionFactoryCache;
     final FunctionInstantiator functionInstantiator;
     final TableFunctionSources functionSources;
-    final OuterColumnReads outerColumnReads = new OuterColumnReads();
+    final OuterColumnReads outerColumnReads;
     final PlanNodePools planNodes;
     final PlanTables planTables;
     final PreparedFunctions preparedFunctions;
@@ -106,10 +110,17 @@ public final class BindContext implements Mutable {
             TableFunctionSources functionSources,
             BoundExpressionRewriter expressionRewriter,
             FunctionInstantiator functionInstantiator,
+            PostOrderTreeTraversalAlgo traverseAlgo,
             ObjList<BoundExpression> tmpArguments,
             IntList tmpPositions,
             OutputSchema tmpScope,
-            IntList tmpOuterColumns
+            IntList tmpOuterColumns,
+            ObjList<Function> callFunctions,
+            IntList callPositions,
+            ObjList<BoundExpression> callArguments,
+            StringSink intervalText,
+            LongList parsedIntervals,
+            OuterColumnReads outerColumnReads
     ) {
         this.scopes = scopes;
         this.bindingExpressions = bindingExpressions;
@@ -124,14 +135,15 @@ public final class BindContext implements Mutable {
         this.tmpPositions = tmpPositions;
         this.tmpScope = tmpScope;
         this.tmpOuterColumns = tmpOuterColumns;
+        this.outerColumnReads = outerColumnReads;
         this.functionFactoryCache = functionParser.getFunctionFactoryCache();
-        this.functionBinder = new FunctionBinder(this, functionParser.getFunctionResolver(), subqueryCompiler);
+        this.functionBinder = new FunctionBinder(this, functionParser.getFunctionResolver(), subqueryCompiler, traverseAlgo, callFunctions,
+                callPositions, callArguments, intervalText, parsedIntervals);
     }
 
     @Override
     public void clear() {
         functionBinder.clear();
-        tmpScope.clear();
         isSetOperationBranch = false;
     }
 
@@ -273,10 +285,23 @@ public final class BindContext implements Mutable {
         return dot < 0 ? token : token.subSequence(dot + 1, token.length());
     }
 
+    /**
+     * Window calls and specs read the input column a computed column of the same name would shadow.
+     */
+    static OutputSchema windowCallBindingScope(OutputSchema input, OutputSchema scope) {
+        scope.clear();
+        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
+            scope.addColumnAs(input, i, input.getColumnId(i), input.getColumnName(i),
+                    input.isVisible(i) || !hasVisibleColumn(input, input.getColumnName(i)), input.getColumnQualifier(i));
+        }
+        scope.setTimestampIndex(input.getTimestampIndex());
+        return scope;
+    }
+
     void addProjection(ProjectPlan project, BoundExpression expression, OutputSchema nestedSchema, CharSequence requestedName, boolean isVisible) {
         project.getExpressions().add(expression);
         if (expression instanceof ColumnExpression column) {
-            final OutputSchema input = project.getInput().getOutput();
+            final OutputSchema input = project.getChild().getOutput();
             final int index = input.getColumnIndexById(column.getColumnId());
             project.getOutput().add(planNodes.nextColumnId(), createOutputName(requestedName), expression.getDataType(),
                     nestedSchema == null && index >= 0 ? input.getMetadata(index) : nestedSchema, isVisible);
@@ -460,8 +485,8 @@ public final class BindContext implements Mutable {
                     return;
                 }
             }
-            retainImplicitTimestamp(project.getInput());
-            final OutputSchema input = project.getInput().getOutput();
+            retainImplicitTimestamp(project.getChild());
+            final OutputSchema input = project.getChild().getOutput();
             final int timestampIndex = input.getTimestampIndex();
             if (timestampIndex >= 0) {
                 final int columnId = planNodes.nextColumnId();
@@ -532,17 +557,7 @@ public final class BindContext implements Mutable {
         return windowBindingSchema;
     }
 
-    /**
-     * Window calls and specs read the input column a computed column of the same name would shadow.
-     */
     OutputSchema windowCallBindingScope(OutputSchema input) {
-        final OutputSchema windowBindingSchema = scopes.current().windowBindingSchema;
-        windowBindingSchema.clear();
-        for (int i = 0, n = input.getColumnCount(); i < n; i++) {
-            windowBindingSchema.addColumnAs(input, i, input.getColumnId(i), input.getColumnName(i),
-                    input.isVisible(i) || !hasVisibleColumn(input, input.getColumnName(i)), input.getColumnQualifier(i));
-        }
-        windowBindingSchema.setTimestampIndex(input.getTimestampIndex());
-        return windowBindingSchema;
+        return windowCallBindingScope(input, scopes.current().windowBindingSchema);
     }
 }

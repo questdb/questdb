@@ -46,9 +46,14 @@ import io.questdb.std.ObjList;
  */
 public final class ParquetPushdownExtractor {
     private static final ExpressionVisitor CURSORS = expression -> expression instanceof CursorExpression ? TreeWalk.STOP : TreeWalk.CONTINUE;
-    private final ObjList<BoundExpression> conditionValues = new ObjList<>();
+    private final ObjList<BoundExpression> conditionValues;
     private final ObjList<PushdownFilterCondition> conditions = new ObjList<>();
-    private final IntList valueCounts = new IntList();
+    private final IntList valueCounts;
+
+    public ParquetPushdownExtractor(ObjList<BoundExpression> conditionValues, IntList valueCounts) {
+        this.conditionValues = conditionValues;
+        this.valueCounts = valueCounts;
+    }
 
     /**
      * Returns the conditions the caller owns, or null when none survive compilation.

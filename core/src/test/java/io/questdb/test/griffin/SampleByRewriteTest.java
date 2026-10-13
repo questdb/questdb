@@ -37,11 +37,14 @@ import org.junit.Test;
 
 public class SampleByRewriteTest extends AbstractCairoTest {
     @Test
-    public void testHiddenBucketSurvivesCountProjection() throws Exception {
+    public void testFillValuesKeepDistinctAggregateOccurrences() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertPrunedSampleBy("SELECT count() n FROM lp_sample_prune SAMPLE BY 1h FILL(NONE) ALIGN TO CALENDAR",
-                    "n\n2\n1\n2\n");
+            assertPrunedSampleBy("SELECT ts,sum(v) a,sum(v) b FROM lp_sample_prune SAMPLE BY 1h FILL(11,22) ALIGN TO FIRST OBSERVATION",
+                    "ts\ta\tb\n2024-01-01T00:10:00.000000Z\t30\t30\n2024-01-01T01:10:00.000000Z\t30\t30\n"
+                            + "2024-01-01T02:10:00.000000Z\t11\t22\n2024-01-01T03:10:00.000000Z\t90\t90\n");
+            assertPrunedSampleBy("SELECT n FROM (SELECT ts,v%2 parity,count() n FROM lp_sample_prune"
+                    + " SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION)", "n\n2\n1\n1\n2\n");
         });
     }
 
@@ -55,18 +58,6 @@ public class SampleByRewriteTest extends AbstractCairoTest {
                             + " SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION)"
                             + " WHERE ts>='2024-01-01T00:30:00.000000Z' ORDER BY ts",
                     "ts\tn\n2024-01-01T01:10:00.000000Z\t1\n2024-01-01T02:10:00.000000Z\t1\n2024-01-01T03:10:00.000000Z\t2\n");
-        });
-    }
-
-    @Test
-    public void testFillValuesKeepDistinctAggregateOccurrences() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            assertPrunedSampleBy("SELECT ts,sum(v) a,sum(v) b FROM lp_sample_prune SAMPLE BY 1h FILL(11,22) ALIGN TO FIRST OBSERVATION",
-                    "ts\ta\tb\n2024-01-01T00:10:00.000000Z\t30\t30\n2024-01-01T01:10:00.000000Z\t30\t30\n"
-                            + "2024-01-01T02:10:00.000000Z\t11\t22\n2024-01-01T03:10:00.000000Z\t90\t90\n");
-            assertPrunedSampleBy("SELECT n FROM (SELECT ts,v%2 parity,count() n FROM lp_sample_prune"
-                    + " SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION)", "n\n2\n1\n1\n2\n");
         });
     }
 
@@ -88,14 +79,11 @@ public class SampleByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testOuterFiltersCannotChangeBucketMembership() throws Exception {
+    public void testHiddenBucketSurvivesCountProjection() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
-            assertPrunedSampleBy("SELECT n FROM (SELECT ts,count() n FROM lp_sample_prune SAMPLE BY 1h FILL(NONE) ALIGN TO CALENDAR)"
-                    + " WHERE ts>='2024-01-01T00:30:00.000000Z' ORDER BY ts", "n\n1\n2\n");
-            assertPrunedSampleBy("SELECT ts,n FROM (SELECT ts,count() n FROM lp_sample_prune SAMPLE BY 1h FILL(NONE) ALIGN TO CALENDAR)"
-                            + " WHERE n=2 ORDER BY ts",
-                    "ts\tn\n2024-01-01T00:00:00.000000Z\t2\n2024-01-01T03:00:00.000000Z\t2\n");
+            assertPrunedSampleBy("SELECT count() n FROM lp_sample_prune SAMPLE BY 1h FILL(NONE) ALIGN TO CALENDAR",
+                    "n\n2\n1\n2\n");
         });
     }
 
@@ -111,6 +99,18 @@ public class SampleByRewriteTest extends AbstractCairoTest {
             }
             assertQuery("SELECT * FROM " + table + " ORDER BY ts").timestamp("ts").expectSize().returns(
                     "ts\tn\n2024-01-01T00:00:00.000000Z\t2\n2024-01-01T01:00:00.000000Z\t1\n2024-01-01T03:00:00.000000Z\t2\n");
+        });
+    }
+
+    @Test
+    public void testOuterFiltersCannotChangeBucketMembership() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertPrunedSampleBy("SELECT n FROM (SELECT ts,count() n FROM lp_sample_prune SAMPLE BY 1h FILL(NONE) ALIGN TO CALENDAR)"
+                    + " WHERE ts>='2024-01-01T00:30:00.000000Z' ORDER BY ts", "n\n1\n2\n");
+            assertPrunedSampleBy("SELECT ts,n FROM (SELECT ts,count() n FROM lp_sample_prune SAMPLE BY 1h FILL(NONE) ALIGN TO CALENDAR)"
+                            + " WHERE n=2 ORDER BY ts",
+                    "ts\tn\n2024-01-01T00:00:00.000000Z\t2\n2024-01-01T03:00:00.000000Z\t2\n");
         });
     }
 
@@ -136,7 +136,7 @@ public class SampleByRewriteTest extends AbstractCairoTest {
             Assert.assertEquals(aggregate.getGroupingExpressions().size() + aggregate.getAggregates().size(),
                     aggregate.getOutput().getColumnCount());
             if (aggregate instanceof SampleByPlan sample) {
-                Assert.assertTrue(aggregate.getInput().getOutput().getColumnIndexById(sample.getTimestampColumnId()) >= 0);
+                Assert.assertTrue(aggregate.getChild().getOutput().getColumnIndexById(sample.getTimestampColumnId()) >= 0);
             }
             aggregates++;
         } else if (plan instanceof ScanPlan) {

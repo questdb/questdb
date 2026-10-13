@@ -65,14 +65,13 @@ import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
 /**
- * Removes the columns no consumer reads, starting from the root's output, and lays out the
- * outputs of scans, joins and windows over the surviving columns.
+ * Removes the columns no consumer reads, starting from the root's output, with the window calls that
+ * compute them, and lays out the outputs of scans, joins and windows over the surviving columns.
  */
 final class ColumnPruning implements OptimiserPass {
     private final AggregateInputOrder aggregateInputOrder;
     private final ObjList<LogicalPlan> alignedPath = new ObjList<>();
     private final OptimiserContext context;
-    private final ObjList<BoundExpression> tmpExpressions;
     private final ObjectPool<ColumnExpression> narrowingColumns;
     private final ObjectPool<ProjectPlan> narrowingProjects;
     private final ObjList<LogicalPlan> pruneAncestors;
@@ -90,11 +89,12 @@ final class ColumnPruning implements OptimiserPass {
             return expression;
         }
     };
+    private final IntList remappedSymbolColumns;
     private final IntList retainedColumnIndexes;
     private final BitSet retainedColumns = new BitSet();
-    private final OutputSchema tmpSchema;
     private final ObjList<LogicalPlan> sharedSetOperations = new ObjList<>();
-    private final IntList tmpUpdateTypes;
+    private final ObjList<BoundExpression> tmpExpressions;
+    private final OutputSchema tmpSchema;
     private LogicalPlan joinInputPlan;
 
     ColumnPruning(
@@ -104,7 +104,7 @@ final class ColumnPruning implements OptimiserPass {
             ObjectPool<ColumnExpression> narrowingColumns,
             ObjectPool<ProjectPlan> narrowingProjects,
             IntList retainedColumnIndexes,
-            IntList tmpUpdateTypes,
+            IntList remappedSymbolColumns,
             IntHashSet requiredColumnIds,
             ObjList<LogicalPlan> pruneAncestors,
             OutputSchema tmpSchema
@@ -115,7 +115,7 @@ final class ColumnPruning implements OptimiserPass {
         this.narrowingColumns = narrowingColumns;
         this.narrowingProjects = narrowingProjects;
         this.retainedColumnIndexes = retainedColumnIndexes;
-        this.tmpUpdateTypes = tmpUpdateTypes;
+        this.remappedSymbolColumns = remappedSymbolColumns;
         this.requiredColumnIds = requiredColumnIds;
         this.pruneAncestors = pruneAncestors;
         this.tmpSchema = tmpSchema;
@@ -177,8 +177,8 @@ final class ColumnPruning implements OptimiserPass {
     }
 
     private void alignScanColumns(ProjectPlan project) {
-        final WindowJoinPlan windowJoin = project.getInput() instanceof WindowJoinPlan join ? join : null;
-        final LogicalPlan top = windowJoin != null ? windowJoin.getMaster() : project.getInput();
+        final WindowJoinPlan windowJoin = project.getChild() instanceof WindowJoinPlan join ? join : null;
+        final LogicalPlan top = windowJoin != null ? windowJoin.getMaster() : project.getChild();
         LogicalPlan input = top;
         boolean hasWindow = false;
         while (input instanceof FilterPlan || input instanceof SortPlan || input instanceof LimitPlan
@@ -239,7 +239,7 @@ final class ColumnPruning implements OptimiserPass {
             if (node instanceof WindowPlan window) {
                 // Window outputs follow its input columns, then its function columns.
                 final OutputSchema nodeOutput = window.getOutput();
-                final OutputSchema child = window.getInput().getOutput();
+                final OutputSchema child = window.getChild().getOutput();
                 final int timestampId = nodeOutput.getTimestampColumnId();
                 tmpSchema.copyFrom(nodeOutput);
                 nodeOutput.copyFrom(child);
@@ -361,7 +361,7 @@ final class ColumnPruning implements OptimiserPass {
             }
             case AggregatePlan aggregate -> {
                 if (aggregate.getSharedSource() != null) {
-                    LogicalPlan input = aggregate.getInput();
+                    LogicalPlan input = aggregate.getChild();
                     while (input instanceof ProjectPlan project && LogicalPlans.isColumnProjection(project)) {
                         input = input.inputAt(0);
                     }
@@ -379,13 +379,13 @@ final class ColumnPruning implements OptimiserPass {
                 if (aggregate.getGroupingExpressions().size() == 0 && aggregate.getAggregates().size() == 1) {
                     final FunctionExpression call = aggregate.getAggregates().getQuick(0);
                     if (call.getArgumentCount() == 0 && SqlKeywords.isCountKeyword(call.getName())) {
-                        if (isCountInputMaterialized(aggregate.getInput())) {
-                            final OutputSchema input = aggregate.getInput().getOutput();
+                        if (isCountInputMaterialized(aggregate.getChild())) {
+                            final OutputSchema input = aggregate.getChild().getOutput();
                             for (int i = 0, n = input.getColumnCount(); i < n; i++) {
                                 requiredColumnIds.add(input.getColumnId(i));
                             }
                         } else {
-                            aggregate.replaceInput(0, removeCountInputProjections(aggregate.getInput()));
+                            aggregate.replaceInput(0, removeCountInputProjections(aggregate.getChild()));
                         }
                     }
                 }
@@ -393,17 +393,38 @@ final class ColumnPruning implements OptimiserPass {
                 return;
             }
             case WindowPlan window -> {
-                final LogicalPlan input = window.getInput();
-                for (int i = 0, n = window.getFunctionColumnIds().size(); i < n; i++) {
-                    collectWindowRequiredColumns(window, i);
+                final LogicalPlan input = window.getChild();
+                final IntList functionColumnIds = window.getFunctionColumnIds();
+                for (int i = functionColumnIds.size() - 1; i >= 0; i--) {
+                    if (requiredColumnIds.contains(functionColumnIds.getQuick(i))) {
+                        collectWindowRequiredColumns(window, i);
+                    } else {
+                        window.getFunctions().remove(i);
+                        window.getSpecs().remove(i);
+                        functionColumnIds.removeIndex(i);
+                    }
+                }
+                if (functionColumnIds.size() == 0) {
+                    removeWindow(window);
+                    return;
                 }
                 pruneColumns(input);
                 final OutputSchema output = window.getOutput();
                 tmpSchema.copyFrom(output);
-                output.copyFrom(input.getOutput());
+                output.copyFrom(window.getChild().getOutput());
+                int inputCount = output.getColumnCount();
+                int replacedCount = 0;
+                for (int i = 0; i < inputCount; i++) {
+                    if (tmpSchema.getColumnIndexById(output.getColumnId(i)) < 0) {
+                        replacedCount++;
+                    }
+                }
                 for (int i = 0, n = window.getFunctionColumnIds().size(); i < n; i++) {
                     final int index = tmpSchema.getColumnIndexById(window.getFunctionColumnIds().getQuick(i));
-                    removeReplacedWindowColumn(output, tmpSchema.getColumnName(index));
+                    if (replacedCount > 0 && removeReplacedWindowColumn(output, tmpSchema.getColumnName(index), inputCount)) {
+                        inputCount--;
+                        replacedCount--;
+                    }
                     output.addColumnFrom(tmpSchema, index);
                 }
                 output.setTimestampColumnId(timestampId);
@@ -490,7 +511,7 @@ final class ColumnPruning implements OptimiserPass {
                 return;
             }
             case ProjectPlan project -> {
-                final int inputTimestampId = project.getInput().getOutput().getTimestampColumnId();
+                final int inputTimestampId = project.getChild().getOutput().getTimestampColumnId();
                 if (project.hasTimestampDeclaration()) {
                     requiredColumnIds.add(timestampId);
                 }
@@ -502,7 +523,7 @@ final class ColumnPruning implements OptimiserPass {
                 for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
                     collectRequiredColumns(project.getExpressions().getQuick(i));
                 }
-                final LogicalPlan projectInput = project.getInput();
+                final LogicalPlan projectInput = project.getChild();
                 // A computing projection reads a table function in place; narrowing
                 // a source that produces every column anyway only adds a mapping.
                 if (!(projectInput instanceof FunctionSourcePlan source) || source.isProjectable()
@@ -510,7 +531,7 @@ final class ColumnPruning implements OptimiserPass {
                     pruneColumns(projectInput);
                 }
                 alignScanColumns(project);
-                final OutputSchema input = project.getInput().getOutput();
+                final OutputSchema input = project.getChild().getOutput();
                 if (!project.hasTimestampDeclaration() && project.getOutput().getTimestampIndex() < 0 && input.getTimestampIndex() >= 0
                         && (timestampId >= 0 || inputTimestampId != input.getTimestampColumnId())) {
                     // Pruning one timestamp alias can make another alias the designated
@@ -530,9 +551,9 @@ final class ColumnPruning implements OptimiserPass {
             }
             case FilterPlan filter -> filter.visitReads(requiredReads);
             case LatestByPlan latest -> {
-                final LogicalPlan input = latest.getInput();
+                final LogicalPlan input = latest.getChild();
                 final boolean isNativeScan = input instanceof ScanPlan
-                        || input instanceof FilterPlan filter && filter.getInput() instanceof ScanPlan;
+                        || input instanceof FilterPlan filter && filter.getChild() instanceof ScanPlan;
                 if (latest.getTimestampColumnId() >= 0 && !isNativeScan) {
                     requiredColumnIds.add(latest.getTimestampColumnId());
                 }
@@ -551,8 +572,8 @@ final class ColumnPruning implements OptimiserPass {
             }
             case SortPlan sort -> {
                 sort.visitReads(requiredReads);
-                if (sort.getInput() instanceof LatestByPlan || sort.getInput() instanceof FilterPlan) {
-                    final LogicalPlan input = sort.getInput();
+                if (sort.getChild() instanceof LatestByPlan || sort.getChild() instanceof FilterPlan) {
+                    final LogicalPlan input = sort.getChild();
                     final OutputSchema output = input.getOutput();
                     final ProjectPlan projection = narrowingProjects.next().of(input, plan.getPosition());
                     // Predicate and partition keys need not occupy the sorted record.
@@ -577,7 +598,7 @@ final class ColumnPruning implements OptimiserPass {
             }
         }
         final ForwardingPlan forwarding = (ForwardingPlan) plan;
-        pruneColumns(forwarding.getInput());
+        pruneColumns(forwarding.getChild());
         forwarding.deriveOutput();
     }
 
@@ -626,7 +647,7 @@ final class ColumnPruning implements OptimiserPass {
         }
         // Hidden keys still define groups; a keyless aggregate still returns
         // one row when every aggregate value has been pruned.
-        pruneColumns(grouping.getInput());
+        pruneColumns(grouping.getChild());
     }
 
     private void pruneOutput(LogicalPlan plan) {
@@ -645,11 +666,6 @@ final class ColumnPruning implements OptimiserPass {
         final ProjectPlan project = plan instanceof ProjectPlan projectPlan ? projectPlan : null;
         final ObjList<BoundExpression> expressions = project != null ? project.getExpressions() : null;
         final IntList updateTypes = project != null && project.hasUpdateConversions() ? project.getUpdateTargetTypes() : null;
-        tmpUpdateTypes.clear();
-        if (updateTypes != null) {
-            tmpUpdateTypes.addAll(updateTypes);
-            updateTypes.clear();
-        }
         final AggregatePlan aggregate = plan instanceof AggregatePlan aggregatePlan ? aggregatePlan : null;
         final ObjList<BoundExpression> keys = aggregate == null ? null : aggregate.getGroupingExpressions();
         final int keyCount = keys == null ? 0 : keys.size();
@@ -664,7 +680,7 @@ final class ColumnPruning implements OptimiserPass {
                 expressions.setQuick(index, expressions.getQuick(i));
             }
             if (updateTypes != null) {
-                updateTypes.add(tmpUpdateTypes.getQuick(i));
+                updateTypes.setQuick(index, updateTypes.getQuick(i));
             }
             if (keys != null && i < keyCount) {
                 keys.setQuick(keptKeyCount++, keys.getQuick(i));
@@ -676,6 +692,9 @@ final class ColumnPruning implements OptimiserPass {
         output.retain(retainedColumnIndexes);
         if (indexes != null) {
             indexes.setPos(output.getColumnCount());
+        }
+        if (updateTypes != null) {
+            updateTypes.setPos(output.getColumnCount());
         }
         if (expressions != null) {
             for (int i = output.getColumnCount(), n = expressions.size(); i < n; i++) {
@@ -729,7 +748,7 @@ final class ColumnPruning implements OptimiserPass {
             projection.getOutput().setTimestampColumnId(inputSchema.getTimestampColumnId());
             plan.replaceInput(i, projection);
         }
-        plan.remapSymbolColumns(retainedColumnIndexes);
+        plan.remapSymbolColumns(retainedColumnIndexes, remappedSymbolColumns);
         output.retain(retainedColumnIndexes);
     }
 
@@ -802,23 +821,23 @@ final class ColumnPruning implements OptimiserPass {
             input = input.inputAt(0);
         }
         if (input instanceof LimitPlan limit) {
-            limit.replaceInput(0, removeCountInputProjections(limit.getInput()));
+            limit.replaceInput(0, removeCountInputProjections(limit.getChild()));
         }
         return input;
     }
 
     private void removeOrderedAggregateInputProjection(AggregatePlan aggregate) {
         while (true) {
-            LogicalPlan candidate = aggregate.getInput();
+            LogicalPlan candidate = aggregate.getChild();
             UnaryPlan boundary = null;
             while (candidate instanceof LimitPlan limit) {
                 boundary = limit;
-                candidate = limit.getInput();
+                candidate = limit.getChild();
             }
             if (!(candidate instanceof ProjectPlan project)) {
                 return;
             }
-            final LogicalPlan input = project.getInput();
+            final LogicalPlan input = project.getChild();
             if (project.hasTimestampDeclaration() || !LogicalPlans.isColumnProjection(project)
                     || project.getExpressions().size() != input.getOutput().getColumnCount()
                     || !(input instanceof SortPlan) && !(input instanceof LimitPlan)) {
@@ -843,7 +862,7 @@ final class ColumnPruning implements OptimiserPass {
                 aggregate.replaceInput(0, input);
             } else {
                 boundary.replaceInput(0, input);
-                LogicalPlans.deriveLimits(aggregate.getInput());
+                LogicalPlans.deriveLimits(aggregate.getChild());
             }
         }
     }
@@ -851,13 +870,30 @@ final class ColumnPruning implements OptimiserPass {
     /**
      * Keeps out the nested window column a top-level window function has replaced in the window's output.
      */
-    private void removeReplacedWindowColumn(OutputSchema output, CharSequence name) {
-        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+    private boolean removeReplacedWindowColumn(OutputSchema output, CharSequence name, int inputCount) {
+        for (int i = 0; i < inputCount; i++) {
             if (Chars.equalsIgnoreCase(output.getColumnName(i), name) && tmpSchema.getColumnIndexById(output.getColumnId(i)) < 0) {
                 output.remove(i);
-                return;
+                return true;
             }
         }
+        return false;
+    }
+
+    /**
+     * Replaces a window that computes no column a consumer reads with its input, which prunes in the window's place.
+     */
+    private void removeWindow(WindowPlan window) {
+        final LogicalPlan input = window.getChild();
+        final int depth = pruneAncestors.size();
+        final LogicalPlan parent = pruneAncestors.getQuick(depth - 2);
+        for (int i = 0, n = parent.inputCount(); i < n; i++) {
+            if (parent.inputAt(i) == window) {
+                parent.replaceInput(i, input);
+            }
+        }
+        pruneAncestors.setQuick(depth - 1, input);
+        pruneColumns0(input);
     }
 
     /**
@@ -880,7 +916,7 @@ final class ColumnPruning implements OptimiserPass {
      * A grouping key stays in the aggregate output anyway; dropping its selection only adds a remapping.
      */
     private void retainGroupingKeys(ProjectPlan project) {
-        final LogicalPlan input = LogicalPlans.skipFilters(project.getInput());
+        final LogicalPlan input = LogicalPlans.skipFilters(project.getChild());
         if (project != joinInputPlan || !(input instanceof AggregatePlan aggregate) || !LogicalPlans.isColumnProjection(project)) {
             return;
         }

@@ -1461,6 +1461,41 @@ public class PivotTest extends AbstractSqlParserTest {
     }
 
     @Test
+    public void testPivotSubqueryPivotInAggregateKeepsGeneratedAliases() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', 1, 0), ('b', 2, 1), ('x', 3, 2)");
+            assertQuery("""
+                    SELECT * FROM t PIVOT (
+                        sum(CASE WHEN ts = (SELECT max(ts) FROM (t PIVOT (max(ts) FOR k IN ('max(v)') GROUP BY ts))) THEN v END) s,
+                        max(v)
+                        FOR k IN ('a', 'b')
+                    )
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            a_s	a_max(v)	b_s	b_max(v)
+                            null	1	null	2
+                            """);
+        });
+    }
+
+    @Test
+    public void testPivotSubqueryPivotInValueListKeepsDuplicateCheck() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR k IN ('a', (SELECT first(x) FROM (t PIVOT (sum(v) FOR k IN ('x')))), 'a'))")
+                    .noLeakCheck()
+                    .fails(103, "duplicate value in PIVOT IN list: 'a'");
+            assertQuery("SELECT * FROM t PIVOT (sum(v) FOR k IN ('a', (SELECT first(b) FROM (t PIVOT (sum(v) FOR k IN ('b')))), 'b'))")
+                    .noLeakCheck()
+                    .fails(46, "constant expected");
+        });
+    }
+
+    @Test
     public void testPivotSubqueryReturnsEmptyResultSet() throws Exception {
         assertMemoryLeak(() -> {
             execute(ddlCities);

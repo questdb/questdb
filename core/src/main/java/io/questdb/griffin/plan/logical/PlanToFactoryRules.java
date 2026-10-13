@@ -55,7 +55,7 @@ public final class PlanToFactoryRules {
      * only declares the designated timestamp.
      */
     public static LogicalPlan aggregateBase(AggregatePlan aggregate) {
-        return timestampDeclarationBase(LogicalPlans.skipRenames(aggregate.getInput()));
+        return timestampDeclarationBase(LogicalPlans.skipRenames(aggregate.getChild()));
     }
 
     /**
@@ -65,7 +65,7 @@ public final class PlanToFactoryRules {
         if (postingDistinctScan(aggregate) != null) {
             return AggregateFactory.POSTING_DISTINCT;
         }
-        if (aggregate.getInput() instanceof HorizonJoinPlan) {
+        if (aggregate.getChild() instanceof HorizonJoinPlan) {
             return AggregateFactory.HORIZON;
         }
         return LogicalPlans.isCount(aggregate) ? AggregateFactory.COUNT : AggregateFactory.GROUP_BY;
@@ -85,7 +85,7 @@ public final class PlanToFactoryRules {
      * The table scan the generator builds the filter into, or null when it filters the factory of its input.
      */
     public static ScanPlan fusedScan(FilterPlan filter) {
-        return filter.getInput() instanceof ScanPlan scan && !scan.isWalClientUpdate() ? scan : null;
+        return filter.getChild() instanceof ScanPlan scan && !scan.isWalClientUpdate() ? scan : null;
     }
 
     /**
@@ -95,10 +95,10 @@ public final class PlanToFactoryRules {
     public static LogicalPlan generatedPlan(LogicalPlan plan) {
         while (true) {
             if (plan instanceof ProjectPlan project && isIdentityProjection(project)) {
-                plan = project.getInput();
+                plan = project.getChild();
             } else if (plan instanceof FilterPlan filter && !isFusedFilter(filter)
                     && filter.getPredicate() instanceof ConstantExpression constant && constant.getLongValue() != 0) {
-                plan = filter.getInput();
+                plan = filter.getChild();
             } else {
                 return plan;
             }
@@ -113,7 +113,7 @@ public final class PlanToFactoryRules {
         if (plan instanceof WindowPlan window) {
             return window;
         }
-        return plan instanceof ProjectPlan project && project.getInput() instanceof WindowPlan window
+        return plan instanceof ProjectPlan project && project.getChild() instanceof WindowPlan window
                 && isWindowOutputProjection(project, window) ? window : null;
     }
 
@@ -122,7 +122,7 @@ public final class PlanToFactoryRules {
      * otherwise.
      */
     public static WindowJoinPlan generatedWindowJoin(ProjectPlan project) {
-        return project.getInput() instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project) ? windowJoin : null;
+        return project.getChild() instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project) ? windowJoin : null;
     }
 
     /**
@@ -138,11 +138,26 @@ public final class PlanToFactoryRules {
     }
 
     /**
+     * True when every GeoHash prefix the within() call tests is a constant the column takes, so that
+     * {@link #withinPrefixes} collects them.
+     */
+    public static boolean hasConstantWithinPrefixes(FunctionExpression within) {
+        final int columnType = within.argumentAt(0).getDataType();
+        for (int i = 1, n = within.getArgumentCount(); i < n; i++) {
+            if (!(within.argumentAt(i) instanceof ConstantExpression prefix)
+                    || !GeoHashes.isNormalizableGeoPrefix(prefix.getLongValue(), prefix.getDataType(), columnType)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * True when the plan, under any projections, filters a table scan, so the scan's access path serves the filter.
      */
     public static boolean hasNativeFilterInput(LogicalPlan plan) {
         plan = LogicalPlans.skipProjects(plan);
-        return plan instanceof FilterPlan filter && filter.getInput() instanceof ScanPlan;
+        return plan instanceof FilterPlan filter && filter.getChild() instanceof ScanPlan;
     }
 
     /**
@@ -184,13 +199,13 @@ public final class PlanToFactoryRules {
             return null;
         }
         final OutputSchema output = project.getOutput();
-        final OutputSchema input = project.getInput().getOutput();
+        final OutputSchema input = project.getChild().getOutput();
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             final int index = input.getColumnIndexById(((ColumnExpression) project.getExpressions().getQuick(i)).getColumnId());
             if (!Chars.equals(output.getColumnName(i), input.getColumnName(index))) {
                 return null;
             }
-            if (i == timestampIndex && index != PhysicalProperties.timestampIndex(project.getInput())) {
+            if (i == timestampIndex && index != PhysicalProperties.timestampIndex(project.getChild())) {
                 return null;
             }
         }
@@ -205,7 +220,7 @@ public final class PlanToFactoryRules {
      */
     public static FilterPlan horizonStolenFilter(LogicalPlan slave) {
         final ProjectPlan projection = horizonSlaveProjection(slave);
-        final FilterPlan filter = stolenFilter(projection != null ? projection.getInput() : slave);
+        final FilterPlan filter = stolenFilter(projection != null ? projection.getChild() : slave);
         if (filter == null) {
             return null;
         }
@@ -230,7 +245,7 @@ public final class PlanToFactoryRules {
      */
     public static boolean isIdentityProjection(ProjectPlan project) {
         return isIdentityProjection(project, null, PhysicalProperties.timestampIndex(project),
-                PhysicalProperties.timestampIndex(project.getInput()));
+                PhysicalProperties.timestampIndex(project.getChild()));
     }
 
     /**
@@ -240,7 +255,7 @@ public final class PlanToFactoryRules {
      * it only changes the name case.
      */
     public static boolean isIdentityProjection(ProjectPlan project, @Nullable RecordMetadata layout, int timestampIndex, int inputTimestampIndex) {
-        final LogicalPlan input = project.getInput();
+        final LogicalPlan input = project.getChild();
         if (LogicalPlans.isComputedProjection(project) || input instanceof WindowPlan window && isWindowOutputProjection(project, window)
                 || input instanceof WindowJoinPlan && LogicalPlans.isColumnOnlyProjection(project)) {
             return false;
@@ -252,7 +267,7 @@ public final class PlanToFactoryRules {
             return false;
         }
         final boolean isKeySpellingKept = LogicalPlans.skipFilters(input) instanceof AggregatePlan aggregate
-                && aggregate.hasKeySpellingKept() && !(aggregate.getInput() instanceof HorizonJoinPlan);
+                && aggregate.hasKeySpellingKept() && !(aggregate.getChild() instanceof HorizonJoinPlan);
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             final ColumnExpression column = (ColumnExpression) project.getExpressions().getQuick(i);
             final CharSequence name = output.getColumnName(i);
@@ -312,7 +327,7 @@ public final class PlanToFactoryRules {
      * columns. {@code order} and {@code readIds} are scratch lists.
      */
     public static boolean isWindowJoinTimestampKept(ProjectPlan project, WindowJoinPlan windowJoin, IntList order, IntList readIds) {
-        final OutputSchema input = project.getInput().getOutput();
+        final OutputSchema input = project.getChild().getOutput();
         final ObjList<BoundExpression> expressions = project.getExpressions();
         order.clear();
         for (int i = 0, n = expressions.size(); i < n; i++) {
@@ -338,7 +353,7 @@ public final class PlanToFactoryRules {
      * binds as its keep flag, which the projection above the filter drops.
      */
     public static boolean isWindowKeepFlag(FilterPlan filter) {
-        final LogicalPlan input = filter.getInput();
+        final LogicalPlan input = filter.getChild();
         final WindowPlan window = generatedWindow(input);
         if (!(filter.getPredicate() instanceof ColumnExpression column) || window == null
                 || window.getAlgorithm() != WindowPlan.Algorithm.CACHED_LIGHT || window.getFunctions().size() != 1
@@ -362,7 +377,10 @@ public final class PlanToFactoryRules {
             return false;
         }
         final OutputSchema input = window.getOutput();
+        final int functionCount = window.getFunctionColumnIds().size();
+        final int firstFunctionIndex = input.getColumnCount() - functionCount;
         int windowCount = 0;
+        int lastFunctionIndex = -1;
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column)) {
                 return false;
@@ -371,14 +389,15 @@ public final class PlanToFactoryRules {
             if (index < 0 || column.isCast() || !column.isDirectReference() || input.getColumnType(index) != project.getOutput().getColumnType(i)) {
                 return false;
             }
-            if (window.getFunctionColumnIds().indexOf(column.getColumnId(), 0, window.getFunctionColumnIds().size()) >= 0) {
-                if (LogicalPlans.isColumnSelectedBefore(project, i, column.getColumnId())) {
+            if (index >= firstFunctionIndex) {
+                if (index <= lastFunctionIndex && LogicalPlans.isColumnSelectedBefore(project, i, column.getColumnId())) {
                     return false;
                 }
+                lastFunctionIndex = Math.max(lastFunctionIndex, index);
                 windowCount++;
             }
         }
-        return windowCount == window.getFunctionColumnIds().size();
+        return windowCount == functionCount;
     }
 
     /**
@@ -386,7 +405,7 @@ public final class PlanToFactoryRules {
      * projection that only declares the designated timestamp.
      */
     public static LogicalPlan latestByBase(LatestByPlan latest) {
-        return timestampDeclarationBase(latest.getInput());
+        return timestampDeclarationBase(latest.getChild());
     }
 
     /**
@@ -394,7 +413,7 @@ public final class PlanToFactoryRules {
      * BY into; null otherwise.
      */
     public static ScanPlan latestByScan(LatestByPlan latest) {
-        return LogicalPlans.scanThroughFilter(latest.getInput());
+        return LogicalPlans.scanThroughFilter(latest.getChild());
     }
 
     /**
@@ -402,12 +421,12 @@ public final class PlanToFactoryRules {
      * builds for the input, unless the projection's input is another; null otherwise.
      */
     public static ProjectPlan parallelTopKProjection(SortPlan sort) {
-        final LogicalPlan base = generatedPlan(sort.getInput());
+        final LogicalPlan base = generatedPlan(sort.getChild());
         if (!isPeelableProjection(base)) {
             return null;
         }
         final ProjectPlan projection = (ProjectPlan) base;
-        return isPeelableProjection(generatedPlan(projection.getInput())) ? null : projection;
+        return isPeelableProjection(generatedPlan(projection.getChild())) ? null : projection;
     }
 
     /**
@@ -415,7 +434,7 @@ public final class PlanToFactoryRules {
      */
     public static LogicalPlan parallelTopKSource(SortPlan sort) {
         final ProjectPlan projection = parallelTopKProjection(sort);
-        return projection != null ? projection.getInput() : sort.getInput();
+        return projection != null ? projection.getChild() : sort.getChild();
     }
 
     /**
@@ -423,7 +442,7 @@ public final class PlanToFactoryRules {
      * directly or through one filter, whose predicate the scan's intervals implement whole; null otherwise.
      */
     public static ScanPlan postingDistinctScan(AggregatePlan aggregate) {
-        final ScanPlan scan = LogicalPlans.scanThroughFilter(aggregate.getInput());
+        final ScanPlan scan = LogicalPlans.scanThroughFilter(aggregate.getChild());
         return scan != null && scan.getAccessPath() == ScanPlan.AccessPath.POSTING_DISTINCT ? scan : null;
     }
 
@@ -434,7 +453,7 @@ public final class PlanToFactoryRules {
      * that designates none, or when operator planning dropped it from a computing projection over a window join.
      */
     public static int projectedTimestampIndex(ProjectPlan project, int inputTimestampIndex) {
-        final LogicalPlan input = project.getInput();
+        final LogicalPlan input = project.getChild();
         final int timestampIndex = requestedTimestampIndex(project, inputTimestampIndex);
         if (timestampIndex < 0) {
             return -1;
@@ -452,7 +471,7 @@ public final class PlanToFactoryRules {
      * designated timestamp unless the SAMPLE BY reads the timestamp that projection declares.
      */
     public static LogicalPlan sampleByBase(SampleByPlan sample) {
-        final LogicalPlan sampled = sample.getInput();
+        final LogicalPlan sampled = sample.getChild();
         return sample.isTimestampRequired() ? sampled : timestampDeclarationBase(sampled);
     }
 
@@ -479,7 +498,7 @@ public final class PlanToFactoryRules {
      */
     public static FilterPlan temporalStolenFilter(LogicalPlan slave) {
         final ProjectPlan projection = temporalSlaveProjection(slave);
-        return stolenFilter(projection != null ? projection.getInput() : slave);
+        return stolenFilter(projection != null ? projection.getChild() : slave);
     }
 
     /**
@@ -571,7 +590,7 @@ public final class PlanToFactoryRules {
         final int orderColumnId = project.getRequestedOrderColumnId();
         final int inputOrderId = LogicalPlans.projectedSourceColumnId(project, orderColumnId);
         return project.getOutput().getTimestampIndex() < 0 && inputOrderId >= 0
-                && inputTimestampIndex == project.getInput().getOutput().getColumnIndexById(inputOrderId)
+                && inputTimestampIndex == project.getChild().getOutput().getColumnIndexById(inputOrderId)
                 ? project.getOutput().getColumnIndexById(orderColumnId) : project.getOutput().getTimestampIndex();
     }
 

@@ -57,12 +57,12 @@ import io.questdb.std.Chars;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
-import io.questdb.std.Mutable;
+import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.bind.BindContext.*;
 
-final class WindowBinder implements Mutable {
+final class WindowBinder {
     private static final int MAX_WINDOW_NESTING_DEPTH = 8;
     private static final int SEARCH_PURE_WINDOW_FUNCTIONS = 1;
     private static final int SEARCH_UNAGGREGATED = 2;
@@ -85,20 +85,15 @@ final class WindowBinder implements Mutable {
     private final VirtualRecord bindPartitionRecord = new VirtualRecord(new ObjList<>());
     private final BindContext ctx;
     private final FunctionParser functionParser;
-    private final IntList windowGroupMembers = new IntList();
-    private final IntHashSet windowInheritancePositions = new IntHashSet();
-    private final ArrayColumnTypes windowKeyTypes = new ArrayColumnTypes();
+    private final IntList windowGroupMembers;
+    private final IntHashSet windowInheritancePositions;
     private int windowLevelCount;
 
-    WindowBinder(BindContext ctx, FunctionParser functionParser) {
+    WindowBinder(BindContext ctx, FunctionParser functionParser, IntList windowGroupMembers, IntHashSet windowInheritancePositions) {
         this.ctx = ctx;
         this.functionParser = functionParser;
-    }
-
-    @Override
-    public void clear() {
-        windowGroupMembers.clear();
-        windowInheritancePositions.clear();
+        this.windowGroupMembers = windowGroupMembers;
+        this.windowInheritancePositions = windowInheritancePositions;
     }
 
     private static void validateWindowNesting(ExpressionNode expression, int depth) throws SqlException {
@@ -119,18 +114,13 @@ final class WindowBinder implements Mutable {
         }
     }
 
-    static SqlException windowInAggregation(int position) {
-        return SqlException.$(position, "Window function is not allowed in context of aggregation. Use sub-query.");
-    }
-
     private void addWindowCopies(ExpressionNode copy, ExpressionNode occurrence) {
         final BindScope scope = ctx.scope();
         if (copy == null || occurrence == null) {
             return;
         }
         if (copy.windowExpression != null) {
-            scope.windowCopies.add(copy);
-            scope.windowCopyOrigins.add(windowOccurrence(occurrence));
+            scope.windowOccurrences.putIfAbsent(copy, windowOccurrence(occurrence));
         }
         addWindowCopies(copy.lhs, occurrence.lhs);
         addWindowCopies(copy.rhs, occurrence.rhs);
@@ -275,6 +265,38 @@ final class WindowBinder implements Mutable {
         }
     }
 
+    private FunctionExpression bindWindowFunction(ExpressionNode expression, WindowSpec spec, OutputSchema input, OutputSchema bindingScope,
+                                                  QueryModel source, SqlExecutionContext executionContext) throws SqlException {
+        try {
+            final ArrayColumnTypes keyTypes = ctx.scope().windowKeyTypes;
+            keyTypes.clear();
+            for (int i = 0, n = spec.getPartitionBy().size(); i < n; i++) {
+                final BoundExpression partition = spec.getPartitionBy().getQuick(i);
+                if (!LogicalPlans.hasOuterColumn(partition)) {
+                    keyTypes.add(partition.getDataType());
+                }
+            }
+            final boolean isPartitioned = keyTypes.getColumnCount() > 0;
+            final int orderCount = spec.getOrderByColumnIds().size();
+            final boolean isTimestampOrdered = orderCount == 1
+                    && spec.getOrderByColumnIds().getQuick(0) == input.getTimestampColumnId();
+            final int direction = isTimestampOrdered
+                    ? spec.getOrderByDirections().getQuick(0) == SortDirection.ASCENDING ? RecordCursorFactory.SCAN_DIRECTION_FORWARD : RecordCursorFactory.SCAN_DIRECTION_BACKWARD
+                    : RecordCursorFactory.SCAN_DIRECTION_OTHER;
+            final int timestampIndex = input.getTimestampIndex();
+            executionContext.configureWindowContext(isPartitioned ? bindPartitionRecord : null, isPartitioned ? UNUSED_PARTITION_SINK : null,
+                    keyTypes, orderCount > 0,
+                    direction, orderCount > 0 ? spec.getOrderByPositions().getQuick(0) : -1,
+                    spec.getFramingMode(), spec.getRowsLo(), spec.getRowsLoExprTimeUnit(), spec.getRowsLoExprPos(), spec.getRowsLoKindPos(),
+                    spec.getRowsHi(), spec.getRowsHiExprTimeUnit(), spec.getRowsHiExprPos(), spec.getRowsHiKindPos(),
+                    spec.getExclusionKind(), spec.getExclusionKindPos(), timestampIndex,
+                    timestampIndex < 0 ? ColumnType.UNDEFINED : input.getColumnType(timestampIndex), spec.isIgnoreNulls(), spec.getNullsDescPos());
+            return ctx.functionBinder.bindWindow(expression, bindingScope, sourceAlias(source), executionContext);
+        } finally {
+            executionContext.clearWindowContext();
+        }
+    }
+
     /**
      * Evaluates the SELECT columns that hold no window function in a projection under the window plans,
      * together with the columns the window functions read, in the order they appear.
@@ -320,7 +342,7 @@ final class WindowBinder implements Mutable {
      * Binds the partition and order expressions of a window. An order expression that is not a column keeps its
      * place in the spec unbound, and fails once the window call has bound: a window orders by input columns only.
      */
-    private void bindWindowSpec(int windowIndex, WindowSpec spec, QueryModel source, SqlExecutionContext executionContext) throws SqlException {
+    private ExpressionNode bindWindowSpec(int windowIndex, WindowSpec spec, QueryModel source, SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
         final ExpressionNode node = scope.windowNodes.getQuick(windowIndex);
         final WindowExpression syntax = node.windowExpression;
@@ -333,24 +355,33 @@ final class WindowBinder implements Mutable {
             if (aggregatePosition >= 0) {
                 throw SqlException.$(aggregatePosition, "Aggregate function cannot be passed as an argument");
             }
-            spec.getPartitionBy().add(ctx.functionBinder.bind(partition, ctx.windowCallBindingScope(scope.windowInput.getOutput()), sourceAlias(source), executionContext));
+            spec.getPartitionBy().add(ctx.functionBinder.bind(partition, windowCallScope(), sourceAlias(source), executionContext));
         }
+        ExpressionNode orderViolation = null;
         for (int k = 0, count = syntax.getOrderBy().size(); k < count; k++) {
             final ExpressionNode order = replaceWindowReferences(syntax.getOrderBy().getQuick(k));
             if (order.type != ExpressionNode.LITERAL) {
-                if (scope.windowOrderViolations.getQuick(windowIndex) == null) {
-                    scope.windowOrderViolations.setQuick(windowIndex, order);
+                if (orderViolation == null) {
+                    orderViolation = order;
                 }
                 spec.addOrderBy(-1, SqlBinder.sortDirection(syntax.getOrderByDirection().getQuick(k)), order.token, order.position);
                 continue;
             }
-            final BoundExpression bound = ctx.functionBinder.bind(order, ctx.windowCallBindingScope(scope.windowInput.getOutput()), sourceAlias(source), executionContext);
+            final BoundExpression bound = ctx.functionBinder.bind(order, windowCallScope(), sourceAlias(source), executionContext);
             // Only an outer column of a LATERAL body is not an input column of the window.
             final int id = bound instanceof ColumnExpression column ? column.getColumnId()
                     : appendWindowInputExpression(bound, "__window_order", order.position);
             final OutputSchema input = scope.windowInput.getOutput();
             spec.addOrderBy(id, SqlBinder.sortDirection(syntax.getOrderByDirection().getQuick(k)),
                     input.getColumnName(input.getColumnIndexById(id)), order.position);
+        }
+        return orderViolation;
+    }
+
+    private void clearSelectAliasIndexes() {
+        final LowerCaseCharSequenceIntHashMap indexes = ctx.scope().selectAliasIndexes;
+        if (indexes.size() > 0) {
+            indexes.clear();
         }
     }
 
@@ -389,8 +420,11 @@ final class WindowBinder implements Mutable {
         if (expression == null) {
             return;
         }
-        if (expression.windowExpression != null && findWindowNode(expression) < 0) {
-            ctx.scope().windowNodes.add(expression);
+        if (expression.windowExpression != null) {
+            final BindScope scope = ctx.scope();
+            if (scope.windowNodeIndexes.putIfAbsent(windowOccurrence(expression), scope.windowNodes.size())) {
+                scope.windowNodes.add(expression);
+            }
         }
         collectWindowNodes0(expression.lhs);
         collectWindowNodes0(expression.rhs);
@@ -445,14 +479,7 @@ final class WindowBinder implements Mutable {
     }
 
     private int findWindowNode(ExpressionNode expression) {
-        final BindScope scope = ctx.scope();
-        final ExpressionNode occurrence = windowOccurrence(expression);
-        for (int i = 0, n = scope.windowNodes.size(); i < n; i++) {
-            if (windowOccurrence(scope.windowNodes.getQuick(i)) == occurrence) {
-                return i;
-            }
-        }
-        return -1;
+        return ctx.scope().windowNodeIndexes.get(windowOccurrence(expression));
     }
 
     private int findWindowPosition(ExpressionNode expression, int searchMode) {
@@ -560,6 +587,20 @@ final class WindowBinder implements Mutable {
         }
     }
 
+    private boolean readsWindowResult(ExpressionNode expression) {
+        return expression != null && (windowAliasCopyId(expression) >= 0 || windowAliasReferenceIndex(expression) >= 0 || windowResultId(expression) >= 0
+                || readsWindowResult(expression.lhs) || readsWindowResult(expression.rhs) || readsWindowResult(expression.args));
+    }
+
+    private boolean readsWindowResult(ObjList<ExpressionNode> expressions) {
+        for (int i = 0, n = expressions.size(); i < n; i++) {
+            if (readsWindowResult(expressions.getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * A window function argument may name an earlier computed column, which it reads through a
      * self-reference column of the inner projection.
@@ -573,12 +614,8 @@ final class WindowBinder implements Mutable {
             if (Chars.indexOfLastUnquoted(node.token, '.') >= 0 || getColumnIndexQuiet(source, node.token) >= 0) {
                 return false;
             }
-            for (int i = 0; i < columnIndex; i++) {
-                if (Chars.equalsIgnoreCase(columns.getQuick(i).getName(), GenericLexer.unquote(node.token))) {
-                    return !isWindowArgument || !isPureComputedColumn(columns.getQuick(i).getAst());
-                }
-            }
-            return false;
+            final int index = selectAliasIndex(columns, GenericLexer.unquote(node.token));
+            return index >= 0 && index < columnIndex && (!isWindowArgument || !isPureComputedColumn(columns.getQuick(index).getAst()));
         }
         isWindowArgument |= node.windowExpression != null;
         if (referencesEarlierAlias(node.lhs, columns, columnIndex, source, isWindowArgument)
@@ -599,7 +636,7 @@ final class WindowBinder implements Mutable {
      */
     private void renameQualifiedWindowInput(ProjectPlan project) {
         final BindScope scope = ctx.scope();
-        if (!project.getInput().getOutput().hasColumnQualifiers()) {
+        if (!project.getChild().getOutput().hasColumnQualifiers()) {
             return;
         }
         scope.resetAliases();
@@ -613,24 +650,23 @@ final class WindowBinder implements Mutable {
     }
 
     private ExpressionNode replaceAliasReference(ExpressionNode expression) {
-        final BindScope scope = ctx.scope();
-        for (int i = 0, n = scope.windowAliasCopies.size(); i < n; i++) {
-            final int aliasId = scope.windowAliasIds.getQuick(scope.windowAliasCopyColumns.getQuick(i));
-            if (scope.windowAliasCopies.getQuick(i) == expression && aliasId >= 0) {
-                return windowColumnReference(aliasId, expression.position);
-            }
+        final int aliasId = windowAliasCopyId(expression);
+        if (aliasId >= 0) {
+            return windowColumnReference(aliasId, expression.position);
         }
-        for (int i = 0, n = scope.windowAliasResolutions.size(); i < n; i++) {
-            if (scope.windowAliasReferences.getQuick(i) == expression) {
-                return scope.windowAliasResolutions.getQuick(i);
-            }
-        }
-        return null;
+        final int index = windowAliasReferenceIndex(expression);
+        return index < 0 ? null : ctx.scope().windowAliasResolutions.getQuick(index);
     }
 
+    /**
+     * The call itself when no argument reads a window result, otherwise a copy that reads the results as columns.
+     */
     private ExpressionNode replaceWindowCallReferences(ExpressionNode call) {
         final ExpressionNode alias = replaceAliasReference(call);
-        return alias != null ? alias : replaceWindowReferencesInCopy(call);
+        if (alias != null) {
+            return alias;
+        }
+        return readsWindowResult(call.lhs) || readsWindowResult(call.rhs) || readsWindowResult(call.args) ? replaceWindowReferencesInCopy(call) : call;
     }
 
     private ExpressionNode replaceWindowReferences(ExpressionNode expression) {
@@ -641,14 +677,8 @@ final class WindowBinder implements Mutable {
         if (alias != null) {
             return alias;
         }
-        if (expression.windowExpression != null) {
-            final BindScope scope = ctx.scope();
-            final int index = findWindowNode(expression);
-            if (index >= 0 && scope.windowColumnIds.getQuick(index) >= 0) {
-                return windowColumnReference(scope.windowColumnIds.getQuick(index), expression.position);
-            }
-        }
-        return replaceWindowReferencesInCopy(expression);
+        final int id = windowResultId(expression);
+        return id >= 0 ? windowColumnReference(id, expression.position) : replaceWindowReferencesInCopy(expression);
     }
 
     private ExpressionNode replaceWindowReferencesInCopy(ExpressionNode expression) {
@@ -667,7 +697,7 @@ final class WindowBinder implements Mutable {
     }
 
     private WindowExpression resolveWindow(WindowExpression syntax, QueryModel model) throws SqlException {
-        final WindowExpression result = syntax.deepClone(ctx.planNodes.windowSyntax, ctx.bindingExpressions);
+        final WindowExpression result = syntax.deepCloneSpec(ctx.planNodes.windowSyntax, ctx.bindingExpressions);
         if (syntax.isNamedWindowReference()) {
             final WindowExpression named = lookupWindow(model, syntax.getWindowName());
             if (named == null) {
@@ -831,6 +861,19 @@ final class WindowBinder implements Mutable {
     }
 
     /**
+     * The first SELECT column the alias names, or -1.
+     */
+    private int selectAliasIndex(ObjList<QueryColumn> columns, CharSequence alias) {
+        final LowerCaseCharSequenceIntHashMap indexes = ctx.scope().selectAliasIndexes;
+        if (indexes.size() == 0) {
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                indexes.putIfAbsent(columns.getQuick(i).getName(), i);
+            }
+        }
+        return indexes.get(alias);
+    }
+
+    /**
      * The SELECT expression an ORDER BY expression repeats, or the ORDER BY expression itself.
      */
     private ExpressionNode selectedOrderExpression(QueryModel model, ExpressionNode order) {
@@ -871,6 +914,42 @@ final class WindowBinder implements Mutable {
         }
     }
 
+    /**
+     * The column of the window value the alias copy computes, or -1.
+     */
+    private int windowAliasCopyId(ExpressionNode expression) {
+        final BindScope scope = ctx.scope();
+        for (int i = 0, n = scope.windowAliasCopies.size(); i < n; i++) {
+            final int aliasId = scope.windowAliasIds.getQuick(scope.windowAliasCopyColumns.getQuick(i));
+            if (scope.windowAliasCopies.getQuick(i) == expression && aliasId >= 0) {
+                return aliasId;
+            }
+        }
+        return -1;
+    }
+
+    private int windowAliasReferenceIndex(ExpressionNode expression) {
+        final BindScope scope = ctx.scope();
+        for (int i = 0, n = scope.windowAliasResolutions.size(); i < n; i++) {
+            if (scope.windowAliasReferences.getQuick(i) == expression) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    /**
+     * The scope window calls and specs of the current window input bind in, built once per input.
+     */
+    private OutputSchema windowCallScope() {
+        final BindScope scope = ctx.scope();
+        if (scope.windowCallScopeInput != scope.windowInput) {
+            windowCallBindingScope(scope.windowInput.getOutput(), scope.windowCallScope);
+            scope.windowCallScopeInput = scope.windowInput;
+        }
+        return scope.windowCallScope;
+    }
+
     private ExpressionNode windowColumnReference(int id, int position) {
         final OutputSchema output = ctx.scope().windowInput.getOutput();
         final int index = output.getColumnIndexById(id);
@@ -884,72 +963,57 @@ final class WindowBinder implements Mutable {
      * The window call, as written in the query, that a bound copy of it stands for.
      */
     private ExpressionNode windowOccurrence(ExpressionNode node) {
-        final BindScope scope = ctx.scope();
-        for (int i = 0, n = scope.windowCopies.size(); i < n; i++) {
-            if (scope.windowCopies.getQuick(i) == node) {
-                return scope.windowCopyOrigins.getQuick(i);
-            }
-        }
-        return node;
+        final ExpressionNode occurrence = ctx.scope().windowOccurrences.get(node);
+        return occurrence != null ? occurrence : node;
     }
 
     /**
      * Names a window column after the SELECT alias it implements, or after its function.
      */
     private CharSequence windowOutputName(ExpressionNode node, QueryModel model) {
-        final BindScope scope = ctx.scope();
-        for (int i = 0, n = scope.windowSelectExpressions.size(); i < n; i++) {
-            if (scope.windowSelectExpressions.getQuick(i) == node) {
-                final CharSequence alias = model.getBottomUpColumns().getQuick(i).getName();
-                return Chars.indexOf(alias, '.') < 0 ? alias : node.token;
-            }
+        final int index = ctx.scope().windowSelectIndexes.get(node);
+        if (index < 0) {
+            return node.token;
         }
-        return node.token;
+        final CharSequence alias = model.getBottomUpColumns().getQuick(index).getName();
+        return Chars.indexOf(alias, '.') < 0 ? alias : node.token;
+    }
+
+    /**
+     * The column of the bound window the window call reads, or -1.
+     */
+    private int windowResultId(ExpressionNode expression) {
+        if (expression.windowExpression == null) {
+            return -1;
+        }
+        final int index = findWindowNode(expression);
+        return index < 0 ? -1 : ctx.scope().windowColumnIds.getQuick(index);
+    }
+
+    static SqlException windowInAggregation(int position) {
+        return SqlException.$(position, "Window function is not allowed in context of aggregation. Use sub-query.");
     }
 
     FunctionExpression bindWindowFunction(ExpressionNode expression, WindowSpec spec, OutputSchema input,
                                           QueryModel source, SqlExecutionContext executionContext) throws SqlException {
-        try {
-            final ArrayColumnTypes keyTypes = windowKeyTypes;
-            keyTypes.clear();
-            for (int i = 0, n = spec.getPartitionBy().size(); i < n; i++) {
-                final BoundExpression partition = spec.getPartitionBy().getQuick(i);
-                if (!LogicalPlans.hasOuterColumn(partition)) {
-                    keyTypes.add(partition.getDataType());
-                }
-            }
-            final boolean isPartitioned = keyTypes.getColumnCount() > 0;
-            final int orderCount = spec.getOrderByColumnIds().size();
-            final boolean isTimestampOrdered = orderCount == 1
-                    && spec.getOrderByColumnIds().getQuick(0) == input.getTimestampColumnId();
-            final int direction = isTimestampOrdered
-                    ? spec.getOrderByDirections().getQuick(0) == SortDirection.ASCENDING ? RecordCursorFactory.SCAN_DIRECTION_FORWARD : RecordCursorFactory.SCAN_DIRECTION_BACKWARD
-                    : RecordCursorFactory.SCAN_DIRECTION_OTHER;
-            final int timestampIndex = input.getTimestampIndex();
-            executionContext.configureWindowContext(isPartitioned ? bindPartitionRecord : null, isPartitioned ? UNUSED_PARTITION_SINK : null,
-                    keyTypes, orderCount > 0,
-                    direction, orderCount > 0 ? spec.getOrderByPositions().getQuick(0) : -1,
-                    spec.getFramingMode(), spec.getRowsLo(), spec.getRowsLoExprTimeUnit(), spec.getRowsLoExprPos(), spec.getRowsLoKindPos(),
-                    spec.getRowsHi(), spec.getRowsHiExprTimeUnit(), spec.getRowsHiExprPos(), spec.getRowsHiKindPos(),
-                    spec.getExclusionKind(), spec.getExclusionKindPos(), timestampIndex,
-                    timestampIndex < 0 ? ColumnType.UNDEFINED : input.getColumnType(timestampIndex), spec.isIgnoreNulls(), spec.getNullsDescPos());
-            return ctx.functionBinder.bindWindow(expression, ctx.windowCallBindingScope(input), sourceAlias(source), executionContext);
-        } finally {
-            executionContext.clearWindowContext();
-        }
+        return bindWindowFunction(expression, spec, input, ctx.windowCallBindingScope(input), source, executionContext);
     }
 
     LogicalPlan bindWindows(QueryModel model, QueryModel source, LogicalPlan input, SqlExecutionContext executionContext) throws SqlException {
         final BindScope bindScope = ctx.scope();
         bindScope.windowInput = input;
+        bindScope.windowCallScopeInput = null;
+        bindScope.windowNodeIndexes.clear();
         bindScope.windowNodes.clear();
         bindScope.windowOrderExpressions.clear();
         bindScope.windowLevels.clear();
         bindScope.windowColumnIds.clear();
         clearWindowAliases();
-        bindScope.windowCopies.clear();
-        bindScope.windowCopyOrigins.clear();
+        if (bindScope.windowOccurrences.size() > 0) {
+            bindScope.windowOccurrences.clear();
+        }
         bindScope.windowSelectExpressions.clear();
+        bindScope.windowSelectIndexes.clear();
         bindScope.windowAliasIds.setAll(model.getBottomUpColumns().size(), -1);
         bindScope.windowSelfReferences.clear();
         bindScope.resetAliases();
@@ -971,6 +1035,7 @@ final class WindowBinder implements Mutable {
             }
             final ExpressionNode expression = bindScope.windowAliasIds.getQuick(i) >= 0 ? ast
                     : rewriteWindowAliases(ast, model, source, false, executionContext);
+            bindScope.windowSelectIndexes.putIfAbsent(expression, i);
             bindScope.windowSelectExpressions.add(expression);
             collectWindowNodes(expression);
         }
@@ -984,7 +1049,8 @@ final class WindowBinder implements Mutable {
         final int levels = nameWindowNodes(model);
         WindowPlan bottomWindow = null;
         bindScope.windowColumnIds.setAll(bindScope.windowNodes.size(), -1);
-        bindScope.windowOrderViolations.setAll(bindScope.windowNodes.size(), null);
+        int orderViolationIndex = -1;
+        ExpressionNode orderViolation = null;
         for (int level = 1; level <= levels; level++) {
             bindVolatileAliasCopies(model, source, executionContext);
             bindScope.windowLevelSpecs.clear();
@@ -999,7 +1065,11 @@ final class WindowBinder implements Mutable {
                 if (executionContext.isLiveViewCompile()) {
                     spec.setLiveViewDescription(LiveViewWindowDescription.of(syntax));
                 }
-                bindWindowSpec(i, spec, source, executionContext);
+                final ExpressionNode violation = bindWindowSpec(i, spec, source, executionContext);
+                if (orderViolation == null && violation != null) {
+                    orderViolationIndex = i;
+                    orderViolation = violation;
+                }
             }
             final WindowPlan window = ctx.planNodes.windowPlans.next().of(bindScope.windowInput, model.getModelPosition());
             if (level == 1) {
@@ -1020,10 +1090,10 @@ final class WindowBinder implements Mutable {
                                     && spec.getOrderByColumnIds().getQuick(0) == scope.getTimestampColumnId()
                                     && spec.getOrderByDirections().getQuick(0) == SortDirection.ASCENDING);
                 }
-                final FunctionExpression function = bindWindowFunction(replaceWindowCallReferences(node), spec, bindScope.windowInput.getOutput(), source, executionContext);
-                final ExpressionNode violation = bindScope.windowOrderViolations.getQuick(i);
-                if (violation != null) {
-                    throw SqlException.invalidColumn(violation.position, violation.token);
+                final FunctionExpression function = bindWindowFunction(replaceWindowCallReferences(node), spec, bindScope.windowInput.getOutput(), windowCallScope(),
+                        source, executionContext);
+                if (i == orderViolationIndex) {
+                    throw SqlException.invalidColumn(orderViolation.position, orderViolation.token);
                 }
                 final int id = ctx.planNodes.nextColumnId();
                 window.getFunctions().add(function);
@@ -1050,7 +1120,7 @@ final class WindowBinder implements Mutable {
         }
         if (innerProject != null) {
             renameQualifiedWindowInput(innerProject);
-        } else if (bottomWindow != null && bottomWindow.getInput() == input && input.getOutput().hasColumnQualifiers()) {
+        } else if (bottomWindow != null && bottomWindow.getChild() == input && input.getOutput().hasColumnQualifiers()) {
             final OutputSchema output = input.getOutput();
             final ProjectPlan project = ctx.planNodes.projects.next().of(input, bottomWindow.getPosition());
             for (int i = 0, n = output.getColumnCount(); i < n; i++) {
@@ -1100,12 +1170,13 @@ final class WindowBinder implements Mutable {
      */
     boolean hasProjectionReferences(QueryModel model, OutputSchema source) {
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        for (int i = 1, n = columns.size(); i < n; i++) {
-            if (referencesEarlierAlias(columns.getQuick(i).getAst(), columns, i, source, false)) {
-                return true;
-            }
+        clearSelectAliasIndexes();
+        boolean hasReferences = false;
+        for (int i = 1, n = columns.size(); i < n && !hasReferences; i++) {
+            hasReferences = referencesEarlierAlias(columns.getQuick(i).getAst(), columns, i, source, false);
         }
-        return false;
+        clearSelectAliasIndexes();
+        return hasReferences;
     }
 
     /**
@@ -1114,12 +1185,13 @@ final class WindowBinder implements Mutable {
      */
     boolean hasWindowProjectionReferences(QueryModel model, OutputSchema source) {
         final ObjList<QueryColumn> columns = model.getBottomUpColumns();
-        for (int i = 1, n = columns.size(); i < n; i++) {
-            if (referencesEarlierAlias(ctx.scope().windowSelectExpressions.getQuick(i), columns, i, source, false)) {
-                return true;
-            }
+        clearSelectAliasIndexes();
+        boolean hasReferences = false;
+        for (int i = 1, n = columns.size(); i < n && !hasReferences; i++) {
+            hasReferences = referencesEarlierAlias(ctx.scope().windowSelectExpressions.getQuick(i), columns, i, source, false);
         }
-        return false;
+        clearSelectAliasIndexes();
+        return hasReferences;
     }
 
     boolean hasWindows(QueryModel model, QueryModel source) {
@@ -1160,7 +1232,9 @@ final class WindowBinder implements Mutable {
      * validated and its frame normalised.
      */
     WindowExpression resolveWindowSyntax(WindowExpression syntax, QueryModel model, SqlExecutionContext executionContext) throws SqlException {
-        windowInheritancePositions.clear();
+        if (windowInheritancePositions.size() > 0) {
+            windowInheritancePositions.clear();
+        }
         final WindowExpression resolved = resolveWindow(syntax, model);
         validateWindowSpec(resolved.getPartitionBy(), "window function is not allowed in PARTITION BY clause");
         validateWindowSpec(resolved.getOrderBy(), "window function is not allowed in ORDER BY clause of window specification");

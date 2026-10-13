@@ -197,22 +197,22 @@ public class SubqueryStabilityContractTest extends AbstractCairoTest {
                     for (int t = 0; t < TABLES.length; t++) {
                         for (int q = 0, n = queries.size(); q < n; q++) {
                             final String sql = queries.getQuick(q).replace("#T", TABLES[t]);
-                            String result;
-                            try {
-                                TestUtils.printSql(engine, context, sql, actual);
-                                result = actual.toString();
-                            } catch (Throwable th) {
-                                result = "error: " + th;
+                            if (expected.size() <= q) {
+                                try {
+                                    TestUtils.printSql(engine, context, sql, actual);
+                                    expected.add(actual.toString());
+                                } catch (Throwable th) {
+                                    expected.add("error: " + th);
+                                }
                             }
                             runs++;
-                            if (expected.size() <= q) {
-                                expected.add(result);
-                            }
-                            if (result.startsWith("error: ") || !result.equals(expected.getQuick(q))) {
+                            try {
+                                assertRowsOnly(sql, expected.getQuick(q));
+                            } catch (Throwable th) {
                                 failures.put("config=").put(config).put(" [parallelGroupBy=").put(isParallelGroupBy)
                                         .put(", parallelFilter=").put(isParallelFilter).put(", jit=").put(isJit)
                                         .put(", parallelTopK=").put(isParallelTopK).put(", encodedSort=").put(isEncodedSort).put("] sql=").put(sql).put('\n')
-                                        .put(result).put('\n');
+                                        .put(th.toString()).put('\n');
                             }
                         }
                     }

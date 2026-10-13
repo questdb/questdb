@@ -48,9 +48,9 @@ import io.questdb.std.ObjectPool;
 final class NegativeLimitReversal implements OptimiserPass {
     private final ObjectPool<ConstantExpression> constants;
     private final IntList limitKeyIds;
-    private final PlanRewriter negativeLimits = this::reverseNegativeLimit;
     private final ObjList<LogicalPlan> restoredSorts;
     private final ObjectPool<SortPlan> sorts;
+    private final PlanRewriter negativeLimits = this::reverseNegativeLimit;
 
     NegativeLimitReversal(ObjectPool<ConstantExpression> constants, ObjectPool<SortPlan> sorts, IntList limitKeyIds, ObjList<LogicalPlan> restoredSorts) {
         this.constants = constants;
@@ -62,12 +62,6 @@ final class NegativeLimitReversal implements OptimiserPass {
     @Override
     public LogicalPlan apply(LogicalPlan plan) throws SqlException {
         return reverseNegativeLimits(plan);
-    }
-
-    @Override
-    public void clear() {
-        limitKeyIds.clear();
-        restoredSorts.clear();
     }
 
     @Override
@@ -89,17 +83,6 @@ final class NegativeLimitReversal implements OptimiserPass {
         return index < 0 ? -1 : plan.getOutput().getColumnId(index);
     }
 
-    /**
-     * Reads the last rows of an ascending timestamp-led multi-key sort as the
-     * first rows of the reversed sort below the projection, then restores the order:
-     * {@code ORDER BY ts, a LIMIT -n} becomes {@code ORDER BY ts, a} over {@code ORDER BY ts DESC, a DESC LIMIT n}.
-     * An enclosing sort replaces the restoring one.
-     */
-    private LogicalPlan reverseNegativeLimits(LogicalPlan root) throws SqlException {
-        restoredSorts.clear();
-        return root.rewriteBottomUp(negativeLimits);
-    }
-
     private LogicalPlan reverseNegativeLimit(LogicalPlan plan) {
         if (plan instanceof SortPlan) {
             LogicalPlan parent = plan;
@@ -114,7 +97,7 @@ final class NegativeLimitReversal implements OptimiserPass {
         if (!(plan instanceof LimitPlan limit)) {
             return plan;
         }
-        final LogicalPlan upperTop = limit.getInput();
+        final LogicalPlan upperTop = limit.getChild();
         LogicalPlan upperBottom = limit;
         while (upperBottom.inputAt(0) instanceof ProjectPlan) {
             upperBottom = upperBottom.inputAt(0);
@@ -127,15 +110,15 @@ final class NegativeLimitReversal implements OptimiserPass {
         if (limit.getHi() != null || !(limit.getLo() instanceof ConstantExpression lo)
                 || lo.getLongValue() >= 0 || lo.getLongValue() == Numbers.LONG_NULL
                 || directions.size() < 2 || directions.getQuick(0) != SortDirection.ASCENDING
-                || sort.isMarkoutHorizon() || ids.getQuick(0) != sort.getInput().getOutput().getTimestampColumnId()) {
+                || sort.isMarkoutHorizon() || ids.getQuick(0) != sort.getChild().getOutput().getTimestampColumnId()) {
             return plan;
         }
-        final LogicalPlan lowerTop = sort.getInput();
+        final LogicalPlan lowerTop = sort.getChild();
         ProjectPlan lowerBottom = null;
         LogicalPlan source = lowerTop;
         while (source instanceof ProjectPlan project && LogicalPlans.isColumnProjection(project)) {
             lowerBottom = project;
-            source = project.getInput();
+            source = project.getChild();
         }
         if (!isTableSource(source)) {
             return plan;
@@ -180,5 +163,16 @@ final class NegativeLimitReversal implements OptimiserPass {
         restored.replaceInput(0, upper);
         restoredSorts.add(restored);
         return restored;
+    }
+
+    /**
+     * Reads the last rows of an ascending timestamp-led multi-key sort as the
+     * first rows of the reversed sort below the projection, then restores the order:
+     * {@code ORDER BY ts, a LIMIT -n} becomes {@code ORDER BY ts, a} over {@code ORDER BY ts DESC, a DESC LIMIT n}.
+     * An enclosing sort replaces the restoring one.
+     */
+    private LogicalPlan reverseNegativeLimits(LogicalPlan root) throws SqlException {
+        restoredSorts.clear();
+        return root.rewriteBottomUp(negativeLimits);
     }
 }

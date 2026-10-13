@@ -54,10 +54,12 @@ public final class IntervalAnalysis {
     private final PlaceholderBounds bounds = new PlaceholderBounds();
     private final IntervalExtractor extractor;
     private BoundExpression residual;
-    private int timestampType;
 
-    public IntervalAnalysis(CairoConfiguration configuration) {
-        extractor = new IntervalExtractor(configuration, new StringSink(), new LongList());
+    /**
+     * Parses interval text with the given temporaries, which no caller reads across an analysis.
+     */
+    public IntervalAnalysis(CairoConfiguration configuration, StringSink intervalText, LongList parsedIntervals) {
+        extractor = new IntervalExtractor(configuration, intervalText, parsedIntervals);
     }
 
     /**
@@ -65,7 +67,7 @@ public final class IntervalAnalysis {
      */
     public boolean allIntervalsHitOnePartition(int partitionBy) {
         final RuntimeIntervalModelBuilder intervals = extractor.getIntervals();
-        return RuntimeIntervalModel.allIntervalsHitOnePartition(ColumnType.getTimestampDriver(timestampType), partitionBy,
+        return RuntimeIntervalModel.allIntervalsHitOnePartition(ColumnType.getTimestampDriver(extractor.getTimestampType()), partitionBy,
                 intervals.getStaticIntervals(), intervals.isStatic());
     }
 
@@ -75,7 +77,6 @@ public final class IntervalAnalysis {
      * @param depth the generation depth of the scan's query level, which caps sub-query bound speculation
      */
     public void analyse(BoundExpression predicate, int timestampColumnId, int timestampType, int depth, BoundExpressionRewriter rewriter) throws SqlException {
-        this.timestampType = timestampType;
         bounds.clear();
         residual = extractor.analyse(predicate, timestampColumnId, timestampType, depth, bounds, rewriter);
     }
@@ -98,7 +99,7 @@ public final class IntervalAnalysis {
      * The type of the designated timestamp the last analysis read.
      */
     public int getTimestampType() {
-        return timestampType;
+        return extractor.getTimestampType();
     }
 
     /**
@@ -134,7 +135,6 @@ public final class IntervalAnalysis {
      * Starts an analysis that constrains nothing, for a scan without a predicate over the designated timestamp.
      */
     public void of(int timestampType) {
-        this.timestampType = timestampType;
         residual = null;
         extractor.of(timestampType);
     }

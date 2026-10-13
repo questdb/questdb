@@ -568,7 +568,7 @@ final class TemporalJoinBinder {
      */
     static void designateTimestampOffset(ProjectPlan project) {
         final OutputSchema output = project.getOutput();
-        final LogicalPlan input = project.getInput();
+        final LogicalPlan input = project.getChild();
         final int timestampId = input.getOutput().getTimestampColumnId();
         if (output.getTimestampIndex() >= 0 || timestampId < 0 || hasOwnTimestampContract(input)) {
             return;

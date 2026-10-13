@@ -53,14 +53,10 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
-import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.millitime.Dates;
 import org.jetbrains.annotations.NotNull;
 
 public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursorFactory {
@@ -317,11 +313,11 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private final int sampleFromFuncType;
         private final Function sampleToFunc;
         private final TimestampDriver timestampDriver;
+        private final SampleByTimezone timezone = new SampleByTimezone();
         private final Function timezoneNameFunc;
         private final int timezoneNameFuncPos;
         private boolean areTimestampsInitialized;
         private SqlExecutionCircuitBreaker circuitBreaker;
-        private long fixedOffset;
         private long hiSample = -1;
         private boolean isMapBuilt;
         private boolean isMapFilled;
@@ -331,8 +327,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private Record managedRecord;
         private long prevSample = -1;
         private long rowId;
-        private TimeZoneRules rules;
-        private long tzOffset;
 
         public SampleByInterpolateRecordCursor(
                 CairoConfiguration configuration,
@@ -418,7 +412,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             isMapInitialized = false;
             isMapFilled = false;
             isMapBuilt = false;
-            parseParams(this, executionContext);
+            timezone.of(timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, timestampDriver, this, executionContext);
             sampleFromFunc.init(managedCursor, executionContext);
             sampleToFunc.init(managedCursor, executionContext);
             areTimestampsInitialized = false;
@@ -778,9 +772,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             assert good;
 
             final long timestamp = managedRecord.getTimestamp(timestampIndex);
-            if (rules != null) {
-                tzOffset = rules.getOffset(timestamp);
-            }
+            final TimeZoneRules rules = timezone.getRules();
+            final long tzOffset = rules != null ? rules.getOffset(timestamp) : timezone.getTzOffset();
+            final long fixedOffset = timezone.getFixedOffset();
 
             if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
                 // this is the default path, we align time intervals to the first observation
@@ -796,47 +790,6 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             }
             prevSample = sampler.round(timestamp);
             loSample = prevSample; // the lowest timestamp value
-        }
-
-        protected void parseParams(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
-            // factory guarantees that base cursor is not empty
-            timezoneNameFunc.init(base, executionContext);
-            offsetFunc.init(base, executionContext);
-            rules = null;
-
-            final CharSequence tz = timezoneNameFunc.getStrA(null);
-            if (tz != null) {
-                try {
-                    long opt = Dates.parseOffset(tz);
-                    if (opt == Long.MIN_VALUE) {
-                        // this is timezone name
-                        // fixed rules means the timezone does not have historical or daylight time changes
-                        rules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                                Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, tz.length())),
-                                timestampDriver.getTZRuleResolution()
-                        );
-                    } else {
-                        // here timezone is in numeric offset format
-                        tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(opt));
-                    }
-                } catch (NumericException e) {
-                    throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
-                }
-            } else {
-                tzOffset = 0;
-            }
-
-            final CharSequence offset = offsetFunc.getStrA(null);
-            if (offset != null) {
-                final long val = Dates.parseOffset(offset);
-                if (val == Numbers.LONG_NULL) {
-                    // bad value for offset
-                    throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
-                }
-                fixedOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(val));
-            } else {
-                fixedOffset = Long.MIN_VALUE;
-            }
         }
     }
 }

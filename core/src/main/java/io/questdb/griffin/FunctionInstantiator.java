@@ -471,13 +471,15 @@ public final class FunctionInstantiator implements Mutable {
             nullProbeMetadata.add(new TableColumnMetadata(NULL_PROBE_COLUMN, type, IndexType.NONE, 0, false, null));
         }
         Function function = null;
+        final int mark = instantiations.getPos();
         try {
             nullProbeConstants.setQuick(0, Constants.getNullConstant(type));
-            function = instantiate(call, nullProbeSchema, nullProbeMetadata, executionContext);
+            function = instantiateNew(call, nullProbeSchema, nullProbeMetadata, executionContext, false, null);
             return !function.getBool(nullProbeRecord);
         } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException e) {
             return false;
         } finally {
+            instantiations.rewind(mark);
             Misc.free(function);
             Misc.freeObjList(nullProbeConstants);
         }

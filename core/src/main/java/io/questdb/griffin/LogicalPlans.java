@@ -36,6 +36,7 @@ import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -63,13 +64,13 @@ public final class LogicalPlans {
     public static final int SELF_COMPARISON_FALSE = 0;
     public static final int SELF_COMPARISON_NONE = -1;
     public static final int SELF_COMPARISON_TRUE = 1;
-    private static final int ORDER_STABLE = 2;
-    private static final int RESULT_STABLE = 1;
-    private static final int SEQUENCE_STABLE = RESULT_STABLE | ORDER_STABLE;
     private static final ExpressionVisitor COLUMN_READS = expression -> expression instanceof ColumnExpression ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private static final PlanVisitor EXTERNAL_SOURCES = plan -> plan instanceof FunctionSourcePlan source && source.hasExternalDataSource()
             ? TreeWalk.STOP : TreeWalk.CONTINUE;
+    private static final int ORDER_STABLE = 2;
     private static final ExpressionVisitor OUTER_COLUMN_READS = expression -> expression instanceof OuterColumnExpression ? TreeWalk.STOP : TreeWalk.CONTINUE;
+    private static final int RESULT_STABLE = 1;
+    private static final int SEQUENCE_STABLE = RESULT_STABLE | ORDER_STABLE;
     private static final ExpressionVisitor VOLATILE_NODES = expression -> !isStableWithinExecution(expression)
             || !(expression instanceof FunctionExpression || expression instanceof ColumnExpression || expression instanceof ConstantExpression
             || expression instanceof CursorExpression || expression instanceof BindVariableExpression || expression instanceof TypeExpression)
@@ -124,7 +125,7 @@ public final class LogicalPlans {
                     yield false;
                 }
                 final ColumnExpression column = (ColumnExpression) project.getExpressions().getQuick(columnIndex);
-                final LogicalPlan input = project.getInput();
+                final LogicalPlan input = project.getChild();
                 final int inputIndex = input.getOutput().getColumnIndexById(column.getColumnId());
                 yield inputIndex >= 0 && input.getOutput().getColumnType(inputIndex) == output.getColumnType(columnIndex)
                         && canPushSetTimestamp(input, inputIndex);
@@ -176,6 +177,16 @@ public final class LogicalPlans {
     }
 
     /**
+     * Records, for each key of the sort, the index of the projection expression that passes it through without a cast.
+     */
+    public static void collectSortKeyIndexes(ProjectPlan project, SortPlan sort, IntList sink) {
+        sink.clear();
+        for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
+            sink.add(projectedUncastColumnIndex(project, sort.getColumnIds().getQuick(i)));
+        }
+    }
+
+    /**
      * The plan whose own expression or scan defines the column, followed through column-only projections, filters,
      * sorts and joins.
      */
@@ -191,7 +202,7 @@ public final class LogicalPlans {
                         return plan;
                     }
                     id = column.getColumnId();
-                    plan = project.getInput();
+                    plan = project.getChild();
                 }
                 case FilterPlan _, SortPlan _ -> plan = plan.inputAt(0);
                 case JoinPlan join -> {
@@ -223,7 +234,7 @@ public final class LogicalPlans {
      */
     public static void deriveLimits(LogicalPlan plan) {
         if (plan instanceof LimitPlan limit) {
-            deriveLimits(limit.getInput());
+            deriveLimits(limit.getChild());
             limit.deriveOutput();
         }
     }
@@ -300,7 +311,7 @@ public final class LogicalPlans {
                     return false;
                 }
             }
-            plan = project.getInput();
+            plan = project.getChild();
         }
         return plan instanceof SortPlan sort && !sort.isMarkoutHorizon() && sort.isLimited();
     }
@@ -444,7 +455,7 @@ public final class LogicalPlans {
         if (!(plan instanceof ProjectPlan project) || !project.hasTimestampDeclaration()) {
             return false;
         }
-        final OutputSchema input = project.getInput().getOutput();
+        final OutputSchema input = project.getChild().getOutput();
         if (project.getExpressions().size() != input.getColumnCount()) {
             return false;
         }
@@ -472,8 +483,8 @@ public final class LogicalPlans {
                 || !isTimestampEndpointBackward(call) && !Chars.equalsIgnoreCase(call.getName(), "min") && !Chars.equalsIgnoreCase(call.getName(), "first")) {
             return false;
         }
-        final LogicalPlan input = aggregate.getInput();
-        final LogicalPlan table = input instanceof FilterPlan filter ? filter.getInput() : input;
+        final LogicalPlan input = aggregate.getChild();
+        final LogicalPlan table = input instanceof FilterPlan filter ? filter.getChild() : input;
         return table instanceof ScanPlan scan && column.getColumnId() == scan.getNativeTimestampColumnId()
                 && column.getColumnId() == input.getOutput().getTimestampColumnId();
     }
@@ -638,7 +649,7 @@ public final class LogicalPlans {
      * The table scan the plan is, or the one directly under it when it is a filter; null otherwise.
      */
     public static ScanPlan scanThroughFilter(LogicalPlan plan) {
-        return (plan instanceof FilterPlan filter ? filter.getInput() : plan) instanceof ScanPlan scan ? scan : null;
+        return (plan instanceof FilterPlan filter ? filter.getChild() : plan) instanceof ScanPlan scan ? scan : null;
     }
 
     /**
@@ -696,7 +707,7 @@ public final class LogicalPlans {
      */
     public static LogicalPlan skipRenames(LogicalPlan plan) {
         while (plan instanceof ProjectPlan project && !project.hasTimestampDeclaration() && !project.hasUpdateConversions()) {
-            final OutputSchema input = project.getInput().getOutput();
+            final OutputSchema input = project.getChild().getOutput();
             final OutputSchema output = project.getOutput();
             if (output.getColumnCount() != input.getColumnCount() || output.getTimestampIndex() != input.getTimestampIndex()) {
                 return plan;
@@ -707,9 +718,25 @@ public final class LogicalPlans {
                     return plan;
                 }
             }
-            plan = project.getInput();
+            plan = project.getChild();
         }
         return plan;
+    }
+
+    /**
+     * Moves the sort of the grouping's rows above the projection that reads them, once the projection computes in
+     * place of keys it passed through: the sort keys become the projection columns at the indexes
+     * {@link #collectSortKeyIndexes} recorded before the projection changed. Returns the sort.
+     */
+    public static SortPlan sortAboveProjection(SortPlan sort, ProjectPlan project, GroupingPlan grouping, IntList sortKeyIndexes) {
+        final OutputSchema output = project.getOutput();
+        for (int i = 0, n = sortKeyIndexes.size(); i < n; i++) {
+            sort.getColumnIds().setQuick(i, output.getColumnId(sortKeyIndexes.getQuick(i)));
+        }
+        project.replaceInput(0, grouping);
+        output.setTimestampIndex(projectedColumnIndex(project, grouping.getOutput().getTimestampColumnId()));
+        sort.replaceInput(0, project);
+        return sort;
     }
 
     /**
@@ -755,7 +782,7 @@ public final class LogicalPlans {
     }
 
     private static boolean canPushSetTimestampThrough(UnaryPlan plan, int columnIndex) {
-        final LogicalPlan input = plan.getInput();
+        final LogicalPlan input = plan.getChild();
         final int inputIndex = input.getOutput().getColumnIndexById(plan.getOutput().getColumnId(columnIndex));
         return inputIndex >= 0 && canPushSetTimestamp(input, inputIndex);
     }
@@ -776,7 +803,7 @@ public final class LogicalPlans {
     }
 
     private static int groupingStability(AggregatePlan aggregate, boolean isParallelGroupByEnabled) {
-        if (aggregate.getSharedSource() != null || stability(aggregate.getInput(), isParallelGroupByEnabled) != SEQUENCE_STABLE
+        if (aggregate.getSharedSource() != null || stability(aggregate.getChild(), isParallelGroupByEnabled) != SEQUENCE_STABLE
                 || !areStable(aggregate.getGroupingExpressions()) || !areStable(aggregate.getAggregates())) {
             return 0;
         }
@@ -806,14 +833,14 @@ public final class LogicalPlans {
             case ScanPlan scan -> scan.getTableToken().isLiveView() ? 0 : SEQUENCE_STABLE;
             case FunctionSourcePlan source -> source.isDeterministic() ? SEQUENCE_STABLE : 0;
             case FilterPlan filter ->
-                    isStable(filter.getPredicate()) ? stability(filter.getInput(), isParallelGroupByEnabled) : 0;
+                    isStable(filter.getPredicate()) ? stability(filter.getChild(), isParallelGroupByEnabled) : 0;
             case ProjectPlan project ->
-                    areStable(project.getExpressions()) ? stability(project.getInput(), isParallelGroupByEnabled) : 0;
-            case SortPlan sort -> sort.isMarkoutHorizon() ? 0 : stability(sort.getInput(), isParallelGroupByEnabled);
+                    areStable(project.getExpressions()) ? stability(project.getChild(), isParallelGroupByEnabled) : 0;
+            case SortPlan sort -> sort.isMarkoutHorizon() ? 0 : stability(sort.getChild(), isParallelGroupByEnabled);
             case LimitPlan limit -> isStable(limit.getLo()) && isStable(limit.getHi())
-                    && stability(limit.getInput(), isParallelGroupByEnabled) == SEQUENCE_STABLE ? SEQUENCE_STABLE : 0;
+                    && stability(limit.getChild(), isParallelGroupByEnabled) == SEQUENCE_STABLE ? SEQUENCE_STABLE : 0;
             case AggregatePlan aggregate -> groupingStability(aggregate, isParallelGroupByEnabled);
-            case DistinctPlan distinct -> stability(distinct.getInput(), isParallelGroupByEnabled) & RESULT_STABLE;
+            case DistinctPlan distinct -> stability(distinct.getChild(), isParallelGroupByEnabled) & RESULT_STABLE;
             case SetOperationPlan operation ->
                     stability(operation.getLeft(), isParallelGroupByEnabled) & stability(operation.getRight(), isParallelGroupByEnabled);
             default -> 0;

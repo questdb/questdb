@@ -32,6 +32,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PriorityMetadata;
@@ -89,10 +90,15 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 
 final class ProjectionFactoryGenerator {
+    private final FunctionInstantiator functionInstantiator;
+
+    ProjectionFactoryGenerator(FunctionInstantiator functionInstantiator) {
+        this.functionInstantiator = functionInstantiator;
+    }
 
     private static boolean hasProjectionReferences(ProjectPlan project) {
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            if (referencesOutput(project.getExpressions().getQuick(i), project.getOutput(), project.getInput().getOutput())) {
+            if (referencesOutput(project.getExpressions().getQuick(i), project.getOutput(), project.getChild().getOutput())) {
                 return true;
             }
         }
@@ -106,7 +112,7 @@ final class ProjectionFactoryGenerator {
      */
     private static boolean isPlannedIdentityChecked(ProjectPlan project) {
         return !LogicalPlans.isComputedProjection(project)
-                && !(LogicalPlans.skipFilters(project.getInput()) instanceof JoinPlan join && join.getOrderedInputs().size() > 1);
+                && !(LogicalPlans.skipFilters(project.getChild()) instanceof JoinPlan join && join.getOrderedInputs().size() > 1);
     }
 
     private static RecordCursorFactory newSelected(GenericRecordMetadata metadata, IntList mapping, RecordCursorFactory base, LogicalPlan input) {
@@ -181,7 +187,7 @@ final class ProjectionFactoryGenerator {
         final PriorityMetadata priorityMetadata;
         final int reservedSlots;
         try {
-            final OutputSchema input = project.getInput().getOutput();
+            final OutputSchema input = project.getChild().getOutput();
             functions = new ObjList<>(count);
             metadata = new GenericRecordMetadata();
             // A column that reads an earlier column by alias reads that column's slot of this record,
@@ -191,7 +197,7 @@ final class ProjectionFactoryGenerator {
             final OutputSchema scope;
             final GenericRecordMetadata scopeMetadata;
             if (reservedSlots > 0) {
-                scope = frame.projectionScope;
+                scope = frame.schema;
                 scope.clear();
                 scopeMetadata = frame.projectionScopeMetadata;
                 scopeMetadata.clear();
@@ -213,7 +219,7 @@ final class ProjectionFactoryGenerator {
                 final int columnIndex;
                 if (project.hasUpdateConversions()) {
                     columnIndex = expression instanceof ColumnExpression column ? input.getColumnIndexById(column.getColumnId()) : -1;
-                    function = frame.functionInstantiator.instantiateUpdateAssignment(expression, project.getUpdateTargetTypes().getQuick(i),
+                    function = functionInstantiator.instantiateUpdateAssignment(expression, project.getUpdateTargetTypes().getQuick(i),
                             input, base.getMetadata(), executionContext);
                 } else if (expression instanceof ColumnExpression column) {
                     columnIndex = input.getColumnIndexById(column.getColumnId());
@@ -222,8 +228,8 @@ final class ProjectionFactoryGenerator {
                             columnIndex >= 0 ? reservedSlots + columnIndex : scope.getColumnIndexById(column.getColumnId()), scopeMetadata);
                 } else {
                     columnIndex = -1;
-                    function = reservedSlots == 0 ? frame.functionInstantiator.instantiate(expression, input, base.getMetadata(), executionContext)
-                            : frame.functionInstantiator.instantiate(expression, scope, scopeMetadata, executionContext);
+                    function = reservedSlots == 0 ? functionInstantiator.instantiate(expression, input, base.getMetadata(), executionContext)
+                            : functionInstantiator.instantiate(expression, scope, scopeMetadata, executionContext);
                 }
                 try {
                     if (project.hasUpdateConversions() && LogicalPlans.updateColumnType(function.getType(), project.getUpdateTargetTypes().getQuick(i))
@@ -306,11 +312,14 @@ final class ProjectionFactoryGenerator {
      * plain columns over a factory with {@code baseMetadata}.
      */
     static void selectColumns(ProjectPlan project, RecordMetadata baseMetadata, GenericRecordMetadata metadata, IntList mapping) {
-        final OutputSchema input = project.getInput().getOutput();
+        final OutputSchema input = project.getChild().getOutput();
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             final int index = input.getColumnIndexById(((ColumnExpression) project.getExpressions().getQuick(i)).getColumnId());
             mapping.add(index);
-            metadata.add(SqlCodeGenerator.copyColumn(baseMetadata, index, Chars.toString(project.getOutput().getColumnName(i))));
+            final CharSequence name = project.getOutput().getColumnName(i);
+            metadata.add(Chars.equals(baseMetadata.getColumnName(index), name)
+                    ? baseMetadata.getColumnMetadata(index)
+                    : SqlCodeGenerator.copyColumn(baseMetadata, index, Chars.toString(name)));
         }
         metadata.setTimestampIndex(PlanToFactoryRules.projectedTimestampIndex(project, baseMetadata.getTimestampIndex()));
     }
@@ -330,7 +339,7 @@ final class ProjectionFactoryGenerator {
             case FilterPlan filter -> addColumnReferences(frame, filter.getPredicate(), 1);
             case SortPlan sort -> {
                 // A sort key that a projection passes through reads the projection's input column.
-                final LogicalPlan input = sort.getInput();
+                final LogicalPlan input = sort.getChild();
                 final IntList columns = sort.getColumnIds();
                 for (int i = 0, n = columns.size(); i < n; i++) {
                     int columnId = columns.getQuick(i);
@@ -344,7 +353,7 @@ final class ProjectionFactoryGenerator {
                 }
             }
             case GroupingPlan aggregate -> {
-                setReferenceCounts(frame, aggregate.getInput().getOutput(), 0);
+                setReferenceCounts(frame, aggregate.getChild().getOutput(), 0);
                 final int timestampId = aggregate instanceof SampleByPlan sample ? sample.getTimestampColumnId() : -1;
                 if (timestampId >= 0) {
                     frame.setReferenceCount(timestampId, 1);
@@ -430,7 +439,7 @@ final class ProjectionFactoryGenerator {
             int timestampIndex,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final LogicalPlan input = project.getInput();
+        final LogicalPlan input = project.getChild();
         if (LogicalPlans.isComputedProjection(project)) {
             return generateVirtualProjection(frame, project, base, timestampIndex, executionContext);
         }

@@ -37,7 +37,6 @@ import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.IntIntHashMap;
-import io.questdb.std.Mutable;
 
 /**
  * Records on the scans of a bound query level the columns its text references, with the text position of the first
@@ -48,15 +47,14 @@ import io.questdb.std.Mutable;
  * table through a view records none: the view's own text references its columns, and the view's permission covers
  * them.
  */
-final class ReferencedColumns implements ExpressionVisitor, PlanExpressionVisitor, Mutable {
+final class ReferencedColumns implements ExpressionVisitor, PlanExpressionVisitor {
     private final PlanVisitor passedReads = this::passReferences;
-    private final IntIntHashMap positions = new IntIntHashMap();
+    private final IntIntHashMap positions;
     private final PlanVisitor scans = this::markScan;
     private final PlanVisitor statedReads = this::collect;
 
-    @Override
-    public void clear() {
-        positions.clear();
+    ReferencedColumns(IntIntHashMap positions) {
+        this.positions = positions;
     }
 
     @Override

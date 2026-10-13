@@ -50,16 +50,24 @@ import io.questdb.std.ObjList;
  * its step or of a step before it, and none reads a column that a step matching per outer row null-extends.
  */
 final class DecorrelationVerifier {
-    private final OnFacts facts = new OnFacts();
-    private final IntList otherCounts = new IntList();
-    private final IntList outerPairCounts = new IntList();
-    private final IntList pairCounts = new IntList();
-    private final ObjList<JoinInput> reachedSteps = new ObjList<>();
+    private final IntList counts;
+    private final OnFacts facts;
+    private final ObjList<JoinInput> reachedSteps;
     private final ObjList<JoinInput> recordedSteps = new ObjList<>();
-    private final PlanVisitor carrierChecker = this::checkCarriers;
     private final PlanVisitor stepRecorder = this::recordSteps;
     private String pass;
     private LogicalPlan root;
+    private final PlanVisitor carrierChecker = this::checkCarriers;
+
+    /**
+     * Borrows {@code reachedSteps}, {@code pairs} and {@code counts} as temporaries; the counts hold from {@link #record}
+     * to {@link #verify}.
+     */
+    DecorrelationVerifier(ObjList<JoinInput> reachedSteps, IntList pairs, IntList counts) {
+        this.reachedSteps = reachedSteps;
+        this.facts = new OnFacts(pairs);
+        this.counts = counts;
+    }
 
     /**
      * True when a step at an ordered position up to {@code through} null-extends the input at {@code input} and
@@ -124,9 +132,7 @@ final class DecorrelationVerifier {
     }
 
     private void clear() {
-        otherCounts.clear();
-        outerPairCounts.clear();
-        pairCounts.clear();
+        counts.clear();
         reachedSteps.clear();
         recordedSteps.clear();
     }
@@ -138,9 +144,9 @@ final class DecorrelationVerifier {
                 if (!step.isDependent() && step.getJoinType().isBarrier()) {
                     facts.of(step);
                     recordedSteps.add(step);
-                    pairCounts.add(facts.pairCount());
-                    outerPairCounts.add(facts.outerPairCount);
-                    otherCounts.add(facts.otherCount);
+                    counts.add(facts.pairCount());
+                    counts.add(facts.outerPairCount);
+                    counts.add(facts.otherCount);
                 }
             }
         }
@@ -161,7 +167,7 @@ final class DecorrelationVerifier {
                         return;
                     }
                     columnId = column.getColumnId();
-                    plan = project.getInput();
+                    plan = project.getChild();
                 }
                 case ForwardingPlan forwarding -> plan = forwarding.inputAt(0);
                 case AggregatePlan aggregate -> {
@@ -171,13 +177,13 @@ final class DecorrelationVerifier {
                         return;
                     }
                     columnId = column.getColumnId();
-                    plan = aggregate.getInput();
+                    plan = aggregate.getChild();
                 }
                 case WindowPlan window -> {
-                    if (window.getInput().getOutput().getColumnIndexById(columnId) < 0) {
+                    if (window.getChild().getOutput().getColumnIndexById(columnId) < 0) {
                         return;
                     }
-                    plan = window.getInput();
+                    plan = window.getChild();
                 }
                 case JoinPlan join -> {
                     final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
@@ -211,6 +217,7 @@ final class DecorrelationVerifier {
     void verify(LogicalPlan root, String pass) {
         this.root = root;
         this.pass = pass;
+        reachedSteps.clear();
         try {
             root.walkTopDown(carrierChecker);
             for (int i = 0, n = recordedSteps.size(); i < n; i++) {
@@ -219,8 +226,9 @@ final class DecorrelationVerifier {
                     throw PlanVerifier.failure(PlanVerifier.DECORRELATION_STEP_LOST, -1, null, root, pass, root);
                 }
                 facts.of(step);
-                if (facts.pairCount() < pairCounts.getQuick(i) || facts.otherCount < otherCounts.getQuick(i)
-                        || outerPairCounts.getQuick(i) > 0 && !facts.hasCarrierPair(step)) {
+                final int countBase = 3 * i;
+                if (facts.pairCount() < counts.getQuick(countBase) || facts.otherCount < counts.getQuick(countBase + 2)
+                        || counts.getQuick(countBase + 1) > 0 && !facts.hasCarrierPair(step)) {
                     throw PlanVerifier.failure(PlanVerifier.JOIN_ON_KEPT, -1, null, root, pass, root);
                 }
             }
@@ -233,9 +241,13 @@ final class DecorrelationVerifier {
     }
 
     private static final class OnFacts {
-        private final IntList pairs = new IntList();
+        private final IntList pairs;
         private int otherCount;
         private int outerPairCount;
+
+        private OnFacts(IntList pairs) {
+            this.pairs = pairs;
+        }
 
         private static boolean isColumnReference(BoundExpression expression) {
             return expression instanceof ColumnExpression column && !column.isCast() || expression instanceof OuterColumnExpression;

@@ -66,56 +66,59 @@ import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.bind.BindContext.blockGroupBy;
-import static io.questdb.griffin.bind.BindContext.findGroupingColumn;
-import static io.questdb.griffin.bind.BindContext.getColumnIndexQuiet;
-import static io.questdb.griffin.bind.BindContext.hasComputedProjection;
-import static io.questdb.griffin.bind.BindContext.isPlainColumnProjection;
-import static io.questdb.griffin.bind.BindContext.isRowCount;
-import static io.questdb.griffin.bind.BindContext.isSameColumn;
-import static io.questdb.griffin.bind.BindContext.isWildcardColumn;
-import static io.questdb.griffin.bind.BindContext.orderNotSelected;
-import static io.questdb.griffin.bind.BindContext.sourceAlias;
+import static io.questdb.griffin.bind.BindContext.*;
 import static io.questdb.griffin.bind.OrderBinder.orderProjectionIndex;
 
 final class AggregateBinder implements Mutable {
-    private final ObjList<ExpressionNode> aggregateNodeStack = new ObjList<>();
+    private final ObjList<ExpressionNode> aggregateNodeStack;
     private final SqlBinder binder;
-    private final ObjList<BoundExpression> callArguments = new ObjList<>();
     private final IntObjHashMap<ExpressionNode> columnSpellings = new IntObjHashMap<>();
     private final CairoConfiguration configuration;
     private final BindContext ctx;
-    private final IntHashSet nestedReads = new IntHashSet();
-    private final IntList nextSelections = new IntList();
+    private final IntHashSet nestedReads;
+    private final IntList nextSelections;
     private final ExpressionNode normalizedCount;
     private final OrderBinder orderBinder;
-    private final IntList removedAggregates = new IntList();
-    private final IntList replacedSumIds = new IntList();
+    private final IntList removedAggregates;
+    private final IntList replacedSumIds;
     private final SampleByBinder sampleByBinder;
-    private final IntIntHashMap selectionHeads = new IntIntHashMap();
-    private final IntList sortKeyIndexes = new IntList();
-    private final UniqueColumnNames uniqueNames = new UniqueColumnNames();
+    private final IntIntHashMap selectionHeads;
+    private final IntList sortKeyIndexes;
+    private final UniqueColumnNames uniqueNames;
 
-    AggregateBinder(BindContext ctx, SqlBinder binder, CairoConfiguration configuration, OrderBinder orderBinder, SampleByBinder sampleByBinder) {
+    AggregateBinder(
+            BindContext ctx,
+            SqlBinder binder,
+            CairoConfiguration configuration,
+            OrderBinder orderBinder,
+            SampleByBinder sampleByBinder,
+            IntHashSet nestedReads,
+            IntIntHashMap selectionHeads,
+            IntList nextSelections,
+            IntList removedAggregates,
+            IntList replacedSumIds,
+            IntList sortKeyIndexes,
+            UniqueColumnNames uniqueNames
+    ) {
         this.ctx = ctx;
         this.binder = binder;
         this.configuration = configuration;
         this.orderBinder = orderBinder;
         this.sampleByBinder = sampleByBinder;
+        this.aggregateNodeStack = orderBinder.selectExpressions;
+        this.nestedReads = nestedReads;
         this.normalizedCount = orderBinder.normalizedCount;
+        this.selectionHeads = selectionHeads;
+        this.nextSelections = nextSelections;
+        this.removedAggregates = removedAggregates;
+        this.replacedSumIds = replacedSumIds;
+        this.sortKeyIndexes = sortKeyIndexes;
+        this.uniqueNames = uniqueNames;
     }
 
     @Override
     public void clear() {
-        aggregateNodeStack.clear();
-        callArguments.clear();
         columnSpellings.clear();
-        nestedReads.clear();
-        nextSelections.clear();
-        removedAggregates.clear();
-        replacedSumIds.clear();
-        selectionHeads.clear();
-        sortKeyIndexes.clear();
     }
 
     private static boolean containsNode(ExpressionNode expression, ExpressionNode node) {
@@ -226,7 +229,7 @@ final class AggregateBinder implements Mutable {
      * The projection reads the aggregate directly or through a sort of its rows.
      */
     private static boolean readsAggregate(ProjectPlan project, GroupingPlan aggregate) {
-        return project.getInput() == aggregate || project.getInput() instanceof SortPlan sort && sort.getInput() == aggregate;
+        return project.getChild() == aggregate || project.getChild() instanceof SortPlan sort && sort.getChild() == aggregate;
     }
 
     private static boolean readsProjectedColumns(BoundExpression expression, ProjectPlan project) {
@@ -255,7 +258,7 @@ final class AggregateBinder implements Mutable {
     private void addAggregateInputColumns(BoundExpression expression, ProjectPlan project) {
         if (expression instanceof ColumnExpression column) {
             if (project.getOutput().getColumnIndexById(column.getColumnId()) < 0) {
-                final OutputSchema input = project.getInput().getOutput();
+                final OutputSchema input = project.getChild().getOutput();
                 final int index = input.getColumnIndexById(column.getColumnId());
                 final ExpressionNode spelling = columnSpellings.get(column.getColumnId());
                 final CharSequence name;
@@ -288,7 +291,7 @@ final class AggregateBinder implements Mutable {
             QueryModel model, QueryModel source, GroupingPlan aggregate, SqlExecutionContext context
     ) throws SqlException {
         final BindScope scope = ctx.scope();
-        final OutputSchema input = aggregate.getInput().getOutput();
+        final OutputSchema input = aggregate.getChild().getOutput();
         if (expression.isWildcard()) {
             ctx.validateWildcard(expression, input, source);
             for (int i = 0, n = input.getColumnCount(); i < n; i++) {
@@ -307,7 +310,7 @@ final class AggregateBinder implements Mutable {
         if (!isDuplicateAllowed && findGroupingExpression(expression, source, aggregate) >= 0) {
             return;
         }
-        final OutputSchema bindingScope = aggregate.getInput() instanceof WindowPlan ? ctx.windowBindingScope(input) : input;
+        final OutputSchema bindingScope = aggregate.getChild() instanceof WindowPlan ? ctx.windowBindingScope(input) : input;
         final BoundExpression bound;
         if (expression.type == ExpressionNode.LITERAL && !ctx.functionBinder.isOuterColumn(expression, bindingScope, sourceAlias(source))) {
             final int index = ctx.bindColumnIndex(expression, bindingScope, source);
@@ -363,7 +366,7 @@ final class AggregateBinder implements Mutable {
     private int aggregateSelectedOrderIndex(ExpressionNode order, QueryModel source, GroupingPlan aggregate, ProjectPlan selected) throws SqlException {
         final int ordinal = orderProjectionIndex(order, selected.getOutput(), selected.getExpressions().size());
         return ordinal >= 0 ? ordinal
-                : orderBinder.selectedOrderIndex(order, ctx.scope().aggregateSelectExpressions, aggregate.getInput().getOutput(), source, aggregate);
+                : orderBinder.selectedOrderIndex(order, ctx.scope().aggregateSelectExpressions, aggregate.getChild().getOutput(), source, aggregate);
     }
 
     private int aggregateSubstitutionIndex(ExpressionNode expression, QueryModel source, GroupingPlan aggregate) throws SqlException {
@@ -383,12 +386,12 @@ final class AggregateBinder implements Mutable {
     private FunctionExpression bindAggregate(
             CharSequence name, int position, ColumnExpression argument, OutputSchema input, SqlExecutionContext executionContext
     ) throws SqlException {
-        callArguments.clear();
+        final ObjList<BoundExpression> arguments = ctx.functionBinder.getCallArguments();
+        arguments.clear();
         if (argument != null) {
-            callArguments.add(argument);
+            arguments.add(argument);
         }
-        final BoundExpression bound = ctx.functionBinder.bindCall(name, position, callArguments, input, executionContext);
-        callArguments.clear();
+        final BoundExpression bound = ctx.functionBinder.bindCall(name, position, input, executionContext);
         if (bound instanceof FunctionExpression function && function.isAggregate()) {
             return function;
         }
@@ -404,7 +407,7 @@ final class AggregateBinder implements Mutable {
         LogicalPlan result = project;
         final boolean isSingleRow = aggregate.getGroupingExpressions().size() == 0;
         final int visibleCount = project.getExpressions().size();
-        if (source.getSampleBy() != null && source.getOrderBy().size() == 0 && project.getInput() instanceof SortPlan sort) {
+        if (source.getSampleBy() != null && source.getOrderBy().size() == 0 && project.getChild() instanceof SortPlan sort) {
             int timestampIndex = project.getOutput().getTimestampIndex();
             if (timestampIndex < 0) {
                 timestampIndex = sampleByTimestampAliasIndex(source, aggregate, project, visibleCount);
@@ -413,7 +416,7 @@ final class AggregateBinder implements Mutable {
                 for (int i = 0, n = scope.aggregateSelectExpressions.size(); i < n; i++) {
                     final ExpressionNode expression = scope.aggregateSelectExpressions.getQuick(i);
                     if (hasComputedProjection(project) || LogicalPlans.hasRepeatedColumn(project)
-                            || sampleByBinder.referencesSampleByTimestamp(expression, aggregate.getInput().getOutput(), source)) {
+                            || sampleByBinder.referencesSampleByTimestamp(expression, aggregate.getChild().getOutput(), source)) {
                         final OutputSchema output = sort.getOutput();
                         final int index = output.getTimestampIndex();
                         ctx.addProjection(project, ctx.planNodes.columns.next().of(output.getColumnId(index), output.getColumnType(index), expression.position),
@@ -425,7 +428,7 @@ final class AggregateBinder implements Mutable {
             }
             if (timestampIndex >= 0) {
                 sort.getColumnIds().setQuick(0, project.getOutput().getColumnId(timestampIndex));
-                project.replaceInput(0, sort.getInput());
+                project.replaceInput(0, sort.getChild());
                 sort.replaceInput(0, project);
                 project.getOutput().setTimestampIndex(-1);
                 result = sort;
@@ -445,7 +448,7 @@ final class AggregateBinder implements Mutable {
                 if (index < 0) {
                     // Reuse an already selected expression before introducing a
                     // hidden sort value. Aggregate calls remain one occurrence.
-                    index = orderBinder.resolveOrderIndex(order, scope.aggregateSelectExpressions, aggregate.getInput().getOutput(), source, aggregate,
+                    index = orderBinder.resolveOrderIndex(order, scope.aggregateSelectExpressions, aggregate.getChild().getOutput(), source, aggregate,
                             scope.aggregateOrderExpressions, i);
                 }
                 if (index < 0 && ordering == null && !isPlainColumnProjection(project) && order.type != ExpressionNode.LITERAL && !ctx.hasAggregate(order)) {
@@ -522,17 +525,6 @@ final class AggregateBinder implements Mutable {
         collectAggregateOrderSubstitutions(order, source, aggregate, project,
                 model.isDistinct() && !ctx.hasAggregation(model, source) ? visibleCount : 0);
         return ctx.functionBinder.bind(order, project.getOutput(), null, scope.substitutionNodes, scope.substitutionColumns, executionContext);
-    }
-
-    private BoundExpression bindCall(
-            CharSequence name, int position, BoundExpression left, BoundExpression right, OutputSchema input, SqlExecutionContext executionContext
-    ) throws SqlException {
-        callArguments.clear();
-        callArguments.add(left);
-        callArguments.add(right);
-        final BoundExpression bound = ctx.functionBinder.bindCall(name, position, callArguments, input, executionContext);
-        callArguments.clear();
-        return bound;
     }
 
     private LogicalPlan bindDistinctAggregation(
@@ -697,7 +689,7 @@ final class AggregateBinder implements Mutable {
             return;
         }
         if (expression.type == ExpressionNode.LITERAL
-                && getColumnIndexQuiet(aggregate.getInput().getOutput(), expression.token) < 0
+                && getColumnIndexQuiet(aggregate.getChild().getOutput(), expression.token) < 0
                 && orderProjectionIndex(expression, project.getOutput(), visibleCount) >= 0) {
             return;
         }
@@ -764,7 +756,7 @@ final class AggregateBinder implements Mutable {
         }
         if (!ctx.hasAggregate(expression) && (!isNested || expression.type == ExpressionNode.LITERAL)) {
             if (!isConstantGroupingExpression(expression) || !isNested && expression.type != ExpressionNode.BIND_VARIABLE
-                    && aggregate.getInput() instanceof HorizonJoinPlan) {
+                    && aggregate.getChild() instanceof HorizonJoinPlan) {
                 addGroupingExpression(expression, null, !isNested && expression.type == ExpressionNode.LITERAL
                         && Chars.indexOfLastUnquoted(expression.token, '.') > -1, model, source, aggregate, context);
             }
@@ -782,7 +774,7 @@ final class AggregateBinder implements Mutable {
             QueryModel model, QueryModel source, SampleByPlan sampleBy, SqlExecutionContext context
     ) throws SqlException {
         final BindScope scope = ctx.scope();
-        final OutputSchema input = sampleBy.getInput().getOutput();
+        final OutputSchema input = sampleBy.getChild().getOutput();
         boolean hasTimestampOutput = SampleByBinder.isFillPlanned(source);
         for (int i = 0, n = scope.aggregateSelectExpressions.size(); i < n && !hasTimestampOutput; i++) {
             hasTimestampOutput = sampleByBinder.referencesSampleByTimestamp(scope.aggregateSelectExpressions.getQuick(i), input, source);
@@ -812,7 +804,7 @@ final class AggregateBinder implements Mutable {
             return;
         }
         if (expression.type == ExpressionNode.LITERAL) {
-            if (!sampleByBinder.referencesSampleByTimestamp(expression, aggregate.getInput().getOutput(), source)) {
+            if (!sampleByBinder.referencesSampleByTimestamp(expression, aggregate.getChild().getOutput(), source)) {
                 addGroupingExpression(expression, model, source, aggregate, context);
             }
         } else if (expression.paramCount < 3) {
@@ -829,7 +821,7 @@ final class AggregateBinder implements Mutable {
             QueryModel model, QueryModel source, GroupingPlan aggregate, BoundExpression bucket, SqlExecutionContext context
     ) throws SqlException {
         final BindScope scope = ctx.scope();
-        final OutputSchema input = aggregate.getInput().getOutput();
+        final OutputSchema input = aggregate.getChild().getOutput();
         int firstTimestampIndex = -1;
         int timestampIndex = -1;
         for (int i = 0, n = scope.aggregateSelectExpressions.size(); i < n; i++) {
@@ -970,21 +962,6 @@ final class AggregateBinder implements Mutable {
         }
     }
 
-    /**
-     * The index of the aggregate {@code name(column)}, or of {@code name()} when columnId is -1, that normalisation
-     * settled: neither pending nor removed by it; -1 when absent.
-     */
-    private int findSettledAggregate(GroupingPlan aggregate, CharSequence name, int columnId) {
-        final BindScope scope = ctx.scope();
-        final ObjList<FunctionExpression> aggregates = aggregate.getAggregates();
-        for (int i = 0, n = aggregates.size(); i < n; i++) {
-            if (scope.pendingSumLiteral(aggregate, i) == null && isColumnAggregate(aggregates.getQuick(i), name, columnId)) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     private ExpressionNode findGroupByViolation(ExpressionNode expression) {
         if (expression == null) {
             return null;
@@ -1001,6 +978,21 @@ final class AggregateBinder implements Mutable {
             violation = findGroupByViolation(expression.args.getQuick(i));
         }
         return violation;
+    }
+
+    /**
+     * The index of the aggregate {@code name(column)}, or of {@code name()} when columnId is -1, that normalisation
+     * settled: neither pending nor removed by it; -1 when absent.
+     */
+    private int findSettledAggregate(GroupingPlan aggregate, CharSequence name, int columnId) {
+        final BindScope scope = ctx.scope();
+        final ObjList<FunctionExpression> aggregates = aggregate.getAggregates();
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
+            if (scope.pendingSumLiteral(aggregate, i) == null && isColumnAggregate(aggregates.getQuick(i), name, columnId)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private boolean hasAggregateComputation() {
@@ -1088,7 +1080,7 @@ final class AggregateBinder implements Mutable {
             return true;
         }
         if (hasSelectAliases && expression.type == ExpressionNode.LITERAL
-                && getColumnIndexQuiet(aggregate.getInput().getOutput(), expression.token) < 0) {
+                && getColumnIndexQuiet(aggregate.getChild().getOutput(), expression.token) < 0) {
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
                 if (Chars.equalsIgnoreCase(model.getBottomUpColumns().getQuick(i).getName(), expression.token)) {
                     return true;
@@ -1305,7 +1297,7 @@ final class AggregateBinder implements Mutable {
             bindPendingSums(aggregate, bindingScope, source, executionContext);
             return result;
         }
-        if (!(project.getInput() instanceof SortPlan sort)) {
+        if (!(project.getChild() instanceof SortPlan sort)) {
             normaliseSums(project, aggregate, bindingScope, source, executionContext);
             return result;
         }
@@ -1313,20 +1305,11 @@ final class AggregateBinder implements Mutable {
             bindPendingSums(aggregate, bindingScope, source, executionContext);
             return result;
         }
-        sortKeyIndexes.clear();
-        for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
-            sortKeyIndexes.add(LogicalPlans.projectedUncastColumnIndex(project, sort.getColumnIds().getQuick(i)));
-        }
+        LogicalPlans.collectSortKeyIndexes(project, sort, sortKeyIndexes);
         if (!normaliseSums(project, aggregate, bindingScope, source, executionContext)) {
             return result;
         }
-        final OutputSchema output = project.getOutput();
-        for (int i = 0, n = sortKeyIndexes.size(); i < n; i++) {
-            sort.getColumnIds().setQuick(i, output.getColumnId(sortKeyIndexes.getQuick(i)));
-        }
-        project.replaceInput(0, aggregate);
-        output.setTimestampIndex(LogicalPlans.projectedColumnIndex(project, aggregate.getOutput().getTimestampColumnId()));
-        sort.replaceInput(0, project);
+        LogicalPlans.sortAboveProjection(sort, project, aggregate, sortKeyIndexes);
         if (parent == null) {
             return sort;
         }
@@ -1349,7 +1332,7 @@ final class AggregateBinder implements Mutable {
         final BindScope scope = ctx.scope();
         final ObjList<FunctionExpression> functions = aggregate.getAggregates();
         final OutputSchema output = aggregate.getOutput();
-        final OutputSchema input = aggregate.getInput().getOutput();
+        final OutputSchema input = aggregate.getChild().getOutput();
         final int keyCount = aggregate.getGroupingExpressions().size();
         removedAggregates.clear();
         replacedSumIds.clear();
@@ -1440,9 +1423,10 @@ final class AggregateBinder implements Mutable {
             int sumIndex, int countIndex, int position, SqlExecutionContext executionContext
     ) throws SqlException {
         final BoundExpression term = countIndex < 0 ? value
-                : bindCall("*", position, inputColumn(output, countIndex, position), value, output, executionContext);
+                : ctx.functionBinder.bindCall("*", position, inputColumn(output, countIndex, position), value, output, executionContext);
         final ColumnExpression sum = inputColumn(output, sumIndex, position);
-        return bindCall(operator, operatorPosition, isColumnOnLeft ? sum : term, isColumnOnLeft ? term : sum, output, executionContext);
+        return ctx.functionBinder.bindCall(operator, operatorPosition, isColumnOnLeft ? sum : term, isColumnOnLeft ? term : sum, output,
+                executionContext);
     }
 
     private void projectSampleByKeys(SampleByPlan sampleBy, QueryModel model, boolean isJoin) {
@@ -1458,12 +1442,12 @@ final class AggregateBinder implements Mutable {
         if (!hasComputedKey) {
             return;
         }
-        final ProjectPlan project = ctx.planNodes.projects.next().of(sampleBy.getInput(), sampleBy.getPosition());
+        final ProjectPlan project = ctx.planNodes.projects.next().of(sampleBy.getChild(), sampleBy.getPosition());
         scope.resetAliases();
         columnSpellings.clear();
         if (isJoin) {
             for (int i = 0, n = model.getBottomUpColumns().size(); i < n; i++) {
-                collectColumnSpellings(model.getBottomUpColumns().getQuick(i).getAst(), sampleBy.getInput().getOutput());
+                collectColumnSpellings(model.getBottomUpColumns().getQuick(i).getAst(), sampleBy.getChild().getOutput());
             }
         }
         for (int i = 0, n = sampleBy.getGroupingExpressions().size(); i < n; i++) {
@@ -1480,7 +1464,7 @@ final class AggregateBinder implements Mutable {
         for (int i = 0, n = sampleBy.getAggregates().size(); i < n; i++) {
             addAggregateInputColumns(sampleBy.getAggregates().getQuick(i), project);
         }
-        final OutputSchema input = sampleBy.getInput().getOutput();
+        final OutputSchema input = sampleBy.getChild().getOutput();
         addAggregateInputColumns(ctx.planNodes.columns.next().of(sampleBy.getTimestampColumnId(),
                 input.getColumnType(input.getColumnIndexById(sampleBy.getTimestampColumnId())), sampleBy.getPosition()), project);
         columnSpellings.clear();
@@ -1553,7 +1537,7 @@ final class AggregateBinder implements Mutable {
             QueryModel model, QueryModel source, GroupingPlan aggregate, SqlExecutionContext executionContext
     ) throws SqlException {
         final BindScope scope = ctx.scope();
-        if (source.getNestedModel() != null || ctx.outerColumnReads.isReadBy(aggregate.getInput(), ctx.tmpOuterColumns)
+        if (source.getNestedModel() != null || ctx.outerColumnReads.isReadBy(aggregate.getChild(), ctx.tmpOuterColumns)
                 || source.getTableName() == null || source.getJoinModels().size() != 1
                 || model.getJoinModels().size() != 1 || model.getWhereClause() != null
                 || model.getSampleBy() != null || source.getSampleBy() != null
@@ -1569,8 +1553,8 @@ final class AggregateBinder implements Mutable {
         if (argument.type == ExpressionNode.ARRAY_CONSTRUCTOR) {
             throw SqlException.$(argument.position, "unsupported type of expression");
         }
-        final LogicalPlan input = aggregate.getInput();
-        final LogicalPlan filterInput = input instanceof LatestByPlan latest ? latest.getInput() : input;
+        final LogicalPlan input = aggregate.getChild();
+        final LogicalPlan filterInput = input instanceof LatestByPlan latest ? latest.getChild() : input;
         if (argument.type == ExpressionNode.LITERAL
                 && ColumnType.isSymbol(filterInput.getOutput().getColumnType(ctx.bindColumnIndex(argument, filterInput.getOutput(), source)))) {
             return false;
@@ -1586,7 +1570,7 @@ final class AggregateBinder implements Mutable {
         LogicalPlan filtered = filterInput;
         if (filtered instanceof FilterPlan previous) {
             predicate = ctx.expressionRewriter.combineConjunction(previous.getPredicate(), predicate, 0);
-            filtered = previous.getInput();
+            filtered = previous.getChild();
         }
         final FilterPlan filter = ctx.planNodes.filters.next().of(filtered, predicate, 0);
         if (input instanceof LatestByPlan) {
@@ -1614,7 +1598,7 @@ final class AggregateBinder implements Mutable {
      */
     private int sampleByTimestampAliasIndex(QueryModel source, GroupingPlan aggregate, ProjectPlan project, int visibleCount) throws SqlException {
         final BindScope scope = ctx.scope();
-        final OutputSchema input = aggregate.getInput().getOutput();
+        final OutputSchema input = aggregate.getChild().getOutput();
         final int inputTimestampIndex = input.getTimestampIndex();
         if (inputTimestampIndex < 0) {
             return -1;
@@ -1793,7 +1777,7 @@ final class AggregateBinder implements Mutable {
         }
 
         final boolean isCountDistinctRewritten = rewriteCountDistinct(model, source, aggregate, executionContext);
-        final OutputSchema aggregateScope = selectExpressions == null ? aggregate.getInput().getOutput() : ctx.windowBindingScope(aggregate.getInput().getOutput());
+        final OutputSchema aggregateScope = selectExpressions == null ? aggregate.getChild().getOutput() : ctx.windowBindingScope(aggregate.getChild().getOutput());
         final boolean isSumNormalisable = aggregate.hasDirectTableInput() && !SampleByBinder.hasFill(source);
         for (int i = 0; i < scope.aggregateNodes.size(); ) {
             final ExpressionNode expression = scope.aggregateNodes.getQuick(i);
@@ -2026,8 +2010,8 @@ final class AggregateBinder implements Mutable {
 
     int findGroupingExpression(ExpressionNode expression, QueryModel source, GroupingPlan aggregate) throws SqlException {
         final BindScope scope = ctx.scope();
-        final OutputSchema bindingScope = aggregate.getInput() instanceof WindowPlan
-                ? ctx.windowBindingScope(aggregate.getInput().getOutput()) : aggregate.getInput().getOutput();
+        final OutputSchema bindingScope = aggregate.getChild() instanceof WindowPlan
+                ? ctx.windowBindingScope(aggregate.getChild().getOutput()) : aggregate.getChild().getOutput();
         final int identity = scope.groupingNodes.indexOf(expression);
         if (identity >= 0) {
             return identity;

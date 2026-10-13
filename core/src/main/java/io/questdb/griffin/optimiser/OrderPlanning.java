@@ -144,14 +144,14 @@ final class OrderPlanning implements OptimiserPass {
             return;
         }
         int columnId = sort.getColumnIds().getQuick(0);
-        LogicalPlan plan = sort.getInput();
+        LogicalPlan plan = sort.getChild();
         while (plan instanceof ProjectPlan project) {
             final int index = project.getOutput().getColumnIndexById(columnId);
             if (index < 0) {
                 return;
             }
             final BoundExpression expression = project.getExpressions().getQuick(index);
-            plan = project.getInput();
+            plan = project.getChild();
             if (expression instanceof ColumnExpression column) {
                 columnId = column.getColumnId();
                 continue;
@@ -177,7 +177,7 @@ final class OrderPlanning implements OptimiserPass {
             }
             leftId = left.getColumnId();
             rightId = right.getColumnId();
-            plan = project.getInput();
+            plan = project.getChild();
         }
         if (!(plan instanceof JoinPlan join)) {
             return;
@@ -229,8 +229,8 @@ final class OrderPlanning implements OptimiserPass {
     private static LogicalPlan removeReorderedSorts0(LogicalPlan plan, boolean isReordered, boolean isSetBranchReordered) {
         switch (plan) {
             case SortPlan sort -> {
-                final LogicalPlan source = LogicalPlans.skipProjects(sort.getInput());
-                final LogicalPlan input = removeReorderedSorts0(sort.getInput(), true, false);
+                final LogicalPlan source = LogicalPlans.skipProjects(sort.getChild());
+                final LogicalPlan input = removeReorderedSorts0(sort.getChild(), true, false);
                 if (source instanceof WindowPlan) {
                     sort.replaceInput(0, input);
                     return sort;
@@ -246,9 +246,9 @@ final class OrderPlanning implements OptimiserPass {
                 return sort;
             }
             case ProjectPlan project -> {
-                final boolean isSorted = project.getInput() instanceof SortPlan;
+                final boolean isSorted = project.getChild() instanceof SortPlan;
                 replaceReorderedInput(project, isReordered && !project.hasTimestampDeclaration(), isSetBranchReordered);
-                if (isSorted && project.getInput() instanceof ProjectPlan inner && isHiddenSortKeyPrefix(project, inner)) {
+                if (isSorted && project.getChild() instanceof ProjectPlan inner && isHiddenSortKeyPrefix(project, inner)) {
                     inner.getExpressions().setPos(project.getExpressions().size());
                     inner.getOutput().copyFrom(project.getOutput());
                     return inner;
@@ -343,7 +343,7 @@ final class OrderPlanning implements OptimiserPass {
         if (order == null) {
             return null;
         }
-        final SortPlan mapped = sorts.next().of(aggregate.getInput(), order.getPosition());
+        final SortPlan mapped = sorts.next().of(aggregate.getChild(), order.getPosition());
         for (int i = 0, n = order.getColumnIds().size(); i < n; i++) {
             final int index = aggregate.getOutput().getColumnIndexById(order.getColumnIds().getQuick(i));
             if (index < 0 || index >= aggregate.getGroupingExpressions().size()
@@ -364,7 +364,7 @@ final class OrderPlanning implements OptimiserPass {
         if (order == null || order.hasAliasedKey()) {
             return null;
         }
-        final SortPlan mapped = sorts.next().of(project.getInput(), order.getPosition());
+        final SortPlan mapped = sorts.next().of(project.getChild(), order.getPosition());
         for (int i = 0, n = order.getColumnIds().size(); i < n; i++) {
             final int index = project.getOutput().getColumnIndexById(order.getColumnIds().getQuick(i));
             if (index < 0 || !(project.getExpressions().getQuick(index) instanceof ColumnExpression column)) {
@@ -389,11 +389,11 @@ final class OrderPlanning implements OptimiserPass {
                 && (plan instanceof ProjectPlan || plan instanceof FilterPlan || plan instanceof LimitPlan || plan instanceof SortPlan);
         switch (plan) {
             case WindowPlan window -> requireWindow(window, orderColumnId, direction, order,
-                    window.isSelectOrdered() && order != null && order.getInput() == plan, isRowOrderRequired);
-            case ProjectPlan project when project.getInput() instanceof WindowPlan window && PlanToFactoryRules.isWindowOutputProjection(project, window) ->
+                    window.isSelectOrdered() && order != null && order.getChild() == plan, isRowOrderRequired);
+            case ProjectPlan project when project.getChild() instanceof WindowPlan window && PlanToFactoryRules.isWindowOutputProjection(project, window) ->
                     requireWindow(window, LogicalPlans.projectedSourceColumnId(project, orderColumnId), direction, projectedOrder(project, order),
-                            window.isSelectOrdered() && order != null && order.getInput() == plan, isRowOrderRequired);
-            case ProjectPlan project when project.getInput() instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project) ->
+                            window.isSelectOrdered() && order != null && order.getChild() == plan, isRowOrderRequired);
+            case ProjectPlan project when project.getChild() instanceof WindowJoinPlan windowJoin && LogicalPlans.isColumnOnlyProjection(project) ->
                     requireWindowJoin(windowJoin);
             case LatestByPlan latest -> {
                 final ScanPlan scan = PlanToFactoryRules.latestByScan(latest);
@@ -404,15 +404,15 @@ final class OrderPlanning implements OptimiserPass {
                 }
             }
             case SampleByPlan sample -> requireNothing(PlanToFactoryRules.sampleByBase(sample));
-            case FillPlan fill -> requireNothing(fill.getInput());
+            case FillPlan fill -> requireNothing(fill.getChild());
             case ScanPlan scan ->
                     requireScan(scan, orderColumnId >= 0 ? scanDirection(scan, orderColumnId, direction) : SortDirection.ASCENDING,
                             null, null, true);
             case FunctionSourcePlan _ -> {
             }
-            case DistinctPlan distinct -> requireNothing(distinct.getInput());
-            case LimitPlan sortedLimit when LogicalPlans.hasSortUnderStableProjects(sortedLimit.getInput()) ->
-                    requireSortedLimit(sortedLimit.getInput(), sortedLimit);
+            case DistinctPlan distinct -> requireNothing(distinct.getChild());
+            case LimitPlan sortedLimit when LogicalPlans.hasSortUnderStableProjects(sortedLimit.getChild()) ->
+                    requireSortedLimit(sortedLimit.getChild(), sortedLimit);
             case AggregatePlan aggregate -> requireAggregate(aggregate, orderColumnId, direction, order);
             case JoinPlan join -> requireJoin(join, orderColumnId, direction, order, isRowOrderRequired);
             case WindowJoinPlan windowJoin -> requireWindowJoin(windowJoin);
@@ -426,7 +426,7 @@ final class OrderPlanning implements OptimiserPass {
     }
 
     private void requireAggregate(AggregatePlan aggregate, int orderColumnId, SortDirection direction, SortPlan order) {
-        if (aggregate.getInput() instanceof HorizonJoinPlan horizon) {
+        if (aggregate.getChild() instanceof HorizonJoinPlan horizon) {
             requireNothing(horizon.getMaster());
             for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
                 requireNothing(horizon.getSlaves().getQuick(i).getInput());
@@ -446,9 +446,9 @@ final class OrderPlanning implements OptimiserPass {
                 && aggregate.getGroupingExpressions().getQuick(orderIndex) instanceof ColumnExpression key && key.isDirectReference()) {
             inputOrderColumnId = key.getColumnId();
         }
-        final LogicalPlan input = LogicalPlans.skipRenames(aggregate.getInput());
+        final LogicalPlan input = LogicalPlans.skipRenames(aggregate.getChild());
         SortPlan inputOrder = keyOrder(aggregate, order);
-        for (LogicalPlan plan = aggregate.getInput(); plan != input; plan = plan.inputAt(0)) {
+        for (LogicalPlan plan = aggregate.getChild(); plan != input; plan = plan.inputAt(0)) {
             final ProjectPlan rename = (ProjectPlan) plan;
             if (inputOrderColumnId >= 0) {
                 inputOrderColumnId = LogicalPlans.projectedSourceColumnId(rename, inputOrderColumnId);
@@ -508,15 +508,15 @@ final class OrderPlanning implements OptimiserPass {
      */
     private void requireSortInput(SortPlan sort, int orderColumnId, SortDirection direction, LimitPlan limit) {
         if (isJoinSlaveInput && direction == SortDirection.DESCENDING && !sort.isReversal()) {
-            require(sort.getInput(), -1, null, null, null, false);
+            require(sort.getChild(), -1, null, null, null, false);
         } else {
-            require(sort.getInput(), orderColumnId, direction, sort, limit, false);
+            require(sort.getChild(), orderColumnId, direction, sort, limit, false);
         }
     }
 
     private void requireSortedLimit(LogicalPlan plan, LimitPlan limit) {
         if (plan instanceof ProjectPlan project) {
-            requireSortedLimit(project.getInput(), limit);
+            requireSortedLimit(project.getChild(), limit);
             return;
         }
         final SortPlan sort = (SortPlan) plan;
@@ -536,7 +536,7 @@ final class OrderPlanning implements OptimiserPass {
                 inputOrderColumnId = orderColumnId;
                 inputDirection = direction;
                 inputOrder = order;
-                inputLimit = filter.getInput() instanceof ScanPlan ? limit : null;
+                inputLimit = filter.getChild() instanceof ScanPlan ? limit : null;
             }
             case ProjectPlan project -> {
                 project.setRequestedOrderColumnId(orderColumnId);
@@ -549,7 +549,7 @@ final class OrderPlanning implements OptimiserPass {
                 if (PlanToFactoryRules.hasNativeFilterInput(project)) {
                     inputOrder = projectedOrder(project, order);
                     inputLimit = order == null || inputOrder != null ? limit : null;
-                } else if (project.getInput() instanceof AggregatePlan || project.getInput() instanceof WindowPlan
+                } else if (project.getChild() instanceof AggregatePlan || project.getChild() instanceof WindowPlan
                         || PlanToFactoryRules.hasOrderedJoinMasterInput(project)) {
                     inputOrder = projectedOrder(project, order);
                 }
@@ -573,7 +573,7 @@ final class OrderPlanning implements OptimiserPass {
         switch (plan) {
             case FilterPlan filter when filter.getPredicate() != null && input instanceof ScanPlan scan ->
                     requireScan(scan, scanDirection(scan, inputOrderColumnId, inputDirection), inputOrder, inputLimit, isInputRowOrderRequired);
-            case LimitPlan _ when input instanceof DistinctPlan distinct -> requireNothing(distinct.getInput());
+            case LimitPlan _ when input instanceof DistinctPlan distinct -> requireNothing(distinct.getChild());
             case SortPlan sort -> requireSortInput(sort, inputOrderColumnId, inputDirection, inputLimit);
             default ->
                     require(input, inputOrderColumnId, inputDirection, inputOrder, inputLimit, isInputRowOrderRequired);
@@ -582,7 +582,7 @@ final class OrderPlanning implements OptimiserPass {
 
     private void requireWindow(WindowPlan window, int orderColumnId, SortDirection direction, SortPlan order, boolean isQueryOrder,
                                boolean isRowOrderRequired) {
-        final LogicalPlan input = window.getInput();
+        final LogicalPlan input = window.getChild();
         int inputOrderColumnId = -1;
         SortDirection inputDirection = null;
         if (orderColumnId >= 0) {

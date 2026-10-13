@@ -55,9 +55,10 @@ public class ObjectPool<T extends Mutable> implements Mutable {
     }
 
     /**
-     * Creates a pool whose retained footprint does not depend on its peak use: {@link #clear()} and
-     * {@link #rewind(int)} clear the objects they release, so a kept object holds no reference into the work that
-     * released it, and {@link #clear()} drops every object past the first {@code maxRetainedSize}.
+     * Creates a pool whose retained footprint does not depend on its peak use: {@link #clear()},
+     * {@link #rewind(int)} and {@link #release(Mutable)} clear the objects they release, so a kept object holds no
+     * reference into the work that released it and {@link #next()} hands it out without clearing it again, and
+     * {@link #clear()} drops every object past the first {@code maxRetainedSize}.
      *
      * @param maxRetainedSize the most objects the pool keeps once {@link #clear()} releases them, never fewer than
      *                        {@code size}
@@ -94,7 +95,9 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         }
 
         T o = list.getQuick(pos++);
-        o.clear();
+        if (maxRetainedSize == Integer.MAX_VALUE) {
+            o.clear();
+        }
         return o;
     }
 
@@ -133,6 +136,9 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         T objectToSwap = list.getQuick(pos);
         list.setQuick(pos, o);
         list.setQuick(objectPos, objectToSwap);
+        if (maxRetainedSize < Integer.MAX_VALUE) {
+            o.clear();
+        }
     }
 
     public void resetCapacity() {
@@ -166,7 +172,11 @@ public class ObjectPool<T extends Mutable> implements Mutable {
 
     private void fill() {
         for (int i = 0; i < size; i++) {
-            list.add(factory.newInstance());
+            final T o = factory.newInstance();
+            if (maxRetainedSize < Integer.MAX_VALUE) {
+                o.clear();
+            }
+            list.add(o);
         }
     }
 

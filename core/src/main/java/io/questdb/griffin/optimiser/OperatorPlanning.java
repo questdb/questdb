@@ -69,6 +69,7 @@ import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.IntList;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 
 /**
@@ -83,7 +84,7 @@ import io.questdb.std.ObjList;
  * generator builds exactly what it records. From the same properties it rejects a time series join, a SAMPLE BY and
  * an aggregate function whose input does not deliver the ascending designated timestamp order they require.
  */
-final class OperatorPlanning {
+final class OperatorPlanning implements Mutable {
     private static final PlanVisitor SHARED_CONSUMERS = plan -> {
         if (plan instanceof AggregatePlan aggregate && aggregate.getSharedSource() != null
                 && sharedTarget(aggregate.getSharedSource().getInput()) instanceof AggregatePlan target) {
@@ -101,14 +102,21 @@ final class OperatorPlanning {
     private final OptimiserContext context;
     private final IntList readIds;
     private final IntList readOrder;
-    private final ObjList<JoinInput> undecidedSteps = new ObjList<>();
+    private final ObjList<JoinInput> undecidedSteps;
     private boolean isFullFatJoins;
 
-    OperatorPlanning(CairoConfiguration configuration, OptimiserContext context, IntList readOrder, IntList readIds) {
+    OperatorPlanning(CairoConfiguration configuration, OptimiserContext context, IntList readOrder, IntList readIds,
+                     ObjList<JoinInput> undecidedSteps) {
         this.configuration = configuration;
         this.context = context;
         this.readOrder = readOrder;
         this.readIds = readIds;
+        this.undecidedSteps = undecidedSteps;
+    }
+
+    @Override
+    public void clear() {
+        undecidedSteps.clear();
     }
 
     /**
@@ -158,7 +166,7 @@ final class OperatorPlanning {
      * True when the fill re-reads the row of a PREV value it cannot keep in a fixed-size slot.
      */
     private static boolean hasPrevReadBack(FillPlan fill) {
-        final OutputSchema input = fill.getInput().getOutput();
+        final OutputSchema input = fill.getChild().getOutput();
         final IntList targets = fill.getTargetColumnIds();
         for (int i = 0, n = targets.size(); i < n; i++) {
             final int mode = fill.getModes().getQuick(i);
@@ -198,7 +206,7 @@ final class OperatorPlanning {
      * last() of a non-array column, the shape a SAMPLE BY reads from the index of its symbol key.
      */
     private static boolean isFirstLastShape(SampleByPlan sample, int timestampIndex, int baseTimestampIndex, int symbolIndex) {
-        final OutputSchema input = sample.getInput().getOutput();
+        final OutputSchema input = sample.getChild().getOutput();
         final ObjList<BoundExpression> keys = sample.getGroupingExpressions();
         for (int i = 0, n = keys.size(); i < n; i++) {
             final ColumnExpression column = (ColumnExpression) keys.getQuick(i);
@@ -260,7 +268,7 @@ final class OperatorPlanning {
      * filter through.
      */
     private static boolean isPassedThroughProjection(ProjectPlan project) {
-        final LogicalPlan input = project.getInput();
+        final LogicalPlan input = project.getChild();
         return !LogicalPlans.isComputedProjection(project)
                 && !(input instanceof WindowPlan window && PlanToFactoryRules.isWindowOutputProjection(project, window))
                 && !(input instanceof WindowJoinPlan && LogicalPlans.isColumnOnlyProjection(project));
@@ -273,7 +281,7 @@ final class OperatorPlanning {
     private static LogicalPlan sharedTarget(LogicalPlan source) {
         while (true) {
             if (source instanceof ProjectPlan project && LogicalPlans.isColumnOnlyProjection(project)) {
-                source = project.getInput();
+                source = project.getChild();
             } else if (source instanceof SetOperationPlan operation) {
                 source = operation.getLeft();
             } else {
@@ -348,11 +356,11 @@ final class OperatorPlanning {
     private boolean hasFilter(LogicalPlan plan) {
         while (true) {
             switch (plan) {
-                case ProjectPlan project when isPassedThroughProjection(project) -> plan = project.getInput();
+                case ProjectPlan project when isPassedThroughProjection(project) -> plan = project.getChild();
                 case SortPlan sort when sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER
-                        || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION -> plan = sort.getInput();
+                        || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION -> plan = sort.getChild();
                 case LimitPlan limit when limit.getApplication() == LimitPlan.Application.INPUT ->
-                        plan = limit.getInput();
+                        plan = limit.getChild();
                 case JoinPlan join when join.getOrderedInputs().size() == 1 ->
                         plan = join.getOrderedInputs().getQuick(0).getInput();
                 case FilterPlan filter when !PlanToFactoryRules.isFusedFilter(filter) -> {
@@ -363,10 +371,10 @@ final class OperatorPlanning {
                     if (predicate instanceof ConstantExpression constant && constant.getLongValue() == 0) {
                         return false;
                     }
-                    plan = filter.getInput();
+                    plan = filter.getChild();
                 }
                 case FilterPlan filter -> {
-                    return hasScanFilter((ScanPlan) filter.getInput());
+                    return hasScanFilter((ScanPlan) filter.getChild());
                 }
                 case ScanPlan scan -> {
                     return hasScanFilter(scan);
@@ -433,10 +441,10 @@ final class OperatorPlanning {
      */
     private boolean isFirstLastIndexScan(SampleByPlan sample, LogicalPlan base) {
         while (base instanceof ProjectPlan project && PlanToFactoryRules.isIdentityProjection(project)) {
-            base = project.getInput();
+            base = project.getChild();
         }
         if (base instanceof FilterPlan filter && PlanToFactoryRules.isFusedFilter(filter)) {
-            base = filter.getInput();
+            base = filter.getChild();
         }
         if (sample.getFillMode() != SampleByPlan.FILL_NONE || !(base instanceof ScanPlan scan)
                 || scan.getAccessPath() != ScanPlan.AccessPath.SYMBOL_INDEX || scan.getIndexKeys().size() != 1
@@ -452,7 +460,7 @@ final class OperatorPlanning {
         }
         final int baseTimestampIndex = timestampIndex(scan);
         final int timestampIndex = sample.isTimestampRequired() ? baseTimestampIndex
-                : sample.getInput().getOutput().getColumnIndexById(sample.getTimestampColumnId());
+                : sample.getChild().getOutput().getColumnIndexById(sample.getTimestampColumnId());
         return isFirstLastShape(sample, timestampIndex, baseTimestampIndex, symbolIndex);
     }
 
@@ -480,10 +488,10 @@ final class OperatorPlanning {
         final boolean isStolen;
         if (!PlanToFactoryRules.isFusedFilter(filter)) {
             final BoundExpression predicate = filter.getPredicate();
-            isStolen = isPageFrameSource(filter.getInput())
+            isStolen = isPageFrameSource(filter.getChild())
                     && (isFiltering(predicate) ? filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL : isGateStolen && isGate(predicate));
         } else {
-            final ScanPlan scan = (ScanPlan) filter.getInput();
+            final ScanPlan scan = (ScanPlan) filter.getChild();
             final BoundExpression residual = scan.getResidual();
             final boolean isLimited = PhysicalProperties.implementsLimit(filter) == PhysicalProperties.Capability.YES;
             final boolean isCovering = scan.getIndexRead() == ScanPlan.IndexRead.COVERING;
@@ -522,12 +530,12 @@ final class OperatorPlanning {
         if (!executionContext.isParallelTopKEnabled()) {
             return SortPlan.Algorithm.LIMITED;
         }
-        final LogicalPlan base = PlanToFactoryRules.generatedPlan(sort.getInput());
+        final LogicalPlan base = PlanToFactoryRules.generatedPlan(sort.getChild());
         final ProjectPlan projection = PlanToFactoryRules.parallelTopKProjection(sort);
         if (projection == null && PlanToFactoryRules.isPeelableProjection(base)) {
             return isPageFrameSource(base) ? SortPlan.Algorithm.PARALLEL_TOP_K : SortPlan.Algorithm.LIMITED;
         }
-        final LogicalPlan source = projection != null ? PlanToFactoryRules.generatedPlan(projection.getInput()) : base;
+        final LogicalPlan source = projection != null ? PlanToFactoryRules.generatedPlan(projection.getChild()) : base;
         final SortPlan.Algorithm algorithm;
         if (isPageFrameSource(source)) {
             algorithm = SortPlan.Algorithm.PARALLEL_TOP_K;
@@ -539,8 +547,8 @@ final class OperatorPlanning {
         if (projection == null || !LogicalPlans.isComputedProjection(projection)) {
             return algorithm;
         }
-        final OutputSchema input = projection.getInput().getOutput();
-        final OutputSchema sorted = sort.getInput().getOutput();
+        final OutputSchema input = projection.getChild().getOutput();
+        final OutputSchema sorted = sort.getChild().getOutput();
         for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
             final int index = sorted.getColumnIndexById(sort.getColumnIds().getQuick(i));
             if (projection.hasUpdateConversions() || !(projection.getExpressions().getQuick(index) instanceof ColumnExpression column)
@@ -554,7 +562,7 @@ final class OperatorPlanning {
     private void planAggregate(AggregatePlan aggregate) throws SqlException {
         final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
         if (factory == PlanToFactoryRules.AggregateFactory.HORIZON) {
-            final HorizonJoinPlan horizon = (HorizonJoinPlan) aggregate.getInput();
+            final HorizonJoinPlan horizon = (HorizonJoinPlan) aggregate.getChild();
             final LogicalPlan master = horizon.getMaster();
             validateConsumedTimestamp(master);
             for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
@@ -574,10 +582,10 @@ final class OperatorPlanning {
         final LogicalPlan base = PlanToFactoryRules.aggregateBase(aggregate);
         readOrder(base, false, true);
         if (hasTimestampAggregate(aggregate.getAggregates())) {
-            final LogicalPlan input = LogicalPlans.skipRenames(aggregate.getInput());
+            final LogicalPlan input = LogicalPlans.skipRenames(aggregate.getChild());
             final int baseTimestampIndex = timestampIndex(base);
             final int timestampIndex = base != input ? PlanToFactoryRules.projectedTimestampIndex((ProjectPlan) input, baseTimestampIndex) : baseTimestampIndex;
-            validateTimestampAggregates(aggregate.getAggregates(), aggregate.getInput().getOutput(), timestampIndex,
+            validateTimestampAggregates(aggregate.getAggregates(), aggregate.getChild().getOutput(), timestampIndex,
                     baseTimestampIndex == timestampIndex && scanDirection(base) == PhysicalProperties.ScanDirection.FORWARD);
         }
         aggregate.setAlgorithm(aggregateAlgorithm(aggregate, base));
@@ -588,7 +596,7 @@ final class OperatorPlanning {
      * without random access.
      */
     private void planFill(FillPlan fill) {
-        final LogicalPlan input = fill.getInput();
+        final LogicalPlan input = fill.getChild();
         final int timestampIndex = input.getOutput().getColumnIndexById(fill.getTimestampColumnId());
         final FillPlan.Algorithm algorithm;
         if (isSampleByRowsFill(fill)) {
@@ -614,10 +622,10 @@ final class OperatorPlanning {
         if (!PlanToFactoryRules.isFusedFilter(filter)) {
             filter.setAlgorithm(!isFiltering(filter.getPredicate()) ? null
                     : PlanToFactoryRules.isWindowKeepFlag(filter) ? FilterPlan.Algorithm.WINDOW_KEEP_FLAG
-                      : isParallelEnabled && isKnownYes(PhysicalProperties.supportsPageFrameCursor(filter.getInput())) ? FilterPlan.Algorithm.PARALLEL : FilterPlan.Algorithm.SERIAL);
+                      : isParallelEnabled && isKnownYes(PhysicalProperties.supportsPageFrameCursor(filter.getChild())) ? FilterPlan.Algorithm.PARALLEL : FilterPlan.Algorithm.SERIAL);
             return;
         }
-        final ScanPlan scan = (ScanPlan) filter.getInput();
+        final ScanPlan scan = (ScanPlan) filter.getChild();
         scan.setResidualAlgorithm(!hasResidualFilterChoice(scan) ? null
                 : isParallelEnabled && isParallelResidual(scan) ? FilterPlan.Algorithm.PARALLEL : FilterPlan.Algorithm.SERIAL);
     }
@@ -655,7 +663,7 @@ final class OperatorPlanning {
         if (PlanToFactoryRules.latestByScan(latest) != null) {
             return;
         }
-        final LogicalPlan input = latest.getInput();
+        final LogicalPlan input = latest.getChild();
         final LogicalPlan base = PlanToFactoryRules.latestByBase(latest);
         boolean isAscending = false;
         if (latest.isTimestampOrderInherited() && input.getOutput().getColumnIndexById(latest.getTimestampColumnId())
@@ -671,13 +679,13 @@ final class OperatorPlanning {
      * Decides which operator applies the LIMIT and, over a sort, how the sort implements it.
      */
     private void planLimit(LimitPlan limit) {
-        final LogicalPlan limited = limit.getInput();
+        final LogicalPlan limited = limit.getChild();
         if (!LogicalPlans.hasSortUnderStableProjects(limited)) {
             limit.setApplication(isInputLimit(limited) ? LimitPlan.Application.INPUT : LimitPlan.Application.OPERATOR);
             return;
         }
         final SortPlan sort = (SortPlan) LogicalPlans.skipProjects(limited);
-        final LogicalPlan input = sort.getInput();
+        final LogicalPlan input = sort.getChild();
         final int keyIndex = input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0));
         final boolean isTimestampOrdered = isTimestampOrdered(sort);
         final boolean isOrderDelivered = isAdviceFollowed(input) && PlanToFactoryRules.hasAdvisedInput(input)
@@ -735,7 +743,7 @@ final class OperatorPlanning {
     }
 
     private void planSampleBy(SampleByPlan sample) throws SqlException {
-        final LogicalPlan sampled = sample.getInput();
+        final LogicalPlan sampled = sample.getChild();
         if (sample.isTimestampRequired()) {
             validateConsumedTimestamp(sampled);
         }
@@ -798,7 +806,7 @@ final class OperatorPlanning {
      * Decides how the generator implements a sort without a LIMIT over it; the LIMIT over a bounded sort decides again.
      */
     private void planSort(SortPlan sort, boolean isTimestampRequired) {
-        final LogicalPlan input = sort.getInput();
+        final LogicalPlan input = sort.getChild();
         final int keyIndex = input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0));
         final int timestampIndex = PhysicalProperties.timestampIndex(input);
         readOrder(input, true, keyIndex == timestampIndex);
@@ -817,7 +825,7 @@ final class OperatorPlanning {
     }
 
     private void planWindow(WindowPlan window) {
-        final LogicalPlan input = window.getInput();
+        final LogicalPlan input = window.getChild();
         final SortKeys queryOrder = window.getQueryOrder();
         final boolean isAdviceFollowed = isAdviceFollowed(input);
         final int timestampIndex = PhysicalProperties.timestampIndex(input);
@@ -951,30 +959,30 @@ final class OperatorPlanning {
                 }
                 if (LogicalPlans.isConstant(filter.getPredicate())) {
                     if (LogicalPlans.constantTruth(filter.getPredicate()) != 0) {
-                        readOrder(filter.getInput(), isAdviceRead, isDirectionRead);
+                        readOrder(filter.getChild(), isAdviceRead, isDirectionRead);
                     }
                 } else {
-                    readOrder(filter.getInput(), false, isDirectionRead);
+                    readOrder(filter.getChild(), false, isDirectionRead);
                 }
             }
-            case ProjectPlan project -> readOrder(project.getInput(), isAdviceRead, isDirectionRead);
+            case ProjectPlan project -> readOrder(project.getChild(), isAdviceRead, isDirectionRead);
             case SortPlan sort -> {
                 if (sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER || sort.getAlgorithm() == SortPlan.Algorithm.TIMESTAMP_DECLARATION) {
-                    readOrder(sort.getInput(), isAdviceRead, isDirectionRead);
+                    readOrder(sort.getChild(), isAdviceRead, isDirectionRead);
                 }
             }
             case LimitPlan limit -> {
                 if (limit.getApplication() != LimitPlan.Application.SORT) {
-                    readOrder(limit.getInput(), isAdviceRead && limit.getApplication() == LimitPlan.Application.INPUT, isDirectionRead);
+                    readOrder(limit.getChild(), isAdviceRead && limit.getApplication() == LimitPlan.Application.INPUT, isDirectionRead);
                 }
             }
             case DistinctPlan distinct -> {
-                final LogicalPlan input = distinct.getInput();
+                final LogicalPlan input = distinct.getChild();
                 if (isRandomAccess(input) && PhysicalProperties.timestampIndex(input) >= 0) {
                     readOrder(input, false, isDirectionRead);
                 }
             }
-            case WindowPlan window -> readOrder(window.getInput(), isAdviceRead, isDirectionRead);
+            case WindowPlan window -> readOrder(window.getChild(), isAdviceRead, isDirectionRead);
             case WindowJoinPlan windowJoin -> readOrder(windowJoin.getMaster(), isAdviceRead, isDirectionRead);
             case JoinPlan join -> readJoinOrder(join, join.getOrderedInputs().size(), isAdviceRead, isDirectionRead);
             case SetOperationPlan operation -> {
@@ -1093,10 +1101,10 @@ final class OperatorPlanning {
      * window result is fixed-width; else the cached one.
      */
     private WindowPlan.Algorithm windowAlgorithm(WindowPlan window) {
-        final OutputSchema input = window.getInput().getOutput();
+        final OutputSchema input = window.getChild().getOutput();
         boolean isStreamed = true;
         boolean isLight = configuration.isSqlWindowCachedLightEnabled() && configuration.isSqlOrderBySortEnabled()
-                && isKnownYes(PhysicalProperties.supportsRandomAccess(window.getInput()));
+                && isKnownYes(PhysicalProperties.supportsRandomAccess(window.getChild()));
         for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
             final WindowSpec spec = window.getSpecs().getQuick(i);
             final FunctionExpression function = window.getFunctions().getQuick(i);
@@ -1161,7 +1169,7 @@ final class OperatorPlanning {
      * True when the fill reads the rows of a SAMPLE BY cursor that fills no bucket itself.
      */
     static boolean isSampleByRowsFill(FillPlan fill) {
-        return fill.getInput() instanceof SampleByPlan sample && sample.getAlgorithm() == SampleByPlan.Algorithm.FILL_NONE;
+        return fill.getChild() instanceof SampleByPlan sample && sample.getAlgorithm() == SampleByPlan.Algorithm.FILL_NONE;
     }
 
     /**
@@ -1176,7 +1184,7 @@ final class OperatorPlanning {
      * designated timestamp, in the input's scan direction.
      */
     static boolean isTimestampOrdered(SortPlan sort) {
-        final LogicalPlan input = sort.getInput();
+        final LogicalPlan input = sort.getChild();
         return input.getOutput().getColumnIndexById(sort.getColumnIds().getQuick(0)) == PhysicalProperties.timestampIndex(input)
                 && PhysicalProperties.scanDirection(input) == PhysicalProperties.ScanDirection.of(sort.getDirections().getQuick(0));
     }
@@ -1232,7 +1240,7 @@ final class OperatorPlanning {
             case SampleByPlan sample -> planSampleBy(sample);
             case FillPlan fill -> planFill(fill);
             case LatestByPlan latest -> planLatestBy(latest);
-            case ProjectPlan project when project.getInput() instanceof WindowJoinPlan windowJoin && !LogicalPlans.isColumnOnlyProjection(project)
+            case ProjectPlan project when project.getChild() instanceof WindowJoinPlan windowJoin && !LogicalPlans.isColumnOnlyProjection(project)
                     && !PlanToFactoryRules.isWindowJoinTimestampKept(project, windowJoin, readOrder, readIds) ->
                     project.markTimestampDropped();
             default -> {

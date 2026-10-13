@@ -52,7 +52,8 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            char samplingIntervalUnit
     ) {
         super(
                 configuration,
@@ -69,7 +70,8 @@ class SampleByFillNoneNotKeyedRecordCursor extends AbstractVirtualRecordSampleBy
                 sampleFromFunc,
                 sampleFromFuncPos,
                 sampleToFunc,
-                sampleToFuncPos
+                sampleToFuncPos,
+                samplingIntervalUnit
         );
         this.value = value;
         record.of(value);

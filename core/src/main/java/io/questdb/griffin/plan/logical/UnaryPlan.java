@@ -28,22 +28,22 @@ import java.util.Objects;
 
 public abstract sealed class UnaryPlan extends LogicalPlan
         permits ForwardingPlan, GroupingPlan, ProjectPlan, WindowPlan {
-    private LogicalPlan input;
+    private LogicalPlan child;
 
     @Override
     public void clear() {
         super.clear();
-        input = null;
+        child = null;
     }
 
-    public LogicalPlan getInput() {
-        return input;
+    public LogicalPlan getChild() {
+        return child;
     }
 
     @Override
     public LogicalPlan inputAt(int index) {
         checkInputIndex(index);
-        return input;
+        return child;
     }
 
     @Override
@@ -54,17 +54,17 @@ public abstract sealed class UnaryPlan extends LogicalPlan
     @Override
     public void replaceInput(int index, LogicalPlan input) {
         checkInputIndex(index);
-        this.input = Objects.requireNonNull(input);
-    }
-
-    protected void configure(LogicalPlan input, int position) {
-        this.input = Objects.requireNonNull(input);
-        setPosition(position);
+        this.child = Objects.requireNonNull(input);
     }
 
     private static void checkInputIndex(int index) {
         if (index != 0) {
             throw new IndexOutOfBoundsException("input index: " + index);
         }
+    }
+
+    protected void configure(LogicalPlan input, int position) {
+        this.child = Objects.requireNonNull(input);
+        setPosition(position);
     }
 }

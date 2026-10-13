@@ -68,23 +68,23 @@ import io.questdb.std.ObjList;
  * shares that source's copy.
  */
 final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
-    private final IntIntHashMap columnIds = new IntIntHashMap();
+    private final IntIntHashMap columnIds;
     private final OptimiserContext context;
     private final ObjList<JoinInput> copiedInputs = new ObjList<>();
+    private final PlanVisitor nodeColumnIds = this::assignNodeColumnIds;
     private final ObjList<JoinInput> originalInputs = new ObjList<>();
     private final PlanNodePools planNodes;
     private final ObjList<AggregatePlan> sharingCopies = new ObjList<>();
     private IntIntHashMap remappedIds;
-    private final PlanVisitor nodeColumnIds = this::assignNodeColumnIds;
 
-    LogicalPlanCopier(OptimiserContext context, PlanNodePools planNodes) {
+    LogicalPlanCopier(OptimiserContext context, PlanNodePools planNodes, IntIntHashMap columnIds) {
         this.context = context;
         this.planNodes = planNodes;
+        this.columnIds = columnIds;
     }
 
     @Override
     public void clear() {
-        columnIds.clear();
         copiedInputs.clear();
         originalInputs.clear();
         sharingCopies.clear();
@@ -141,7 +141,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     }
 
     private AggregatePlan cloneAggregate(AggregatePlan aggregate) {
-        final AggregatePlan clone = planNodes.aggregates.next().of(aggregate.getInput(), aggregate.getPosition());
+        final AggregatePlan clone = planNodes.aggregates.next().of(aggregate.getChild(), aggregate.getPosition());
         cloneGrouping(aggregate, clone);
         clone.setAlgorithm(aggregate.getAlgorithm());
         clone.setSharedConsumerCount(aggregate.getSharedConsumerCount());
@@ -155,7 +155,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     }
 
     private FillPlan cloneFill(FillPlan fill) {
-        final FillPlan clone = planNodes.fills.next().of(fill.getInput(), fill.getPosition());
+        final FillPlan clone = planNodes.fills.next().of(fill.getChild(), fill.getPosition());
         clone.getModes().addAll(fill.getModes());
         clone.getSourceColumnIds().addAll(fill.getSourceColumnIds());
         clone.getTargetColumnIds().addAll(fill.getTargetColumnIds());
@@ -244,7 +244,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             case ScanPlan scan -> cloneScan(scan);
             case FunctionSourcePlan source -> context.getFunctionSources().copy(source);
             case FilterPlan filter -> {
-                final FilterPlan filterClone = planNodes.filters.next().of(filter.getInput(), filter.getPredicate(), filter.getPosition());
+                final FilterPlan filterClone = planNodes.filters.next().of(filter.getChild(), filter.getPredicate(), filter.getPosition());
                 filterClone.setAlgorithm(filter.getAlgorithm());
                 yield filterClone;
             }
@@ -253,9 +253,9 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             case AggregatePlan aggregate -> cloneAggregate(aggregate);
             case FillPlan fill -> cloneFill(fill);
             case WindowPlan window -> cloneWindow(window);
-            case DistinctPlan distinct -> planNodes.distincts.next().of(distinct.getInput(), distinct.getPosition());
+            case DistinctPlan distinct -> planNodes.distincts.next().of(distinct.getChild(), distinct.getPosition());
             case LatestByPlan latest -> {
-                final LatestByPlan latestClone = planNodes.latestByPlans.next().of(latest.getInput(), latest.getTimestampColumnId(), latest.getPosition());
+                final LatestByPlan latestClone = planNodes.latestByPlans.next().of(latest.getChild(), latest.getTimestampColumnId(), latest.getPosition());
                 latestClone.getKeyColumnIds().addAll(latest.getKeyColumnIds());
                 latestClone.setTimestampOrderInherited(latest.isTimestampOrderInherited());
                 latestClone.setAlgorithm(latest.getAlgorithm());
@@ -274,7 +274,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
             }
             case SortPlan sort -> cloneSort(sort);
             case LimitPlan limit -> {
-                final LimitPlan limitClone = planNodes.limits.next().of(limit.getInput(), limit.getLo(), limit.getHi(), limit.getPosition());
+                final LimitPlan limitClone = planNodes.limits.next().of(limit.getChild(), limit.getLo(), limit.getHi(), limit.getPosition());
                 limitClone.setApplication(limit.getApplication());
                 yield limitClone;
             }
@@ -284,7 +284,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     }
 
     private ProjectPlan cloneProject(ProjectPlan project) {
-        final ProjectPlan clone = planNodes.projects.next().of(project.getInput(), project.getPosition());
+        final ProjectPlan clone = planNodes.projects.next().of(project.getChild(), project.getPosition());
         clone.getExpressions().addAll(project.getExpressions());
         if (project.hasTimestampDeclaration()) {
             clone.markTimestampDeclaration();
@@ -301,7 +301,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     }
 
     private SampleByPlan cloneSampleBy(SampleByPlan sampleBy) {
-        final SampleByPlan clone = planNodes.sampleByPlans.next().of(sampleBy.getInput(), sampleBy.getPosition());
+        final SampleByPlan clone = planNodes.sampleByPlans.next().of(sampleBy.getChild(), sampleBy.getPosition());
         cloneGrouping(sampleBy, clone);
         clone.getFillTokens().addAll(sampleBy.getFillTokens());
         clone.getFillValues().addAll(sampleBy.getFillValues());
@@ -355,7 +355,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     }
 
     private SortPlan cloneSort(SortPlan sort) {
-        final SortPlan clone = planNodes.sorts.next().of(sort.getInput(), sort.getPosition());
+        final SortPlan clone = planNodes.sorts.next().of(sort.getChild(), sort.getPosition());
         clone.getColumnIds().addAll(sort.getColumnIds());
         clone.getDirections().addAll(sort.getDirections());
         if (sort.hasAliasedKey()) {
@@ -379,7 +379,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
     }
 
     private WindowPlan cloneWindow(WindowPlan window) {
-        final WindowPlan clone = planNodes.windowPlans.next().of(window.getInput(), window.getPosition());
+        final WindowPlan clone = planNodes.windowPlans.next().of(window.getChild(), window.getPosition());
         clone.getFunctions().addAll(window.getFunctions());
         for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
             final WindowSpec spec = window.getSpecs().getQuick(i);

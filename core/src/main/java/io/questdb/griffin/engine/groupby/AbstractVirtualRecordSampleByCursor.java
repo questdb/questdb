@@ -51,7 +51,8 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
             Function sampleFromFunc,
             int sampleFromFuncPos,
             Function sampleToFunc,
-            int sampleToFuncPos
+            int sampleToFuncPos,
+            char samplingIntervalUnit
     ) {
         super(
                 configuration,
@@ -68,7 +69,8 @@ public abstract class AbstractVirtualRecordSampleByCursor extends AbstractNoReco
                 sampleFromFunc,
                 sampleFromFuncPos,
                 sampleToFunc,
-                sampleToFuncPos
+                sampleToFuncPos,
+                samplingIntervalUnit
         );
         this.record = new VirtualRecordNoRowid(recordFunctions);
         for (int i = 0, n = recordFunctions.size(); i < n; i++) {

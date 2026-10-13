@@ -94,7 +94,8 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         fixture.sampleFromFunc,
                         0,
                         fixture.sampleToFunc,
-                        0
+                        0,
+                        'h'
                 )
         );
     }
@@ -120,7 +121,8 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         fixture.sampleFromFunc,
                         0,
                         fixture.sampleToFunc,
-                        0
+                        0,
+                        'h'
                 )
         );
     }
@@ -157,7 +159,8 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                             throwingSampleFromFunc,
                             0,
                             fixture.sampleToFunc,
-                            0
+                            0,
+                            'h'
                     )
             );
 
@@ -203,7 +206,8 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                     fixture.sampleFromFunc,
                     0,
                     fixture.sampleToFunc,
-                    0
+                    0,
+                    'h'
             );
         });
     }

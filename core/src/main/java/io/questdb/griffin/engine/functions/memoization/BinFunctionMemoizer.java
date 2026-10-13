@@ -35,7 +35,12 @@ import io.questdb.std.BinarySequence;
 import io.questdb.std.ByteList;
 
 /**
- * Copies the bytes, since a binary sequence may compute each byte when it is read.
+ * Reads the argument's sequence once per row and copies its bytes as they are first read, since a
+ * binary sequence may compute each byte when it is read. Length and null-ness come from that same
+ * sequence without reading a byte, so a row whose readers ask only for them generates and copies no
+ * payload, and one whose readers stop at a prefix copies only the prefix. The deferred copy relies
+ * on the argument's sequence staying unchanged until the argument is read again or the record
+ * moves, the same lifetime the array memoizer relies on for its view.
  */
 public final class BinFunctionMemoizer extends BinFunction implements MemoizerFunction {
     private final ByteList bytes = new ByteList();
@@ -43,16 +48,20 @@ public final class BinFunctionMemoizer extends BinFunction implements MemoizerFu
     private final BinarySequence sequence = new BinarySequence() {
         @Override
         public byte byteAt(long index) {
+            if (index >= bytes.size()) {
+                copyBytes(index);
+            }
             return bytes.getQuick((int) index);
         }
 
         @Override
         public long length() {
-            return bytes.size();
+            return length;
         }
     };
-    private boolean isNull;
+    private long length;
     private boolean validValue;
+    private BinarySequence value;
 
     public BinFunctionMemoizer(Function fn) {
         this.fn = fn;
@@ -71,13 +80,13 @@ public final class BinFunctionMemoizer extends BinFunction implements MemoizerFu
     @Override
     public BinarySequence getBin(Record rec) {
         memoize(rec);
-        return isNull ? null : sequence;
+        return value == null ? null : sequence;
     }
 
     @Override
     public long getBinLen(Record rec) {
         memoize(rec);
-        return isNull ? TableUtils.NULL_LEN : bytes.size();
+        return length;
     }
 
     @Override
@@ -100,14 +109,17 @@ public final class BinFunctionMemoizer extends BinFunction implements MemoizerFu
         return fn.supportsRandomAccess();
     }
 
+    private void copyBytes(long hi) {
+        for (long i = bytes.size(); i <= hi && i < length; i++) {
+            bytes.add(value.byteAt(i));
+        }
+    }
+
     private void memoize(Record rec) {
         if (!validValue) {
-            final BinarySequence value = fn.getBin(rec);
-            isNull = value == null;
+            value = fn.getBin(rec);
+            length = value == null ? TableUtils.NULL_LEN : value.length();
             bytes.clear();
-            for (long i = 0, n = isNull ? 0 : value.length(); i < n; i++) {
-                bytes.add(value.byteAt(i));
-            }
             validValue = true;
         }
     }

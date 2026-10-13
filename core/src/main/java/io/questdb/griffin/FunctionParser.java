@@ -47,12 +47,11 @@ import java.util.ArrayDeque;
 public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutable {
     private final CairoConfiguration configuration;
     private final ArrayDeque<Function> functionStack = new ArrayDeque<>();
-    private final ArrayDeque<RecordMetadata> metadataStack = new ArrayDeque<>();
-    private final IntList mutableArgPositions = new IntList();
-    private final ObjList<Function> mutableArgs = new ObjList<>();
+    private final IntList mutableArgPositions;
+    private final ObjList<Function> mutableArgs;
     private final IntStack positionStack = new IntStack();
     private final FunctionResolver resolver;
-    private final PostOrderTreeTraversalAlgo traverseAlgo = new PostOrderTreeTraversalAlgo();
+    private final PostOrderTreeTraversalAlgo traverseAlgo;
     private RecordMetadata metadata;
     private SqlExecutionContext sqlExecutionContext;
     private SubqueryCompiler subqueryCompiler;
@@ -62,8 +61,25 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     }
 
     public FunctionParser(CairoConfiguration configuration, FunctionResolver resolver) {
+        this(configuration, resolver, new PostOrderTreeTraversalAlgo(), new ObjList<>(), new IntList());
+    }
+
+    /**
+     * Walks expressions with {@code traverseAlgo}, which nests, and gathers the arguments of each call it constructs
+     * in {@code args} and {@code argPositions}, which no caller reads across a call construction.
+     */
+    public FunctionParser(
+            CairoConfiguration configuration,
+            FunctionResolver resolver,
+            PostOrderTreeTraversalAlgo traverseAlgo,
+            ObjList<Function> args,
+            IntList argPositions
+    ) {
         this.configuration = configuration;
         this.resolver = resolver;
+        this.traverseAlgo = traverseAlgo;
+        this.mutableArgs = args;
+        this.mutableArgPositions = argPositions;
     }
 
     @Override
@@ -118,13 +134,13 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             RecordMetadata metadata,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        final RecordMetadata enclosingMetadata = this.metadata;
+        final SqlExecutionContext enclosingExecutionContext = this.sqlExecutionContext;
+        final int functionBase = functionStack.size();
+        final int positionBase = positionStack.size();
+        this.metadata = metadata;
         this.sqlExecutionContext = executionContext;
-
-        if (this.metadata != null) {
-            metadataStack.push(this.metadata);
-        }
         try {
-            this.metadata = metadata;
             if (node != null) {
                 node.reassociateConstants(configuration.getCairoSqlLegacyOperatorPrecedence());
             }
@@ -133,10 +149,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             } catch (Exception e) {
                 // Release parsed functions best-effort: keep closing the rest even if one close()
                 // throws, and fold close failures into e as suppressed instead of masking it.
-                for (int i = functionStack.size(); i > 0; i--) {
+                for (int i = functionStack.size(); i > functionBase; i--) {
                     Misc.free(functionStack.poll(), e);
                 }
-                positionStack.clear();
+                for (int i = positionStack.size(); i > positionBase; i--) {
+                    positionStack.pop();
+                }
                 throw e;
             }
 
@@ -145,11 +163,8 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             assert positionStack.size() == functionStack.size();
             return resolver.foldRoot(function, position);
         } finally {
-            if (metadataStack.isEmpty()) {
-                this.metadata = null;
-            } else {
-                this.metadata = metadataStack.poll();
-            }
+            this.metadata = enclosingMetadata;
+            this.sqlExecutionContext = enclosingExecutionContext;
         }
     }
 

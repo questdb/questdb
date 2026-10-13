@@ -51,6 +51,33 @@ public class ObjectPoolTest extends AbstractTest {
     }
 
     @Test
+    public void testBoundedPoolClearsEachObjectOncePerUse() {
+        final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 8);
+        final ObjList<TestObject> taken = take(bounded, 6);
+        for (int i = 0; i < 6; i++) {
+            Assert.assertEquals(1, taken.getQuick(i).getClearCount());
+        }
+        bounded.clear();
+        final ObjList<TestObject> again = take(bounded, 6);
+        for (int i = 0; i < 6; i++) {
+            Assert.assertSame(taken.getQuick(i), again.getQuick(i));
+            Assert.assertEquals(2, again.getQuick(i).getClearCount());
+        }
+    }
+
+    @Test
+    public void testBoundedReleaseClearsObject() {
+        final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 8);
+        final ObjList<TestObject> taken = take(bounded, 2);
+        bounded.release(taken.getQuick(0));
+        Assert.assertEquals(0, taken.getQuick(0).getValue());
+        Assert.assertEquals(2, taken.getQuick(1).getValue());
+        Assert.assertSame(taken.getQuick(0), bounded.next());
+        Assert.assertEquals(0, taken.getQuick(0).getValue());
+        Assert.assertEquals(2, taken.getQuick(0).getClearCount());
+    }
+
+    @Test
     public void testBorrowAfterClear() {
         TestObject obj1 = pool.next();
         pool.release(obj1);
@@ -296,13 +323,17 @@ public class ObjectPoolTest extends AbstractTest {
     }
 
     private static class TestObject implements Mutable {
-        private boolean isCleared = false;
+        private int clearCount = 0;
         private int value = 0;
 
         @Override
         public void clear() {
             value = 0;
-            isCleared = true;
+            clearCount++;
+        }
+
+        public int getClearCount() {
+            return clearCount;
         }
 
         public int getValue() {
@@ -314,7 +345,7 @@ public class ObjectPoolTest extends AbstractTest {
         }
 
         public boolean wasCleared() {
-            return isCleared;
+            return clearCount > 0;
         }
     }
 }

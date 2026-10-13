@@ -44,11 +44,11 @@ import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.TableFunctionSources;
-import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
@@ -111,10 +111,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final AggregateFactoryGenerator aggregateGenerator;
     private final CairoConfiguration configuration;
     private final OutputSchema emptySchema;
-    private final BoundExpressionRewriter expressionRewriter;
     private final FilterFactoryGenerator filterGenerator;
     private final FunctionInstantiator functionInstantiator;
-    private final TableFunctionSources functionSources;
     private final ObjList<GenerationFrame> generationFrames = new ObjList<>();
     private final MemoryCARW jitIRMem;
     private final JoinFactoryGenerator joinGenerator;
@@ -124,8 +122,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ScanFactoryGenerator scanGenerator;
     private final SetOperationFactoryGenerator setOperationGenerator;
     private final SortFactoryGenerator sortGenerator;
-    private final LongList tmpLongs = new LongList();
+    private final IntList tmpIndexes;
+    private final LongList tmpLongs;
+    private final IntList tmpMasterKeys;
     private final StringSink tmpSink;
+    private final IntList tmpValues;
     private final WindowFactoryGenerator windowGenerator;
     private int generationDepth;
 
@@ -141,6 +142,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             FunctionInstantiator functionInstantiator,
             TableFunctionSources functionSources,
             StringSink tmpSink,
+            LongList tmpLongs,
             IntHashSet tmpIds,
             IntList tmpIndexes,
             IntList tmpValues,
@@ -150,10 +152,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         try {
             this.configuration = configuration;
             this.emptySchema = emptySchema;
-            this.expressionRewriter = expressionRewriter;
             this.functionInstantiator = functionInstantiator;
-            this.functionSources = functionSources;
             this.tmpSink = tmpSink;
+            this.tmpLongs = tmpLongs;
+            this.tmpIndexes = tmpIndexes;
+            this.tmpValues = tmpValues;
+            this.tmpMasterKeys = tmpMasterKeys;
             final RecordComparatorCompiler recordComparatorCompiler = new RecordComparatorCompiler(asm);
             this.jitIRMem = Vm.getCARWInstance(
                     configuration.getSqlJitIRMemoryPageSize(),
@@ -164,20 +168,23 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             jitIRMem.putByte((byte) 0);
             jitIRMem.truncate();
             final PageFrameReduceTaskFactory reduceTaskFactory = () -> new PageFrameReduceTask(configuration, MemoryTag.NATIVE_SQL_COMPILER);
-            this.filterGenerator = new FilterFactoryGenerator(configuration, characterStore, jitIRMem, reduceTaskFactory, tmpSink,
-                    tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys, tmpLongs);
-            this.aggregateGenerator = new AggregateFactoryGenerator(configuration, this, filterGenerator, asm, entityColumnFilter);
-            this.joinGenerator = new JoinFactoryGenerator(configuration, this, filterGenerator, functionResolver.getFunctionFactoryCache(), asm,
-                    entityColumnFilter, reduceTaskFactory, tmpSink, tmpIds);
-            this.latestByGenerator = new LatestByFactoryGenerator(configuration, this, asm, tmpIndexes);
-            this.projectionGenerator = new ProjectionFactoryGenerator();
-            this.scanGenerator = new ScanFactoryGenerator(configuration, filterGenerator, latestByGenerator, reduceTaskFactory,
-                    planTables);
+            this.filterGenerator = new FilterFactoryGenerator(configuration, characterStore, jitIRMem, reduceTaskFactory, functionInstantiator,
+                    tmpSink, tmpIndexes, tmpValues, tmpLongs);
+            this.aggregateGenerator = new AggregateFactoryGenerator(configuration, this, filterGenerator, functionInstantiator, asm,
+                    entityColumnFilter, tmpIndexes, tmpValues, tmpMasterKeys);
+            this.joinGenerator = new JoinFactoryGenerator(configuration, this, filterGenerator, functionInstantiator, expressionRewriter,
+                    functionResolver.getFunctionFactoryCache(), asm, entityColumnFilter, reduceTaskFactory, tmpSink, tmpIds, tmpIndexes);
+            this.latestByGenerator = new LatestByFactoryGenerator(configuration, this, asm);
+            this.projectionGenerator = new ProjectionFactoryGenerator(functionInstantiator);
+            this.scanGenerator = new ScanFactoryGenerator(configuration, filterGenerator, latestByGenerator, functionInstantiator,
+                    expressionRewriter, functionSources, reduceTaskFactory, planTables);
             this.sortGenerator = new SortFactoryGenerator(configuration, this, filterGenerator, projectionGenerator, asm, entityColumnFilter,
                     recordComparatorCompiler);
-            this.sampleByGenerator = new SampleByFactoryGenerator(configuration, this, functionResolver, asm, entityColumnFilter, sortGenerator);
+            this.sampleByGenerator = new SampleByFactoryGenerator(configuration, this, functionResolver, functionInstantiator, asm,
+                    entityColumnFilter, sortGenerator, tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys);
             this.setOperationGenerator = new SetOperationFactoryGenerator(configuration, this, sortGenerator, asm, entityColumnFilter);
-            this.windowGenerator = new WindowFactoryGenerator(configuration, this, asm, entityColumnFilter, recordComparatorCompiler);
+            this.windowGenerator = new WindowFactoryGenerator(configuration, this, functionInstantiator, asm, entityColumnFilter,
+                    recordComparatorCompiler, tmpSink);
         } catch (Throwable th) {
             close();
             throw th;
@@ -217,7 +224,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw new IllegalStateException("query is not bound");
         }
         if (generationFrames.size() == generationDepth) {
-            generationFrames.add(new GenerationFrame(configuration, tmpSink, tmpLongs, expressionRewriter, functionInstantiator, functionSources));
+            generationFrames.add(new GenerationFrame(configuration, tmpSink, tmpLongs, tmpIndexes, tmpValues, tmpMasterKeys));
         }
         final GenerationFrame frame = generationFrames.getQuick(generationDepth++);
         try {
@@ -259,7 +266,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return generationFrames.size();
     }
 
-    // used in tests
     public void setEnableJitNullChecks(boolean value) {
         filterGenerator.setEnableJitNullChecks(value);
     }
@@ -377,7 +383,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case FilterPlan filter -> {
                 final Function predicate;
                 try {
-                    predicate = frame.functionInstantiator.instantiate(residual, input.getOutput(), base.getMetadata(), executionContext);
+                    predicate = functionInstantiator.instantiate(residual, input.getOutput(), base.getMetadata(), executionContext);
                 } catch (Throwable th) {
                     Misc.free(base, th);
                     throw th;
@@ -392,7 +398,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
                 }
                 return filterGenerator.generate(frame, residual, input.getOutput(), base, predicate,
-                        frame.functionInstantiator, executionContext, hasUpdateScan(input), filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL,
+                        executionContext, hasUpdateScan(input), filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL,
                         null, input instanceof ScanPlan scan && scan.hasHint(ScanPlan.HINT_PRE_TOUCH));
             }
             case ProjectPlan project -> {
@@ -506,14 +512,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case LatestByPlan latest -> latestByGenerator.generateLatestBy(frame, latest, executionContext);
             case SampleByPlan sample -> sampleByGenerator.generateSampleBy(frame, sample, executionContext);
             case FillPlan fill -> {
-                final RecordCursorFactory base = generate(frame, fill.getInput(), executionContext);
-                yield sampleByGenerator.generateFill(frame, fill, fill.getInput().getOutput(), base, executionContext);
+                final RecordCursorFactory base = generate(frame, fill.getChild(), executionContext);
+                yield sampleByGenerator.generateFill(frame, fill, fill.getChild().getOutput(), base, executionContext);
             }
             case ScanPlan scan -> scanGenerator.generateScan(frame, scan, executionContext);
             case FunctionSourcePlan source -> scanGenerator.generateFunctionSource(frame, source, executionContext);
             case DistinctPlan distinct -> aggregateGenerator.generateDistinct(frame, distinct, null, executionContext);
-            case LimitPlan limit when LogicalPlans.hasSortUnderStableProjects(limit.getInput()) ->
-                    sortGenerator.generateSortedLimit(frame, limit.getInput(), limit, executionContext);
+            case LimitPlan limit when LogicalPlans.hasSortUnderStableProjects(limit.getChild()) ->
+                    sortGenerator.generateSortedLimit(frame, limit.getChild(), limit, executionContext);
             case AggregatePlan aggregate when PlanToFactoryRules.aggregateFactory(aggregate) == PlanToFactoryRules.AggregateFactory.POSTING_DISTINCT ->
                     scanGenerator.generatePostingDistinct(frame, aggregate, executionContext);
             case AggregatePlan aggregate -> aggregateGenerator.generateAggregate(frame, aggregate, executionContext);
@@ -547,7 +553,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (filter == null) {
             throw new IllegalStateException("stolen filter is not planned");
         }
-        final LogicalPlan input = filter.getInput();
+        final LogicalPlan input = filter.getChild();
         final BoundExpression predicate = filter.getPredicate();
         final ScanPlan scan = PlanToFactoryRules.fusedScan(filter);
         final RecordCursorFactory leaf;
@@ -556,7 +562,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } else {
             leaf = generate(frame, input, executionContext);
             try {
-                final Function function = frame.functionInstantiator.instantiate(predicate, input.getOutput(), leaf.getMetadata(), executionContext);
+                final Function function = functionInstantiator.instantiate(predicate, input.getOutput(), leaf.getMetadata(), executionContext);
                 target.of(predicate, input.getOutput(), function, filter.getAlgorithm() == FilterPlan.Algorithm.PARALLEL
                         && (!hasUpdateScan(input) || executionContext.isWalApplication()));
                 if (input instanceof FunctionSourcePlan source) {
@@ -584,8 +590,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         Function lo = null;
         final Function hi;
         try {
-            lo = frame.functionInstantiator.instantiate(limit.getLo(), emptySchema, executionContext);
-            hi = limit.getHi() == null ? null : frame.functionInstantiator.instantiate(limit.getHi(), emptySchema, executionContext);
+            lo = functionInstantiator.instantiate(limit.getLo(), emptySchema, executionContext);
+            hi = limit.getHi() == null ? null : functionInstantiator.instantiate(limit.getHi(), emptySchema, executionContext);
         } catch (Throwable th) {
             Misc.free(lo, th);
             Misc.free(base, th);

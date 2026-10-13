@@ -72,7 +72,7 @@ final class FilterFactoryGenerator {
     private static final Log LOG = LogFactory.getLog(FilterFactoryGenerator.class);
     private final CairoConfiguration configuration;
     private final boolean enableJitDebug;
-    private final ObjList<Function> jitBindVarFunctions = new ObjList<>();
+    private final FunctionInstantiator functionInstantiator;
     private final MemoryCARW jitIRMem;
     private final CompiledFilterIRSerializer jitIRSerializer;
     private final PageFrameReduceTaskFactory reduceTaskFactory;
@@ -83,17 +83,17 @@ final class FilterFactoryGenerator {
             CharacterStore characterStore,
             MemoryCARW jitIRMem,
             PageFrameReduceTaskFactory reduceTaskFactory,
+            FunctionInstantiator functionInstantiator,
             StringSink tmpSink,
             IntList tmpIndexes,
             IntList tmpValues,
-            IntList tmpMasterKeys,
-            IntList tmpSlaveKeys,
             LongList tmpLongs
     ) {
         this.configuration = configuration;
         this.jitIRMem = jitIRMem;
         this.reduceTaskFactory = reduceTaskFactory;
-        this.jitIRSerializer = new CompiledFilterIRSerializer(characterStore, tmpSink, tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys, tmpLongs);
+        this.functionInstantiator = functionInstantiator;
+        this.jitIRSerializer = new CompiledFilterIRSerializer(characterStore, tmpSink, tmpIndexes, tmpValues, tmpLongs);
         this.enableJitDebug = configuration.isSqlJitDebugEnabled();
     }
 
@@ -101,8 +101,10 @@ final class FilterFactoryGenerator {
      * Compiles the predicate over the page frames of the factory into the prepared filter's JIT filters and bind
      * variables. Throws the JIT's decline, leaving what it compiled in the prepared filter.
      */
-    private void compileJit(PreparedFilter target, RecordCursorFactory base, BoundExpression predicate, OutputSchema input,
-                            SqlExecutionContext executionContext) throws SqlException {
+    private void compileJit(GenerationFrame frame, PreparedFilter target, RecordCursorFactory base, BoundExpression predicate,
+                            OutputSchema input, SqlExecutionContext executionContext) throws SqlException {
+        final ObjList<Function> bindVarFunctions = frame.functions;
+        bindVarFunctions.clear();
         CompiledFilter compiledFilter = null;
         CompiledCountOnlyFilter compiledCountOnlyFilter = null;
         try {
@@ -111,7 +113,7 @@ final class FilterFactoryGenerator {
             try {
                 try (PageFrameCursor cursor = base.getPageFrameCursor(executionContext, ORDER_ANY)) {
                     final boolean forceScalar = executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR;
-                    jitIRSerializer.of(jitIRMem, executionContext, base.getMetadata(), input, cursor, jitBindVarFunctions);
+                    jitIRSerializer.of(jitIRMem, executionContext, base.getMetadata(), input, cursor, bindVarFunctions);
                     jitOptions = jitIRSerializer.serialize(predicate, forceScalar, enableJitDebug, enableJitNullChecks);
                 }
                 compiledFilter = new CompiledFilter();
@@ -135,15 +137,15 @@ final class FilterFactoryGenerator {
             }
         } catch (Throwable th) {
             target.setJit(compiledFilter, compiledCountOnlyFilter, null);
-            final Throwable cleanup = Misc.freeObjListBestEffort(null, jitBindVarFunctions);
-            jitBindVarFunctions.clear();
+            final Throwable cleanup = Misc.freeObjListBestEffort(null, bindVarFunctions);
+            bindVarFunctions.clear();
             if (cleanup != null) {
                 th.addSuppressed(cleanup);
             }
             throw th;
         }
-        target.setJit(compiledFilter, compiledCountOnlyFilter, new ObjList<>(jitBindVarFunctions));
-        jitBindVarFunctions.clear();
+        target.setJit(compiledFilter, compiledCountOnlyFilter, new ObjList<>(bindVarFunctions));
+        bindVarFunctions.clear();
     }
 
     private RecordCursorFactory generate(
@@ -152,7 +154,6 @@ final class FilterFactoryGenerator {
             OutputSchema input,
             RecordCursorFactory base,
             Function filter,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext,
             boolean isUpdate,
             boolean isParallel,
@@ -179,7 +180,7 @@ final class FilterFactoryGenerator {
         }
         final RecordCursorFactory jitFactory = tryGenerateJitFilter(
                 frame, base, filter, columns, executionContext,
-                predicate, input, instantiator, isUpdate, enablePreTouch, limitCount
+                predicate, input, isUpdate, enablePreTouch, limitCount
         );
         if (jitFactory != null) {
             return jitFactory;
@@ -188,9 +189,9 @@ final class FilterFactoryGenerator {
         final ObjList<Function> workerFilters;
         try {
             if (limitCount != null) {
-                limit = instantiator.instantiate(limitCount, input, executionContext);
+                limit = functionInstantiator.instantiate(limitCount, input, executionContext);
             }
-            workerFilters = instantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
+            workerFilters = functionInstantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
                     executionContext.getSharedQueryWorkerCount(), executionContext);
         } catch (Throwable th) {
             Misc.free(limit, th);
@@ -252,14 +253,13 @@ final class FilterFactoryGenerator {
             OutputSchema input,
             RecordCursorFactory base,
             Function filter,
-            FunctionInstantiator instantiator,
             SqlExecutionContext executionContext,
             boolean isUpdate,
             boolean isParallel,
             BoundExpression limitCount,
             boolean enablePreTouch
     ) throws SqlException {
-        return generate(frame, predicate, input, base, filter, instantiator, executionContext, isUpdate, isParallel, limitCount, enablePreTouch, true);
+        return generate(frame, predicate, input, base, filter, executionContext, isUpdate, isParallel, limitCount, enablePreTouch, true);
     }
 
     /**
@@ -268,8 +268,7 @@ final class FilterFactoryGenerator {
      */
     RecordCursorFactory generateCovering(
             BoundExpression predicate, OutputSchema input, CoveringIndexRecordCursorFactory base, Function filter,
-            FunctionInstantiator instantiator, SqlExecutionContext executionContext, boolean isParallel, BoundExpression limitCount,
-            boolean enablePreTouch
+            SqlExecutionContext executionContext, boolean isParallel, BoundExpression limitCount, boolean enablePreTouch
     ) throws SqlException {
         Function limit = null;
         ObjList<Function> workers = null;
@@ -278,11 +277,11 @@ final class FilterFactoryGenerator {
             IntHashSet columns = null;
             if (isParallel) {
                 if (limitCount != null) {
-                    limit = instantiator.instantiate(limitCount, input, executionContext);
+                    limit = functionInstantiator.instantiate(limitCount, input, executionContext);
                 }
                 columns = new IntHashSet();
                 collectColumnIndexes(predicate, input, columns);
-                workers = instantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
+                workers = functionInstantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
                         executionContext.getSharedQueryWorkerCount(), executionContext);
             }
             final int limitPosition = limitCount == null ? 0 : limitCount.getPosition();
@@ -347,7 +346,7 @@ final class FilterFactoryGenerator {
     ) throws SqlException {
         final Function filter;
         try {
-            filter = frame.functionInstantiator.instantiate(predicate, step.getOutput(), base.getMetadata(), executionContext);
+            filter = functionInstantiator.instantiate(predicate, step.getOutput(), base.getMetadata(), executionContext);
         } catch (Throwable th) {
             Misc.free(base, th);
             throw th;
@@ -368,7 +367,7 @@ final class FilterFactoryGenerator {
             Function filter,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        return generate(frame, predicate, step.getOutput(), base, filter, frame.functionInstantiator, executionContext, false, false, null,
+        return generate(frame, predicate, step.getOutput(), base, filter, executionContext, false, false, null,
                 false, PlanToFactoryRules.isPostJoinFilterFolded(step, predicate));
     }
 
@@ -376,7 +375,7 @@ final class FilterFactoryGenerator {
      * Fills the prepared filter's column set, its JIT filter where the prepared filter allows one, with the bind
      * variable memory the consumer reads them from, and its per-worker clones.
      */
-    void prepareParallel(PreparedFilter target, RecordCursorFactory leaf, FunctionInstantiator instantiator, SqlExecutionContext executionContext)
+    void prepareParallel(GenerationFrame frame, PreparedFilter target, RecordCursorFactory leaf, SqlExecutionContext executionContext)
             throws SqlException {
         final BoundExpression predicate = target.getPredicate();
         final OutputSchema input = target.getInput();
@@ -385,7 +384,7 @@ final class FilterFactoryGenerator {
         target.setColumns(columns);
         if (target.isJitAllowed() && executionContext.getJitMode() != SqlJitMode.JIT_MODE_DISABLED && JitUtil.isJitSupported()) {
             try {
-                compileJit(target, leaf, predicate, input, executionContext);
+                compileJit(frame, target, leaf, predicate, input, executionContext);
             } catch (SqlException | LimitOverflowException decline) {
                 Throwable cleanup = Misc.freeBestEffort(null, target.getCompiledFilter());
                 cleanup = Misc.freeBestEffort(cleanup, target.getCompiledCountOnlyFilter());
@@ -410,7 +409,7 @@ final class FilterFactoryGenerator {
                 ));
             }
         }
-        target.setWorkers(instantiator.instantiateWorkers(predicate, input, leaf.getMetadata(), target.getFilter(),
+        target.setWorkers(functionInstantiator.instantiateWorkers(predicate, input, leaf.getMetadata(), target.getFilter(),
                 executionContext.getSharedQueryWorkerCount(), executionContext));
     }
 
@@ -430,7 +429,6 @@ final class FilterFactoryGenerator {
             SqlExecutionContext executionContext,
             BoundExpression predicate,
             OutputSchema input,
-            FunctionInstantiator instantiator,
             boolean isUpdate,
             boolean enablePreTouch,
             @Nullable BoundExpression limitCount
@@ -442,7 +440,7 @@ final class FilterFactoryGenerator {
         }
         final PreparedFilter jit = frame.pushPreparedFilter();
         try {
-            compileJit(jit, base, predicate, input, executionContext);
+            compileJit(frame, jit, base, predicate, input, executionContext);
         } catch (SqlException | LimitOverflowException decline) {
             Throwable cleanup = null;
             try {
@@ -472,12 +470,12 @@ final class FilterFactoryGenerator {
         final int limitPosition;
         try {
             if (limitCount != null) {
-                limit = instantiator.instantiate(limitCount, input, executionContext);
+                limit = functionInstantiator.instantiate(limitCount, input, executionContext);
                 limitPosition = limitCount.getPosition();
             } else {
                 limitPosition = 0;
             }
-            workers = instantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
+            workers = functionInstantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
                     executionContext.getSharedQueryWorkerCount(), executionContext);
         } catch (Throwable th) {
             Misc.freeObjList(workers, th);

@@ -110,7 +110,7 @@ final class SortFactoryGenerator {
         try {
             final SortPlan.Algorithm algorithm = sort.getAlgorithm();
             if (algorithm != SortPlan.Algorithm.INPUT_ORDER) {
-                final OutputSchema input = sort.getInput().getOutput();
+                final OutputSchema input = sort.getChild().getOutput();
                 final ListColumnFilter keys = frame.listColumnFilterB;
                 keys.clear();
                 for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
@@ -184,7 +184,7 @@ final class SortFactoryGenerator {
             if (ParanoiaState.PLAN_PARANOIA_MODE && !leaf.supportsPageFrameCursor()) {
                 throw new AssertionError("parallel top-K input does not read page frames");
             }
-            final OutputSchema sorted = sort.getInput().getOutput();
+            final OutputSchema sorted = sort.getChild().getOutput();
             final OutputSchema input = source.getOutput();
             final ListColumnFilter keys = new ListColumnFilter();
             for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
@@ -196,7 +196,7 @@ final class SortFactoryGenerator {
             final int timestampIndex = PhysicalProperties.timestampIndex(sort);
             metadata.setTimestampIndex(timestampIndex < 0 ? -1 : sourceIndex(projection, sorted, input, timestampIndex));
             if (isFilterStolen) {
-                filterGenerator.prepareParallel(prepared, leaf, frame.functionInstantiator, executionContext);
+                filterGenerator.prepareParallel(frame, prepared, leaf, executionContext);
             }
             final RecordCursorFactory ownedLeaf = leaf;
             leaf = null;
@@ -303,7 +303,7 @@ final class SortFactoryGenerator {
 
     RecordCursorFactory generateSortedLimit(GenerationFrame frame, LogicalPlan plan, LimitPlan limit, SqlExecutionContext executionContext) throws SqlException {
         if (plan instanceof ProjectPlan project) {
-            final RecordCursorFactory base = generateSortedLimit(frame, project.getInput(), limit, executionContext);
+            final RecordCursorFactory base = generateSortedLimit(frame, project.getChild(), limit, executionContext);
             return projectionGenerator.generateProjection(frame, project, base, executionContext);
         }
         if (!(plan instanceof SortPlan sort)) {
@@ -312,7 +312,7 @@ final class SortFactoryGenerator {
         if (sort.getAlgorithm() == SortPlan.Algorithm.PARALLEL_TOP_K || sort.getAlgorithm() == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K) {
             return generateParallelTopK(frame, sort, limit, executionContext);
         }
-        final RecordCursorFactory base = codeGenerator.generate(frame, sort.getInput(), executionContext);
+        final RecordCursorFactory base = codeGenerator.generate(frame, sort.getChild(), executionContext);
         if (limit.getApplication() == LimitPlan.Application.INPUT) {
             return generate(frame, sort, base, null, null, null);
         }

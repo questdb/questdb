@@ -41,62 +41,71 @@ import io.questdb.std.ObjectPool;
 /**
  * Selects the order of a join of more than two inputs from the {@link JoinGraph} binding collected for it, with the
  * first input first, and publishes the keys, join types and ordered inputs ({@link #order(JoinPlan)}). Dependencies
- * come from the statement's plan-node pools; every other list is borrowed until {@link #clear()}.
+ * come from the statement's plan-node pools; the lists it owns stay until {@link #clear()}, and the borrowed ones are
+ * temporaries of one ordering.
  */
 final class JoinOrderSolver implements Mutable {
     private final ObjList<JoinKind> bestJoinTypes = new ObjList<>();
     private final IntList bestOrder;
-    private final IntList candidateOrder = new IntList();
-    private final ObjList<IntHashSet> children = new ObjList<>();
+    private final IntList candidateOrder;
+    private final ObjList<IntHashSet> children;
     private final ObjectPool<IntHashSet> childrenPool;
     private final ObjectPool<JoinDependency> dependencyPool;
-    private final IntList inCounts = new IntList();
-    private final ObjList<JoinKind> joinTypes = new ObjList<>();
+    private final IntList inCounts;
+    private final ObjList<JoinKind> joinTypes;
     private final IntHashSet markedIndexes;
     private final ObjList<JoinEquality> movedKeys = new ObjList<>();
-    private final IntList pendingSources = new IntList();
-    private final IntSortedList ready = new IntSortedList();
+    private final IntList pendingSources;
+    private final IntSortedList ready;
     private final IntList roots;
-    private final IntList semanticEdges = new IntList();
-    private final ObjList<JoinDependency> stagedDependencies = new ObjList<>();
+    private final IntList semanticEdges;
+    private final ObjList<JoinDependency> stagedDependencies;
     private final IntList stagedIndexes;
     private ObjList<JoinDependency> dependencies;
     private JoinGraph graph;
-    private JoinPlan join;
 
     /**
-     * Borrows {@code markedIndexes}, {@code stagedIndexes}, {@code bestOrder} and {@code roots} as temporaries of
-     * one call and leaves them empty.
+     * Borrows {@code markedIndexes}, {@code stagedIndexes}, {@code bestOrder}, {@code roots}, {@code inCounts},
+     * {@code candidateOrder} and {@code pendingSources} as temporaries of one call, and the other lists and the pool of
+     * child sets as temporaries of one ordering.
      */
-    JoinOrderSolver(PlanNodePools planNodes, IntHashSet markedIndexes, IntList stagedIndexes, IntList bestOrder, IntList roots) {
-        this.childrenPool = new ObjectPool<>(IntHashSet::new, 4, planNodes.maxRetainedJoinContexts);
+    JoinOrderSolver(
+            PlanNodePools planNodes,
+            IntHashSet markedIndexes,
+            IntList stagedIndexes,
+            IntList bestOrder,
+            IntList roots,
+            IntList inCounts,
+            IntList candidateOrder,
+            IntList pendingSources,
+            IntSortedList ready,
+            ObjList<IntHashSet> children,
+            ObjectPool<IntHashSet> childrenPool,
+            ObjList<JoinKind> joinTypes,
+            ObjList<JoinDependency> stagedDependencies
+    ) {
         this.dependencyPool = planNodes.joinDependencies;
         this.markedIndexes = markedIndexes;
         this.stagedIndexes = stagedIndexes;
         this.bestOrder = bestOrder;
         this.roots = roots;
+        this.semanticEdges = roots;
+        this.inCounts = inCounts;
+        this.candidateOrder = candidateOrder;
+        this.pendingSources = pendingSources;
+        this.ready = ready;
+        this.children = children;
+        this.childrenPool = childrenPool;
+        this.joinTypes = joinTypes;
+        this.stagedDependencies = stagedDependencies;
     }
 
     @Override
     public void clear() {
         bestJoinTypes.clear();
-        bestOrder.clear();
-        candidateOrder.clear();
-        children.clear();
-        childrenPool.clear();
-        inCounts.clear();
-        joinTypes.clear();
-        markedIndexes.clear();
         movedKeys.clear();
-        pendingSources.clear();
-        ready.clear();
-        roots.clear();
-        semanticEdges.clear();
-        stagedDependencies.clear();
-        stagedIndexes.clear();
         dependencies = null;
         graph = null;
-        join = null;
     }
 
     /**
@@ -272,7 +281,9 @@ final class JoinOrderSolver implements Mutable {
 
     private void of(JoinPlan join, JoinGraph graph) {
         clear();
-        this.join = join;
+        children.clear();
+        childrenPool.clear();
+        joinTypes.clear();
         this.graph = graph;
         this.dependencies = graph.getDependencies();
         final ObjList<JoinInput> inputs = join.getInputs();

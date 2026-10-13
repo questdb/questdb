@@ -46,7 +46,6 @@ import io.questdb.std.ObjList;
  * passes read it.
  */
 final class OptimiserContext implements Mutable {
-    private final ObjList<BoundExpression> callArguments;
     private final CallBinder callBinder;
     private final TableFunctionSources functionSources;
     private final FunctionInstantiator instantiator;
@@ -61,8 +60,7 @@ final class OptimiserContext implements Mutable {
             FunctionInstantiator instantiator,
             TableFunctionSources functionSources,
             PlanNodePools planNodes,
-            PlanTables planTables,
-            ObjList<BoundExpression> callArguments
+            PlanTables planTables
     ) {
         this.planNodes = planNodes;
         this.planTables = planTables;
@@ -70,7 +68,6 @@ final class OptimiserContext implements Mutable {
         this.callBinder = callBinder;
         this.instantiator = instantiator;
         this.functionSources = functionSources;
-        this.callArguments = callArguments;
     }
 
     @Override
@@ -83,26 +80,21 @@ final class OptimiserContext implements Mutable {
      * {@link CallBinder#bindCall}.
      */
     BoundExpression bindCall(CharSequence name, int position, OutputSchema input) throws SqlException {
-        final BoundExpression bound = callBinder.bindCall(name, position, callArguments, input, executionContext);
-        callArguments.clear();
-        return bound;
+        return callBinder.bindCall(name, position, input, executionContext);
     }
 
     /**
      * Binds the call {@code name} over the two already-bound arguments.
      */
     BoundExpression bindCall(CharSequence name, int position, BoundExpression left, BoundExpression right, OutputSchema input) throws SqlException {
-        callArguments.clear();
-        callArguments.add(left);
-        callArguments.add(right);
-        return bindCall(name, position, input);
+        return callBinder.bindCall(name, position, left, right, input, executionContext);
     }
 
     /**
      * The arguments the next {@link #bindCall(CharSequence, int, OutputSchema)} binds.
      */
     ObjList<BoundExpression> getCallArguments() {
-        return callArguments;
+        return callBinder.getCallArguments();
     }
 
     SqlExecutionContext getExecutionContext() {

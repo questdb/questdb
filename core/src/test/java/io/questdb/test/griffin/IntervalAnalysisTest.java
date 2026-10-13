@@ -38,6 +38,7 @@ import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.LongList;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
@@ -256,7 +257,7 @@ public class IntervalAnalysisTest extends AbstractCairoTest {
                     SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                     FunctionBindingHarness harness = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))
             ) {
-                final IntervalAnalysis analysis = new IntervalAnalysis(configuration);
+                final IntervalAnalysis analysis = new IntervalAnalysis(configuration, new StringSink(), new LongList());
                 for (int i = 0; i < TABLES.length; i++) {
                     for (String query : OFFSET) {
                         assertAnalysis(compiler, harness, analysis, String.format(query, TABLES[i]), PARTITIONS[i], true);
@@ -333,7 +334,7 @@ public class IntervalAnalysisTest extends AbstractCairoTest {
                     SqlCompilerImpl compiler = new SqlCompilerImpl(engine);
                     FunctionBindingHarness harness = new FunctionBindingHarness(engine, new FunctionParser(configuration, engine.getFunctionFactoryCache()))
             ) {
-                final IntervalAnalysis analysis = new IntervalAnalysis(configuration);
+                final IntervalAnalysis analysis = new IntervalAnalysis(configuration, new StringSink(), new LongList());
                 for (int i = 0; i < TABLES.length; i++) {
                     for (String predicate : predicates) {
                         final String sql = "SELECT * FROM " + TABLES[i] + " WHERE " + String.format(predicate, TABLES[i]);

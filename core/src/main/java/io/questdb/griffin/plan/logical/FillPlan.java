@@ -71,7 +71,7 @@ public final class FillPlan extends ForwardingPlan {
      */
     @Override
     public int derivedTimestampIndex() {
-        return getInput().getOutput().getColumnIndexById(timestampColumnId);
+        return getChild().getOutput().getColumnIndexById(timestampColumnId);
     }
 
     /**
@@ -129,12 +129,12 @@ public final class FillPlan extends ForwardingPlan {
         return to;
     }
 
-    public ObjList<CharSequence> getTokens() {
-        return tokens;
-    }
-
     public int getToPosition() {
         return to == null ? 0 : to.getPosition();
+    }
+
+    public ObjList<CharSequence> getTokens() {
+        return tokens;
     }
 
     public ObjList<BoundExpression> getValues() {

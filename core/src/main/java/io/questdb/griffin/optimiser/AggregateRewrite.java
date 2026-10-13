@@ -42,7 +42,6 @@ import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 
 /**
  * Rewrites an aggregate read by a projection, directly or through a sort of its rows.
@@ -59,10 +58,10 @@ import io.questdb.std.ObjectPool;
  * see {@link ProjectionMerge#limitBelowProjection}.
  */
 final class AggregateRewrite implements OptimiserPass {
-    private final ObjectPool<ColumnExpression> columns;
     private final OptimiserContext context;
+    private final ProjectPlan mapping;
+    private final ColumnExpression mappingColumn;
     private final ProjectionMerge projectionMerge;
-    private final ObjectPool<ProjectPlan> projects;
     private final IntList sortKeyIndexes;
     // The projection whose aggregate the last rewriteProjectedAggregate call lifted keys from.
     private ProjectPlan liftedProject;
@@ -72,14 +71,14 @@ final class AggregateRewrite implements OptimiserPass {
     AggregateRewrite(
             OptimiserContext context,
             ProjectionMerge projectionMerge,
-            ObjectPool<ColumnExpression> columns,
-            ObjectPool<ProjectPlan> projects,
+            ProjectPlan mapping,
+            ColumnExpression mappingColumn,
             IntList sortKeyIndexes
     ) {
         this.context = context;
         this.projectionMerge = projectionMerge;
-        this.columns = columns;
-        this.projects = projects;
+        this.mapping = mapping;
+        this.mappingColumn = mappingColumn;
         this.sortKeyIndexes = sortKeyIndexes;
     }
 
@@ -170,7 +169,7 @@ final class AggregateRewrite implements OptimiserPass {
 
     private static boolean hasRepeatedKeyColumn(AggregatePlan aggregate) {
         final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
-        final OutputSchema input = aggregate.getInput().getOutput();
+        final OutputSchema input = aggregate.getChild().getOutput();
         for (int i = 1, n = keys.size(); i < n; i++) {
             final int columnId = keyColumnId(keys.getQuick(i), input);
             if (columnId >= 0) {
@@ -198,7 +197,7 @@ final class AggregateRewrite implements OptimiserPass {
     }
 
     private static boolean isJoinInput(AggregatePlan aggregate) {
-        return switch (LogicalPlans.skipFilters(aggregate.getInput())) {
+        return switch (LogicalPlans.skipFilters(aggregate.getChild())) {
             case JoinPlan _, WindowJoinPlan _, HorizonJoinPlan _ -> true;
             default -> false;
         };
@@ -253,8 +252,9 @@ final class AggregateRewrite implements OptimiserPass {
 
     private void liftKey(ProjectPlan project, AggregatePlan aggregate, int keyIndex, ColumnExpression column, int columnKeyIndex) {
         final OutputSchema output = aggregate.getOutput();
-        final ProjectPlan mapping = projects.next().of(aggregate, aggregate.getPosition());
-        mapping.getExpressions().add(columns.next().of(output.getColumnId(columnKeyIndex), column.getDataType(), column.getPosition()));
+        mapping.clear();
+        mapping.of(aggregate, aggregate.getPosition());
+        mapping.getExpressions().add(mappingColumn.of(output.getColumnId(columnKeyIndex), column.getDataType(), column.getPosition()));
         mapping.getOutput().add(column.getColumnId(), output.getColumnName(columnKeyIndex), column.getDataType(), false);
         final BoundExpression key = aggregate.getGroupingExpressions().getQuick(keyIndex);
         final int keyId = output.getColumnId(keyIndex);
@@ -279,7 +279,7 @@ final class AggregateRewrite implements OptimiserPass {
         }
         repeatedKeyAggregate = aggregate;
         final ObjList<BoundExpression> keys = aggregate.getGroupingExpressions();
-        final OutputSchema input = aggregate.getInput().getOutput();
+        final OutputSchema input = aggregate.getChild().getOutput();
         final int leadingIndex = leadingKeyIndex(project, aggregate);
         boolean isLifted = false;
         for (int i = keys.size() - 1; i >= 0; i--) {
@@ -317,10 +317,10 @@ final class AggregateRewrite implements OptimiserPass {
         if (!(plan instanceof LimitPlan limit) || repeatedKeyAggregate == null) {
             return plan;
         }
-        final LogicalPlan input = limit.getInput();
+        final LogicalPlan input = limit.getChild();
         final SortPlan sort = input instanceof SortPlan sorted ? sorted : null;
-        final LogicalPlan projected = sort == null ? input : sort.getInput();
-        return projected instanceof ProjectPlan project && project.getInput() == repeatedKeyAggregate
+        final LogicalPlan projected = sort == null ? input : sort.getChild();
+        return projected instanceof ProjectPlan project && project.getChild() == repeatedKeyAggregate
                 ? projectionMerge.limitBelowProjection(limit, sort, project, repeatedKeyAggregate) : limit;
     }
 
@@ -339,34 +339,25 @@ final class AggregateRewrite implements OptimiserPass {
         if (!isKeyLiftable || !(plan instanceof ProjectPlan project)) {
             return plan;
         }
-        final LogicalPlan input = project.getInput();
+        final LogicalPlan input = project.getChild();
         if (input instanceof AggregatePlan aggregate) {
             if (liftKeys(project, aggregate)) {
                 liftedProject = project;
             }
             return project;
         }
-        if (!(input instanceof SortPlan sort) || !(sort.getInput() instanceof AggregatePlan aggregate)
+        if (!(input instanceof SortPlan sort) || !(sort.getChild() instanceof AggregatePlan aggregate)
                 || !LogicalPlans.projectsSortKeys(project, sort)) {
             return project;
         }
-        sortKeyIndexes.clear();
-        for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
-            sortKeyIndexes.add(LogicalPlans.projectedUncastColumnIndex(project, sort.getColumnIds().getQuick(i)));
-        }
+        LogicalPlans.collectSortKeyIndexes(project, sort, sortKeyIndexes);
         project.replaceInput(0, aggregate);
         if (!liftKeys(project, aggregate)) {
             project.replaceInput(0, sort);
             return project;
         }
         liftedProject = project;
-        final OutputSchema output = project.getOutput();
-        for (int i = 0, n = sortKeyIndexes.size(); i < n; i++) {
-            sort.getColumnIds().setQuick(i, output.getColumnId(sortKeyIndexes.getQuick(i)));
-        }
-        output.setTimestampIndex(LogicalPlans.projectedColumnIndex(project, aggregate.getOutput().getTimestampColumnId()));
-        sort.replaceInput(0, project);
-        return sort;
+        return LogicalPlans.sortAboveProjection(sort, project, aggregate, sortKeyIndexes);
     }
 
 }

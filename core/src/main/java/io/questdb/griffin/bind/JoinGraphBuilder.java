@@ -42,47 +42,56 @@ import io.questdb.std.ObjectPool;
  * Collects the equalities, ordering constraints, lateral dependencies and late inputs of a join of more than two
  * inputs into the join's {@link JoinGraph}, merges the equalities that key one input on one column, and checks that
  * the join semantics admit an order ({@link #prepare()}); the optimiser's join order solver orders the graph.
- * Dependencies and equalities come from the statement's plan-node pools; every other list is borrowed until
- * {@link #clear()}.
+ * Dependencies and equalities come from the statement's plan-node pools; the source filters are its own until
+ * {@link #clear()}, and every other list is a borrowed temporary of one collection.
  */
 public final class JoinGraphBuilder implements Mutable {
-    private final ObjList<IntHashSet> children = new ObjList<>();
+    private final ObjList<IntHashSet> children;
     private final ObjectPool<IntHashSet> childrenPool;
     private final ObjectPool<JoinDependency> dependencyPool;
     private final ObjectPool<JoinEquality> equalityPool;
-    private final IntList inCounts = new IntList();
-    private final ObjList<JoinKind> joinTypes = new ObjList<>();
+    private final IntList inCounts;
+    private final ObjList<JoinKind> joinTypes;
     private final IntHashSet markedIndexes;
-    private final IntSortedList ready = new IntSortedList();
-    private final IntList semanticEdges = new IntList();
+    private final IntSortedList ready;
+    private final IntList semanticEdges;
     private final ObjList<JoinEquality> sourceFilters = new ObjList<>();
-    private final ObjList<JoinDependency> stagedDependencies = new ObjList<>();
+    private final ObjList<JoinDependency> stagedDependencies;
     private ObjList<JoinDependency> dependencies;
     private JoinGraph graph;
     private boolean isCollecting;
     private JoinPlan join;
 
     /**
-     * Borrows {@code markedIndexes} as a temporary of one call and leaves it empty.
+     * Borrows {@code markedIndexes} as a temporary of one call, and the other lists and the pool of child sets as
+     * temporaries of one collection.
      */
-    public JoinGraphBuilder(PlanNodePools planNodes, IntHashSet markedIndexes) {
-        this.childrenPool = new ObjectPool<>(IntHashSet::new, 4, planNodes.maxRetainedJoinContexts);
+    public JoinGraphBuilder(
+            PlanNodePools planNodes,
+            IntHashSet markedIndexes,
+            IntList inCounts,
+            IntList semanticEdges,
+            IntSortedList ready,
+            ObjList<IntHashSet> children,
+            ObjectPool<IntHashSet> childrenPool,
+            ObjList<JoinKind> joinTypes,
+            ObjList<JoinDependency> stagedDependencies
+    ) {
         this.dependencyPool = planNodes.joinDependencies;
         this.equalityPool = planNodes.joinEqualities;
         this.markedIndexes = markedIndexes;
+        this.inCounts = inCounts;
+        this.semanticEdges = semanticEdges;
+        this.ready = ready;
+        this.children = children;
+        this.childrenPool = childrenPool;
+        this.joinTypes = joinTypes;
+        this.stagedDependencies = stagedDependencies;
     }
 
     @Override
     public void clear() {
-        children.clear();
-        childrenPool.clear();
-        inCounts.clear();
-        joinTypes.clear();
-        markedIndexes.clear();
-        ready.clear();
-        semanticEdges.clear();
         sourceFilters.clear();
-        stagedDependencies.clear();
         dependencies = null;
         graph = null;
         isCollecting = false;
@@ -164,6 +173,10 @@ public final class JoinGraphBuilder implements Mutable {
             throw new IllegalStateException("join order has already been selected");
         }
         clear();
+        children.clear();
+        childrenPool.clear();
+        joinTypes.clear();
+        stagedDependencies.clear();
         this.join = join;
         this.graph = graph;
         this.dependencies = graph.getDependencies();

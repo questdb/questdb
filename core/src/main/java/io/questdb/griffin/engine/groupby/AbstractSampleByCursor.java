@@ -31,11 +31,7 @@ import io.questdb.cairo.sql.NoRandomAccessRecordCursor;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.std.Numbers;
-import io.questdb.std.NumericException;
-import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
-import io.questdb.std.datetime.millitime.Dates;
 
 import java.io.Closeable;
 
@@ -52,6 +48,7 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
     protected final TimestampSampler timestampSampler;
     protected final Function timezoneNameFunc;
     protected final int timezoneNameFuncPos;
+    private final SampleByTimezone timezone = new SampleByTimezone();
     protected long fixedOffset;
     protected long localEpoch;
     protected long nextDstUtc;
@@ -93,45 +90,12 @@ public abstract class AbstractSampleByCursor implements NoRandomAccessRecordCurs
     }
 
     protected void parseParams(RecordCursor base, SqlExecutionContext executionContext) throws SqlException {
-        // factory guarantees that base cursor is not empty
-        timezoneNameFunc.init(base, executionContext);
-        offsetFunc.init(base, executionContext);
-        rules = null;
-
-        final CharSequence tz = timezoneNameFunc.getStrA(null);
-        if (tz != null) {
-            try {
-                long opt = Dates.parseOffset(tz);
-                if (opt == Long.MIN_VALUE) {
-                    // this is timezone name
-                    // fixed rules means the timezone does not have historical or daylight time changes
-                    rules = DateLocaleFactory.EN_LOCALE.getZoneRules(
-                            Numbers.decodeLowInt(DateLocaleFactory.EN_LOCALE.matchZone(tz, 0, tz.length())),
-                            timestampDriver.getTZRuleResolution()
-                    );
-                } else {
-                    // here timezone is in numeric offset format
-                    tzOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(opt));
-                    nextDstUtc = Long.MAX_VALUE;
-                }
-            } catch (NumericException e) {
-                throw SqlException.$(timezoneNameFuncPos, "invalid timezone: ").put(tz);
-            }
-        } else {
-            tzOffset = 0;
+        timezone.of(timezoneNameFunc, timezoneNameFuncPos, offsetFunc, offsetFuncPos, timestampDriver, base, executionContext);
+        rules = timezone.getRules();
+        if (rules == null) {
+            tzOffset = timezone.getTzOffset();
             nextDstUtc = Long.MAX_VALUE;
         }
-
-        final CharSequence offset = offsetFunc.getStrA(null);
-        if (offset != null) {
-            final long val = Dates.parseOffset(offset);
-            if (val == Numbers.LONG_NULL) {
-                // bad value for offset
-                throw SqlException.$(offsetFuncPos, "invalid offset: ").put(offset);
-            }
-            fixedOffset = timestampDriver.fromMinutes(Numbers.decodeLowInt(val));
-        } else {
-            fixedOffset = Long.MIN_VALUE;
-        }
+        fixedOffset = timezone.getFixedOffset();
     }
 }

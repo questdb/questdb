@@ -69,8 +69,7 @@ import io.questdb.std.ObjectPool;
  * equi-join keys and narrows decorrelation domains with their master's filters.
  */
 final class FilterPushdown implements OptimiserPass {
-    private static final ExpressionVisitor NULL_LITERALS = FilterPushdown::nullLiteral;
-    private static final int OFFSET_LEAVES = 3;
+    private static final int OFFSET_LEAVES = 3;    private static final ExpressionVisitor NULL_LITERALS = FilterPushdown::nullLiteral;
     private static final ConjunctTest ORDER_INDEPENDENT_CONJUNCTS = LogicalPlans::isOrderIndependent;
     private static final int OTHER_LEAVES = 4;
     private static final int PLAIN_LEAVES = 2;
@@ -79,16 +78,14 @@ final class FilterPushdown implements OptimiserPass {
     private final AggregateInputOrder aggregateInputOrder;
     private final ConjunctSplit conjunctSplit = new ConjunctSplit();
     private final OptimiserContext context;
-    private final ObjList<BoundExpression> tmpExpressions;
     private final ObjectPool<FilterPlan> filters;
-    private final IntList joinConjunctTargets = new IntList();
-    private final PlanRewriter joinFilters = this::pushJoinFilters;
+    private final IntList joinConjunctTargets;
     private final IntList latestKeyPositions;
-    private final ColumnExpression mappingColumn = new ColumnExpression();
-    private final ProjectPlan mappingProjection = new ProjectPlan();
+    private final ColumnExpression mappingColumn;
+    private final ProjectPlan mappingProjection;
     private final ObjectPool<ColumnExpression> narrowingColumns;
-    private final ObjectPool<ProjectPlan> narrowingProjects;
     private final PlanVisitor sharedDomainFilters = this::filterSharedDomain;
+    private final ObjList<BoundExpression> tmpExpressions;
     private final IntList transitiveFactOrigins;
     private final ObjList<BoundExpression> transitiveFacts;
     private ProjectPlan conjunctScope;
@@ -100,7 +97,8 @@ final class FilterPushdown implements OptimiserPass {
     private LogicalPlan latestKeyLimit;
     private SortPlan latestKeySort;
     private int selectedJoinSource;
-    private final ConjunctTest selectedJoinConjuncts = conjunct -> joinConjunctTargets.getQuick(joinConjunctIndex++) == selectedJoinSource;
+    private final ConjunctTest selectedJoinConjuncts = this::isSelectedJoinConjunct;
+    private final PlanRewriter joinFilters = this::pushJoinFilters;
     private int singleColumnId;
     private final ExpressionVisitor singleColumnReads = expression -> {
         if (expression instanceof ColumnExpression column) {
@@ -112,14 +110,15 @@ final class FilterPushdown implements OptimiserPass {
         }
         return TreeWalk.CONTINUE;
     };
-
     FilterPushdown(
             OptimiserContext context,
             AggregateInputOrder aggregateInputOrder,
             ObjList<BoundExpression> tmpExpressions,
             ObjectPool<FilterPlan> filters,
             ObjectPool<ColumnExpression> narrowingColumns,
-            ObjectPool<ProjectPlan> narrowingProjects,
+            ProjectPlan mappingProjection,
+            ColumnExpression mappingColumn,
+            IntList joinConjunctTargets,
             IntList latestKeyPositions,
             IntList transitiveFactOrigins,
             ObjList<BoundExpression> transitiveFacts
@@ -129,7 +128,9 @@ final class FilterPushdown implements OptimiserPass {
         this.tmpExpressions = tmpExpressions;
         this.filters = filters;
         this.narrowingColumns = narrowingColumns;
-        this.narrowingProjects = narrowingProjects;
+        this.mappingProjection = mappingProjection;
+        this.mappingColumn = mappingColumn;
+        this.joinConjunctTargets = joinConjunctTargets;
         this.latestKeyPositions = latestKeyPositions;
         this.transitiveFactOrigins = transitiveFactOrigins;
         this.transitiveFacts = transitiveFacts;
@@ -149,12 +150,9 @@ final class FilterPushdown implements OptimiserPass {
     public void clear() {
         conjunctScope = null;
         conjunctSplit.clear();
-        joinConjunctTargets.clear();
         isLatestKeyScope = false;
         latestKeyLimit = null;
         latestKeySort = null;
-        mappingColumn.clear();
-        mappingProjection.clear();
     }
 
     @Override
@@ -194,7 +192,7 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     private static boolean hasInputTimestamp(ProjectPlan project) {
-        final int timestampId = project.getInput().getOutput().getTimestampColumnId();
+        final int timestampId = project.getChild().getOutput().getTimestampColumnId();
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             if (project.getExpressions().getQuick(i) instanceof ColumnExpression column
                     && column.getColumnId() == timestampId) {
@@ -412,7 +410,7 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     private static boolean isSubsampleKeepFilter(FilterPlan filter) {
-        if (filter.getInput() instanceof WindowPlan window && filter.getPredicate() instanceof ColumnExpression column) {
+        if (filter.getChild() instanceof WindowPlan window && filter.getPredicate() instanceof ColumnExpression column) {
             final IntList ids = window.getFunctionColumnIds();
             final int index = ids.indexOf(column.getColumnId(), 0, ids.size());
             return index >= 0 && window.getSpecs().getQuick(index).isSubsampleKeepFlag();
@@ -519,10 +517,10 @@ final class FilterPushdown implements OptimiserPass {
             final int index = project.getOutput().getColumnIndexById(column.getColumnId());
             final BoundExpression projected = project.getExpressions().getQuick(index);
             if (projected instanceof ColumnExpression reference) {
-                return project.getInput().getOutput().getColumnIndexById(reference.getColumnId()) >= 0
+                return project.getChild().getOutput().getColumnIndexById(reference.getColumnId()) >= 0
                         && canPushThroughProjection(column, project) ? PLAIN_LEAVES : OTHER_LEAVES;
             }
-            return isTimestampOffset(projected, project.getInput().getOutput()) ? OFFSET_LEAVES : OTHER_LEAVES;
+            return isTimestampOffset(projected, project.getChild().getOutput()) ? OFFSET_LEAVES : OTHER_LEAVES;
         }
         if (expression instanceof FunctionExpression call) {
             final int flags = call.getFunctionFlags();
@@ -730,7 +728,7 @@ final class FilterPushdown implements OptimiserPass {
      */
     private int filterSharedDomain(LogicalPlan plan) {
         if (!(plan instanceof AggregatePlan aggregate) || aggregate.getSharedSource() == null
-                || !(aggregate.getInput() instanceof ScanPlan scan)) {
+                || !(aggregate.getChild() instanceof ScanPlan scan)) {
             return TreeWalk.CONTINUE;
         }
         final LogicalPlan source = LogicalPlans.skipFilters(aggregate.getSharedSource().getInput());
@@ -739,22 +737,23 @@ final class FilterPushdown implements OptimiserPass {
             return TreeWalk.CONTINUE;
         }
         final int position = aggregate.getPosition();
-        final ProjectPlan mapping = narrowingProjects.next().of(scan, position);
+        mappingProjection.clear();
+        mappingProjection.of(scan, position);
         final IntList inputIds = aggregate.getSharedInputIds();
         final IntList sourceIds = aggregate.getSharedSourceIds();
         for (int i = 0, n = inputIds.size(); i < n; i++) {
             final int index = scan.getOutput().getColumnIndexById(inputIds.getQuick(i));
             if (index >= 0) {
                 final int type = scan.getOutput().getColumnType(index);
-                mapping.getExpressions().add(narrowingColumns.next().of(inputIds.getQuick(i), type, position));
-                mapping.getOutput().add(sourceIds.getQuick(i), scan.getOutput().getColumnName(index), type, true);
+                mappingProjection.getExpressions().add(narrowingColumns.next().of(inputIds.getQuick(i), type, position));
+                mappingProjection.getOutput().add(sourceIds.getQuick(i), scan.getOutput().getColumnName(index), type, true);
             }
         }
         LogicalPlan input = scan;
         for (LogicalPlan filter = aggregate.getSharedSource().getInput(); filter != source; filter = filter.inputAt(0)) {
             final BoundExpression predicate = ((FilterPlan) filter).getPredicate();
-            if (LogicalPlans.isStableWithinExecution(predicate) && LogicalPlans.readsOnly(predicate, mapping.getOutput())) {
-                final FilterPlan copy = filters.next().of(input, context.getRewriter().copyRemappedColumns(predicate, mapping), predicate.getPosition());
+            if (LogicalPlans.isStableWithinExecution(predicate) && LogicalPlans.readsOnly(predicate, mappingProjection.getOutput())) {
+                final FilterPlan copy = filters.next().of(input, context.getRewriter().copyRemappedColumns(predicate, mappingProjection), predicate.getPosition());
                 input = copy;
             }
         }
@@ -766,11 +765,13 @@ final class FilterPushdown implements OptimiserPass {
         ProjectPlan view = null;
         final ObjList<BoundExpression> grouping = aggregate.getGroupingExpressions();
         final OutputSchema output = aggregate.getOutput();
-        final OutputSchema input = aggregate.getInput().getOutput();
+        final OutputSchema input = aggregate.getChild().getOutput();
         for (int i = 0, n = grouping.size(); i < n; i++) {
             if (grouping.getQuick(i) instanceof ColumnExpression column && column.isDirectReference()) {
                 if (view == null) {
-                    view = narrowingProjects.next().of(aggregate.getInput(), aggregate.getPosition());
+                    view = mappingProjection;
+                    view.clear();
+                    view.of(aggregate.getChild(), aggregate.getPosition());
                 }
                 view.getExpressions().add(column);
                 view.getOutput().add(output.getColumnId(i), output.getColumnName(i), output.getColumnType(i), true);
@@ -837,6 +838,10 @@ final class FilterPushdown implements OptimiserPass {
                 || ordered.indexOf(join.getInputs().getQuick(origin)) < boundaryPosition);
     }
 
+    private boolean isSelectedJoinConjunct(BoundExpression conjunct) {
+        return joinConjunctTargets.getQuick(joinConjunctIndex++) == selectedJoinSource;
+    }
+
     private boolean isTransitiveSourceSafe(JoinPlan join, int source, BoundExpression fact) {
         final int last = join.getOrderedInputs().size() - 1;
         if (isInnerJoinRegion(join)) {
@@ -885,7 +890,7 @@ final class FilterPushdown implements OptimiserPass {
      */
     private BoundExpression latestKeySelector(LatestByPlan latest, FilterPlan filter, LogicalPlan crossed) {
         final BoundExpression predicate = filter.getPredicate();
-        if (!isLatestKeyScope || latest.getKeyColumnIds().size() != 1 || !(latest.getInput() instanceof ScanPlan scan)) {
+        if (!isLatestKeyScope || latest.getKeyColumnIds().size() != 1 || !(latest.getChild() instanceof ScanPlan scan)) {
             return null;
         }
         final int keyId = latest.getKeyColumnIds().getQuick(0);
@@ -916,7 +921,7 @@ final class FilterPushdown implements OptimiserPass {
         if (latestKeySort != null) {
             final IntList sortIds = latestKeySort.getColumnIds();
             for (int i = 0, n = sortIds.size(); i < n; i++) {
-                final int id = sourceColumnId(latestKeySort.getInput() == filter ? crossed : latestKeySort.getInput(),
+                final int id = sourceColumnId(latestKeySort.getChild() == filter ? crossed : latestKeySort.getChild(),
                         sortIds.getQuick(i), latest);
                 if (id < 0) {
                     return null;
@@ -936,7 +941,7 @@ final class FilterPushdown implements OptimiserPass {
         ProjectPlan crossedProject = null;
         boolean isOrderCrossed = false;
         while (true) {
-            final LogicalPlan input = filter.getInput();
+            final LogicalPlan input = filter.getChild();
             final UnaryPlan crossed;
             final BoundExpression predicate;
             if (input instanceof ProjectPlan project && !LogicalPlans.isColumnProjection(project)) {
@@ -946,7 +951,7 @@ final class FilterPushdown implements OptimiserPass {
                 if (movable != null) {
                     final BoundExpression residual = conjunctSplit.getRemainder();
                     final BoundExpression substituted = context.getRewriter().substituteProjection(movable, project);
-                    final FilterPlan pushed = filters.next().of(project.getInput(), substituted, substituted.getPosition());
+                    final FilterPlan pushed = filters.next().of(project.getChild(), substituted, substituted.getPosition());
                     project.replaceInput(0, pushDownScopedFilter(pushed));
                     if (residual != null) {
                         filter.of(project, residual, filter.getPosition());
@@ -970,7 +975,7 @@ final class FilterPushdown implements OptimiserPass {
                     if (movable != null) {
                         final BoundExpression residual = conjunctSplit.getRemainder();
                         final BoundExpression remapped = context.getRewriter().remapColumns(movable, project);
-                        final FilterPlan pushed = filters.next().of(project.getInput(), remapped, remapped.getPosition());
+                        final FilterPlan pushed = filters.next().of(project.getChild(), remapped, remapped.getPosition());
                         project.replaceInput(0, pushDownFilter(pushed));
                         filter.of(project, residual, filter.getPosition());
                     }
@@ -993,7 +998,7 @@ final class FilterPushdown implements OptimiserPass {
                     combined = context.getRewriter().combineConjunction(combined, tmpExpressions.getQuick(i), filter.getPosition());
                 }
                 tmpExpressions.clear();
-                filter.of(inner.getInput(), combined, filter.getPosition());
+                filter.of(inner.getChild(), combined, filter.getPosition());
                 filter.deriveOutput();
                 continue;
             } else if (input instanceof SortPlan sort) {
@@ -1004,7 +1009,7 @@ final class FilterPushdown implements OptimiserPass {
                         return result;
                     }
                     final BoundExpression residual = conjunctSplit.getRemainder();
-                    final LogicalPlan belowSort = sort.getInput();
+                    final LogicalPlan belowSort = sort.getChild();
                     final FilterPlan pushed = filters.next().of(belowSort, movable, movable.getPosition());
                     sort.replaceInput(0, pushDownFilter(pushed));
                     filter.of(sort, residual, filter.getPosition());
@@ -1040,7 +1045,7 @@ final class FilterPushdown implements OptimiserPass {
                     filter.of(input, residual, filter.getPosition());
                 }
                 return result;
-            } else if (input instanceof AggregatePlan aggregate && !(aggregate.getInput() instanceof HorizonJoinPlan)) {
+            } else if (input instanceof AggregatePlan aggregate && !(aggregate.getChild() instanceof HorizonJoinPlan)) {
                 final ProjectPlan keys = groupingKeyView(aggregate);
                 if (keys == null || isUnstable(filter.getPredicate())) {
                     return result;
@@ -1053,7 +1058,7 @@ final class FilterPushdown implements OptimiserPass {
                 }
                 final BoundExpression residual = conjunctSplit.getRemainder();
                 final BoundExpression remapped = context.getRewriter().remapColumns(movable, keys);
-                final FilterPlan pushed = filters.next().of(aggregate.getInput(), remapped, remapped.getPosition());
+                final FilterPlan pushed = filters.next().of(aggregate.getChild(), remapped, remapped.getPosition());
                 aggregate.replaceInput(0, pushDownScopedFilter(pushed));
                 if (residual != null) {
                     filter.of(input, residual, filter.getPosition());
@@ -1095,7 +1100,7 @@ final class FilterPushdown implements OptimiserPass {
                 final BoundExpression keys = selector == null ? null : latestKeyList(latest, selector);
                 if (keys == null) {
                     // LATEST BY already emits rows in ascending timestamp order.
-                    if (parent instanceof SortPlan sort && crossedProject != null && crossedProject.getInput() == sort) {
+                    if (parent instanceof SortPlan sort && crossedProject != null && crossedProject.getChild() == sort) {
                         if (sort.getColumnIds().size() == 1
                                 && sort.getColumnIds().getQuick(0) == input.getOutput().getTimestampColumnId()
                                 && sort.getDirections().getQuick(0) == SortDirection.ASCENDING) {
@@ -1122,7 +1127,7 @@ final class FilterPushdown implements OptimiserPass {
                 // move a predicate through computed projections.
                 return result;
             }
-            final LogicalPlan newInput = crossed.getInput();
+            final LogicalPlan newInput = crossed.getChild();
             filter.of(newInput, predicate, filter.getPosition());
             filter.deriveOutput();
             crossed.replaceInput(0, filter);
@@ -1296,4 +1301,6 @@ final class FilterPushdown implements OptimiserPass {
         expression.walk(singleColumnReads);
         return singleColumnId;
     }
+
+
 }

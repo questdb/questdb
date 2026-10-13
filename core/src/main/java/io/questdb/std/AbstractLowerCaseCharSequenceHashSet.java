@@ -48,8 +48,10 @@ public abstract class AbstractLowerCaseCharSequenceHashSet implements Mutable {
 
     @Override
     public void clear() {
-        Arrays.fill(keys, noEntryKey);
-        free = capacity;
+        if (free != capacity) {
+            Arrays.fill(keys, noEntryKey);
+            free = capacity;
+        }
     }
 
     public boolean contains(CharSequence key) {

@@ -62,6 +62,7 @@ import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 
 /**
  * Decides how every scan of a query level, and of each sub-query it reads, reads its table, once
@@ -84,17 +85,12 @@ import io.questdb.std.ObjList;
 final class AccessPathPlanning {
     private static final int MODEL_NONE = -1;
     private final ObjList<LongList> capturedIntervals = new ObjList<>();
-    private final IntList capturedTypes = new IntList();
+    private final IntList capturedTypes;
     private final CairoConfiguration configuration;
-    private final ObjList<BoundExpression> conjuncts = new ObjList<>();
+    private final ObjList<BoundExpression> conjuncts;
     private final OptimiserContext context;
-    private final ExpressionVisitor cursorFinder = this::findCursor;
     private final ObjList<CursorExpression> cursors = new ObjList<>();
-    private final IntervalAnalysis intervals;
-    private final SymbolKeyExtractor keys = new SymbolKeyExtractor();
-    private final OperatorPlanning operatorPlanning;
-    private final LongList prefixes = new LongList();
-    private final ObjList<Subquery> subqueries = new ObjList<>();
+    private final ExpressionVisitor cursorFinder = this::findCursor;
     private final PlanExpressionVisitor subqueryCollector = new PlanExpressionVisitor() {
         @Override
         public int visitColumnId(int columnId, int position) {
@@ -107,7 +103,11 @@ final class AccessPathPlanning {
             return expression;
         }
     };
-    private final IntList tableColumnIndexes = new IntList();
+    private final IntervalAnalysis intervals;
+    private final SymbolKeyExtractor keys;
+    private final OperatorPlanning operatorPlanning;
+    private final ObjList<Subquery> subqueries = new ObjList<>();
+    private final IntList tableColumnIndexes;
     private int captureLevel = -1;
     private int depth;
     private ScanPlan horizonSlaveScan;
@@ -115,11 +115,25 @@ final class AccessPathPlanning {
     private WindowJoinStep pendingStep;
     private TableAccessInfo table;
 
-    AccessPathPlanning(CairoConfiguration configuration, OptimiserContext context, OperatorPlanning operatorPlanning) {
+    AccessPathPlanning(
+            CairoConfiguration configuration,
+            OptimiserContext context,
+            OperatorPlanning operatorPlanning,
+            ObjList<BoundExpression> conjuncts,
+            ObjList<BoundExpression> excludedConjuncts,
+            IntList capturedTypes,
+            IntList tableColumnIndexes,
+            StringSink intervalText,
+            LongList parsedIntervals
+    ) {
         this.configuration = configuration;
         this.context = context;
         this.operatorPlanning = operatorPlanning;
-        this.intervals = new IntervalAnalysis(configuration);
+        this.conjuncts = conjuncts;
+        this.capturedTypes = capturedTypes;
+        this.tableColumnIndexes = tableColumnIndexes;
+        this.intervals = new IntervalAnalysis(configuration, intervalText, parsedIntervals);
+        this.keys = new SymbolKeyExtractor(conjuncts, excludedConjuncts);
     }
 
     /**
@@ -163,7 +177,7 @@ final class AccessPathPlanning {
                 || output.getColumnIndexById(column.getColumnId()) < 0) {
             return null;
         }
-        return PlanToFactoryRules.withinPrefixes(call, output, prefixes) ? call : null;
+        return PlanToFactoryRules.hasConstantWithinPrefixes(call) ? call : null;
     }
 
     private int findCursor(BoundExpression expression) {
@@ -385,11 +399,11 @@ final class AccessPathPlanning {
                 || key.getDataType() != ColumnType.SYMBOL || !context.getExecutionContext().isCoveringIndexEnabled()) {
             return false;
         }
-        LogicalPlan source = aggregate.getInput();
+        LogicalPlan source = aggregate.getChild();
         BoundExpression predicate = null;
         if (source instanceof FilterPlan filter) {
             predicate = filter.getPredicate();
-            source = filter.getInput();
+            source = filter.getChild();
         }
         if (!(source instanceof ScanPlan scan) || scan.hasHint(ScanPlan.HINT_NO_COVERING) || scan.hasHint(ScanPlan.HINT_NO_INDEX)) {
             return false;
@@ -491,7 +505,6 @@ final class AccessPathPlanning {
         boolean hasExtractor = predicate != null;
         if (predicate != null) {
             if (latest != null && configuration.useWithinLatestByOptimisation()) {
-                prefixes.clear();
                 within = collectWithin(predicate, output);
             }
             final int timestampIndex = output.getColumnIndexById(scan.getNativeTimestampColumnId());
@@ -669,7 +682,7 @@ final class AccessPathPlanning {
     }
 
     private void walkAggregate(AggregatePlan aggregate, boolean isTimestampRequired) throws SqlException {
-        if (aggregate.getInput() instanceof HorizonJoinPlan horizon) {
+        if (aggregate.getChild() instanceof HorizonJoinPlan horizon) {
             final boolean isHorizonTimestampRequired = operatorPlanning.requiresInputTimestamp(aggregate, 0, isTimestampRequired);
             walk(horizon.getMaster(), operatorPlanning.requiresInputTimestamp(horizon, 0, isHorizonTimestampRequired));
             for (int i = 0, n = horizon.getSlaves().size(); i < n; i++) {
@@ -686,10 +699,10 @@ final class AccessPathPlanning {
             return;
         }
         if (!planPosting(aggregate)) {
-            walk(aggregate.getInput(), operatorPlanning.requiresInputTimestamp(aggregate, 0, isTimestampRequired));
+            walk(aggregate.getChild(), operatorPlanning.requiresInputTimestamp(aggregate, 0, isTimestampRequired));
             return;
         }
-        planScanSubqueries(aggregate.getInput(), PlanToFactoryRules.postingDistinctScan(aggregate));
+        planScanSubqueries(aggregate.getChild(), PlanToFactoryRules.postingDistinctScan(aggregate));
     }
 
     private void walkJoin(JoinPlan join, boolean isTimestampRequired) throws SqlException {
@@ -710,7 +723,7 @@ final class AccessPathPlanning {
     }
 
     private void walkLatestBy(LatestByPlan latest, boolean isTimestampRequired) throws SqlException {
-        final LogicalPlan input = latest.getInput();
+        final LogicalPlan input = latest.getChild();
         final ScanPlan scan = PlanToFactoryRules.latestByScan(latest);
         final boolean isInputTimestampRequired = operatorPlanning.requiresInputTimestamp(latest, 0, isTimestampRequired);
         if (scan != null) {
@@ -726,10 +739,9 @@ final class AccessPathPlanning {
         final int level = ++captureLevel;
         if (capturedIntervals.size() == level) {
             capturedIntervals.add(new LongList());
-            capturedTypes.add(MODEL_NONE);
         }
         capturedIntervals.getQuick(level).clear();
-        capturedTypes.setQuick(level, MODEL_NONE);
+        capturedTypes.extendAndSet(level, MODEL_NONE);
         try {
             isCapturing = true;
             walk(windowJoin.getMaster(), operatorPlanning.requiresInputTimestamp(windowJoin, 0, isTimestampRequired));
@@ -767,6 +779,7 @@ final class AccessPathPlanning {
         isCapturing = false;
         pendingStep = null;
         this.depth = depth;
+        operatorPlanning.clear();
         try {
             operatorPlanning.countSharedConsumers(root);
             walk(root, isTimestampRequired);

@@ -76,7 +76,7 @@ final class CorrelatedChainRewriter {
      * outer columns to those keys. Records a keyless aggregate that becomes keyed.
      */
     private void addMappedKeys(GroupingPlan aggregate, int base) {
-        final OutputSchema input = aggregate.getInput().getOutput();
+        final OutputSchema input = aggregate.getChild().getOutput();
         final OutputSchema output = aggregate.getOutput();
         if (aggregate instanceof AggregatePlan scalar && compensation.scalarAggregates.indexOf(scalar) > -1) {
             compensation.scalarAggregate = scalar;
@@ -136,9 +136,9 @@ final class CorrelatedChainRewriter {
      */
     private LogicalPlan rankLimit(LimitPlan limit, LogicalPlan input, int base) throws SqlException {
         final int position = limit.getPosition();
-        final ProjectPlan wrapper = input instanceof ProjectPlan project && project.getInput() instanceof SortPlan
+        final ProjectPlan wrapper = input instanceof ProjectPlan project && project.getChild() instanceof SortPlan
                 && LogicalPlans.isColumnProjection(project) ? project : null;
-        LogicalPlan ordered = wrapper != null ? wrapper.getInput() : input;
+        LogicalPlan ordered = wrapper != null ? wrapper.getChild() : input;
         final OutputSchema output = ordered.getOutput();
         final WindowSpec spec = ctx.planNodes.windowSpecs.next().of(ctx.planNodes.unboundedWindow);
         for (int k = base, n = ctx.mappedOuterIds.size(); k < n; k++) {
@@ -150,7 +150,7 @@ final class CorrelatedChainRewriter {
                 final int columnId = sort.getColumnIds().getQuick(i);
                 spec.addOrderBy(columnId, sort.getDirections().getQuick(i), output.getColumnName(output.getColumnIndexById(columnId)), position);
             }
-            ordered = sort.getInput();
+            ordered = sort.getChild();
         }
         BoundExpression lo = limit.getLo();
         BoundExpression hi = limit.getHi();

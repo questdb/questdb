@@ -159,7 +159,6 @@ public class FunctionResolver implements Mutable {
     private final FunctionFactoryCache functionFactoryCache;
     private final ObjList<Class<? extends FunctionFactory>> implicitConversions = new ObjList<>();
     private final Long256Impl long256Sink = new Long256Impl();
-    private final IntList undefinedVariables = new IntList();
     private boolean cursorFunctionInstantiated;
     private int executionRequirementPosition = -1;
     private String nonDeterministicCallName;
@@ -436,6 +435,7 @@ public class FunctionResolver implements Mutable {
         final int argCount = args == null ? 0 : args.size();
         implicitConversions.clear();
         implicitConversions.setPos(argCount);
+        final IntList undefinedVariables = argTraits;
         undefinedVariables.clear();
         // find all undefined args for the purpose of setting
         // their types when we find suitable candidate function

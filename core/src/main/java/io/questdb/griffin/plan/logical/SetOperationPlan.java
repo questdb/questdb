@@ -31,7 +31,6 @@ import java.util.Objects;
 
 public final class SetOperationPlan extends LogicalPlan {
     public static final ObjectFactory<SetOperationPlan> FACTORY = SetOperationPlan::new;
-    private final IntList remappedSymbolColumns = new IntList();
     private final IntList symbolColumns = new IntList();
     private boolean isMerged;
     private boolean isSymbolRestorationRequired;
@@ -151,9 +150,10 @@ public final class SetOperationPlan extends LogicalPlan {
     }
 
     /**
-     * Reindexes symbol restoration after retaining original output ordinals in the given order.
+     * Reindexes symbol restoration after retaining original output ordinals in the given order; {@code remappedSymbolColumns}
+     * is a temporary list.
      */
-    public void remapSymbolColumns(IntList retainedColumnIndexes) {
+    public void remapSymbolColumns(IntList retainedColumnIndexes, IntList remappedSymbolColumns) {
         remappedSymbolColumns.clear();
         for (int i = 0, n = retainedColumnIndexes.size(); i < n; i++) {
             if (symbolColumns.binarySearchUniqueList(retainedColumnIndexes.getQuick(i)) >= 0) {
@@ -162,7 +162,6 @@ public final class SetOperationPlan extends LogicalPlan {
         }
         symbolColumns.clear();
         symbolColumns.addAll(remappedSymbolColumns);
-        remappedSymbolColumns.clear();
     }
 
     @Override

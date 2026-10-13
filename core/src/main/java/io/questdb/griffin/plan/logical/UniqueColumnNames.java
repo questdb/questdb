@@ -28,6 +28,7 @@ import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
+import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.str.StringSink;
 
@@ -39,7 +40,6 @@ import io.questdb.std.str.StringSink;
 public final class UniqueColumnNames implements Mutable {
     private static final int MAX_SUFFIX_DIGITS = 9;
     private final LowerCaseCharSequenceIntHashMap nextSuffixes = new LowerCaseCharSequenceIntHashMap();
-    private final StringSink prefix = new StringSink();
     private final LowerCaseCharSequenceHashSet takenNames = new LowerCaseCharSequenceHashSet();
 
     @Override
@@ -77,7 +77,7 @@ public final class UniqueColumnNames implements Mutable {
             suffix += (c - '0') * scale;
             scale *= 10;
             if (c != '0') {
-                prefix.clear();
+                final StringSink prefix = Misc.getThreadLocalSink();
                 prefix.put(name, 0, lo);
                 final int index = nextSuffixes.keyIndex(prefix);
                 if (index < 0 && nextSuffixes.valueAt(index) > suffix) {

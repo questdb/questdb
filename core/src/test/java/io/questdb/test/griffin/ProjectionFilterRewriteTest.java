@@ -42,6 +42,17 @@ import org.junit.Test;
 
 public class ProjectionFilterRewriteTest extends AbstractCairoTest {
     @Test
+    public void testAdjacentColumnProjectsCollapseWithReorderedRepeatedOutputs() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            assertCollapsed("""
+                    SELECT second AS value,first AS duplicate
+                    FROM (SELECT a AS first,a AS second FROM (SELECT id AS a FROM lp_pushdown))
+                    """, "value\tduplicate\n3\t3\n1\t1\n2\t2\n4\t4\n", 1);
+        });
+    }
+
+    @Test
     public void testAdjacentFiltersCombineAfterColumnRemapping() throws Exception {
         assertMemoryLeak(() -> {
             createRows();
@@ -51,17 +62,6 @@ public class ProjectionFilterRewriteTest extends AbstractCairoTest {
                     "id\n2\n", ScanPlan.class);
             assertOptimised("SELECT id FROM (SELECT id FROM lp_pushdown WHERE false) WHERE id IN(1,2,3)",
                     "id\n", ScanPlan.class);
-        });
-    }
-
-    @Test
-    public void testAdjacentColumnProjectsCollapseWithReorderedRepeatedOutputs() throws Exception {
-        assertMemoryLeak(() -> {
-            createRows();
-            assertCollapsed("""
-                    SELECT second AS value,first AS duplicate
-                    FROM (SELECT a AS first,a AS second FROM (SELECT id AS a FROM lp_pushdown))
-                    """, "value\tduplicate\n3\t3\n1\t1\n2\t2\n4\t4\n", 1);
         });
     }
 
@@ -88,26 +88,6 @@ public class ProjectionFilterRewriteTest extends AbstractCairoTest {
                     SELECT value FROM (SELECT id+1 AS value,id AS raw FROM lp_pushdown) q
                     WHERE q.value>2 ORDER BY value
                     """, "value\n3\n4\n5\n", ProjectPlan.class);
-        });
-    }
-
-    @Test
-    public void testTimestampCastProjectionComparesAtConsumerPrecision() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE lp_projection_ts (id INT,ts TIMESTAMP) TIMESTAMP(ts)");
-            execute("INSERT INTO lp_projection_ts VALUES (1,'2020-01-01'),(2,'2020-01-02')");
-            final String literal = "'2020-01-01T00:00:00.000000001Z'";
-            assertOptimised("SELECT id FROM (SELECT id,ts::timestamp AS renamed FROM lp_projection_ts) WHERE renamed=" + literal,
-                    "id\n", ScanPlan.class);
-            assertOptimised("SELECT id FROM (SELECT id,ts::timestamp AS ts FROM lp_projection_ts) WHERE ts=" + literal,
-                    "id\n", ScanPlan.class);
-            assertOptimised("SELECT id FROM (SELECT id,renamed AS second FROM"
-                            + " (SELECT id,ts::timestamp AS renamed FROM lp_projection_ts)) WHERE second=" + literal,
-                    "id\n", ScanPlan.class);
-            assertOptimised("SELECT id FROM (SELECT id,ts::timestamp AS renamed FROM lp_projection_ts) WHERE renamed=" + literal + " AND id>0",
-                    "id\n", ScanPlan.class);
-            assertOptimised("SELECT renamed FROM (SELECT id,ts::timestamp AS renamed FROM lp_projection_ts) WHERE id>0",
-                    "renamed\n2020-01-01T00:00:00.000000Z\n2020-01-02T00:00:00.000000Z\n", ScanPlan.class);
         });
     }
 
@@ -212,6 +192,26 @@ public class ProjectionFilterRewriteTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTimestampCastProjectionComparesAtConsumerPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_projection_ts (id INT,ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO lp_projection_ts VALUES (1,'2020-01-01'),(2,'2020-01-02')");
+            final String literal = "'2020-01-01T00:00:00.000000001Z'";
+            assertOptimised("SELECT id FROM (SELECT id,ts::timestamp AS renamed FROM lp_projection_ts) WHERE renamed=" + literal,
+                    "id\n", ScanPlan.class);
+            assertOptimised("SELECT id FROM (SELECT id,ts::timestamp AS ts FROM lp_projection_ts) WHERE ts=" + literal,
+                    "id\n", ScanPlan.class);
+            assertOptimised("SELECT id FROM (SELECT id,renamed AS second FROM"
+                            + " (SELECT id,ts::timestamp AS renamed FROM lp_projection_ts)) WHERE second=" + literal,
+                    "id\n", ScanPlan.class);
+            assertOptimised("SELECT id FROM (SELECT id,ts::timestamp AS renamed FROM lp_projection_ts) WHERE renamed=" + literal + " AND id>0",
+                    "id\n", ScanPlan.class);
+            assertOptimised("SELECT renamed FROM (SELECT id,ts::timestamp AS renamed FROM lp_projection_ts) WHERE id>0",
+                    "renamed\n2020-01-01T00:00:00.000000Z\n2020-01-02T00:00:00.000000Z\n", ScanPlan.class);
+        });
+    }
+
     private static void assertExpressionInputs(BoundExpression expression, OutputSchema input) {
         if (expression instanceof ColumnExpression column) {
             final int index = input.getColumnIndexById(column.getColumnId());
@@ -231,8 +231,8 @@ public class ProjectionFilterRewriteTest extends AbstractCairoTest {
             node = node.inputAt(0);
         }
         final FilterPlan filter = (FilterPlan) node;
-        Assert.assertSame(expectedInput, filter.getInput().getClass());
-        assertExpressionInputs(filter.getPredicate(), filter.getInput().getOutput());
+        Assert.assertSame(expectedInput, filter.getChild().getClass());
+        assertExpressionInputs(filter.getPredicate(), filter.getChild().getOutput());
         while (node.inputCount() > 0) {
             node = node.inputAt(0);
         }

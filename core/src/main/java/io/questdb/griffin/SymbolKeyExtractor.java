@@ -45,7 +45,9 @@ import io.questdb.std.Mutable;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.SingleCharCharSequence;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8s;
 
 /**
  * Symbol key intrinsics of one native scan occurrence: the included and excluded key sets of a
@@ -53,16 +55,26 @@ import io.questdb.std.str.Utf8Sequence;
  */
 public final class SymbolKeyExtractor implements Mutable {
     private final KeySet excluded = new KeySet();
-    private final ObjList<BoundExpression> excludedConjuncts = new ObjList<>();
+    private final ObjList<BoundExpression> excludedConjuncts;
     private final KeySet included = new KeySet();
-    private final ObjList<BoundExpression> includedConjuncts = new ObjList<>();
+    private final ObjList<BoundExpression> includedConjuncts;
     private final ObjHashSet<BoundExpression> intrinsics = new ObjHashSet<>();
+    private final StringSink keyText = new StringSink();
     private final KeySet merged = new KeySet();
+    private final StringSink otherKeyText = new StringSink();
     private final KeySet pending = new KeySet();
     private int columnId = -1;
     private boolean hasKey;
     private boolean isFalse;
     private CursorExpression subquery;
+
+    /**
+     * Records the conjuncts of each extraction in the given temporary lists.
+     */
+    public SymbolKeyExtractor(ObjList<BoundExpression> includedConjuncts, ObjList<BoundExpression> excludedConjuncts) {
+        this.includedConjuncts = includedConjuncts;
+        this.excludedConjuncts = excludedConjuncts;
+    }
 
     /**
      * The caller owns the returned key function; bind values remain deferred until cursor open.
@@ -73,7 +85,7 @@ public final class SymbolKeyExtractor implements Mutable {
             return switch (ColumnType.tagOf(constant.getDataType())) {
                 case ColumnType.CHAR -> constant.getLongValue() == 0 ? StrConstant.NULL
                         : StrConstant.fromValue(SingleCharCharSequence.get((char) constant.getLongValue()));
-                default -> StrConstant.fromValue(textOf(constant));
+                default -> StrConstant.fromValue(textOf(constant, Misc.getThreadLocalSink()));
             };
         }
         final Function function = instantiator.instantiate(value, input, metadata, executionContext);
@@ -142,20 +154,6 @@ public final class SymbolKeyExtractor implements Mutable {
         return isFalse;
     }
 
-    /**
-     * The code of a one-character constant, CHAR, STRING or VARCHAR, so that every spelling compares equal; -1 otherwise.
-     */
-    private static int charCodeOf(BoundExpression value) {
-        if (!(value instanceof ConstantExpression constant)) {
-            return -1;
-        }
-        if (ColumnType.tagOf(constant.getDataType()) == ColumnType.CHAR) {
-            return constant.getLongValue() == 0 ? -1 : (int) constant.getLongValue();
-        }
-        final CharSequence text = textOf(constant);
-        return text != null && text.length() == 1 ? text.charAt(0) : -1;
-    }
-
     private static boolean isBind(BoundExpression value) {
         return value instanceof BindVariableExpression;
     }
@@ -200,27 +198,6 @@ public final class SymbolKeyExtractor implements Mutable {
         return call.getArgumentCount() == 2 && ("!=".equals(name) || "<>".equals(name));
     }
 
-    private static boolean isNullKey(BoundExpression value) {
-        return !isBind(value) && charCodeOf(value) < 0 && textOf(value) == null;
-    }
-
-    private static boolean isSameKey(BoundExpression left, BoundExpression right) {
-        if (isBind(left) || isBind(right)) {
-            return isBind(left) && isBind(right)
-                    && Chars.equals(((BindVariableExpression) left).getName(), ((BindVariableExpression) right).getName());
-        }
-        final int code = charCodeOf(left);
-        if (code != charCodeOf(right)) {
-            return false;
-        }
-        if (code >= 0) {
-            return true;
-        }
-        final CharSequence leftText = textOf(left);
-        final CharSequence rightText = textOf(right);
-        return leftText == null ? rightText == null : rightText != null && Chars.equals(leftText, rightText);
-    }
-
     private static ColumnExpression selectorColumn(FunctionExpression call) {
         if (isEquals(call) || isNotEquals(call)) {
             for (int i = 0; i < 2; i++) {
@@ -246,15 +223,20 @@ public final class SymbolKeyExtractor implements Mutable {
     }
 
     /**
-     * The UTF-16 text of a STRING or VARCHAR constant; null for a NULL value or any other type.
+     * The UTF-16 text of a STRING or VARCHAR constant; null for a NULL value or any other type. A non-ASCII VARCHAR
+     * decodes into {@code sink}.
      */
-    private static CharSequence textOf(BoundExpression value) {
+    private static CharSequence textOf(BoundExpression value, StringSink sink) {
         final ConstantExpression constant = (ConstantExpression) value;
         return switch (ColumnType.tagOf(constant.getDataType())) {
             case ColumnType.STRING -> constant.getStrValue();
             case ColumnType.VARCHAR -> {
                 final Utf8Sequence text = constant.getVarcharValue();
-                yield text == null ? null : text.isAscii() ? text.asAsciiCharSequence() : text.toString();
+                if (text == null || text.isAscii()) {
+                    yield text == null ? null : text.asAsciiCharSequence();
+                }
+                sink.clear();
+                yield Utf8s.utf8ToUtf16(text, sink) ? sink : text.toString();
             }
             default -> null;
         };
@@ -457,6 +439,20 @@ public final class SymbolKeyExtractor implements Mutable {
         }
     }
 
+    /**
+     * The code of a one-character constant, CHAR, STRING or VARCHAR, so that every spelling compares equal; -1 otherwise.
+     */
+    private int charCodeOf(BoundExpression value) {
+        if (!(value instanceof ConstantExpression constant)) {
+            return -1;
+        }
+        if (ColumnType.tagOf(constant.getDataType()) == ColumnType.CHAR) {
+            return constant.getLongValue() == 0 ? -1 : (int) constant.getLongValue();
+        }
+        final CharSequence text = textOf(constant, keyText);
+        return text != null && text.length() == 1 ? text.charAt(0) : -1;
+    }
+
     private void collectPending(FunctionExpression call) {
         pending.clear();
         for (int i = 1, n = call.getArgumentCount(); i < n; i++) {
@@ -493,6 +489,27 @@ public final class SymbolKeyExtractor implements Mutable {
 
     private boolean isKeyColumn(BoundExpression expression) {
         return isKeyOperand(expression) && ((ColumnExpression) expression).getColumnId() == columnId;
+    }
+
+    private boolean isNullKey(BoundExpression value) {
+        return !isBind(value) && charCodeOf(value) < 0 && textOf(value, keyText) == null;
+    }
+
+    private boolean isSameKey(BoundExpression left, BoundExpression right) {
+        if (isBind(left) || isBind(right)) {
+            return isBind(left) && isBind(right)
+                    && Chars.equals(((BindVariableExpression) left).getName(), ((BindVariableExpression) right).getName());
+        }
+        final int code = charCodeOf(left);
+        if (code != charCodeOf(right)) {
+            return false;
+        }
+        if (code >= 0) {
+            return true;
+        }
+        final CharSequence leftText = textOf(left, keyText);
+        final CharSequence rightText = textOf(right, otherKeyText);
+        return leftText == null ? rightText == null : rightText != null && Chars.equals(leftText, rightText);
     }
 
     private void mark(BoundExpression conjunct) {
@@ -574,7 +591,7 @@ public final class SymbolKeyExtractor implements Mutable {
         revert(excludedConjuncts);
     }
 
-    private static final class KeySet {
+    private final class KeySet {
         private final CharSequenceHashSet binds = new CharSequenceHashSet();
         private final IntHashSet chars = new IntHashSet();
         private final CharSequenceHashSet constants = new CharSequenceHashSet();
@@ -584,10 +601,10 @@ public final class SymbolKeyExtractor implements Mutable {
         void add(BoundExpression value) {
             final boolean isAdded;
             if (value instanceof BindVariableExpression parameter) {
-                isAdded = binds.add(parameter.getName());
+                isAdded = addText(binds, parameter.getName());
             } else {
                 final int code = charCodeOf(value);
-                isAdded = code >= 0 ? chars.add(code) : constants.add(textOf(value));
+                isAdded = code >= 0 ? chars.add(code) : addText(constants, textOf(value, keyText));
             }
             if (isAdded) {
                 values.add(value);
@@ -614,7 +631,7 @@ public final class SymbolKeyExtractor implements Mutable {
                 return binds.contains(parameter.getName());
             }
             final int code = charCodeOf(value);
-            return code >= 0 ? chars.contains(code) : constants.contains(textOf(value));
+            return code >= 0 ? chars.contains(code) : constants.contains(textOf(value, keyText));
         }
 
         void remove(BoundExpression value) {
@@ -627,7 +644,7 @@ public final class SymbolKeyExtractor implements Mutable {
                         if (code >= 0) {
                             chars.remove(code);
                         } else {
-                            constants.remove(textOf(value));
+                            constants.remove(textOf(value, keyText));
                         }
                     }
                     values.remove(i);
@@ -638,6 +655,25 @@ public final class SymbolKeyExtractor implements Mutable {
 
         int size() {
             return values.size();
+        }
+
+        /**
+         * Adds the text, a copy when it is the decoding sink; any other text lives as long as the plan.
+         */
+        private boolean addText(CharSequenceHashSet set, CharSequence text) {
+            if (text == null) {
+                return set.addNull();
+            }
+            final int index = set.keyIndex(text);
+            if (index < 0) {
+                return false;
+            }
+            if (text == keyText) {
+                set.addAt(index, text);
+            } else {
+                set.addAtWithBorrowed(index, text);
+            }
+            return true;
         }
     }
 }
