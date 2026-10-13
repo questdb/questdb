@@ -50,6 +50,8 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
 class EncodedSortRecordCursor implements DelegatingRecordCursor {
+    // the most rows of a block over the sorted rows, see peekRecordBlock()
+    private static final int SORTED_BLOCK_MAX_ROWS = 64 * 1024;
     private final SortKeyEncoder encoder;
     // the entries an execution sized from the previous one starts with
     static final long CAPACITY_HINT_START = 64 * 1024;
@@ -72,6 +74,9 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     // the chain lays out at a fixed offset, so that a block of the base's rows is copied into it
     // column by column; null otherwise
     private final int[] blockColumnSizes;
+    // the chain ordinals of a sorted block's rows, see peekRecordBlock(); null until the first block
+    private DirectLongList sortedBlockRows;
+    private SortedBlock sortedBlock;
     private long currentAddr;
     private long endAddr;
     private int entrySize;
@@ -157,6 +162,57 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             return true;
         }
         return false;
+    }
+
+    /**
+     * The next sorted rows, when every column is of a fixed size and not a SYMBOL (see
+     * {@link #blockColumnSizes}): the chain's records then lie at a constant stride from its
+     * start, so a block offers each column at the chain's first record's value, at the stride, and
+     * gathered by the rows' chain ordinals in sorted order.
+     */
+    @Override
+    public RecordBlock peekRecordBlock(int maxRows) {
+        if (blockColumnSizes == null) {
+            return null;
+        }
+        if (!isSorted) {
+            buildAndSort();
+            isSorted = true;
+        }
+        final long remaining = (endAddr - currentAddr) / entrySize;
+        if (remaining < 1) {
+            return null;
+        }
+        circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+        final int n = (int) Math.min(Math.min(remaining, maxRows), SORTED_BLOCK_MAX_ROWS);
+        final long stride = recordChain.getFixedRecordStride();
+        if (sortedBlockRows == null) {
+            sortedBlockRows = new DirectLongList(n, MemoryTag.NATIVE_DEFAULT);
+            sortedBlock = new SortedBlock();
+        }
+        sortedBlockRows.clear();
+        sortedBlockRows.ensureCapacity(n);
+        final long rowsAddr = sortedBlockRows.getAddress();
+        for (int r = 0; r < n; r++) {
+            final long chainOffset = Unsafe.getLong(currentAddr + (long) r * entrySize);
+            // a chain of fixed-size records only, appended one after another from offset 0
+            assert chainOffset % stride == 0;
+            Unsafe.putLong(rowsAddr + ((long) r << 3), chainOffset / stride);
+        }
+        sortedBlockRows.setPos(n);
+        sortedBlock.of(n, stride);
+        return sortedBlock;
+    }
+
+    @Override
+    public void skipRecordBlock(int rowCount) {
+        assert currentAddr + (long) rowCount * entrySize <= endAddr;
+        currentAddr += (long) rowCount * entrySize;
+    }
+
+    @Override
+    public boolean supportsRecordBlocks() {
+        return blockColumnSizes != null;
     }
 
     @Override
@@ -440,6 +496,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     }
 
     private void forceClose() {
+        sortedBlockRows = Misc.free(sortedBlockRows);
         Misc.free(entryMem);
         Misc.free(keyHeap);
         Misc.free(encoder);
@@ -453,5 +510,43 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                 .put(" memory exceeded in EncodedSort (raise ")
                 .put(PropertyKey.CAIRO_SQL_SORT_KEY_MAX_BYTES.getPropertyPath())
                 .put(')');
+    }
+
+    // the next sorted rows, see peekRecordBlock()
+    private class SortedBlock implements RecordBlock {
+        private int rowCount;
+        private long stride;
+
+        @Override
+        public long getColumnAddress(int columnIndex) {
+            return recordChain.addressOf(0) + recordChain.getOffsetOfColumn(0, columnIndex);
+        }
+
+        @Override
+        public long getColumnStride(int columnIndex) {
+            return stride;
+        }
+
+        @Override
+        public Record getRecordAt(int row) {
+            final Record record = recordChain.getRecord();
+            recordChain.recordAt(record, sortedBlockRows.get(row) * stride);
+            return record;
+        }
+
+        @Override
+        public int getRowCount() {
+            return rowCount;
+        }
+
+        @Override
+        public long getRowIndexesAddress() {
+            return sortedBlockRows.getAddress();
+        }
+
+        void of(int rowCount, long stride) {
+            this.rowCount = rowCount;
+            this.stride = stride;
+        }
     }
 }

@@ -213,6 +213,29 @@ public class RecordBlockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaterializedSortOffersSortedRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllTypes();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final String fixed = "b, by, sh, ch, i, l, d, ts, tn, f, db";
+            final String[] queries = {
+                    "select " + fixed + " from (select " + fixed + " from at union all select " + fixed + " from at where 1 = 0) order by db desc, l",
+                    "select ts, mid from (select ts, (f + db) / 2 mid from at where l > 50 union all select ts, db from at where 1 = 0) order by mid",
+            };
+            for (String query : queries) {
+                assertPlanContains(query, "Encode sort");
+                assertSupportsBlocks(true, query);
+                for (int k = 0; k < 3; k++) {
+                    Assert.assertTrue(query, assertBlocksMatchRows(engine, sqlExecutionContext, query, rnd) > 0);
+                }
+            }
+            // a SYMBOL column: the chain holds its keys, no block
+            final String withSymbol = "select s, l from (select s, l from at union all select s, l from at where 1 = 0) order by l desc";
+            assertSupportsBlocks(false, withSymbol);
+        });
+    }
+
+    @Test
     public void testAsyncFilterOverParquetFrames() throws Exception {
         assertMemoryLeak(() -> {
             createAllTypes();

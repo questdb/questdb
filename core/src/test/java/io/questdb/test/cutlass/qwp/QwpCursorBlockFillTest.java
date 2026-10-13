@@ -352,6 +352,31 @@ public class QwpCursorBlockFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMaterializedSortOffersSortedRows() throws Exception {
+        // a materialized encoded sort of fixed-size, non-SYMBOL columns offers its sorted rows as
+        // blocks gathered from its chain: the wire must be the row fill's, byte for byte
+        assertMemoryLeak(() -> {
+            final Rnd driver = TestUtils.generateRandom(LOG);
+            sqlExecutionContext.changePageFrameSizes(1, 64);
+            createTable(driver);
+            execute("create table st as (select x % 3 = 0 b, (x % 120)::byte by, (x * 7 % 30000)::short sh, rnd_char() ch, " +
+                    "case when x % 11 = 0 then null else x::int end i, case when x % 5 = 0 then null else x * 1000003 end l, " +
+                    "case when x % 9 = 0 then null else (x * 86400000)::date end dt, (x * 90000000)::timestamp ts, " +
+                    "case when x % 6 = 0 then null else (x * 1000)::timestamp_ns end tn, " +
+                    "case when x % 4 = 0 then null else (x / 3.0)::float end f, case when x % 7 = 0 then null else rnd_double() end d, " +
+                    "rnd_symbol(30, 2, 5, 3) s from long_sequence(7000)) timestamp(ts) partition by DAY");
+            final String[] queries = {
+                    "select ts, d from (select ts, (d + f) / 2 d from st where s <> 'zz' union all select ts, d from st where 1 = 0) order by d desc",
+                    "select b, by, sh, ch, i, l, dt, ts, tn, f, d from (select b, by, sh, ch, i, l, dt, ts, tn, f, d from st union all select b, by, sh, ch, i, l, dt, ts, tn, f, d from st where 1 = 0) order by f, l desc",
+                    "select l, d from (select l, d from t union all select l, d from t where 1 = 0) order by d desc limit 5000",
+            };
+            for (String query : queries) {
+                assertBytesMatch(driver, query, 6, true);
+            }
+        });
+    }
+
+    @Test
     public void testStatefulProjectionsKeepRowOrder() throws Exception {
         assertMemoryLeak(() -> {
             final Rnd driver = TestUtils.generateRandom(LOG);
