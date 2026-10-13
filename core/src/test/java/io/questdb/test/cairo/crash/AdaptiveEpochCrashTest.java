@@ -411,6 +411,10 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
                                 insertRows(s, 2, 2);
                                 drainWalQueue();
                                 purgeWal();
+                                if ("sync".equals(exitMode)) {
+                                    // The purge leaves no WAL to replay a partition whose name SYNC did not make durable.
+                                    fsyncPartitionDirectories(s);
+                                }
                             } else {
                                 // No WAL purge here: crash() does not re-seed the durable content of a WAL directory it
                                 // brings back, so the second power loss of an adaptive start would empty it.
@@ -1111,6 +1115,17 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         engine.releaseAllWalWriters();
     }
 
+    // Flushes the names of the partition directories and of the files in them, as a filesystem that journals
+    // directory entries (ext4, XFS) does; SYNC itself, as in base, makes no directory entry durable.
+    private void fsyncPartitionDirectories(Scenario s) throws IOException {
+        try (Stream<java.nio.file.Path> stream = Files.list(tableDir(s)); Path dir = new Path()) {
+            for (java.nio.file.Path partition : stream.filter(Files::isDirectory).filter(d -> d.getFileName().toString().startsWith("2024")).toList()) {
+                TableUtils.fsyncDirDurable(faultFf, dir.of(partition.toString()).$());
+            }
+            TableUtils.fsyncDirDurable(faultFf, dir.of(tableDir(s).toString()).$());
+        }
+    }
+
     private void insertRows(Scenario s, int day, int count) {
         insertRows(s, day, count, true, false, false);
     }
@@ -1320,6 +1335,11 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
             }
             // A nosync instance promises nothing for the state it applied after recovery.
             if (failure == null && !"nosync".equals(commitMode)) {
+                if ("sync".equals(commitMode)) {
+                    // The write above may have created partitions. This row checks the recovered state, not
+                    // whether SYNC makes their names durable, which it does not promise.
+                    fsyncPartitionDirectories(s);
+                }
                 powerLoss(s);
                 failure = recoverAndCheck(s);
                 if (failure != null) {
