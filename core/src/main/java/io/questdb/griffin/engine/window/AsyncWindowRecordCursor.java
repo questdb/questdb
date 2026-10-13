@@ -111,6 +111,11 @@ import java.util.function.LongConsumer;
  */
 public class AsyncWindowRecordCursor implements RecordCursor {
     static final UnorderedPageFrameReducer REDUCER = AsyncWindowRecordCursor::reduce;
+    // a planned walk's (key, frame) counts, counted by the workers ahead of the rounds, see runCountRound()
+    static final UnorderedPageFrameReducer COUNT_REDUCER = AsyncWindowRecordCursor::countKeys;
+    // the most (key, frame) counts a walk keeps, 8 MiB of them, and the fewest worth a round
+    private static final long MAX_PLAN_COUNTS = 1 << 20;
+    private static final long MIN_PLAN_COUNTS = 1024;
     // the first prefix chunk; each next one is twice as large, up to task.rows
     private static final long FIRST_CHUNK_ROWS = 256;
     // The prefix's rows with the frame dispatch switch on: it ends within the chunk that reaches
@@ -160,6 +165,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private final boolean plannedWalkEnabled;
     // whether a round's computed tasks return before the round has finished, see hasNext()
     private final boolean earlyEmitEnabled;
+    // the walk's counts are still to be counted by the workers, before the first round, see runCountRound()
+    private boolean isCountRoundPending;
+    private final LongList countTaskRowCounts = new LongList();
+    // tests: count rounds run since the cursor opened or rewound
+    private long countRoundCount;
     // tests: tasks returned before their round finished, since the cursor opened or rewound
     private long earlyEmittedTaskCount;
     // tests: see getPlannedTaskCount(), counted under -ea only
@@ -379,6 +389,15 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     @TestOnly
     public long getKeptChainCount() {
         return keptChainCount;
+    }
+
+    /**
+     * Rounds in which the workers counted the planned walk's rows ahead of it, since the cursor
+     * opened or rewound, see runCountRound().
+     */
+    @TestOnly
+    public long getCountRoundCount() {
+        return countRoundCount;
     }
 
     /**
@@ -709,6 +728,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             // the rewound scan collects its frames again, so the slots read them afresh
             keyMajorCursor.prepareFrames();
             isWalkPlanned = plannedWalkEnabled && keyMajorCursor.enablePlannedWalk();
+            isCountRoundPending = isWalkPlanned;
             atom.getSlot(-1).ofFrames(keyMajorCursor.getFrameAddressCache());
             if (isWorkerSlotsOpen) {
                 atom.ofWorkerFrames(keyMajorCursor.getFrameAddressCache());
@@ -772,6 +792,69 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         if (sequence.isActive()) {
             task.isComputed = true;
         }
+    }
+
+    // A task of a count round: the walk's (key, frame) counts of a slice of its keys.
+    private static void countKeys(
+            int workerId,
+            @NotNull PageFrameMemoryRecord unused,
+            int taskIndex,
+            @NotNull SqlExecutionCircuitBreaker circuitBreaker,
+            @NotNull UnorderedPageFrameSequence<?> sequence,
+            @Nullable UnorderedPageFrameSequence<?> stealingSequence
+    ) {
+        final RoundAtom roundAtom = (RoundAtom) sequence.getAtom();
+        final int keys = roundAtom.countKeyCount;
+        final int tasks = roundAtom.countTaskCount;
+        final int keyLo = (int) ((long) keys * taskIndex / tasks);
+        final int keyHi = (int) ((long) keys * (taskIndex + 1) / tasks);
+        if (sequence.isActive()) {
+            roundAtom.countWalk.countPlanKeys(keyLo, keyHi);
+        }
+    }
+
+    // Planned walks, before the first round: the workers count every (key, frame)'s rows, which
+    // the walk then reads instead of counting them on this thread as it plans each round. It runs
+    // once the prefix has ended, so a LIMIT the prefix satisfies never reaches a worker, and on
+    // the first round's sequence, before that round is dispatched. Results do not change: the
+    // counts are the ones the walk would count itself.
+    private void runCountRound() {
+        isCountRoundPending = false;
+        if (!keyMajorCursor.preparePlanCounts(MAX_PLAN_COUNTS)) {
+            return;
+        }
+        final int keys = keyMajorCursor.getKeyCount();
+        final long frames = keyMajorCursor.getFrameAddressCache().getFrameCount();
+        if ((long) keys * frames < MIN_PLAN_COUNTS) {
+            return;
+        }
+        final Round round = rounds[0];
+        assert round.state == Round.STATE_FREE;
+        if (!round.isSequenceOpen) {
+            try {
+                round.sequence.ofRounds(baseCursor, executionContext);
+            } catch (SqlException e) {
+                throw CairoException.nonCritical().put(e.getFlyweightMessage());
+            }
+            round.isSequenceOpen = true;
+        }
+        final int tasks = Math.max(1, Math.min(keys, 4 * (workerCount + 1)));
+        countTaskRowCounts.clear();
+        for (int i = 0; i < tasks; i++) {
+            final long taskKeys = (long) keys * (i + 1) / tasks - (long) keys * i / tasks;
+            countTaskRowCounts.add(Math.max(1, taskKeys * frames));
+        }
+        final RoundAtom roundAtom = round.sequence.getAtom();
+        roundAtom.countWalk = keyMajorCursor;
+        roundAtom.countKeyCount = keys;
+        roundAtom.countTaskCount = tasks;
+        try {
+            round.sequence.dispatchRoundAndAwait(COUNT_REDUCER, countTaskRowCounts);
+        } finally {
+            roundAtom.countWalk = null;
+        }
+        keyMajorCursor.usePlanCounts();
+        countRoundCount++;
     }
 
     // Combines the rows of the key the task continues with the key's running values at the end of
@@ -854,6 +937,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
                 this.keyMajorCursor = keyMajorCursor;
                 mode = MODE_PARALLEL;
                 isWalkPlanned = plannedWalkEnabled && keyMajorCursor.enablePlannedWalk();
+                isCountRoundPending = isWalkPlanned;
                 final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
                 ownerRows = newRowIds(memoryTracker);
                 if (splitPlan.getMode() == AsyncWindowSplitPlan.MODE_WARMUP) {
@@ -1220,6 +1304,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         if (!isParallelPhase) {
             return;
         }
+        if (isCountRoundPending) {
+            runCountRound();
+        }
         while (segmentCount <= segmentKinds.length - 2 && !keyMajorCursor.isWalkExhausted()) {
             final Round round = freeRound();
             if (round == null) {
@@ -1309,6 +1396,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
 
     private void resetCounters() {
         plannedTaskCount.set(0);
+        countRoundCount = 0;
         earlyEmittedTaskCount = 0;
         maxRoundRows = 0;
         keptChainCount = 0;
@@ -1555,6 +1643,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
      */
     static class RoundAtom implements StatefulAtom {
         final AsyncWindowAtom atom;
+        // a count round's walk, keys and tasks, see runCountRound(); null between count rounds
+        KeyMajorPageFrameRecordCursor countWalk;
+        int countKeyCount;
+        int countTaskCount;
         // tests: tasks read from a planned walk, shared with the cursor
         AtomicLong plannedTaskCount;
         // the cursor's walk-order pass over folded and replayed columns, or null

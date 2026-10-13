@@ -320,12 +320,14 @@ public class AsyncWindowPlannedWalkTest extends AbstractCairoTest {
     @Test
     public void testRoundsReturnComputedTasksEarly() throws Exception {
         // A round is not a barrier: its computed tasks return, in order, while its later tasks
-        // still compute. Every shape, with keys split and whole, must still match the serial
+        // still compute; and the workers count the planned walk's rows before the first round.
+        // Every shape, with keys split and whole, must still match the serial
         // window, and some task must have returned before its round finished.
         setSizes(100, 2_000, 0, 2_000);
         assertMemoryLeak(() -> inPool(4, (engine, ctx) -> {
             createQuote(engine, ctx, "DAY", 40_000, "posting");
             long early = 0;
+            long countRounds = 0;
             for (int run = 0; run < 4; run++) {
                 for (String shape : SHAPES) {
                     final String query = "select " + shape + " from q where sym in ('S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'BIG', null) order by sym";
@@ -338,6 +340,7 @@ public class AsyncWindowPlannedWalkTest extends AbstractCairoTest {
                         try (RecordCursor cursor = factory.getCursor(ctx)) {
                             TestUtils.assertEquals(query, expected, print(cursor, factory));
                             early += asyncCursor.getEarlyEmittedTaskCount();
+                            countRounds += asyncCursor.getCountRoundCount();
                         }
                         assertSlotsReleased(factory);
                     }
@@ -348,11 +351,14 @@ public class AsyncWindowPlannedWalkTest extends AbstractCairoTest {
                         try (RecordCursor cursor = factory.getCursor(ctx)) {
                             TestUtils.assertEquals(query, expected, print(cursor, factory));
                             Assert.assertEquals(0, asyncCursor.getEarlyEmittedTaskCount());
+                            Assert.assertEquals(0, asyncCursor.getCountRoundCount());
                         }
                     }
                 }
             }
             Assert.assertTrue("no task returned before its round finished", early > 0);
+            // the walk's counts were counted by the workers, ahead of the rounds
+            Assert.assertTrue("no count round", countRounds > 0);
         }));
     }
 
