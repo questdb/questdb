@@ -10179,9 +10179,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     public void testConvertToParquetPostingResealSpillDoesNotLeakValueFile() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
-        // Under ADAPTIVE the save-point pin holds the superseded .pv until the next save point; take one after
-        // every apply pass, so the purge job below can reclaim it.
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 1);
 
         assertMemoryLeak(() -> {
             execute("""
@@ -10275,9 +10272,6 @@ public class PostingIndexCriticalIssuesTest extends AbstractCairoTest {
     public void testInPlaceParquetPostingResealSpillReclaimsValueFile() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256);
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_AUTO_INCLUDE_TIMESTAMP, false);
-        // Under ADAPTIVE the save-point pin holds the superseded .pv until the next save point; take one after
-        // every apply pass, so the purge job below can reclaim it.
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 1);
         // Multi-row-group + rewrite triggers off -> O3 updates the parquet file
         // in place (isRewrite=false) rather than rewriting to a new directory.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);

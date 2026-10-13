@@ -333,6 +333,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     @Test
     public void testShowPartitionsDetachedPartitionPlusAttachable() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // no links in windows
+        // Freeze automatic save points so the retained ATTACH sources stay visible until explicit completion.
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, Long.MAX_VALUE);
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);
         String tableName = testTableName(testName.getMethodName());
