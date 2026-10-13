@@ -25,9 +25,12 @@ package io.questdb.test.griffin.engine.table;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.IndexKeyPageFrameCursor;
@@ -98,6 +101,106 @@ public class IndexKeyScanParallelTest extends AbstractCairoTest {
                     setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
                 }
             }
+        });
+    }
+
+    @Test
+    public void testCursorHeldOpenAcrossCommitsAndReopen() throws Exception {
+        // A parallel open's cursor, read while the table takes appends to its last partition, O3
+        // rows into old partitions, new partitions and an UPDATE, returns the snapshot it opened on,
+        // row for row and bit for bit, as a serial cursor opened at the same time does; and the
+        // cached factory, reopened after those commits, returns the serial scan's rows again.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                createTable(engine, ctx);
+                for (String query : new String[]{
+                        "select * from t where sym = 'A'",
+                        "select * from t where s2 = 'q'",
+                        "select * from t where sym = 'A' and ts > '1970-01-02'",
+                }) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "false");
+                    try (RecordCursorFactory serialFactory = engine.select(query, ctx)) {
+                        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+                        DeferredSingleSymbolFilterPageFrameRecordCursorFactory.setParallelThresholdsForTesting(0, 0, 0);
+                        try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                            final DeferredSingleSymbolFilterPageFrameRecordCursorFactory scan = findScan(factory);
+                            Assert.assertNotNull(scan.getParallelScan());
+                            Assert.assertNull(findScan(serialFactory).getParallelScan());
+                            for (int round = 0; round < 4; round++) {
+                                final StringSink expected = new StringSink();
+                                final StringSink actual = new StringSink();
+                                final long parallelOpens = scan.getOpenCounts()[1];
+                                try (
+                                        RecordCursor serialCursor = serialFactory.getCursor(ctx);
+                                        RecordCursor cursor = factory.getCursor(ctx)
+                                ) {
+                                    int n = 0;
+                                    while (cursor.hasNext()) {
+                                        rawRow(cursor.getRecord(), factory.getMetadata(), actual);
+                                        if (++n == 50) {
+                                            engine.execute("insert into t select 'A', 1_000_000 + x, 0.5, (" + (round * 1_000_000L)
+                                                    + " + x * 1_000_000L)::timestamp, 'q' from long_sequence(500)", ctx);
+                                            engine.execute("insert into t select case when x % 2 = 0 then 'A' else 'B' end, 2_000_000 + x, 0.25, (400_000_000_000L + "
+                                                    + round + " * 10_000_000_000L + x * 1_000_000L)::timestamp, 'q' from long_sequence(500)", ctx);
+                                            engine.execute("update t set y = 7.0 where x % 1000 = 3", ctx);
+                                        }
+                                    }
+                                    Assert.assertTrue(query, n > 50);
+                                    while (serialCursor.hasNext()) {
+                                        rawRow(serialCursor.getRecord(), serialFactory.getMetadata(), expected);
+                                    }
+                                }
+                                Assert.assertEquals(query + " [round " + round + ']', parallelOpens + 1, scan.getOpenCounts()[1]);
+                                TestUtils.assertEquals(query + " [held open, round " + round + ']', expected, actual);
+                                TestUtils.assertEquals(query + " [reopened, round " + round + ']', print(serialFactory, ctx), print(factory, ctx));
+                            }
+                        }
+                    }
+                    DeferredSingleSymbolFilterPageFrameRecordCursorFactory.resetParallelThresholdsForTesting();
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testDescendingScansStaySerial() throws Exception {
+        // The parallel plan's frames come in ascending order, so a descending scan never opens it:
+        // with every threshold at 0, these return the switch-off rows and open no parallel plan.
+        // Negative LIMITs and an ascending ORDER BY ts with a LIMIT are controls that may open it.
+        final String[] queries = {
+                "select * from t where sym = 'A' order by ts desc",
+                "select * from t where sym = 'A' order by ts desc limit 7",
+                "select * from t where sym = 'A' and ts in '1970-01-02T03;5h' order by ts desc",
+                "select * from t where s2 = 'q' order by ts desc limit 11",
+                "select * from t where sym = 'A' limit -7",
+                "select * from t where sym = 'A' limit -1000, -990",
+                "select * from t where s2 = null limit -5",
+                "select * from t where sym = 'A' order by ts limit 5",
+                "select * from t where sym = 'A' and ts > '1970-01-03T19:30' limit 3",
+        };
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                createTable(engine, ctx);
+                for (String query : queries) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "false");
+                    final String expected = print(engine, ctx, query);
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+                    DeferredSingleSymbolFilterPageFrameRecordCursorFactory.setParallelThresholdsForTesting(0, 0, 0);
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        final DeferredSingleSymbolFilterPageFrameRecordCursorFactory scan = findScan(factory);
+                        Assert.assertNotNull(query, scan);
+                        for (int run = 0; run < 2; run++) {
+                            TestUtils.assertEquals(query + " [run " + run + ']', expected, print(factory, ctx));
+                        }
+                        if (query.contains(" desc")) {
+                            Assert.assertTrue(query, scan.getParallelScan() == null || scan.getOpenCounts()[1] == 0);
+                        }
+                    }
+                    DeferredSingleSymbolFilterPageFrameRecordCursorFactory.resetParallelThresholdsForTesting();
+                }
+            }, configuration, LOG);
         });
     }
 
@@ -200,5 +303,21 @@ public class IndexKeyScanParallelTest extends AbstractCairoTest {
             CursorPrinter.println(cursor, factory.getMetadata(), sink);
         }
         return sink.toString();
+    }
+
+    // a row as its raw values: symbols as text, doubles as their bits
+    private static void rawRow(Record record, RecordMetadata metadata, StringSink sink) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            final int tag = ColumnType.tagOf(metadata.getColumnType(i));
+            if (tag == ColumnType.SYMBOL) {
+                sink.put(record.getSymA(i));
+            } else if (tag == ColumnType.DOUBLE) {
+                sink.put(Double.doubleToRawLongBits(record.getDouble(i)));
+            } else {
+                sink.put(record.getLong(i));
+            }
+            sink.put('\t');
+        }
+        sink.put('\n');
     }
 }
