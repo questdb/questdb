@@ -26,7 +26,10 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.idx.AbstractPostingIndexReader;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.idx.PostingIndexFwdReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -46,9 +49,12 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
+import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Emits the rows of an index scan key by key across the whole scan: all rows of the first key
@@ -87,14 +93,35 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
      * {@link #collectKeyRows} took its row limit before the key ended; the next call continues it.
      */
     public static final int COLLECT_ROW_LIMIT = 1;
+    /**
+     * Longs per segment of a walk plan, see {@link #planKeyRows}: the key and frame, the rank of
+     * the segment's first row among the key's rows in the frame, and its row count.
+     */
+    public static final int PLAN_SEGMENT_LONGS = 3;
+    // set in a segment's key/frame word when the segment ends at the key's last row in the frame: the
+    // read then checks that the index holds no row after it, see readKeyRows()
+    private static final long SEGMENT_ENDS_FRAME = 1L << 31;
+    private static final long SEGMENT_FRAME_MASK = SEGMENT_ENDS_FRAME - 1;
+    private static final int[] NO_KEYS = new int[0];
+    // tests: false makes a planned walk count and seek by reading the index, as it does for a
+    // legacy unranked encoding, whose counts and ranks the index cannot tell
+    private static volatile boolean indexRanksEnabled = true;
+    // tests: added to the count of one (key, frame), the first with 2+ rows that is counted, so that the
+    // plan disagrees with the index; see setCountSkew()
+    private static volatile long countSkew;
+    private static volatile long countSkewKeyFrame = -1;
     // Row ids drained from the row cursor ahead of emission. Their column cache lines are loaded
     // in one tight loop (see PageFrameRowToucher), which must fit L1 with room to spare: measured
     // best at 32-64 on a 50M-row table, and worse from 128 up.
     private static final int PREFETCH_ROWS = 32;
     private final Function filter;
+    // posting readers frozen for a planned walk, see enablePlannedWalk()
+    private final ObjList<AbstractPostingIndexReader> frozenReaders = new ObjList<>();
     private final LongList frameHis = new LongList();
     private final ObjList<IndexReader> frameIndexReaders = new ObjList<>();
     private final LongList frameLos = new LongList();
+    // the segments of a planned collect that this thread reads itself
+    private final LongList planScratch = new LongList();
     private final IntList framePartitionIndexes = new IntList();
     private final FrameSnapshot frameSnapshot = new FrameSnapshot();
     // row ids of the current (key, frame) taken from rowCursor ahead of emission, see fillRowBuf()
@@ -110,8 +137,15 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     private int framePos;
     private boolean isExhausted;
     private boolean isFramesCollected;
+    // the walk counts its rows from the index and reads them through readPlan(), see enablePlannedWalk()
+    private boolean isPlanned;
     private int keyCount;
     private int keyIndex;
+    // planned walk: the rows of the (key, frame) it stands in, the rows taken from it, and its frame
+    private long planCount;
+    private int planFrameIndex;
+    private boolean planOpen;
+    private long planRank;
     private int rowBufLen;
     private int rowBufPos;
     private RowCursor rowCursor;
@@ -168,6 +202,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
      */
     @Override
     public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, Counter counter) {
+        assert !isPlanned : "calculateSize() on a planned walk";
         if (isExhausted) {
             return;
         }
@@ -200,6 +235,9 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     @Override
     public void close() {
         rowCursor = Misc.free(rowCursor);
+        unfreezeReaders();
+        isPlanned = false;
+        planOpen = false;
         frameIndexReaders.clear();
         super.close();
     }
@@ -217,6 +255,12 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
      */
     public int collectKeyRows(DirectLongList sink, long rowLimit) {
         assert rowBufPos == rowBufLen : "collectKeyRows() mixed with hasNext()";
+        if (isPlanned) {
+            planScratch.clear();
+            final int status = planKeyRows(planScratch, rowLimit);
+            readPlan(planScratch, sink);
+            return status;
+        }
         if (isExhausted) {
             return COLLECT_EXHAUSTED;
         }
@@ -268,6 +312,15 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
             final int frameIndex = walkFramesBackward ? frameCount - 1 - pos : pos;
             pos++;
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            if (isPlanned) {
+                final long count = countKeyRows(keyIndex, frameIndex);
+                readKeyRows(keyIndex, frameIndex, 0, count, true, sink);
+                collected += count;
+                if (collected >= rowLimit && pos < frameCount) {
+                    return pos;
+                }
+                continue;
+            }
             if (frameAddressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET && hasNoRows(keyIndex, frameIndex)) {
                 continue;
             }
@@ -291,6 +344,170 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     }
 
     /**
+     * Switches the walk, at its start, to planned mode: {@link #planKeyRows} then advances it by
+     * the posting index's per-(key, frame) row counts, without reading a row, and any thread may
+     * read the planned rows later through {@link #readPlan}. {@link #collectKeyRows} and
+     * {@link #collectKeyFrames} read their rows the same way on the calling thread, so a planned
+     * walk can be collected and planned in turns. Rows and their order are those the unplanned
+     * walk collects.
+     * <p>
+     * Planning needs a forward POSTING index on every frame, native frames that no covering
+     * index serves, and keys that read the index as it is, without a filter (see
+     * {@link KeyedRowCursorFactory#isPlainKeyScan}). Returns false, and leaves the walk as it is,
+     * when the scan has anything else. The readers are frozen for the readers' concurrent
+     * cursors until the walk rewinds or closes, which the consumer does only once no thread
+     * reads a plan of it any more. {@link #hasNext()} must not be used on a planned walk.
+     */
+    public boolean enablePlannedWalk() {
+        prepareFrames();
+        if (isPlanned) {
+            return true;
+        }
+        assert rowCursor == null && keyIndex == 0 && framePos == 0 && rowBufPos == rowBufLen : "enablePlannedWalk() past the walk's start";
+        if (!canPlanWalk()) {
+            return false;
+        }
+        for (int i = 0; i < frameCount; i++) {
+            final AbstractPostingIndexReader reader = (AbstractPostingIndexReader) frameIndexReaders.getQuick(i);
+            if (!reader.isFrozen()) {
+                // positioned at this query's index snapshot, with its value memory mapped in full, so
+                // that detached cursors on other threads read it without changing it, see
+                // IndexGatherPageFrameCursor
+                reader.warmForKeys(NO_KEYS, null);
+                reader.setFrozen(true);
+                frozenReaders.add(reader);
+            }
+        }
+        isPlanned = true;
+        return true;
+    }
+
+    public boolean isPlannedWalk() {
+        return isPlanned;
+    }
+
+    /**
+     * Plans the current key the way {@link #collectKeyRows} collects it, with the same status
+     * and the same rows, but appends segments to {@code plan} (see {@link #PLAN_SEGMENT_LONGS})
+     * instead of row ids. Planned walks only, see {@link #enablePlannedWalk()}.
+     *
+     * @return the status, as {@link #collectKeyRows} returns it
+     */
+    public int planKeyRows(LongList plan, long rowLimit) {
+        assert isPlanned;
+        if (isExhausted) {
+            return COLLECT_EXHAUSTED;
+        }
+        if (keyIndex >= keyCount) {
+            isExhausted = true;
+            return COLLECT_EXHAUSTED;
+        }
+        // mirrors collectKeyRows(): a frame's rows are drained up to the limit, and the limit is
+        // checked after every frame, before the key's end
+        long collected = 0;
+        while (true) {
+            if (planOpen) {
+                final long take = Math.min(planCount - planRank, rowLimit - collected);
+                if (take > 0) {
+                    addSegment(plan, keyIndex, planFrameIndex, planRank, take, planRank + take == planCount);
+                    planRank += take;
+                    collected += take;
+                }
+                if (collected >= rowLimit) {
+                    return COLLECT_ROW_LIMIT;
+                }
+            }
+            if (!openNextPlannedFrame()) {
+                keyIndex++;
+                framePos = 0;
+                return COLLECT_KEY_END;
+            }
+        }
+    }
+
+    /**
+     * Plans the rows of the current key that come right before the walk's position, at most
+     * {@code maxRows} of them, in walk order: the rows a task that continues the key starts
+     * early with. Planned walks only.
+     *
+     * @return the rows planned
+     */
+    public long planPrecedingRows(LongList plan, long maxRows) {
+        assert isPlanned;
+        final int lo = plan.size();
+        long need = maxRows;
+        if (planOpen && need > 0) {
+            final long take = Math.min(planRank, need);
+            if (take > 0) {
+                addSegment(plan, keyIndex, planFrameIndex, planRank - take, take, planRank == planCount);
+                need -= take;
+            }
+        }
+        // the frames before the one the walk stands in, from the nearest back
+        for (int pos = (planOpen ? framePos - 1 : framePos) - 1; pos >= 0 && need > 0 && keyIndex < keyCount; pos--) {
+            final int frameIndex = walkFramesBackward ? frameCount - 1 - pos : pos;
+            final long count = countKeyRows(keyIndex, frameIndex);
+            final long take = Math.min(count, need);
+            if (take > 0) {
+                addSegment(plan, keyIndex, frameIndex, count - take, take, true);
+                need -= take;
+            }
+        }
+        // into walk order
+        for (int i = lo, j = plan.size() - PLAN_SEGMENT_LONGS; i < j; i += PLAN_SEGMENT_LONGS, j -= PLAN_SEGMENT_LONGS) {
+            for (int k = 0; k < PLAN_SEGMENT_LONGS; k++) {
+                final long t = plan.getQuick(i + k);
+                plan.setQuick(i + k, plan.getQuick(j + k));
+                plan.setQuick(j + k, t);
+            }
+        }
+        return maxRows - need;
+    }
+
+    @TestOnly
+    public static void setIndexRanksEnabled(boolean enabled) {
+        indexRanksEnabled = enabled;
+    }
+
+    /**
+     * The number of rows in a plan's segments from position {@code lo} of the list on.
+     */
+    public static long planRowCount(LongList plan, int lo) {
+        long rows = 0;
+        for (int i = lo, n = plan.size(); i < n; i += PLAN_SEGMENT_LONGS) {
+            rows += plan.getQuick(i + 2);
+        }
+        return rows;
+    }
+
+    /**
+     * Appends the rows of a plan to {@code sink} as row ids (see {@link #toFrameRowId}), in plan
+     * order: the rows {@link #collectKeyRows} would have appended in its place. Any thread may
+     * call it, concurrently with the walk and other reads, until the walk rewinds or closes.
+     * Throws when the index holds other rows than it counted.
+     */
+    public void readPlan(LongList plan, DirectLongList sink) {
+        for (int i = 0, n = plan.size(); i < n; i += PLAN_SEGMENT_LONGS) {
+            final long keyFrame = plan.getQuick(i);
+            readKeyRows(
+                    (int) (keyFrame >>> 32),
+                    (int) (keyFrame & SEGMENT_FRAME_MASK),
+                    plan.getQuick(i + 1),
+                    plan.getQuick(i + 2),
+                    (keyFrame & SEGMENT_ENDS_FRAME) != 0,
+                    sink
+            );
+        }
+    }
+
+    /**
+     * The number of keys the walk goes over, valid once {@link #prepareFrames()} has run.
+     */
+    public int getKeyCount() {
+        return keyCount;
+    }
+
+    /**
      * The index of the key the walk is in, or will start next when it stands at a key boundary.
      */
     public int getKeyIndex() {
@@ -311,6 +528,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
 
     @Override
     public boolean hasNext() {
+        assert !isPlanned : "hasNext() on a planned walk";
         if (isExhausted) {
             return false;
         }
@@ -409,6 +627,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     public void skipKey() {
         assert rowBufPos == rowBufLen : "skipKey() mixed with hasNext()";
         rowCursor = Misc.free(rowCursor);
+        planOpen = false;
         keyIndex++;
         framePos = 0;
     }
@@ -430,6 +649,197 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         }
         resetWalk();
         super.toTop();
+    }
+
+    private static void addSegment(LongList plan, int keyIndex, int frameIndex, long rankLo, long count, boolean endsFrame) {
+        assert frameIndex >= 0;
+        plan.add(((long) keyIndex << 32) | (frameIndex & SEGMENT_FRAME_MASK) | (endsFrame ? SEGMENT_ENDS_FRAME : 0));
+        plan.add(rankLo);
+        plan.add(count);
+    }
+
+    private boolean canPlanWalk() {
+        if (rowCursorFactory.getIndexDirection() != IndexReader.DIR_FORWARD) {
+            // detached cursors read forward
+            return false;
+        }
+        for (int k = 0; k < keyCount; k++) {
+            if (!rowCursorFactory.isPlainKeyScan(k)) {
+                return false;
+            }
+        }
+        for (int i = 0; i < frameCount; i++) {
+            if (frameAddressCache.getFrameFormat(i) != PartitionFormat.NATIVE
+                    || frameAddressCache.isFrameCovered(i)
+                    || !(frameIndexReaders.getQuick(i) instanceof PostingIndexFwdReader)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    // The rows of a key in a frame, as its row cursor returns them. The index counts them where it
+    // can; a legacy unranked encoding is counted by reading it.
+    private long countKeyRows(int keyIndex, int frameIndex) {
+        final int indexKey = rowCursorFactory.getIndexKey(keyIndex);
+        if (indexKey < 0) {
+            // a symbol the table does not have: its row cursor is empty
+            return 0;
+        }
+        final AbstractPostingIndexReader reader = (AbstractPostingIndexReader) frameIndexReaders.getQuick(frameIndex);
+        final long lo = frameLos.getQuick(frameIndex);
+        final long hi = frameHis.getQuick(frameIndex) - 1;
+        final long entryMax = reader.getEntryMaxValue();
+        final long count = indexRanksEnabled
+                ? reader.countMatchesClamped(indexKey, lo, hi, entryMax >= 0 ? Math.min(hi, entryMax) : hi)
+                : Numbers.LONG_NULL;
+        if (count != Numbers.LONG_NULL) {
+            return skewed(keyIndex, frameIndex, count);
+        }
+        final RowCursor cursor = reader.getDetachedCursor(indexKey, lo, hi, null);
+        try {
+            long n = 0;
+            while (cursor.hasNext()) {
+                cursor.next();
+                n++;
+            }
+            return skewed(keyIndex, frameIndex, n);
+        } finally {
+            Misc.free(cursor);
+        }
+    }
+
+    // tests: see setCountSkew()
+    private static long skewed(int keyIndex, int frameIndex, long count) {
+        final long skew = countSkew;
+        if (skew == 0 || count < 2) {
+            return count;
+        }
+        final long keyFrame = ((long) keyIndex << 32) | frameIndex;
+        synchronized (KeyMajorPageFrameRecordCursor.class) {
+            if (countSkewKeyFrame == -1) {
+                countSkewKeyFrame = keyFrame;
+            }
+        }
+        return countSkewKeyFrame == keyFrame ? Math.max(0, count + skew) : count;
+    }
+
+    /**
+     * Tests: makes the planned walk count {@code skew} rows more (or fewer) than the index holds
+     * for one (key, frame), the first with two rows or more that is counted after the call; 0
+     * switches it off.
+     * The walk's reads must then fail the query rather than return other rows.
+     */
+    @TestOnly
+    public static void setCountSkew(long skew) {
+        synchronized (KeyMajorPageFrameRecordCursor.class) {
+            countSkew = skew;
+            countSkewKeyFrame = -1;
+        }
+    }
+
+    // Opens the planned walk's next frame of the current key. Returns false once the key has been
+    // walked across all frames.
+    private boolean openNextPlannedFrame() {
+        planOpen = false;
+        if (framePos < frameCount) {
+            final int frameIndex = walkFramesBackward ? frameCount - 1 - framePos : framePos;
+            framePos++;
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            planFrameIndex = frameIndex;
+            planRank = 0;
+            planCount = countKeyRows(keyIndex, frameIndex);
+            planOpen = true;
+            return true;
+        }
+        return false;
+    }
+
+    // Appends count rows of the key in the frame, from its rankLo-th on, with a cursor of this thread's own.
+    // endsFrame: the rows are the key's last in the frame, so the index must hold none after them.
+    private void readKeyRows(int keyIndex, int frameIndex, long rankLo, long count, boolean endsFrame, DirectLongList sink) {
+        if (count <= 0) {
+            return;
+        }
+        final int indexKey = rowCursorFactory.getIndexKey(keyIndex);
+        final AbstractPostingIndexReader reader = (AbstractPostingIndexReader) frameIndexReaders.getQuick(frameIndex);
+        final long lo = frameLos.getQuick(frameIndex);
+        final long hi = frameHis.getQuick(frameIndex) - 1;
+        long rowLo = lo;
+        long skip = rankLo;
+        if (rankLo > 0) {
+            final long entryMax = reader.getEntryMaxValue();
+            final long row = indexRanksEnabled
+                    ? reader.selectKthMatch(indexKey, lo, hi, entryMax >= 0 ? Math.min(hi, entryMax) : hi, rankLo)
+                    : Numbers.LONG_NULL;
+            if (row != Numbers.LONG_NULL) {
+                assert row == rankRowByReading(reader, indexKey, lo, hi, rankLo) : "rank seek found another row [keyIndex=" + keyIndex + ", frameIndex=" + frameIndex + ", rankLo=" + rankLo + ']';
+                rowLo = row;
+                skip = 0;
+            }
+        }
+        final RowCursor cursor = reader.getDetachedCursor(indexKey, rowLo, hi, null);
+        try {
+            for (long i = 0; i < skip; i++) {
+                if (!cursor.hasNext()) {
+                    throw planMismatch(keyIndex, frameIndex, rankLo, count, i);
+                }
+                cursor.next();
+            }
+            final long pos = sink.size();
+            final long n = cursor.drainTo(sink, toFrameRowId(frameIndex, 0), count);
+            if (n != count) {
+                throw planMismatch(keyIndex, frameIndex, rankLo, count, n);
+            }
+            if (endsFrame && cursor.hasNext()) {
+                // more rows than counted: they would be dropped without a word
+                throw planMismatch(keyIndex, frameIndex, rankLo, count, count + 1);
+            }
+            final long shift = rowLo - lo;
+            if (shift > 0) {
+                // the cursor's rows are relative to its first row
+                final long addr = sink.getAddress() + pos * Long.BYTES;
+                for (long i = 0; i < n; i++) {
+                    final long a = addr + i * Long.BYTES;
+                    Unsafe.putLong(a, Unsafe.getLong(a) + shift);
+                }
+            }
+        } finally {
+            Misc.free(cursor);
+        }
+    }
+
+    // The rankLo-th row of the key in [lo, hi], by reading the index from lo: what selectKthMatch() must return.
+    private static long rankRowByReading(AbstractPostingIndexReader reader, int indexKey, long lo, long hi, long rankLo) {
+        final RowCursor cursor = reader.getDetachedCursor(indexKey, lo, hi, null);
+        try {
+            for (long i = 0; i < rankLo; i++) {
+                if (!cursor.hasNext()) {
+                    return Numbers.LONG_NULL;
+                }
+                cursor.next();
+            }
+            return cursor.hasNext() ? lo + cursor.next() : Numbers.LONG_NULL;
+        } finally {
+            Misc.free(cursor);
+        }
+    }
+
+    private CairoException planMismatch(int keyIndex, int frameIndex, long rankLo, long count, long found) {
+        return CairoException.critical(0)
+                .put("index walk found other rows than it counted [keyIndex=").put(keyIndex)
+                .put(", frameIndex=").put(frameIndex)
+                .put(", rankLo=").put(rankLo)
+                .put(", count=").put(count)
+                .put(", found=").put(found)
+                .put(']');
+    }
+
+    private void unfreezeReaders() {
+        for (int i = 0, n = frozenReaders.size(); i < n; i++) {
+            frozenReaders.getQuick(i).setFrozen(false);
+        }
+        frozenReaders.clear();
     }
 
     private void collectFrames() {
@@ -530,6 +940,11 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
 
     private void resetWalk() {
         rowCursor = Misc.free(rowCursor);
+        // a planned walk's readers are read by no task any more: the consumer waits for its
+        // tasks before it rewinds or closes the walk
+        unfreezeReaders();
+        isPlanned = false;
+        planOpen = false;
         rowBufPos = 0;
         rowBufLen = 0;
         toucher.clear();

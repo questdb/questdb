@@ -65,6 +65,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongConsumer;
 
 /**
@@ -141,6 +142,13 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     private final Round[] rounds;
     // whether the workers may compute the chain's rows column-wise, see AsyncWindowRowKernel
     private final boolean rowKernelsEnabled;
+    // whether the walk may be planned, so that workers read their tasks' row ids, see
+    // KeyMajorPageFrameRecordCursor.enablePlannedWalk()
+    private final boolean plannedWalkEnabled;
+    // tests: see getPlannedTaskCount(), counted under -ea only
+    private final AtomicLong plannedTaskCount = new AtomicLong();
+    // the walk is planned: tasks hold plans, and the worker that computes a task reads its rows
+    private boolean isWalkPlanned;
     // the kernels are compiled once the atom has every step, at the first execution
     private boolean rowKernelsCompiled;
     // queue of what to return after the head, in scan order: rounds and streamed keys
@@ -268,8 +276,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             rounds[i] = new Round(sequence);
             sequence.getAtom().round = rounds[i];
             sequence.getAtom().replayChain = replayChain;
+            sequence.getAtom().plannedTaskCount = plannedTaskCount;
         }
         this.rowKernelsEnabled = configuration.isSqlParallelWindowKeyRunsEnabled();
+        this.plannedWalkEnabled = configuration.isSqlParallelFrameDispatchEnabled();
         // a round can bring a streamed key with it, and the walk can meet several in a row
         final int segmentCapacity = 4 * roundCount;
         this.segmentKinds = new int[segmentCapacity];
@@ -409,6 +419,22 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     @TestOnly
     public long getPrefixRowCount() {
         return prefixRowsStreamed;
+    }
+
+    /**
+     * Tasks whose row ids the computing thread read from a planned walk, since the walk started.
+     */
+    @TestOnly
+    public long getPlannedTaskCount() {
+        return plannedTaskCount.get();
+    }
+
+    /**
+     * Whether the walk is planned, see {@link KeyMajorPageFrameRecordCursor#enablePlannedWalk()}.
+     */
+    @TestOnly
+    public boolean isWalkPlanned() {
+        return isWalkPlanned;
     }
 
     @Override
@@ -645,6 +671,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         if (mode == MODE_PARALLEL) {
             // the rewound scan collects its frames again, so the slots read them afresh
             keyMajorCursor.prepareFrames();
+            isWalkPlanned = plannedWalkEnabled && keyMajorCursor.enablePlannedWalk();
             atom.getSlot(-1).ofFrames(keyMajorCursor.getFrameAddressCache());
             if (isWorkerSlotsOpen) {
                 atom.ofWorkerFrames(keyMajorCursor.getFrameAddressCache());
@@ -675,6 +702,15 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         final RoundAtom roundAtom = (RoundAtom) sequence.getAtom();
         final AsyncWindowAtom atom = roundAtom.atom;
         final Task task = roundAtom.round.tasks.getQuick(taskIndex);
+        if (task.plannedWalk != null) {
+            // the walk counted the task's rows; this thread reads them from the index
+            task.rows.clear();
+            // sized once: the list then takes the rows without growing
+            task.rows.ensureCapacity(task.plannedRows);
+            task.plannedWalk.readPlan(task.plan, task.rows);
+            assert task.rows.size() == task.plannedRows;
+            assert roundAtom.plannedTaskCount.incrementAndGet() > 0;
+        }
         final int slotId = atom.acquireTaskSlot(workerId, circuitBreaker);
         try {
             final AsyncWindowAtom.Slot slot = atom.getSlot(slotId);
@@ -774,6 +810,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             if (keyMajorCursor.hasOnlyPlainNativeFrames() && isWithinExactRowLimit(keyMajorCursor)) {
                 this.keyMajorCursor = keyMajorCursor;
                 mode = MODE_PARALLEL;
+                isWalkPlanned = plannedWalkEnabled && keyMajorCursor.enablePlannedWalk();
                 final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
                 ownerRows = newRowIds(memoryTracker);
                 if (splitPlan.getMode() == AsyncWindowSplitPlan.MODE_WARMUP) {
@@ -825,8 +862,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             if (emitted == 0) {
                 round.dropLastTask();
             } else {
-                round.taskRowCounts.add(task.rows.size());
-                heldRows += task.rows.size();
+                final long taskSize = task.size();
+                round.taskRowCounts.add(taskSize);
+                heldRows += taskSize;
                 collectedRows += emitted;
                 task.emittedRows = emitted;
                 if (replayChain != null) {
@@ -851,26 +889,32 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     // warm-up rows of a key it continues. Returns the rows collected, warm-up excluded.
     private long collectSlice(Task task, long taskLimit) {
         final DirectLongList rows = task.rows;
+        final boolean planned = beginTask(task);
         task.continuesKey = walkKeyOpen;
         if (task.groupSplit != null) {
             task.groupSplit.continuesKey = walkKeyOpen;
             task.groupSplit.walkBase = walkPosition;
         }
         if (walkKeyOpen && warmRows != null) {
-            for (long i = 0, n = warmRows.size(); i < n; i++) {
-                rows.add(warmRows.get(i));
+            if (planned) {
+                // the key's rows right before the walk's position, as warmRows keeps them unplanned
+                task.plannedRows += keyMajorCursor.planPrecedingRows(task.plan, splitPlan.getWarmupRows());
+            } else {
+                for (long i = 0, n = warmRows.size(); i < n; i++) {
+                    rows.add(warmRows.get(i));
+                }
             }
         }
-        task.emitFrom = rows.size();
+        task.emitFrom = task.size();
         long emitted = 0;
         boolean first = true;
         while (emitted < taskLimit) {
             // a key the task continues has its warm-up rows ahead of its new ones
-            final long keyStart = first && walkKeyOpen ? 0 : rows.size();
+            final long keyStart = first && walkKeyOpen ? 0 : task.size();
             task.keyStarts.add(keyStart);
-            final long keyLo = rows.size();
-            final int status = keyMajorCursor.collectKeyRows(rows, taskLimit - emitted);
-            final long collected = rows.size() - keyLo;
+            final long keyLo = task.size();
+            final int status = collectKeyRows(task, taskLimit - emitted);
+            final long collected = task.size() - keyLo;
             emitted += collected;
             if (first) {
                 task.firstKeyRows = collected;
@@ -882,7 +926,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             }
             if (status == KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT) {
                 walkKeyOpen = true;
-                updateWarmRows(rows, keyStart, false);
+                if (!planned) {
+                    updateWarmRows(rows, keyStart, false);
+                }
                 break;
             }
             walkKeyOpen = false;
@@ -901,28 +947,55 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     // skipped by the walk and marked for this thread to stream. Returns the rows collected.
     private long collectWholeKeys(Task task, long taskLimit) {
         final DirectLongList rows = task.rows;
+        final boolean planned = beginTask(task);
         task.emitFrom = 0;
         task.continuesKey = false;
-        while (rows.size() < taskLimit) {
-            final long keyLo = rows.size();
+        while (task.size() < taskLimit) {
+            final long keyLo = task.size();
+            final int planLo = task.plan.size();
             final int keyIndex = keyMajorCursor.getKeyIndex();
-            final int status = keyMajorCursor.collectKeyRows(rows, maxKeyRows);
+            final int status = collectKeyRows(task, maxKeyRows);
             if (status == KeyMajorPageFrameRecordCursor.COLLECT_KEY_END) {
                 task.keyStarts.add(keyLo);
                 continue;
             }
             if (status == KeyMajorPageFrameRecordCursor.COLLECT_ROW_LIMIT) {
                 // too large for a task: the walk goes on past it, this thread walks it later
-                rows.setPos(keyLo);
-                // the list grew for the key's rows, which it no longer holds
-                shrinkIfOversized(rows, taskRows);
+                if (planned) {
+                    task.plan.setPos(planLo);
+                    task.plannedRows = keyLo;
+                } else {
+                    rows.setPos(keyLo);
+                    // the list grew for the key's rows, which it no longer holds
+                    shrinkIfOversized(rows, taskRows);
+                }
                 keyMajorCursor.skipKey();
                 task.largeKeyIndex = keyIndex;
             }
             // a large key, or no key left
             break;
         }
-        return rows.size();
+        return task.size();
+    }
+
+    // Starts collecting a task: as a plan when the walk is planned. Returns whether it is.
+    private boolean beginTask(Task task) {
+        if (isWalkPlanned) {
+            task.plannedWalk = keyMajorCursor;
+            return true;
+        }
+        return false;
+    }
+
+    // The walk's next rows of the current key into the task, see KeyMajorPageFrameRecordCursor.collectKeyRows()
+    private int collectKeyRows(Task task, long rowLimit) {
+        if (task.plannedWalk != null) {
+            final int planLo = task.plan.size();
+            final int status = keyMajorCursor.planKeyRows(task.plan, rowLimit);
+            task.plannedRows += KeyMajorPageFrameRecordCursor.planRowCount(task.plan, planLo);
+            return status;
+        }
+        return keyMajorCursor.collectKeyRows(task.rows, rowLimit);
     }
 
     private void dispatch(Round round, long heldRows) {
@@ -1192,6 +1265,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     }
 
     private void resetCounters() {
+        plannedTaskCount.set(0);
         maxRoundRows = 0;
         keptChainCount = 0;
         largeKeyRowsStreamed = 0;
@@ -1437,6 +1511,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
      */
     static class RoundAtom implements StatefulAtom {
         final AsyncWindowAtom atom;
+        // tests: tasks read from a planned walk, shared with the cursor
+        AtomicLong plannedTaskCount;
         // the cursor's walk-order pass over folded and replayed columns, or null
         ReplayChain replayChain;
         Round round;
@@ -1746,6 +1822,12 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         // are one key's, see AsyncWindowAtom.Slot.computeKeyRuns()
         private final LongList keyStarts = new LongList();
         private final DirectLongList rows;
+        // a planned walk's segments of the task's rows, which the computing thread reads into rows
+        private final LongList plan = new LongList();
+        // the walk the plan is of, or null when the query's thread collected the rows
+        private KeyMajorPageFrameRecordCursor plannedWalk;
+        // the rows the plan holds
+        private long plannedRows;
         // a worker thread computed the task, not the query's thread; written by the computing thread
         private boolean computedByWorker;
         // with keys split over tasks and a GROUP BY step, what the task hands over, else null
@@ -1776,6 +1858,11 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             this.rows = rows;
         }
 
+        // the task's rows, warm-up included, whether collected or planned
+        long size() {
+            return plannedWalk != null ? plannedRows : rows.size();
+        }
+
         @Override
         public void close() {
             Misc.free(chain);
@@ -1790,6 +1877,9 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         private void reuse(long taskRows) {
             shrinkIfOversized(rows, taskRows);
             rows.clear();
+            plan.clear();
+            plannedWalk = null;
+            plannedRows = 0;
             keyStarts.clear();
             computedByWorker = false;
             isBoundaryProcessed = false;

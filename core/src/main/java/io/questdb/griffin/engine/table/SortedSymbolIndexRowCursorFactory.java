@@ -100,6 +100,11 @@ public class SortedSymbolIndexRowCursorFactory implements KeyedRowCursorFactory 
     }
 
     @Override
+    public boolean isPlainKeyScan(int keyIndex) {
+        return true;
+    }
+
+    @Override
     public boolean isEntity() {
         return false;
     }

@@ -89,6 +89,9 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
     private final RostiRecordCursor cursor;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final ObjectPool<VectorAggregateEntry> entryPool;
+    // native frames come without column addresses, which the aggregating threads compute, see
+    // PageFrameCursor.deferFrameAddresses()
+    private final boolean deferFrameAddresses;
     private final PageFrameAddressCache frameAddressCache;
     private final int keyColumnIndex;
     private final AtomicInteger oomCounter = new AtomicInteger();
@@ -131,6 +134,7 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             this.base = base;
             this.frameAddressCache = new PageFrameAddressCache();
+            this.deferFrameAddresses = configuration.isSqlParallelFrameDispatchEnabled();
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
             sharedCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
             workStealingStrategy = WorkStealingStrategyFactory.getInstance(configuration, workerCount);
@@ -254,6 +258,10 @@ public class GroupByRecordCursorFactory extends AbstractRecordCursorFactory {
             vafList.getQuick(i).clear();
         }
         final PageFrameCursor pageFrameCursor = base.getPageFrameCursor(executionContext, ORDER_ASC);
+        if (deferFrameAddresses) {
+            // the vector aggregates read every frame through the memory pools, which fill it in
+            pageFrameCursor.deferFrameAddresses();
+        }
         return cursor.of(
                 base.getMetadata(),
                 pageFrameCursor,

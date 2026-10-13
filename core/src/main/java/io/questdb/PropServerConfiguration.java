@@ -194,6 +194,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final boolean cairoIndexScanChoiceEnabled;
     private final boolean cairoParallelIndexGroupByEnabled;
     private final int cairoParallelIndexGroupByFrameRows;
+    private final boolean cairoParallelFrameDispatchEnabled;
     private final long cairoParallelIndexGroupByTaskRows;
     private final int cairoGroupByBatchSize;
     private final int cairoGroupByMergeShardQueueCapacity;
@@ -2468,6 +2469,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             }
             this.cairoParallelIndexGroupByFrameRows = getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_FRAME_ROWS, io.questdb.cairo.map.Map.BATCH_ROW_INDEX_MASK + 1);
             validatePageFrameRows(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_FRAME_ROWS, cairoParallelIndexGroupByFrameRows);
+            this.cairoParallelFrameDispatchEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, true);
             this.cairoIndexScanChoiceEnabled = getBoolean(properties, env, PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, true);
             this.cairoIndexScanChoiceMaxSelectivity = getDouble(properties, env, PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY, "0.05");
             if (!(cairoIndexScanChoiceMaxSelectivity >= 0 && cairoIndexScanChoiceMaxSelectivity <= 1)) {
@@ -6098,6 +6100,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlParallelIndexGroupByFrameRows() {
             return cairoParallelIndexGroupByFrameRows;
+        }
+
+        @Override
+        public boolean isSqlParallelFrameDispatchEnabled() {
+            return cairoParallelFrameDispatchEnabled;
         }
 
         @Override

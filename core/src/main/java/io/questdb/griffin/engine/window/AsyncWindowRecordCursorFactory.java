@@ -290,6 +290,10 @@ public class AsyncWindowRecordCursorFactory extends AbstractRecordCursorFactory 
         if (shardCursor != null) {
             final PageFrameCursor frameCursor = scan.getPageFrameCursor(executionContext, PartitionFrameCursorFactory.ORDER_ASC);
             try {
+                if (configuration.isSqlParallelFrameDispatchEnabled()) {
+                    // the shards read every frame through the slots' memory pools, which fill it in
+                    frameCursor.deferFrameAddresses();
+                }
                 shardCursor.of(frameCursor, executionContext);
                 return shardCursor;
             } catch (Throwable th) {

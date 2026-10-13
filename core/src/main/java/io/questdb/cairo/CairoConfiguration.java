@@ -1570,6 +1570,13 @@ public interface CairoConfiguration {
     int getSqlParallelIndexGroupByFrameRows();
 
     /**
+     * Whether the shared query workers set up the units of a parallel scan themselves where the
+     * query's thread used to: a key-major index walk then only counts each task's rows from the
+     * index, and the worker that computes the task reads its row ids. Read when a cursor opens.
+     */
+    boolean isSqlParallelFrameDispatchEnabled();
+
+    /**
      * Whether a GROUP BY over a symbol {@code IN}/{@code =} filter that a POSTING index serves
      * compiles both an index plan and a scan plan, and chooses between them each time the cursor
      * opens, from the index's per-key row counts. Read when the query is compiled. The

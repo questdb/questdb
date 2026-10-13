@@ -581,6 +581,12 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public boolean deferFrameAddresses() {
+            // the base cursor's frames pass through as they are
+            return baseCursor.deferFrameAddresses();
+        }
+
+        @Override
         public ColumnMapping getColumnMapping() {
             return baseCursor.getColumnMapping();
         }

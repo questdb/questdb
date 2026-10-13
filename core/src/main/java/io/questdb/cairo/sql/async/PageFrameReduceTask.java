@@ -40,6 +40,7 @@ import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.NumericException;
+import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.NotNull;
@@ -56,6 +57,9 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private final DirectLongList filteredRows; // Used for TYPE_FILTER and TYPE_WINDOW_JOIN.
     private final PageFrameMemoryPool frameMemoryPool;
     private final long frameQueueCapacity;
+    // the tasks of the group's frames after this task's own, which the frame sequence lends the group;
+    // sized for the largest group, so that of() does not allocate between the slot's claim and publish
+    private final ObjList<PageFrameReduceTask> groupTasks = new ObjList<>(PageFrameSequence.MAX_GROUP_FRAMES - 1);
     private int errno = CairoException.NON_CRITICAL;
     private byte errorKind = AsyncQueryErrorKind.KIND_NONE;
     private int errorMessagePosition;
@@ -64,12 +68,18 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
+    // an Error in a later frame of the group, recorded on that frame's task, see isGroupFrameFailed()
+    private boolean groupFrameFailed;
+    // frames this queue slot carries: this task's frame and the next groupSize - 1, see getGroupTask()
+    private int groupSize = 1;
     private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
     // Valid for TYPE_FILTER only. When set, only filteredRowCount field is initialized by the filter,
     // i.e. filteredRows can't be used.
     private boolean isCountOnly;
     private boolean isOutOfMemory;
     private byte taskType;
+    // the rows of the group's frames
+    private long taskRowCount;
 
     public PageFrameReduceTask(CairoConfiguration configuration, int memoryTag) {
         try {
@@ -149,6 +159,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         Misc.free(dataAddresses);
         Misc.free(auxAddresses);
         Misc.free(frameMemoryPool);
+        // the frame sequence owns the group tasks
+        groupTasks.clear();
     }
 
     /**
@@ -187,6 +199,36 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public PageFrameSequence<?> getFrameSequence() {
         return frameSequence;
+    }
+
+    /**
+     * The task of the {@code k}-th frame of this queue slot's frame group, this task itself for
+     * {@code k == 0}. A group is a run of small consecutive native frames that one worker reduces one
+     * after another, each into its own task, so that the queue protocol and the ordered collect run
+     * once per group rather than once per frame; see {@link PageFrameSequence}.
+     */
+    public PageFrameReduceTask getGroupTask(int k) {
+        return k == 0 ? this : groupTasks.getQuick(k - 1);
+    }
+
+    /**
+     * Whether a later frame of this slot's group failed with an {@link Error} that its own task
+     * already carries. The reducer rethrows such an Error, and the catch that receives it must not
+     * record it on this task as well: the collector would raise it at the group's first frame.
+     */
+    public boolean isGroupFrameFailed() {
+        return groupFrameFailed;
+    }
+
+    void setGroupFrameFailed() {
+        groupFrameFailed = true;
+    }
+
+    /**
+     * The number of frames this queue slot carries, see {@link #getGroupTask(int)}.
+     */
+    public int getGroupSize() {
+        return groupSize;
     }
 
     @SuppressWarnings({"unchecked", "unused"})
@@ -232,6 +274,39 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     public void of(PageFrameSequence<?> frameSequence, int frameIndex, boolean countOnly) {
+        of(frameSequence, frameIndex, 1, countOnly);
+    }
+
+    /**
+     * Sets the slot up for {@code groupSize} consecutive frames from {@code frameIndex} on: this task
+     * for the first, a group task for each of the others, see {@link #getGroupTask(int)}. The
+     * dispatcher calls it between claiming the queue slot and publishing it, so it must not throw:
+     * the group tasks were reserved before the claim, and nothing here allocates.
+     */
+    public void of(PageFrameSequence<?> frameSequence, int frameIndex, int groupSize, boolean countOnly) {
+        assert groupSize > 0;
+        ofFrame(frameSequence, frameIndex, countOnly);
+        assert groupTasks.size() == 0;
+        this.groupSize = groupSize;
+        this.groupFrameFailed = false;
+        long rows = frameSequence.getFrameRowCount(frameIndex);
+        for (int k = 1; k < groupSize; k++) {
+            final PageFrameReduceTask groupTask = frameSequence.takeGroupTask();
+            groupTask.ofFrame(frameSequence, frameIndex + k, countOnly);
+            groupTasks.add(groupTask);
+            rows += frameSequence.getFrameRowCount(frameIndex + k);
+        }
+        this.taskRowCount = rows;
+    }
+
+    /**
+     * The rows of all the frames the slot carries, see {@link #getGroupSize()}.
+     */
+    public long getTaskRowCount() {
+        return taskRowCount;
+    }
+
+    private void ofFrame(PageFrameSequence<?> frameSequence, int frameIndex, boolean countOnly) {
         this.frameSequence = frameSequence;
         final boolean sameQueryExecution = frameSequenceId == frameSequence.getId();
         this.frameSequenceId = frameSequence.getId();
@@ -335,9 +410,25 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
         // we assume that frame indexes are published in ascending order
         // and when we see the last index, we would free up the remaining resources
-        if (frameIndex + 1 == frameCount) {
+        if (frameIndex + groupSize == frameCount) {
             frameSequence.markAsDone();
         }
+
+        // the group tasks go back to the frame sequence, which lends them to its next groups
+        final boolean clearGroupTasks = forceCollect || frameIndex >= frameCount - frameQueueCapacity;
+        for (int k = 0, n = groupTasks.size(); k < n; k++) {
+            final PageFrameReduceTask groupTask = groupTasks.getQuick(k);
+            groupTask.frameSequence = null;
+            groupTask.frameMemory = null;
+            if (clearGroupTasks) {
+                groupTask.clear();
+            } else {
+                groupTask.releaseFrameMemory();
+            }
+            frameSequence.releaseGroupTask(groupTask);
+        }
+        groupTasks.clear();
+        groupSize = 1;
 
         frameSequence = null;
         frameMemory = null;
