@@ -282,6 +282,102 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
     }
 
     @Test
+    public void testFrequentKeyScanKeepsLateralOuterSharedFactory() throws Exception {
+        // The LATERAL body is t CROSS JOIN the outer GROUP BY, through a wrapper whose delegate
+        // the main tree generated, and owns, before the body. The body's frequent key generates t
+        // a second time, as a scan: that must not drop the outer factory's shared-factory cache
+        // entry, or the wrapper builds a second primary that nothing owns (a native leak at
+        // compile) or opens (a NullPointerException in its shared cursor at execution).
+        assertMemoryLeak(() -> {
+            createTable();
+            execute("create table m (ts timestamp, sym symbol, v long) timestamp(ts) partition by day");
+            execute("insert into m select (x * 1_000_000L)::timestamp, 'k' || (x % 7), x * 300 from long_sequence(1000)");
+            // three outer rows, x = 300, 30300 and 60000
+            final String outer = "(SELECT ts, max(v) AS x FROM m WHERE v IN (300, 30300, 60000) GROUP BY ts) o";
+            final String[][] cases = {
+                    {
+                            "SELECT o.ts, o.x, l.c FROM " + outer
+                                    + " JOIN LATERAL (SELECT count() c FROM t WHERE t.sym = 'F' AND t.v <= o.x) l ON true ORDER BY o.ts",
+                            """
+                                    ts\tx\tc
+                                    1970-01-01T00:00:01.000000Z\t300\t120
+                                    1970-01-01T00:01:41.000000Z\t30300\t12060
+                                    1970-01-01T00:03:20.000000Z\t60000\t18000
+                                    """
+                    },
+                    {
+                            "SELECT o.ts, o.x, l.c, l.s FROM " + outer
+                                    + " JOIN LATERAL (SELECT count() c, sum(v) s FROM t WHERE t.sym = 'F' AND t.v < o.x * 10) l ON true ORDER BY o.ts",
+                            """
+                                    ts\tx\tc\ts
+                                    1970-01-01T00:00:01.000000Z\t300\t1198\t1797000
+                                    1970-01-01T00:01:41.000000Z\t30300\t66599\t9270763500
+                                    1970-01-01T00:03:20.000000Z\t60000\t125999\t36089715000
+                                    """
+                    },
+                    {
+                            "SELECT o.ts, o.x, l.v FROM " + outer
+                                    + " JOIN LATERAL (SELECT v FROM t WHERE t.sym = 'F' AND t.v <= o.x ORDER BY ts DESC LIMIT 2) l ON true ORDER BY o.ts, l.v",
+                            """
+                                    ts\tx\tv
+                                    1970-01-01T00:00:01.000000Z\t300\t295
+                                    1970-01-01T00:00:01.000000Z\t300\t300
+                                    1970-01-01T00:01:41.000000Z\t30300\t29995
+                                    1970-01-01T00:01:41.000000Z\t30300\t30000
+                                    1970-01-01T00:03:20.000000Z\t60000\t29995
+                                    1970-01-01T00:03:20.000000Z\t60000\t30000
+                                    """
+                    },
+            };
+            for (String[] c : cases) {
+                assertQuery(c[0]).withPlanContaining("(Shared)").inferRandomAccess().inferTimestamp().returns(c[1]);
+            }
+            // and with the choice off, the covering plan
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, "false");
+            for (String[] c : cases) {
+                assertQuery(c[0]).withPlanContaining("(Shared)", "CoveringIndex").inferRandomAccess().inferTimestamp().returns(c[1]);
+            }
+        });
+    }
+
+    @Test
+    public void testFrequentKeyScanKeepsSubQueryWindowJoins() throws Exception {
+        // An intermediate WINDOW JOIN rewrites its aggregate model's columns: each aggregate it
+        // computes becomes a reference to its alias. The scan's generation of the sub-query must
+        // find the aggregates again, not "Invalid column: s1".
+        assertMemoryLeak(() -> {
+            createTable();
+            createWindowJoinTables();
+            // max(s1 + s2) is 1,064,000 (the windows include the prevailing row)
+            final String sub = "(select max(s1 + s2) from (select m.ts, sum(a.v) s1, sum(b.v) s2 from m"
+                    + " window join n a on (m.sym = a.sym) range between 10 seconds preceding and current row"
+                    + " window join n b on (m.sym = b.sym) range between 20 seconds preceding and current row))";
+            final String[][] cases = {
+                    {
+                            "select count(), sum(v) from t where sym = 'F' and v < " + sub,
+                            "count\tsum\n218799\t113299083000\n"
+                    },
+                    {
+                            "select ts, v from t where sym = 'F' and v < " + sub + " limit -3",
+                            """
+                                    ts\tv
+                                    1970-01-04T01:47:57.840000Z\t29990
+                                    1970-01-04T01:47:58.920000Z\t29995
+                                    1970-01-04T01:48:00.000000Z\t30000
+                                    """
+                    },
+            };
+            for (String[] c : cases) {
+                assertQuery(c[0]).withPlanNotContaining("CoveringIndex").inferRandomAccess().inferTimestamp().expectSize().sizeMayVary().returns(c[1]);
+            }
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, "false");
+            for (String[] c : cases) {
+                assertQuery(c[0]).withPlanContaining("CoveringIndex").inferRandomAccess().inferTimestamp().expectSize().sizeMayVary().returns(c[1]);
+            }
+        });
+    }
+
+    @Test
     public void testExplainCoveringScanInsideScalarSubQuery() throws Exception {
         // a covering scan in a scalar sub-query of a filter: EXPLAIN threw a NullPointerException
         assertMemoryLeak(() -> {
@@ -473,6 +569,13 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
         final StringSink plan = new StringSink();
         printSql("explain " + query, plan);
         Assert.assertFalse(query + '\n' + plan, plan.toString().contains(fragment));
+    }
+
+    private static void createWindowJoinTables() throws SqlException {
+        execute("create table m (ts timestamp, sym symbol, v long) timestamp(ts) partition by day");
+        execute("insert into m select (x * 1_000_000L)::timestamp, 'k' || (x % 7), x * 300 from long_sequence(1000)");
+        execute("create table n (ts timestamp, sym symbol, v long) timestamp(ts) partition by day");
+        execute("insert into n select (x * 1_300_000L)::timestamp, 'k' || (x % 7), x * 200 from long_sequence(1000)");
     }
 
     private static void createTable(CairoEngine engine, SqlExecutionContext ctx) throws SqlException {

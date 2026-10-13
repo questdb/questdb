@@ -31,9 +31,10 @@ import java.util.IdentityHashMap;
 /**
  * The state of one model that a physical generation consumes or marks: its where clauses (the
  * filter, its backup, the constant and post-join filters, the outer-join filter), its LATEST BY
- * nodes, whether it was skipped, and the implementation markers of its LIMIT and LIMIT advice.
- * Generation clears or rewrites all of these; nothing else of a model changes when it is
- * generated. {@link #apply} puts them back as they were when the selection was taken, so that
+ * nodes, whether it was skipped, the implementation markers of its LIMIT and LIMIT advice, and
+ * its column list, which an intermediate WINDOW JOIN rewrites (each aggregate it computes becomes
+ * a reference to its alias for the window joins that follow). Generation clears or rewrites all
+ * of these; nothing else of a model changes when it is generated. {@link #apply} puts them back as they were when the selection was taken, so that
  * the model can be generated again as if for the first time.
  * <p>
  * The saved expressions are copies, made through one memo per snapshot so that a node two
@@ -42,6 +43,9 @@ import java.util.IdentityHashMap;
  */
 final class QueryModelSelection {
     private final ExpressionNode backupWhere;
+    // the column objects, not copies: generation replaces entries of the list, it does not
+    // change the columns themselves
+    private final ObjList<QueryColumn> columns = new ObjList<>();
     private final ExpressionNode constWhere;
     private final boolean isLimitAdviceHiImplemented;
     private final boolean isLimitAdviceLoImplemented;
@@ -64,6 +68,9 @@ final class QueryModelSelection {
         postJoinWhere = copy(model.getPostJoinWhereClause(), copies, null);
         outerJoin = copy(model.getOuterJoinExpressionClause(), copies, null);
         isSkipped = model.isSkipped();
+        if (!(model instanceof QueryModelWrapper)) {
+            columns.addAll(model.getColumns());
+        }
         for (int i = 0; i < model.getLatestBy().size(); i++) {
             latestBy.add(copy(model.getLatestBy().getQuick(i), copies, null));
         }
@@ -107,6 +114,16 @@ final class QueryModelSelection {
         model.getLatestBy().clear();
         for (int i = 0; i < latestBy.size(); i++) {
             model.addLatestBy(copy(latestBy.getQuick(i), copies, pool));
+        }
+        if (columns.size() > 0) {
+            final ObjList<QueryColumn> current = model.getColumns();
+            assert current.size() == columns.size();
+            for (int i = 0, n = Math.min(current.size(), columns.size()); i < n; i++) {
+                final QueryColumn column = columns.getQuick(i);
+                if (current.getQuick(i) != column) {
+                    model.replaceColumn(i, column);
+                }
+            }
         }
         resetMarker(limitLo, isLimitLoImplemented);
         resetMarker(limitHi, isLimitHiImplemented);

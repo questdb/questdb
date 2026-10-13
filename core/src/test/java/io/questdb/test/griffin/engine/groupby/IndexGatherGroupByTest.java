@@ -958,6 +958,44 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScanPlanKeepsLateralOuterSharedFactory() throws Exception {
+        // A LATERAL body over the choice: the body's correlated filter joins the K2 GROUP BY to
+        // the outer GROUP BY, a shared factory generated before the body. Generating the GROUP
+        // BY twice must leave the outer factory's shared-factory cache entry alone.
+        assertMemoryLeak(() -> {
+            createSubQueryTable();
+            createWindowJoinTables();
+            final String sql = "SELECT o.ts, o.x, l.sym, l.c FROM (SELECT ts, max(v) AS x FROM m WHERE v IN (300, 30300, 60000) GROUP BY ts) o"
+                    + " JOIN LATERAL (SELECT sym, c FROM (SELECT sym, count() c FROM g WHERE sym IN ('F', 'G') GROUP BY sym) WHERE c > o.x / 10) l ON true"
+                    + " ORDER BY o.ts, l.sym";
+            final String expected = """
+                    ts\tx\tsym\tc
+                    1970-01-01T00:00:01.000000Z\t300\tF\t6000
+                    1970-01-01T00:00:01.000000Z\t300\tG\t5880
+                    1970-01-01T00:01:41.000000Z\t30300\tF\t6000
+                    1970-01-01T00:01:41.000000Z\t30300\tG\t5880
+                    """;
+            assertSitePlans(sql, expected, "(Shared)");
+        });
+    }
+
+    @Test
+    public void testScanPlanKeepsSubQueryWindowJoins() throws Exception {
+        // An intermediate WINDOW JOIN rewrites its aggregate model's columns: the second
+        // generation of the GROUP BY must find the aggregates of the sub-query again.
+        assertMemoryLeak(() -> {
+            createSubQueryTable();
+            createWindowJoinTables();
+            // max(s1 + s2) is 1,064,000 (the windows include the prevailing row)
+            final String sql = "select sym, count() n, sum(v) s from g where sym in ('F', 'G') and v < (select max(s1 + s2) / 100 from"
+                    + " (select m.ts, sum(a.v) s1, sum(b.v) s2 from m"
+                    + " window join n a on (m.sym = a.sym) range between 10 seconds preceding and current row"
+                    + " window join n b on (m.sym = b.sym) range between 20 seconds preceding and current row)) order by sym";
+            assertSitePlans(sql, "sym\tn\ts\nF\t2127\t11315640\nG\t2085\t11091975\n", null);
+        });
+    }
+
+    @Test
     public void testResidualFilters() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext, "t", ROWS, 43);
@@ -1250,9 +1288,61 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
         }
     }
 
+    private static void createSubQueryTable() throws SqlException {
+        execute("create table g (ts timestamp, sym symbol index type posting, s2 symbol, v long) timestamp(ts) partition by day");
+        // F is a fifth of the rows, G nearly as many (6,000 and 5,880 rows)
+        execute("insert into g select (x * 10_000_000L)::timestamp,"
+                + " case when x % 5 = 0 then 'F' when x % 250 = 1 then 'R' when x % 5 = 1 then 'G' else 'k' || (x % 97) end,"
+                + " 's' || (x % 3), x from long_sequence(30_000)");
+    }
+
+    private static void createWindowJoinTables() throws SqlException {
+        execute("create table m (ts timestamp, sym symbol, v long) timestamp(ts) partition by day");
+        execute("insert into m select (x * 1_000_000L)::timestamp, 'k' || (x % 7), x * 300 from long_sequence(1000)");
+        execute("create table n (ts timestamp, sym symbol, v long) timestamp(ts) partition by day");
+        execute("insert into n select (x * 1_300_000L)::timestamp, 'k' || (x % 7), x * 200 from long_sequence(1000)");
+    }
+
     private static void setFeatures(boolean gather, boolean choice) {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_INDEX_GROUPBY_ENABLED, String.valueOf(gather));
         setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, String.valueOf(choice));
+    }
+
+    /**
+     * Runs a query with the choice (which must open its scan plan), with the gather alone and as
+     * a scan, each against the same literal result. {@code planFragment}, when not null, must be
+     * in each plan.
+     */
+    private void assertSitePlans(String sql, String expected, String planFragment) throws Exception {
+        setFeatures(true, true);
+        final StringSink plan = new StringSink();
+        try (RecordCursorFactory factory = select(sql)) {
+            final IndexScanChoiceRecordCursorFactory chooser = findChoice(factory);
+            if (chooser != null) {
+                final long scanOpens = chooser.getScanPlanOpens();
+                final String actual = print(factory, sqlExecutionContext);
+                Assert.assertTrue(sql, chooser.getScanPlanOpens() > scanOpens);
+                TestUtils.assertEquals(sql, expected, actual);
+            } else {
+                // the choice sits on a join's side, below the reach of findChoice()
+                TestUtils.assertEquals(sql, expected, print(factory, sqlExecutionContext));
+                printSql("explain " + sql, plan);
+                Assert.assertTrue(sql + '\n' + plan, plan.toString().contains("Index Or Scan"));
+                Assert.assertTrue(sql + '\n' + plan, plan.toString().contains("opened: scan"));
+            }
+        }
+        // the gather alone
+        setFeatures(true, false);
+        assertQuery(sql)
+                .withPlanContaining(planFragment == null ? new String[]{"Async Index Group By"} : new String[]{"Async Index Group By", planFragment})
+                .inferRandomAccess()
+                .inferTimestamp()
+                .expectSize()
+                .sizeMayVary()
+                .returns(expected);
+        // and the scan
+        setFeatures(false, false);
+        assertQuery(sql).withPlanNotContaining("Index Group By").inferRandomAccess().inferTimestamp().expectSize().sizeMayVary().returns(expected);
     }
 
     private void assertSameAsSerial(String sql, boolean exact) throws Exception {

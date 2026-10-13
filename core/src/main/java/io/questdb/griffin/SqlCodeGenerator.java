@@ -577,6 +577,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // When a QueryModelWrapper is encountered, we look up its delegate here.
     private final QueryModelGenerationState generationState = new QueryModelGenerationState();
     private final ObjObjHashMap<QueryModel, RecordCursorFactory> sharedFactoryCache = new ObjObjHashMap<>();
+    // The undo log of sharedFactoryCache: every put appends its key and the value it replaced
+    // (null for a new key). A model snapshot records the log's length when it is taken, so that
+    // restoreModels() takes back exactly the entries the discarded generation made, and leaves
+    // those of factories generated, and owned, outside the regenerated region.
+    private final ObjList<QueryModel> sharedFactoryCacheUndoKeys = new ObjList<>();
+    private final ObjList<RecordCursorFactory> sharedFactoryCacheUndoValues = new ObjList<>();
+    // per model snapshot id: the length of the shared factory cache's undo log at saveModels()
+    private final IntList modelSnapshotCacheMarks = new IntList();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack2 = new ArrayDeque<>();
     private final WhereClauseSymbolEstimator symbolEstimator = new WhereClauseSymbolEstimator();
@@ -813,7 +821,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         intListPool.clear();
         pushdownFilterExtractor.clear();
         markoutHorizonContext.clear();
-        sharedFactoryCache.clear();
+        clearSharedFactoryCache();
         generationState.clear();
         modelSnapshots.clear();
     }
@@ -822,7 +830,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     public void close() {
         generationState.setPreparationHook(null);
         generationState.clear();
-        sharedFactoryCache.clear();
+        clearSharedFactoryCache();
         modelSnapshots.clear();
         Throwable failure = null;
         for (int i = 0, n = whereClauseParsers.size(); i < n; i++) {
@@ -995,7 +1003,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // The cache borrows factories from the returned tree. A retry can reuse model
                 // identities, so neither borrowed factories nor snapshots may survive an attempt.
                 generationState.clear();
-                sharedFactoryCache.clear();
+                clearSharedFactoryCache();
                 modelSnapshots.clear();
             }
         }
@@ -1017,7 +1025,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         boolean hasEntered = false;
         try {
             if (parserIndex == 0) {
-                sharedFactoryCache.clear();
+                clearSharedFactoryCache();
                 generationState.begin(model, expressionNodePool);
             } else {
                 hasEntered = generationState.enterRegion(model, expressionNodePool);
@@ -11106,7 +11114,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 cached = false;
             }
             if (primaryFactory.supportsSharedCursors()) {
-                sharedFactoryCache.put(delegate, primaryFactory);
+                putSharedFactory(delegate, primaryFactory);
                 return new SharedRecordCursorFactory(primaryFactory, sid);
             }
             return cached ? generateSharedSource(delegate, executionContext, processJoins) : primaryFactory;
@@ -11115,7 +11123,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (model instanceof QueryModel qm && qm.hasSharedRefs()) {
             RecordCursorFactory factory = generateSharedSource(model, executionContext, processJoins);
             if (factory.supportsSharedCursors()) {
-                sharedFactoryCache.put(qm, factory);
+                putSharedFactory(qm, factory);
             }
             return factory;
         }
@@ -19510,16 +19518,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     /**
      * Puts the models a snapshot saved ({@link #saveModels}) back as they were, for another
-     * generation of the same model. The factories the last generation left in
-     * {@link #sharedFactoryCache} for shared models among them belong to that generation's plan,
-     * which may be freed or kept beside the next one, so the next generation builds its own.
+     * generation of the same model, and takes back the {@link #sharedFactoryCache} entries made
+     * since: they belong to the last generation's plan, which may be freed or kept beside the next
+     * one, so the next generation builds its own. Entries made before the snapshot stay.
      */
     private void restoreModels(int snapshot) {
         modelSnapshots.restore(snapshot, expressionNodePool);
-        for (int i = 0, n = modelSnapshots.getModelCount(snapshot); i < n; i++) {
-            if (modelSnapshots.getModel(snapshot, i) instanceof QueryModel qm) {
-                sharedFactoryCache.remove(qm);
+        // Only the cache entries made since the snapshot belong to the discarded generation. A
+        // model the snapshot reaches may still be a shared model generated before it, outside the
+        // region, such as the delegate of a LATERAL outer reference: its entry, and the factory
+        // the main tree owns, must stay, or the next generation of a wrapper of it builds a
+        // second primary that nothing owns or opens. The cache only borrows its factories, the
+        // site frees (or keeps) the discarded plan that owns them.
+        final int mark = modelSnapshotCacheMarks.getQuick(snapshot);
+        for (int i = sharedFactoryCacheUndoKeys.size() - 1; i >= mark; i--) {
+            final QueryModel key = sharedFactoryCacheUndoKeys.getQuick(i);
+            final RecordCursorFactory replaced = sharedFactoryCacheUndoValues.getQuick(i);
+            if (replaced == null) {
+                sharedFactoryCache.remove(key);
+            } else {
+                sharedFactoryCache.put(key, replaced);
             }
+        }
+        if (mark < sharedFactoryCacheUndoKeys.size()) {
+            sharedFactoryCacheUndoKeys.setPos(mark);
+            sharedFactoryCacheUndoValues.setPos(mark);
         }
     }
 
@@ -19534,7 +19557,26 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * {@link #restoreModels} and {@link #releaseModels} take.
      */
     private int saveModels(IQueryModel model) {
-        return modelSnapshots.save(model);
+        final int snapshot = modelSnapshots.save(model);
+        modelSnapshotCacheMarks.extendAndSet(snapshot, sharedFactoryCacheUndoKeys.size());
+        return snapshot;
+    }
+
+    private void clearSharedFactoryCache() {
+        sharedFactoryCache.clear();
+        sharedFactoryCacheUndoKeys.clear();
+        sharedFactoryCacheUndoValues.clear();
+        // a snapshot held across the clear takes back everything put after it
+        modelSnapshotCacheMarks.setAll(modelSnapshotCacheMarks.size(), 0);
+    }
+
+    private void putSharedFactory(QueryModel model, RecordCursorFactory factory) {
+        final RecordCursorFactory replaced = sharedFactoryCache.get(model);
+        if (replaced != factory) {
+            sharedFactoryCacheUndoKeys.add(model);
+            sharedFactoryCacheUndoValues.add(replaced);
+            sharedFactoryCache.put(model, factory);
+        }
     }
 
     private Function toLimitFunction(
