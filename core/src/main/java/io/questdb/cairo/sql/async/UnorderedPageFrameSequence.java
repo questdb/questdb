@@ -383,7 +383,11 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         try {
             for (int i = 0; i < frameCount && isActive(); i++) {
                 final int slotId = decodedFrameSlots.getQuick(i);
-                decodeAtom.setOwnerMemoryPool(slotId != NOT_DECODED_AHEAD ? decodeAtom.getDecodeMemoryPool(slotId) : null);
+                // a frame the owner decoded (slot -1), or none did, is read through the owner's own pool
+                decodeAtom.setOwnerMemoryPool(null);
+                if (slotId > -1) {
+                    decodeAtom.setOwnerMemoryPool(decodeAtom.getDecodeMemoryPool(slotId));
+                }
                 reduceLocally(i);
             }
         } finally {
