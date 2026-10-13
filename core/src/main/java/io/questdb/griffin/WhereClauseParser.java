@@ -3538,17 +3538,18 @@ public final class WhereClauseParser implements Mutable {
      * which fails with "unknown function name: and_offset" and leaks an internal name to the user.
      * <p>
      * No single layer compiles every filter, so two callers outside interval extraction run this:
-     * SqlCodeGenerator#generateFilter0 calls it on every WHERE clause it compiles, and
-     * SqlOptimiser#rebuildStrandedAndOffsets calls it with a null designated timestamp on post-join
-     * filters, which the join code compiles without generateFilter0.
+     * {@code SqlCodeGenerator#generateFilter0} calls it on every WHERE clause it compiles, and
+     * {@code SqlOptimiser#rebuildStrandedAndOffsets} calls it with a null designated timestamp on
+     * post-join filters, which the join code compiles without {@code generateFilter0}.
      * <p>
-     * A wrapper that SqlOptimiser inserted ({@link ExpressionNode#isOptimiserAndOffset}) is rebuilt over
-     * the column its predicate names, designated timestamp or not: the optimiser wraps a predicate only
-     * when every column literal in it names the {@code dateadd()} column (referencesOnlyTimestampAlias),
-     * and renames that literal at each pushdown hop, so the residual is the query's own predicate. A
-     * hand-written call is rebuilt only over {@code designatedTimestamp}.
+     * This method rebuilds a wrapper that SqlOptimiser inserted ({@link ExpressionNode#isOptimiserAndOffset})
+     * over the column its predicate names, designated timestamp or not: the optimiser wraps a predicate
+     * only when every column literal in it names the {@code dateadd()} column
+     * ({@code SqlOptimiser#referencesOnlyTimestampAlias}), and renames that literal at each pushdown hop,
+     * so the residual is the query's own predicate. It rebuilds a hand-written call only over
+     * {@code designatedTimestamp}.
      * <p>
-     * Rewriting is idempotent: {@code copyFrom} replaces the wrapper with the rebuilt predicate, so a
+     * The rewrite is idempotent: {@code copyFrom} replaces the wrapper with the rebuilt predicate, so a
      * second pass finds no {@code and_offset} node.
      */
     public static void rebuildStrandedAndOffsets(ObjectPool<ExpressionNode> pool, ExpressionNode node, @Nullable CharSequence designatedTimestamp) {

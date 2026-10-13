@@ -1777,14 +1777,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Checks that {@code unitArg} is a quoted single-character constant that names a dateadd() unit adding the
-     * same duration to every timestamp, so the result follows the order of the timestamp argument. Months
-     * ({@code 'M'}) and years ({@code 'y'}) don't: they clamp the day of month and keep the time of day, so
-     * January 29, 30 and 31 plus one month all land on the last day of February. The unit is case-sensitive,
+     * Checks that {@code unitArg} is a quoted single-character constant that names a {@code dateadd()} unit
+     * adding the same duration to every timestamp, so the result follows the order of the timestamp argument.
+     * Months ({@code 'M'}) and years ({@code 'y'}) don't: they clamp the day of month and keep the time of day,
+     * so January 29, 30 and 31 plus one month all land on the last day of February. The unit is case-sensitive,
      * {@code 'm'} is minutes.
      * <p>
-     * The list holds every unit TimestampDriver#getAddMethod() accepts except those two. A unit missing from it
-     * costs the projection its designated timestamp, never the row order.
+     * The list holds every unit {@link TimestampDriver#getAddMethod(char)} accepts except those two. A unit
+     * missing from it costs the projection its designated timestamp, never the row order.
      */
     private static boolean isFixedDurationDateaddUnit(ExpressionNode unitArg) {
         final CharSequence token = unitArg.token;

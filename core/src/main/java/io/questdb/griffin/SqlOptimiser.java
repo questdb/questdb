@@ -8590,21 +8590,21 @@ public class SqlOptimiser implements Mutable {
     }
 
     /**
-     * Rebuilds every and_offset wrapper that moveWhereInsideSubQueries pushed into a post-join filter
-     * into its {@code dateadd()} residual.
+     * Rebuilds every {@code and_offset} wrapper that {@link #moveWhereInsideSubQueries} pushed into a
+     * post-join filter into its {@code dateadd()} residual.
      * <p>
      * The pushdown wraps a predicate on a {@code dateadd()} column and moves the wrapper down one model
      * at a time, renaming the column at each hop. The optimiser tags the column by name only (see
-     * detectTimestampOffset), so the wrapper can stop above a table scan: when the column turns into an
-     * aggregate or a SAMPLE BY bucket ({@code max(ts) ts}), or when a LIMIT, an outer join or a union
-     * branch that can't take it blocks the path. Only a table scan's own filter goes through interval
-     * extraction, which turns the wrapper into an interval, or rebuilds it when the column isn't the
-     * designated timestamp ({@code ts2 AS ts}). Anywhere else the wrapper would reach the function
-     * compiler, which has no and_offset function.
+     * {@link #detectTimestampOffset}), so the wrapper can stop above a table scan: when the column turns
+     * into an aggregate or a SAMPLE BY bucket ({@code max(ts) ts}), or when a LIMIT, an outer join or a
+     * union branch that can't take it blocks the path. Only a table scan's own filter goes through
+     * interval extraction, which turns the wrapper into an interval, or rebuilds it when the column isn't
+     * the designated timestamp ({@code ts2 AS ts}). Anywhere else the wrapper would reach the function
+     * compiler, which has no {@code and_offset} function.
      * <p>
-     * SqlCodeGenerator#generateFilter0 rebuilds the wrappers left in any other model's WHERE clause just
-     * before it compiles that filter. The join code compiles a post-join filter without
-     * generateFilter0, so this pass rebuilds the wrappers there.
+     * {@code SqlCodeGenerator#generateFilter0} rebuilds the wrappers left in any other model's WHERE
+     * clause just before it compiles that filter. The join code compiles a post-join filter without
+     * {@code generateFilter0}, so this pass rebuilds the wrappers there.
      * <p>
      * Each hop renamed the column literal for literal, so {@code dateadd(unit, stride, column)} where the
      * wrapper stopped is the original {@code dateadd()} column, and the rebuilt predicate filters the
