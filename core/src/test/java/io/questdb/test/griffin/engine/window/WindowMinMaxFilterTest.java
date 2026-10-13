@@ -161,6 +161,25 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFullSortCopiesTheRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createT(engine, sqlExecutionContext, 5_000);
+            // the kept rows are scattered over the table: a full sort copies them, a LIMIT reads its few back
+            final String sorted = "select * from (" + taq60() + ") order by x desc";
+            assertSameAsSerial(sorted, true);
+            final StringSink plan = new StringSink();
+            printSql("explain " + sorted, plan);
+            TestUtils.assertContains(plan, "Encode sort");
+            TestUtils.assertNotContains(plan, "Encode sort light");
+            final String limited = sorted + " limit 7";
+            assertSameAsSerial(limited, true);
+            plan.clear();
+            printSql("explain " + limited, plan);
+            TestUtils.assertNotContains(plan, "Encode sort\n");
+        });
+    }
+
+    @Test
     public void testCancelBeforeTheAggregation() throws Exception {
         assertCancellation(false);
     }

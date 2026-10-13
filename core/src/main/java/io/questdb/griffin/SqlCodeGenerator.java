@@ -10900,8 +10900,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 final Function hiFunc = getHiFunction(model, executionContext);
                 final boolean isEncodedSortSupported = configuration.isSqlOrderBySortEnabled()
                         && SortKeyEncoder.isSupported(metadata, listColumnFilterA);
+                // A light sort reads every row again by id, at random, after sorting: the rows a
+                // Min/Max Filter keeps are scattered over the table, so a full sort copies them as
+                // they come instead. A LIMIT reads few of them back, and keeps the light sort.
+                final boolean isCopyPreferred = model.getLimitLo() == null && model.getLimitHi() == null
+                        && readsMinMaxFilter(recordCursorFactory);
 
-                if (recordCursorFactory.recordCursorSupportsRandomAccess()) {
+                if (recordCursorFactory.recordCursorSupportsRandomAccess() && !isCopyPreferred) {
                     if (canSortAndLimitBeOptimized(model, executionContext, loFunc, hiFunc)) {
                         if (!preSortedByTs && loFunc.isConstant() && hiFunc == null) {
                             final long lo = loFunc.getLong(null);
@@ -16934,6 +16939,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 masterMetadata.getTimestampType(),
                 slaveMetadata.getTimestampType()
         );
+    }
+
+    // Whether the factory, or a projection of it, is a Min/Max Filter.
+    private static boolean readsMinMaxFilter(RecordCursorFactory factory) {
+        for (int depth = 0; factory != null && depth < 4; depth++) {
+            if (factory instanceof AsyncWindowMinMaxFilterRecordCursorFactory) {
+                return true;
+            }
+            if (!(factory instanceof SelectedRecordCursorFactory) && !(factory instanceof VirtualRecordCursorFactory)) {
+                return false;
+            }
+            factory = factory.getBaseFactory();
+        }
+        return false;
     }
 
     // Whether the factory, or a base below it, is a covering-index scan.
