@@ -1645,16 +1645,6 @@ public class SqlUtil {
     }
 
     /**
-     * Returns true when the expression is the 5-argument timestamp_floor_utc call that
-     * SqlOptimiser.rewriteSampleBy creates as the SAMPLE BY bucket key.
-     */
-    public static boolean isSampleByBucketFloor(ExpressionNode ast) {
-        return ast.type == ExpressionNode.FUNCTION
-                && ast.paramCount == 5
-                && Chars.equalsIgnoreCase(TimestampFloorFromOffsetUtcFunctionFactory.NAME, ast.token);
-    }
-
-    /**
      * Returns true if the given expression node is a timestamp_floor or
      * timestamp_floor_utc function call.
      */

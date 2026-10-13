@@ -134,11 +134,10 @@ public class QueryModel implements IQueryModel {
     private JoinContext context;
     private boolean distinct = false;
     private boolean explicitTimestamp;
-    // Alias of the timestamp_floor_utc bucket key that SqlOptimiser.rewriteSampleBy
-    // creates. SqlOptimiser.rewriteSelectClause0 (explicit GROUP BY arm) and
-    // renameFillBucketAlias move it when the group-by model re-keys the bucket;
-    // SqlCodeGenerator.generateFill locates the bucket column through it.
-    private CharSequence fillBucketAlias;
+    // The timestamp_floor_utc bucket key node that SqlOptimiser.rewriteSampleBy creates.
+    // SqlCodeGenerator.generateFill locates the bucket column by this node's identity,
+    // so alias renames in SqlOptimiser.rewriteSelectClause0 need no bookkeeping here.
+    private ExpressionNode fillBucketKey;
     private ExpressionNode fillFrom;
     private ExpressionNode fillOffset;
     private ExpressionNode fillStride;
@@ -491,7 +490,7 @@ public class QueryModel implements IQueryModel {
         sampleByOffset = ZERO_OFFSET;
         sampleByTo = null;
         sampleByFrom = null;
-        fillBucketAlias = null;
+        fillBucketKey = null;
         fillFrom = null;
         fillOffset = null;
         fillTo = null;
@@ -773,8 +772,8 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public CharSequence getFillBucketAlias() {
-        return fillBucketAlias;
+    public ExpressionNode getFillBucketKey() {
+        return fillBucketKey;
     }
 
     @Override
@@ -1552,7 +1551,7 @@ public class QueryModel implements IQueryModel {
         // and clears sampleBy in the same block, so the gate `sampleBy != null` at the caller
         // (SqlOptimiser.rewriteSelectClause0) is mutually exclusive with fill* being set.
         assert model.getFillStride() == null
-                && model.getFillBucketAlias() == null
+                && model.getFillBucketKey() == null
                 && model.getFillOffset() == null
                 && model.getFillTimezoneName() == null
                 && model.getFillFrom() == null
@@ -1735,8 +1734,8 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
-    public void setFillBucketAlias(CharSequence fillBucketAlias) {
-        this.fillBucketAlias = fillBucketAlias;
+    public void setFillBucketKey(ExpressionNode fillBucketKey) {
+        this.fillBucketKey = fillBucketKey;
     }
 
     @Override
@@ -2472,11 +2471,6 @@ public class QueryModel implements IQueryModel {
         if (fillStride != null) {
             sink.putAscii(" stride ");
             sink.put(fillStride);
-        }
-
-        if (fillBucketAlias != null) {
-            sink.putAscii(" bucket ");
-            sink.put(fillBucketAlias);
         }
 
         if (fillTimezoneName != null) {

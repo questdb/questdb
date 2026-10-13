@@ -343,8 +343,8 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public CharSequence getFillBucketAlias() {
-        return delegate.getFillBucketAlias();
+    public ExpressionNode getFillBucketKey() {
+        return delegate.getFillBucketKey();
     }
 
     @Override
@@ -1093,7 +1093,7 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
-    public void setFillBucketAlias(CharSequence fillBucketAlias) {
+    public void setFillBucketKey(ExpressionNode fillBucketKey) {
         throw new UnsupportedOperationException();
     }
 

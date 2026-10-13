@@ -1010,18 +1010,6 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    // ensureAliasUniqueness renames a group-by key whose alias an earlier column already
-    // claimed, e.g. the bucket in SELECT sum(a) * 2 v, ts sum ... SAMPLE BY, where the
-    // emitted sum(a) aggregate takes "sum" first. When the renamed key is the SAMPLE BY
-    // bucket, the alias that rewriteSampleBy recorded follows the rename, so that
-    // SqlCodeGenerator.generateFill still finds the bucket.
-    private static void renameFillBucketAlias(IQueryModel baseModel, CharSequence oldAlias, CharSequence newAlias) {
-        final CharSequence bucketAlias = baseModel.getFillBucketAlias();
-        if (bucketAlias != null && Chars.equalsIgnoreCase(bucketAlias, oldAlias)) {
-            baseModel.setFillBucketAlias(newAlias);
-        }
-    }
-
     /**
      * Recurse down expression node tree looking for an alias.
      */
@@ -10820,10 +10808,11 @@ public class SqlOptimiser implements Mutable {
                 nested.setFillTo(hasSubDayTimezoneWrap && sampleByTo != null
                         ? createToUtcCall(sampleByTo, sampleByTimezoneName) : sampleByTo);
                 nested.setFillStride(sampleBy);
-                // SqlCodeGenerator.generateFill locates the bucket key through this alias
-                // instead of guessing from column names: a user column such as
-                // first(ts) AS ts carries the timestamp's name but is not the bucket (#7838).
-                nested.setFillBucketAlias(timestampAlias);
+                // SqlCodeGenerator.generateFill locates the bucket key by this node's identity
+                // instead of guessing from column names: a user column such as first(ts) AS ts
+                // carries the timestamp's name but is not the bucket, and rewriteSelectClause0
+                // may rename the bucket's alias when an aggregate claims it first (#7838).
+                nested.setFillBucketKey(tsFloorFunc);
                 nested.setFillTimezoneName(hasFillFastPathTz ? sampleByTimezoneName : null);
                 nested.setFillValues(sampleByFill);
                 // Propagate offset to the fill cursor only when the sampler grid
@@ -12406,13 +12395,7 @@ public class SqlOptimiser implements Mutable {
 
             // sample-by queries will still require innerVirtualModel
             if ((((rewriteStatus & REWRITE_STATUS_USE_GROUP_BY_MODEL) != 0) && sampleBy == null)) {
-                final CharSequence selectAlias = qc.getAlias();
                 qc = ensureAliasUniqueness(groupByModel, qc);
-                // ensureAliasUniqueness returns the same QueryColumn instance when the alias
-                // was free, so reference inequality detects a rename.
-                if (qc.getAlias() != selectAlias) {
-                    renameFillBucketAlias(baseModel, selectAlias, qc.getAlias());
-                }
                 groupByModel.addBottomUpColumn(qc);
                 // group-by column references might be needed when we have
                 // outer model supporting arithmetic such as:
@@ -12834,15 +12817,6 @@ public class SqlOptimiser implements Mutable {
                     groupByModel.addBottomUpColumn(qc);
                     groupByNodes.add(deepClone(expressionNodePool, node));
                     groupByAliases.add(qc.getAlias());
-                    // rewriteSampleBy puts its bucket on the GROUP BY list when every projected
-                    // column carries the timestamp's token, e.g. a designated timestamp named max
-                    // next to max(v). This loop keys the bucket under a fresh alias; record it, so
-                    // that SqlCodeGenerator.generateFill still finds the bucket. The only such
-                    // node in the GROUP BY list is the optimizer's own, because rewriteSampleBy
-                    // rejects a user-written GROUP BY alongside SAMPLE BY.
-                    if (baseModel.getFillBucketAlias() != null && SqlUtil.isSampleByBucketFloor(node)) {
-                        baseModel.setFillBucketAlias(qc.getAlias());
-                    }
                     emitLiterals(qc.getAst(), translatingModel, innerVirtualModel, baseModel, false, false, false);
                 } else {
                     // The constant is redundant when at least one other group by column will remain.

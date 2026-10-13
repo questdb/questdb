@@ -1681,26 +1681,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     /**
      * Returns the index of the SAMPLE BY bucket key in the group-by output, or -1 when
-     * the output does not carry it. SqlOptimiser.rewriteSampleBy records the bucket's
-     * alias on the model that holds the fill parameters, so the lookup never guesses
-     * the bucket from column names (#7838). As a defensive check, the column under that
-     * alias must be TIMESTAMP-typed and must be the rewrite's own timestamp_floor_utc key.
+     * the output does not carry it. SqlOptimiser.rewriteSampleBy records the bucket key
+     * node on the model that holds the fill parameters, and the group-by column that
+     * carries that very node is the bucket, under whatever alias the optimizer gave it.
+     * The lookup never compares names, so a user column that shares the timestamp's
+     * name or collides with the bucket's alias cannot be taken for the bucket (#7838).
+     * The TIMESTAMP check guards getTimestampDriver downstream.
      */
     private static int findFillBucketIndex(IQueryModel model, RecordMetadata metadata, IQueryModel fillModel) {
-        final CharSequence bucketAlias = fillModel.getFillBucketAlias();
-        assert bucketAlias != null : "rewriteSampleBy records fillBucketAlias together with fillStride";
-        if (bucketAlias == null) {
+        final ExpressionNode bucketKey = fillModel.getFillBucketKey();
+        assert bucketKey != null : "rewriteSampleBy records fillBucketKey together with fillStride";
+        if (bucketKey == null) {
             return -1;
         }
-        final int index = SqlUtil.getColumnIndexQuiet(metadata, bucketAlias);
-        if (index < 0 || !ColumnType.isTimestamp(metadata.getColumnType(index))) {
-            return -1;
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            if (column.getAst() == bucketKey) {
+                final int index = SqlUtil.getColumnIndexQuiet(metadata, column.getAlias());
+                return index >= 0 && ColumnType.isTimestamp(metadata.getColumnType(index)) ? index : -1;
+            }
         }
-        final QueryColumn column = model.getAliasToColumnMap().get(bucketAlias);
-        if (column == null) {
-            return -1;
-        }
-        return SqlUtil.isSampleByBucketFloor(column.getAst()) ? index : -1;
+        return -1;
     }
 
     /**
@@ -4257,11 +4259,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final RecordMetadata baseMeta = groupByFactory.getMetadata();
             final int timestampIndex = findFillBucketIndex(model, baseMeta, curr);
             // This group-by owns the fill (checked above), so its output must carry the
-            // bucket key that rewriteSampleBy recorded. A miss means an optimizer path
-            // re-aliased or dropped the key without updating fillBucketAlias. Fail
-            // loudly under -ea; without -ea skip the fill rather than guess a column.
-            assert timestampIndex >= 0
-                    : "fill bucket alias does not resolve on the group-by output: " + curr.getFillBucketAlias();
+            // bucket key node that rewriteSampleBy recorded. A miss means an optimizer
+            // path dropped or rebuilt that node. Fail loudly under -ea; without -ea skip
+            // the fill rather than guess a column.
+            assert timestampIndex >= 0 : "fill bucket key node not found on the group-by output";
             if (timestampIndex < 0) {
                 final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
                 fillValues = null;
