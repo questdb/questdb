@@ -24,13 +24,28 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.SqlException;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.io.File;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
  * Data semantics of DEDUP SKIP: a new row that matches an existing row, or an earlier row of the
@@ -233,6 +248,57 @@ public class DedupSkipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSkipFormatParquetTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL DEDUP SKIP KEYS(ts, sym)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 1),
+                    ('2024-01-01T01:00:00.000000Z', 'a', 2),
+                    ('2024-01-01T02:00:00.000000Z', 'a', 3)
+                    """);
+            drainWalQueue();
+            assertQuery("SELECT name, isParquet FROM table_partitions('t')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            name\tisParquet
+                            2024-01-01\ttrue
+                            """);
+
+            // a client re-sends rows of the last partition, which is a Parquet one
+            assertPartitionsUnchanged("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T01:00:00.000000Z', 'a', 20),
+                    ('2024-01-01T02:00:00.000000Z', 'a', 30)
+                    """);
+
+            // the partition takes new rows, after its last row too
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T01:00:00.000000Z', 'b', 40),
+                    ('2024-01-01T02:00:00.000000Z', 'a', 50),
+                    ('2024-01-01T03:00:00.000000Z', 'a', 60)
+                    """);
+            drainWalQueue();
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv
+                            2024-01-01T00:00:00.000000Z\ta\t1
+                            2024-01-01T01:00:00.000000Z\ta\t2
+                            2024-01-01T01:00:00.000000Z\tb\t40
+                            2024-01-01T02:00:00.000000Z\ta\t3
+                            2024-01-01T03:00:00.000000Z\ta\t60
+                            """);
+        });
+    }
+
+    @Test
     public void testSkipParquetPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
@@ -265,13 +331,12 @@ public class DedupSkipTest extends AbstractCairoTest {
                     """);
             drainWalQueue();
 
-            // duplicates only, the parquet partition stays as is
-            execute("""
+            // duplicates only, the parquet partition stays as is, though a merge into its only row group rewrites the file
+            assertPartitionsUnchanged("""
                     INSERT INTO t VALUES
                     ('2024-01-01T01:00:00.000000Z', 'b', 14),
                     ('2024-01-01T01:00:00.000000Z', 'c', 15)
                     """);
-            drainWalQueue();
 
             assertQuery("SELECT * FROM t ORDER BY v")
                     .noLeakCheck()
@@ -283,6 +348,391 @@ public class DedupSkipTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\tb\t3
                             2024-01-02T00:00:00.000000Z\ta\t4
                             2024-01-01T01:00:00.000000Z\tc\t11
+                            """);
+        });
+    }
+
+    @Test
+    public void testSkipParquetPartitionCoalescedRowGroups() throws Exception {
+        // 4 rows per row group: 03:00 is both the last timestamp of the first row group and the first one of the
+        // second row group, so a merge of 03:00 rows dedups both row groups as one run and rewrites the file
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 1),
+                    ('2024-01-01T01:00:00.000000Z', 'a', 2),
+                    ('2024-01-01T02:00:00.000000Z', 'a', 3),
+                    ('2024-01-01T03:00:00.000000Z', 'a', 4),
+                    ('2024-01-01T03:00:00.000000Z', 'b', 5),
+                    ('2024-01-01T04:00:00.000000Z', 'a', 6),
+                    ('2024-01-01T05:00:00.000000Z', 'a', 7),
+                    ('2024-01-01T06:00:00.000000Z', 'a', 8),
+                    ('2024-01-02T00:00:00.000000Z', 'a', 100)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            // the second row group has the key 03:00 b
+            assertPartitionsUnchanged("INSERT INTO t VALUES ('2024-01-01T03:00:00.000000Z', 'b', 50)");
+
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T03:00:00.000000Z', 'a', 40),
+                    ('2024-01-01T03:00:00.000000Z', 'c', 41)
+                    """);
+            drainWalQueue();
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv
+                            2024-01-01T00:00:00.000000Z\ta\t1
+                            2024-01-01T01:00:00.000000Z\ta\t2
+                            2024-01-01T02:00:00.000000Z\ta\t3
+                            2024-01-01T03:00:00.000000Z\ta\t4
+                            2024-01-01T03:00:00.000000Z\tb\t5
+                            2024-01-01T03:00:00.000000Z\tc\t41
+                            2024-01-01T04:00:00.000000Z\ta\t6
+                            2024-01-01T05:00:00.000000Z\ta\t7
+                            2024-01-01T06:00:00.000000Z\ta\t8
+                            2024-01-02T00:00:00.000000Z\ta\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testSkipParquetPartitionConvertedKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k INT, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, k)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:01.000000Z', 10, 1),
+                    ('2024-01-01T00:00:03.000000Z', 30, 3),
+                    ('2024-01-01T00:00:05.000000Z', 50, 5),
+                    ('2024-01-02T00:00:00.000000Z', 70, 7)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            // The Parquet file keeps the INT keys, the merge converts them to compare them with the VARCHAR
+            // keys of the new rows
+            execute("ALTER TABLE t ALTER COLUMN k TYPE VARCHAR");
+            drainWalQueue();
+
+            assertPartitionsUnchanged("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:03.000000Z', '30', 33),
+                    ('2024-01-01T00:00:05.000000Z', '50', 55)
+                    """);
+
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:03.000000Z', '30', 333),
+                    ('2024-01-01T00:00:03.000000Z', '31', 31)
+                    """);
+            drainWalQueue();
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tv
+                            2024-01-01T00:00:01.000000Z\t10\t1
+                            2024-01-01T00:00:03.000000Z\t30\t3
+                            2024-01-01T00:00:03.000000Z\t31\t31
+                            2024-01-01T00:00:05.000000Z\t50\t5
+                            2024-01-02T00:00:00.000000Z\t70\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testSkipParquetPartitionInPlaceUpdate() throws Exception {
+        // 4 rows per row group: the Parquet partition has 3 row groups, the merge updates the file in place
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createParquetPartitionTable("t");
+            createParquetPartitionTable("u");
+
+            // duplicates in every row group, which the dedup counts as dropped rows
+            final long dedupRowCount = getDedupRowCount();
+            assertDuplicatesKeepPartitions("""
+                    ('2024-01-01T01:00:00.000000Z', 'a', 1001),
+                    ('2024-01-01T05:00:00.000000Z', 'b', 1005),
+                    ('2024-01-01T10:00:00.000000Z', 'c', 1010)
+                    """);
+            Assert.assertEquals(dedupRowCount + 3, getDedupRowCount());
+
+            // duplicates in the first two row groups and a new row in the third one
+            assertSameAsTwin(
+                    """
+                            ('2024-01-01T01:00:00.000000Z', 'a', 2001),
+                            ('2024-01-01T05:00:00.000000Z', 'b', 2005)
+                            """,
+                    "('2024-01-01T09:00:00.000000Z', 'x', 2009)"
+            );
+
+            // a new row in the first row group and duplicates in the other two, which the merge meets
+            // after it opened the file
+            assertSameAsTwin(
+                    """
+                            ('2024-01-01T06:00:00.000000Z', 'b', 2506),
+                            ('2024-01-01T11:00:00.000000Z', 'c', 2511)
+                            """,
+                    "('2024-01-01T00:00:00.000000Z', 'x', 2500)"
+            );
+
+            // a duplicate in the first row group and a new row after the last one, which adds a row group
+            assertSameAsTwin(
+                    "('2024-01-01T02:00:00.000000Z', 'a', 3002)",
+                    "('2024-01-01T23:00:00.000000Z', 'x', 3023)"
+            );
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv
+                            2024-01-01T00:00:00.000000Z\ta\t1
+                            2024-01-01T00:00:00.000000Z\tx\t2500
+                            2024-01-01T01:00:00.000000Z\ta\t2
+                            2024-01-01T02:00:00.000000Z\ta\t3
+                            2024-01-01T03:00:00.000000Z\ta\t4
+                            2024-01-01T04:00:00.000000Z\tb\t5
+                            2024-01-01T05:00:00.000000Z\tb\t6
+                            2024-01-01T06:00:00.000000Z\tb\t7
+                            2024-01-01T07:00:00.000000Z\tb\t8
+                            2024-01-01T08:00:00.000000Z\tc\t9
+                            2024-01-01T09:00:00.000000Z\tc\t10
+                            2024-01-01T09:00:00.000000Z\tx\t2009
+                            2024-01-01T10:00:00.000000Z\tc\t11
+                            2024-01-01T11:00:00.000000Z\tc\t12
+                            2024-01-01T23:00:00.000000Z\tx\t3023
+                            2024-01-02T00:00:00.000000Z\ta\t100
+                            """);
+        });
+    }
+
+    @Test
+    public void testSkipParquetPartitionNextToChangedPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            // the first two of the three partitions are Parquet ones
+            for (String tableName : new String[]{"t", "u"}) {
+                execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
+                execute("""
+                        INSERT INTO %s VALUES
+                        ('2024-01-01T00:00:00.000000Z', 'a', 1),
+                        ('2024-01-01T01:00:00.000000Z', 'a', 2),
+                        ('2024-01-02T00:00:00.000000Z', 'a', 3),
+                        ('2024-01-02T01:00:00.000000Z', 'a', 4),
+                        ('2024-01-03T00:00:00.000000Z', 'a', 5)
+                        """.formatted(tableName));
+                drainWalQueue();
+                execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+                drainWalQueue();
+            }
+
+            // one commit with a duplicate for the first partition and a new row for the second one
+            assertSameAsTwin(
+                    "('2024-01-01T01:00:00.000000Z', 'a', 20)",
+                    "('2024-01-02T00:30:00.000000Z', 'b', 40)"
+            );
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv
+                            2024-01-01T00:00:00.000000Z\ta\t1
+                            2024-01-01T01:00:00.000000Z\ta\t2
+                            2024-01-02T00:00:00.000000Z\ta\t3
+                            2024-01-02T00:30:00.000000Z\tb\t40
+                            2024-01-02T01:00:00.000000Z\ta\t4
+                            2024-01-03T00:00:00.000000Z\ta\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testSkipParquetPartitionRewriteAfterColumnTypeChange() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createParquetPartitionTable("t");
+            createParquetPartitionTable("u");
+            // The Parquet file keeps v as LONG. A merge that writes rows rewrites the file, and it re-encodes the
+            // row groups that it copies, through the decode buffers that the merge of a row group uses too.
+            execute("ALTER TABLE t ALTER COLUMN v TYPE DOUBLE");
+            execute("ALTER TABLE u ALTER COLUMN v TYPE DOUBLE");
+            drainWalQueue();
+
+            assertDuplicatesKeepPartitions("""
+                    ('2024-01-01T01:00:00.000000Z', 'a', 1001.0),
+                    ('2024-01-01T10:00:00.000000Z', 'c', 1010.0)
+                    """);
+
+            // The merge of the third row group decodes its keys before the rewrite opens its file. Then the
+            // rewrite re-encodes the first two row groups, and the merge decodes the other columns and writes
+            // the third row group.
+            assertSameAsTwin(
+                    "('2024-01-01T01:00:00.000000Z', 'a', 2001.0)",
+                    "('2024-01-01T09:00:00.000000Z', 'x', 2009.0)"
+            );
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv
+                            2024-01-01T00:00:00.000000Z\ta\t1.0
+                            2024-01-01T01:00:00.000000Z\ta\t2.0
+                            2024-01-01T02:00:00.000000Z\ta\t3.0
+                            2024-01-01T03:00:00.000000Z\ta\t4.0
+                            2024-01-01T04:00:00.000000Z\tb\t5.0
+                            2024-01-01T05:00:00.000000Z\tb\t6.0
+                            2024-01-01T06:00:00.000000Z\tb\t7.0
+                            2024-01-01T07:00:00.000000Z\tb\t8.0
+                            2024-01-01T08:00:00.000000Z\tc\t9.0
+                            2024-01-01T09:00:00.000000Z\tc\t10.0
+                            2024-01-01T09:00:00.000000Z\tx\t2009.0
+                            2024-01-01T10:00:00.000000Z\tc\t11.0
+                            2024-01-01T11:00:00.000000Z\tc\t12.0
+                            2024-01-02T00:00:00.000000Z\ta\t100.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testSkipParquetPartitionRewriteCopiesUnchangedMerge() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createRewrittenParquetPartitionTables();
+
+            // A new row in the first row group, duplicates in the other two. The rewrite opens its file at the
+            // first row group and copies the other two as they are.
+            assertSameAsTwin(
+                    """
+                            ('2024-01-01T05:00:00.000000Z', 'b', 2005, 5),
+                            ('2024-01-01T10:00:00.000000Z', 'c', 2010, 10)
+                            """,
+                    "('2024-01-01T02:00:00.000000Z', 'x', 2002, 2)"
+            );
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv\tw
+                            2024-01-01T00:00:00.000000Z\ta\t1\tnull
+                            2024-01-01T01:00:00.000000Z\ta\t2\tnull
+                            2024-01-01T02:00:00.000000Z\ta\t3\tnull
+                            2024-01-01T02:00:00.000000Z\tx\t2002\t2
+                            2024-01-01T03:00:00.000000Z\ta\t4\tnull
+                            2024-01-01T04:00:00.000000Z\tb\t5\tnull
+                            2024-01-01T05:00:00.000000Z\tb\t6\tnull
+                            2024-01-01T06:00:00.000000Z\tb\t7\tnull
+                            2024-01-01T07:00:00.000000Z\tb\t8\tnull
+                            2024-01-01T08:00:00.000000Z\tc\t9\tnull
+                            2024-01-01T09:00:00.000000Z\tc\t10\tnull
+                            2024-01-01T10:00:00.000000Z\tc\t11\tnull
+                            2024-01-01T11:00:00.000000Z\tc\t12\tnull
+                            2024-01-02T00:00:00.000000Z\ta\t100\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testSkipParquetPartitionRewriteFailsToCopy() throws Exception {
+        // the rewrite opens its file, then fails at its first write: the copy of the first row group, which the
+        // merge left as it is before it decided to write the third row group
+        assertRewriteFailureRecovers(true);
+    }
+
+    @Test
+    public void testSkipParquetPartitionRewriteFailsToOpen() throws Exception {
+        // the rewrite creates its directory, then fails to open its file
+        assertRewriteFailureRecovers(false);
+    }
+
+    @Test
+    public void testSkipParquetPartitionRewriteOpensAtMerge() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createRewrittenParquetPartitionTables();
+
+            // A duplicate in the first row group, none in the second one and a new row in the third one. The
+            // rewrite opens its file at the third row group, after it copies the first two as they are.
+            assertSameAsTwin(
+                    "('2024-01-01T01:00:00.000000Z', 'a', 2001, 1)",
+                    "('2024-01-01T09:00:00.000000Z', 'x', 2009, 9)"
+            );
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv\tw
+                            2024-01-01T00:00:00.000000Z\ta\t1\tnull
+                            2024-01-01T01:00:00.000000Z\ta\t2\tnull
+                            2024-01-01T02:00:00.000000Z\ta\t3\tnull
+                            2024-01-01T03:00:00.000000Z\ta\t4\tnull
+                            2024-01-01T04:00:00.000000Z\tb\t5\tnull
+                            2024-01-01T05:00:00.000000Z\tb\t6\tnull
+                            2024-01-01T06:00:00.000000Z\tb\t7\tnull
+                            2024-01-01T07:00:00.000000Z\tb\t8\tnull
+                            2024-01-01T08:00:00.000000Z\tc\t9\tnull
+                            2024-01-01T09:00:00.000000Z\tc\t10\tnull
+                            2024-01-01T09:00:00.000000Z\tx\t2009\t9
+                            2024-01-01T10:00:00.000000Z\tc\t11\tnull
+                            2024-01-01T11:00:00.000000Z\tc\t12\tnull
+                            2024-01-02T00:00:00.000000Z\ta\t100\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testSkipParquetPartitionRewriteOpensAtNewRowGroup() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createRewrittenParquetPartitionTables();
+
+            // A duplicate in the second row group and a new row after the last one. The rewrite opens its file
+            // at the new row group, after it copies the three row groups as they are.
+            assertSameAsTwin(
+                    "('2024-01-01T05:00:00.000000Z', 'b', 2005, 5)",
+                    "('2024-01-01T23:00:00.000000Z', 'x', 2023, 23)"
+            );
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv\tw
+                            2024-01-01T00:00:00.000000Z\ta\t1\tnull
+                            2024-01-01T01:00:00.000000Z\ta\t2\tnull
+                            2024-01-01T02:00:00.000000Z\ta\t3\tnull
+                            2024-01-01T03:00:00.000000Z\ta\t4\tnull
+                            2024-01-01T04:00:00.000000Z\tb\t5\tnull
+                            2024-01-01T05:00:00.000000Z\tb\t6\tnull
+                            2024-01-01T06:00:00.000000Z\tb\t7\tnull
+                            2024-01-01T07:00:00.000000Z\tb\t8\tnull
+                            2024-01-01T08:00:00.000000Z\tc\t9\tnull
+                            2024-01-01T09:00:00.000000Z\tc\t10\tnull
+                            2024-01-01T10:00:00.000000Z\tc\t11\tnull
+                            2024-01-01T11:00:00.000000Z\tc\t12\tnull
+                            2024-01-01T23:00:00.000000Z\tx\t2023\t23
+                            2024-01-02T00:00:00.000000Z\ta\t100\tnull
                             """);
         });
     }
@@ -308,6 +758,13 @@ public class DedupSkipTest extends AbstractCairoTest {
                     ('2024-01-01T00:00:00.000000Z', 12)
                     """);
             drainWalQueue();
+
+            // duplicates only, the parquet partition stays as is
+            assertPartitionsUnchanged("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:30:00.000000Z', 21),
+                    ('2024-01-01T01:00:00.000000Z', 20)
+                    """);
 
             assertQuery("SELECT * FROM t")
                     .noLeakCheck()
@@ -532,6 +989,134 @@ public class DedupSkipTest extends AbstractCairoTest {
         row.append();
     }
 
+    // The number of rows that the dedup of the table "t" dropped since the start
+    private static long getDedupRowCount() throws SqlException {
+        try (
+                RecordCursorFactory factory = select("SELECT wal_dedup_row_count_since_start FROM tables() WHERE table_name = 't'");
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            Assert.assertTrue(cursor.hasNext());
+            return cursor.getRecord().getLong(0);
+        }
+    }
+
+    // Names of the directories of the 2024-01-01 partition, of every version that is on disk
+    private static Set<String> listPartitionDirs(TableToken tableToken) {
+        final String[] dirs = new File(root, tableToken.getDirName()).list((dir, name) -> name.startsWith("2024-01-01"));
+        Assert.assertNotNull(dirs);
+        return new HashSet<>(Arrays.asList(dirs));
+    }
+
+    // Inserts the rows, duplicates of rows that the table "t" and its twin "u" have, into both tables, then
+    // asserts that both tables kept every partition as it was
+    private void assertDuplicatesKeepPartitions(String duplicateRows) throws SqlException {
+        final TableToken tableToken = engine.verifyTableName("t");
+        final TableToken twinToken = engine.verifyTableName("u");
+        final String partitions = readTxnToString(tableToken, false, true, true, true);
+        final String twinPartitions = readTxnToString(twinToken, false, true, true, true);
+        execute("INSERT INTO t VALUES " + duplicateRows);
+        execute("INSERT INTO u VALUES " + duplicateRows);
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(twinToken));
+        Assert.assertEquals(partitions, readTxnToString(tableToken, false, true, true, true));
+        Assert.assertEquals(twinPartitions, readTxnToString(twinToken, false, true, true, true));
+    }
+
+    // Runs the statement on the table "t" and asserts that it changed no partition: neither its row count, nor
+    // its name txn, nor the size of its Parquet file, nor the column versions.
+    private void assertPartitionsUnchanged(String sql) throws SqlException {
+        final TableToken tableToken = engine.verifyTableName("t");
+        final String partitions = readTxnToString(tableToken, false, true, true, true);
+        execute(sql);
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        Assert.assertEquals(partitions, readTxnToString(tableToken, false, true, true, true));
+    }
+
+    // A SKIP merge with a duplicate in the first row group and a new row in the third one opens the output of a
+    // rewrite at the third row group. The rewrite fails, which suspends the table and removes the directory that
+    // the rewrite created. Once the table resumes, the merge succeeds.
+    private void assertRewriteFailureRecovers(boolean isCopyFailure) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isArmed.get() && Utf8s.endsWithAscii(name, TableUtils.PARQUET_PARTITION_NAME)) {
+                    if (!isCopyFailure) {
+                        return -1;
+                    }
+                    // a read-only descriptor: the updater takes it, its first write fails
+                    super.close(super.openRW(name, opts));
+                    return super.openRONoCache(name);
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createParquetPartitionTable("t");
+            // The Parquet file lacks the new column, so a merge that writes rows rewrites the file
+            execute("ALTER TABLE t ADD COLUMN w INT");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("t");
+            final Set<String> partitionDirs = listPartitionDirs(tableToken);
+
+            isArmed.set(true);
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T01:00:00.000000Z', 'a', 2001, 1),
+                    ('2024-01-01T09:00:00.000000Z', 'x', 2009, 9)
+                    """);
+            drainWalQueue();
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            // the failed rewrite removed the directory it created
+            Assert.assertTrue(partitionDirs.containsAll(listPartitionDirs(tableToken)));
+
+            isArmed.set(false);
+            execute("ALTER TABLE t RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv\tw
+                            2024-01-01T00:00:00.000000Z\ta\t1\tnull
+                            2024-01-01T01:00:00.000000Z\ta\t2\tnull
+                            2024-01-01T02:00:00.000000Z\ta\t3\tnull
+                            2024-01-01T03:00:00.000000Z\ta\t4\tnull
+                            2024-01-01T04:00:00.000000Z\tb\t5\tnull
+                            2024-01-01T05:00:00.000000Z\tb\t6\tnull
+                            2024-01-01T06:00:00.000000Z\tb\t7\tnull
+                            2024-01-01T07:00:00.000000Z\tb\t8\tnull
+                            2024-01-01T08:00:00.000000Z\tc\t9\tnull
+                            2024-01-01T09:00:00.000000Z\tc\t10\tnull
+                            2024-01-01T09:00:00.000000Z\tx\t2009\t9
+                            2024-01-01T10:00:00.000000Z\tc\t11\tnull
+                            2024-01-01T11:00:00.000000Z\tc\t12\tnull
+                            2024-01-02T00:00:00.000000Z\ta\t100\tnull
+                            """);
+        });
+    }
+
+    // Inserts the new rows with duplicates of stored rows into the table "t", and the new rows alone into its
+    // twin "u", which has the same rows. SKIP drops the duplicates and writes none of the row groups that hold
+    // their keys, so both tables must end up with the same partitions, down to the name txn and the size of
+    // the Parquet file of each. A Parquet file holds the table name, which has the same length in both tables.
+    private void assertSameAsTwin(String duplicateRows, String newRows) throws SqlException {
+        final TableToken tableToken = engine.verifyTableName("t");
+        final TableToken twinToken = engine.verifyTableName("u");
+        execute("INSERT INTO t VALUES " + duplicateRows + ", " + newRows);
+        execute("INSERT INTO u VALUES " + newRows);
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(twinToken));
+        Assert.assertEquals(readTxnToString(twinToken, false, true, true, true), readTxnToString(tableToken, false, true, true, true));
+    }
+
     private void assertSkipAcrossCommits(boolean drainEachCommit) throws Exception {
         execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
         execute("""
@@ -582,5 +1167,36 @@ public class DedupSkipTest extends AbstractCairoTest {
                 .expectSize()
                 .timestamp("ts")
                 .returns("ts\tsym\tv\n2024-01-01T00:00:00.000000Z\ta\t" + expected + "\n");
+    }
+
+    // Creates the table with 12 rows on 2024-01-01, one per hour, which it converts to a Parquet partition, and
+    // one row on 2024-01-02, in a native partition. With 4 rows per row group, each row group of the Parquet
+    // partition has its own symbol: a, b and c.
+    private void createParquetPartitionTable(String tableName) throws SqlException {
+        execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
+        execute("""
+                INSERT INTO %s
+                SELECT '2024-01-01'::TIMESTAMP + (x - 1) * 3_600_000_000, CASE WHEN x <= 4 THEN 'a' WHEN x <= 8 THEN 'b' ELSE 'c' END, x
+                FROM long_sequence(12)
+                """.formatted(tableName));
+        execute("INSERT INTO " + tableName + " VALUES ('2024-01-02T00:00:00.000000Z', 'a', 100)");
+        drainWalQueue();
+        execute("ALTER TABLE " + tableName + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+        drainWalQueue();
+    }
+
+    // Creates the table "t" and its twin "u" with a Parquet partition that lacks the column w, which the tables
+    // add after the conversion: a merge that writes rows into the partition rewrites its file
+    private void createRewrittenParquetPartitionTables() throws SqlException {
+        createParquetPartitionTable("t");
+        createParquetPartitionTable("u");
+        execute("ALTER TABLE t ADD COLUMN w INT");
+        execute("ALTER TABLE u ADD COLUMN w INT");
+        drainWalQueue();
+        // duplicates in the first and the third row group, the merge leaves the partition as it is
+        assertDuplicatesKeepPartitions("""
+                ('2024-01-01T01:00:00.000000Z', 'a', 1001, 1),
+                ('2024-01-01T10:00:00.000000Z', 'c', 1010, 10)
+                """);
     }
 }

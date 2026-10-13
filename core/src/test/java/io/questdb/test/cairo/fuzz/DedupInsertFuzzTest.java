@@ -532,11 +532,14 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return !transaction.rollback && transaction.operationList.size() > 1 && !transaction.hasReplaceRange();
     }
 
-    // An O3 merge into a Parquet partition rewrites the file even when deduplication drops every
-    // new row, so only native partitions must keep their name txn when every re-inserted row is a duplicate.
-    private static String readPartitionsToString(TableToken tableToken) {
-        return readTxnToString(tableToken, false, true, true, false)
-                .replaceAll("txn: -?\\d+, parquetSize: \\d+", "parquet");
+    // When every re-inserted row is a duplicate, SKIP leaves native and Parquet partitions as they are. UPSERT
+    // keeps a native partition only after it checks that the new rows carry the values the partition has, a
+    // check that the Parquet merge does not make: an UPSERT O3 merge into a Parquet partition writes the file
+    // even when the new rows equal the stored ones, so for UPSERT only native partitions must keep their name
+    // txn.
+    private static String readPartitionsToString(TableToken tableToken, boolean isSkipMode) {
+        final String partitions = readTxnToString(tableToken, false, true, true, false);
+        return isSkipMode ? partitions : partitions.replaceAll("txn: -?\\d+, parquetSize: \\d+", "parquet");
     }
 
     private void addDuplicates(ObjList<FuzzTransaction> transactions, Rnd rnd, IntList upsertKeyIndexes, boolean isSkipMode) {
@@ -919,19 +922,21 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
     // Copies rows of the reference table, which has every written row, into the dedup table. UPSERT keeps the
     // last copy of a key, which is the row the table already has. SKIP drops every copy, including those that
-    // differ from the kept row outside the dedup keys. Either way, no native partition gets rewritten.
+    // differ from the kept row outside the dedup keys. Either way, no native partition gets rewritten, and with
+    // SKIP no Parquet partition either.
     private void reinsertWrittenRows(
             Rnd rnd,
             String tableNameDedup,
             String tableNameReference,
-            String timestampColumnName
+            String timestampColumnName,
+            boolean isSkipMode
     ) throws SqlException {
         execute("ALTER TABLE \"" + tableNameDedup + "\" SQUASH PARTITIONS", sqlExecutionContext);
         drainWalQueue();
 
         LOG.info().$("Re-inserting written rows into table ").$(tableNameDedup).$();
         TableToken tt = engine.verifyTableName(tableNameDedup);
-        String partitions = readPartitionsToString(tt);
+        String partitions = readPartitionsToString(tt, isSkipMode);
         int inserts = 2 + rnd.nextInt(10);
         long minTs, maxTs;
         try (TableReader reader = getReader(tableNameDedup)) {
@@ -957,7 +962,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         drainWalQueue();
 
         Assert.assertFalse("table should not be suspended", engine.getTableSequencerAPI().getTxnTracker(tt).isSuspended());
-        String partitionsAfter = readPartitionsToString(tt);
+        String partitionsAfter = readPartitionsToString(tt, isSkipMode);
         Assert.assertEquals("partitions should be not rewritten", partitions, partitionsAfter);
     }
 
@@ -1122,7 +1127,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
                             rnd,
                             tableNameDedup,
                             tableNameWalNoDedup,
-                            timestampColumnName
+                            timestampColumnName,
+                            isSkipMode
                     );
                     assertSqlCursorsNoDups(
                             tableNameWalNoDedup,
