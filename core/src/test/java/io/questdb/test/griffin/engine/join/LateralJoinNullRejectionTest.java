@@ -262,8 +262,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     }
 
     // When the filter does not compile, a query fails with the error of the filter, or, while the
-    // outer-ref join stays, with the rewriter's error at the RIGHT or FULL keyword. Mode.ANY takes
-    // any error, but never rows.
+    // outer-ref join stays, with the rewriter's error at the RIGHT or FULL keyword.
     @Test
     public void testCheckOfQueryAfterFailedReference() {
         final Column column = column("FLOAT");
@@ -273,18 +272,17 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         for (Shape shape : Shape.values()) {
             final String sql = lateralSql(shape, Form.TABLE, column, template);
             final int keyword = sql.indexOf(shape.joinKeyword);
-            final boolean isAnyErrorAccepted = shape.mode == Mode.ANY;
             assertCheck(shape, column, template, sql, reference, new Outcome(List.of(), null, -1), false);
             assertCheck(shape, column, template, sql, reference, new Outcome(null, typeError, 150), true);
             assertCheck(shape, column, template, sql, reference, new Outcome(null, OUTER_COLUMN_ERROR, keyword), shape.mode != Mode.WHERE_KEY);
-            assertCheck(shape, column, template, sql, reference, new Outcome(null, OUTER_COLUMN_ERROR, keyword + 1), isAnyErrorAccepted);
-            assertCheck(shape, column, template, sql, reference, new Outcome(null, "Invalid column: t.x", 117), isAnyErrorAccepted);
+            assertCheck(shape, column, template, sql, reference, new Outcome(null, OUTER_COLUMN_ERROR, keyword + 1), false);
+            assertCheck(shape, column, template, sql, reference, new Outcome(null, "Invalid column: t.x", 117), false);
         }
     }
 
     // When the reference returns rows, a query returns the same rows, or fails with the rewriter's
     // error at the RIGHT keyword when the filter keeps the rows that the join NULL-extends, or with the
-    // error that the plan raises at a bind variable that is NULL. Mode.ANY takes any error.
+    // error that the plan raises at a bind variable that is NULL. A FULL join decides the same way.
     @Test
     public void testCheckOfQueryAfterReferenceRows() {
         final Column column = column("INT");
@@ -307,9 +305,10 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         final String nullValueError = LateralNullCheckRecordCursorFactory.NULL_VALUE_ERROR;
         assertCheck(Shape.RIGHT_ON, column, "{C} >= $1", sql, nullExtendedRows, new Outcome(null, nullValueError, sql.indexOf("$1")), true);
         assertCheck(Shape.RIGHT_ON, column, "{C} >= $1", sql, nullExtendedRows, new Outcome(null, nullValueError, sql.indexOf("$1") + 1), false);
-        // Mode.ANY
+        // a FULL join
         sql = lateralSql(Shape.FULL_ON, Form.TABLE, column, "{C} = 10");
-        assertCheck(Shape.FULL_ON, column, "{C} = 10", sql, matchedRows, new Outcome(null, "Invalid column: t.x", 117), true);
+        assertCheck(Shape.FULL_ON, column, "{C} = 10", sql, matchedRows, matchedRows, true);
+        assertCheck(Shape.FULL_ON, column, "{C} = 10", sql, matchedRows, new Outcome(null, "Invalid column: t.x", 117), false);
         assertCheck(Shape.FULL_ON, column, "{C} = 10", sql, matchedRows, nullExtendedRows, false);
     }
 
@@ -336,8 +335,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         assertShape(Shape.INNER_ON_FULL);
     }
 
-    // The outer-ref join of a FULL join whose ON reads the outer row cannot be decorrelated in
-    // general, so the test only checks that no such query returns rows other than the reference.
+    // The FULL join also NULL-extends the trades that match no refund. They keep their outer row, so the
+    // filters that decide for a RIGHT join decide for a FULL join too.
     @Test
     public void testFullJoinWithCorrelatedOn() throws Exception {
         assertShape(Shape.FULL_ON);
@@ -401,8 +400,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
 
     // When the filter does not compile, see checkReference(), the query fails with its error, or, while
     // the outer-ref join stays, with the rewriter's error, which the rewriter raises before the code
-    // generator compiles the filter; Mode.ANY takes any error. Otherwise the query returns the rows of
-    // the reference, or fails as expected() decides.
+    // generator compiles the filter. Otherwise the query returns the rows of the reference, or fails as
+    // expected() decides.
     private static void checkCase(
             Shape shape,
             Form form,
@@ -418,9 +417,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         if (reference.error != null) {
             if (actual.error == null) {
                 failures.add(header + ": returned " + summary(actual) + ", the reference failed with " + summary(reference) + "\n    " + sql);
-            } else if (shape.mode != Mode.ANY
-                    && !hasSameMessage(actual, reference)
-                    && (shape.mode == Mode.WHERE_KEY || !isRewriterError(actual, position))) {
+            } else if (!hasSameMessage(actual, reference) && (shape.mode == Mode.WHERE_KEY || !isRewriterError(actual, position))) {
                 failures.add(header + ": failed with " + summary(actual) + ", expected the error of the filter, " + summary(reference)
                         + (shape.mode == Mode.PINNED ? ", or [" + position + "] ... " + ERROR_SUFFIX : "") + "\n    " + sql);
             }
@@ -434,7 +431,6 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         for (int i = 0, n = reference.rows.size(); i < n; i++) {
             keepsNullExtendedRows |= reference.rows.get(i).split("\t")[1].equals("null");
         }
-        // ROWS_OR_ERROR takes any SqlException, see Mode.ANY
         final Expected expected = expected(shape, form, column, template, keepsNullExtendedRows);
         switch (expected) {
             case ROWS -> {
@@ -493,9 +489,6 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     private static Expected expected(Shape shape, Form form, Column column, String template, boolean keepsNullExtendedRows) {
         if (shape.mode == Mode.WHERE_KEY) {
             return Expected.ROWS;
-        }
-        if (shape.mode == Mode.ANY) {
-            return Expected.ROWS_OR_ERROR;
         }
         if (keepsNullExtendedRows || isUnsupported(template)) {
             return Expected.ERROR;
@@ -696,7 +689,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     }
 
     private enum Expected {
-        ROWS, ERROR, ROWS_OR_ERROR
+        ROWS, ERROR
     }
 
     // how the sub-query passes the column through; the rewriter knows the type of a column that a
@@ -733,9 +726,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         // NULL-extends
         PINNED,
         // the rewriter removes the outer-ref join, and the query returns the reference rows
-        WHERE_KEY,
-        // any SqlException is acceptable, but never rows other than the reference
-        ANY
+        WHERE_KEY
     }
 
     private enum Shape {
@@ -743,7 +734,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         INNER_ON_RIGHT("{T} t JOIN xs x ON x.k = {K} RIGHT JOIN refunds r ON t.x = r.k WHERE {P}", "RIGHT JOIN refunds", Mode.PINNED),
         INNER_ON_FULL("{T} t JOIN xs x ON x.k = {K} FULL JOIN refunds r ON t.x = r.k WHERE {P}", "FULL JOIN refunds", Mode.PINNED),
         WHERE_KEY_RIGHT("{T} t RIGHT JOIN refunds r ON t.x = r.k WHERE t.x = {K} AND {P}", "RIGHT JOIN refunds", Mode.WHERE_KEY),
-        FULL_ON("{T} t FULL JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE {P}", "FULL JOIN refunds", Mode.ANY);
+        FULL_ON("{T} t FULL JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE {P}", "FULL JOIN refunds", Mode.PINNED);
 
         final String body;
         final String joinKeyword;

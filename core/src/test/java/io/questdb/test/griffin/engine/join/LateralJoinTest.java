@@ -1219,6 +1219,43 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // WHERE a.id > 0 drops the rows in which the FULL join NULL-extends a, so the outer-ref join stays
+    // ahead of the FULL join, and so does a, whose column the ON clause reads. Per outer row, a 10
+    // matches b 20 for o.k = 1, and a 11 matches b 21 for o.k = 2. The other a row stays with a NULL
+    // bid, and the b row that matches no a row has a NULL aid, which the filter drops.
+    @Test
+    public void testLateralCorrelatedFullJoinOnWithMasterFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT, x INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 1, 1), (2, 2, 2)");
+            execute("INSERT INTO a VALUES (10, 1, 1), (11, 2, 2)");
+            execute("INSERT INTO b VALUES (20, 1, 1), (21, 2, 3)");
+            for (String on : new String[]{"a.x = b.k AND b.k = o.k", "b.k = o.k AND a.x = b.k"}) {
+                final String body = "SELECT a.id aid, b.id bid FROM a FULL JOIN b ON " + on + " WHERE a.id > 0";
+                assertQuery("SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (" + body + ") l ORDER BY 1, 2, 3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\taid\tbid
+                                1\t10\t20
+                                1\t11\tnull
+                                2\t10\tnull
+                                2\t11\t21
+                                """);
+                assertQuery("SELECT o.id, l.aid, l.bid FROM o JOIN LATERAL (" + body + " AND b.id > 0) l ORDER BY 1, 2, 3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\taid\tbid
+                                1\t10\t20
+                                2\t11\t21
+                                """);
+            }
+        });
+    }
+
     // Per outer row, the FULL join emits the b rows of s that match no a row with a NULL a.x, and
     // WHERE a.x = o.x keeps them only for a NULL o.x: 2 null 22. One FULL join over the b rows of
     // all outer rows cannot tell them apart from the b rows of o.x = 1, so the query fails.
@@ -1464,6 +1501,94 @@ public class LateralJoinTest extends AbstractCairoTest {
                 final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM trades t JOIN xs x ON x.k = o.k RIGHT JOIN refunds r ON r.k = t.x WHERE " + filter + ") l";
                 assertQuery(sql)
                         .fails(sql.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+            }
+        });
+    }
+
+    // The ON clause of the RIGHT or FULL join reads the outer row through refunds only, so only the
+    // order as written keeps trades ahead of the join. Run after it, trades would fill in the columns
+    // of refund 103, which matches no outer key and so has a NULL outer-ref key, and that NULL key
+    // would match order 3. Per outer row, the refund with the outer key matches every trade, refund
+    // 102 for the NULL key of order 3, as = matches NULL to NULL, and t.id > 0 drops trade NULL and
+    // the unmatched refunds.
+    @Test
+    public void testLateralCorrelatedOuterJoinOnOnlyOuterKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullableCorrelatedRightJoinTables();
+            execute("INSERT INTO refunds VALUES (103, 5, 4::timestamp)");
+            for (String join : new String[]{"RIGHT", "FULL"}) {
+                final String body = "SELECT t.id tid, r.id rid FROM trades t " + join + " JOIN refunds r ON r.k = o.k";
+                assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (" + body + " WHERE t.id > 0) l ORDER BY 1, 2, 3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                id\ttid\trid
+                                1\t10\t100
+                                1\t12\t100
+                                1\t15\t100
+                                2\t10\t101
+                                2\t12\t101
+                                2\t15\t101
+                                3\t10\t102
+                                3\t12\t102
+                                3\t15\t102
+                                """);
+                // without the filter, the unmatched refunds would lose their outer row
+                final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (" + body + ") l";
+                assertQuery(sql)
+                        .fails(sql.indexOf(join + " JOIN"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+            }
+        });
+    }
+
+    // Every table written before a RIGHT or FULL join runs before it, also when the outer-ref join of
+    // a LATERAL sub-query precedes the join, whatever else the level joins: a non-equi condition on
+    // trades, a LEFT join that reads trades after it, a RIGHT or INNER join after it, and a CROSS join
+    // before it. xs holds the keys of refunds 100 and 102 only. The data is that of
+    // testLateralCorrelatedOuterJoinOnOnlyOuterKey().
+    @Test
+    public void testLateralCorrelatedOuterJoinRunsAfterItsPrefix() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullableCorrelatedRightJoinTables();
+            execute("INSERT INTO refunds VALUES (103, 5, 4::timestamp)");
+            final String everyRefund = """
+                    id\ttid\trid
+                    1\t10\t100
+                    1\t12\t100
+                    1\t15\t100
+                    2\t10\t101
+                    2\t12\t101
+                    2\t15\t101
+                    3\t10\t102
+                    3\t12\t102
+                    3\t15\t102
+                    """;
+            final String refundsInXs = """
+                    id\ttid\trid
+                    1\t10\t100
+                    1\t12\t100
+                    1\t15\t100
+                    3\t10\t102
+                    3\t12\t102
+                    3\t15\t102
+                    """;
+            final String[][] cases = {
+                    {"trades t FULL JOIN refunds r ON r.k = o.k AND r.id > t.id WHERE t.id > 0", everyRefund},
+                    {"trades t RIGHT JOIN refunds r ON r.k = o.k LEFT JOIN refunds r2 ON r2.k = t.x AND r2.k = r.k WHERE t.id > 0", everyRefund},
+                    {"trades t RIGHT JOIN refunds r ON r.k = o.k RIGHT JOIN xs x ON x.k = r.k WHERE t.id > 0 AND r.id > 0", refundsInXs},
+                    {"trades t RIGHT JOIN refunds r ON r.k = o.k JOIN xs x ON x.k = r.k WHERE t.id > 0", refundsInXs},
+                    {"trades t CROSS JOIN xs x RIGHT JOIN refunds r ON r.k = o.k WHERE t.id = 10 AND x.v = 200", """
+                            id\ttid\trid
+                            1\t10\t100
+                            2\t10\t101
+                            3\t10\t102
+                            """},
+            };
+            for (String[] c : cases) {
+                assertQuery("SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM " + c[0] + ") l ORDER BY 1, 2, 3")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(c[1]);
             }
         });
     }

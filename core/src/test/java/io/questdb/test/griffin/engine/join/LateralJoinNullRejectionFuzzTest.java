@@ -79,14 +79,16 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     private static final String[] LATERAL_JOINS = {"JOIN LATERAL", "CROSS JOIN LATERAL", "LEFT JOIN LATERAL"};
     private static final int QUERIES_PER_ROUND = 40;
     private static final Shape[] SHAPES = {
-            new Shape("{T} t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE {P}", false, false),
-            new Shape("{T} t RIGHT JOIN refunds r ON r.k = {K} AND t.x = r.k WHERE {P}", false, false),
-            new Shape("{T} t JOIN xs x ON x.k = {K} RIGHT JOIN refunds r ON t.x = r.k WHERE {P}", false, false),
-            new Shape("{T} t JOIN xs x ON x.k = t.x AND x.k = {K} RIGHT JOIN refunds r ON t.x = r.k WHERE {P}", false, false),
-            new Shape("{T} t JOIN xs x ON x.k = {K} FULL JOIN refunds r ON t.x = r.k WHERE {P}", false, false),
-            new Shape("{T} t RIGHT JOIN refunds r ON t.x = r.k WHERE t.x = {K} AND {P}", true, false),
-            // the rewriter fails on this shape, but must never return other rows than the reference
-            new Shape("{T} t FULL JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE {P}", false, true)
+            new Shape("{T} t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE {P}", false),
+            new Shape("{T} t RIGHT JOIN refunds r ON r.k = {K} AND t.x = r.k WHERE {P}", false),
+            new Shape("{T} t JOIN xs x ON x.k = {K} RIGHT JOIN refunds r ON t.x = r.k WHERE {P}", false),
+            new Shape("{T} t JOIN xs x ON x.k = t.x AND x.k = {K} RIGHT JOIN refunds r ON t.x = r.k WHERE {P}", false),
+            new Shape("{T} t JOIN xs x ON x.k = {K} FULL JOIN refunds r ON t.x = r.k WHERE {P}", false),
+            new Shape("{T} t RIGHT JOIN refunds r ON t.x = r.k WHERE t.x = {K} AND {P}", true),
+            new Shape("{T} t FULL JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE {P}", false),
+            // only the order as written keeps trades ahead of a join whose ON clause reads no trades column
+            new Shape("{T} t RIGHT JOIN refunds r ON r.k = {K} WHERE {P}", false),
+            new Shape("{T} t FULL JOIN refunds r ON r.k = {K} WHERE {P}", false)
     };
     // queries whose filter is valid, so the reference ran and the query was checked against it
     private int validCount;
@@ -293,7 +295,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                 failures.add("WRONG ROWS " + actual + ", expected " + expected + bindSuffix + "\n    " + sql);
             }
         } catch (SqlException e) {
-            if (!shape.isAnyErrorAllowed && !Chars.contains(e.getFlyweightMessage(), ERROR_SUFFIX)) {
+            if (!Chars.contains(e.getFlyweightMessage(), ERROR_SUFFIX)) {
                 failures.add("failed with [" + e.getPosition() + "] " + e.getFlyweightMessage() + bindSuffix + "\n    " + sql);
             }
         } catch (Throwable e) {
@@ -437,6 +439,6 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                               Object[] bindValues) {
     }
 
-    private record Shape(String body, boolean hasWhereKey, boolean isAnyErrorAllowed) {
+    private record Shape(String body, boolean hasWhereKey) {
     }
 }

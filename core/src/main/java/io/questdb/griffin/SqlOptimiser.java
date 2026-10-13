@@ -820,28 +820,6 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    // Returns true when a join that LateralJoinRewriter inserted for the outer references of a LATERAL
-    // sub-query precedes a RIGHT/FULL join. The rewriter needs the preserved rows of that join repeated
-    // for each outer reference, which no join order provides, so the level keeps its order.
-    private static boolean hasLateralOuterRefBeforeRightOrFullJoin(IQueryModel parent) {
-        final ObjList<IQueryModel> joinModels = parent.getJoinModels();
-        boolean hasOuterRef = false;
-        for (int i = 1, n = joinModels.size(); i < n; i++) {
-            final IQueryModel m = joinModels.getQuick(i);
-            final int joinType = m.getJoinType();
-            if (hasOuterRef && (joinType == IQueryModel.JOIN_RIGHT_OUTER
-                    || joinType == IQueryModel.JOIN_FULL_OUTER
-                    || joinType == IQueryModel.JOIN_CROSS_RIGHT
-                    || joinType == IQueryModel.JOIN_CROSS_FULL)) {
-                return true;
-            }
-            if (isLateralOuterRefJoin(m)) {
-                hasOuterRef = true;
-            }
-        }
-        return false;
-    }
-
     private static boolean hasLinearFill(ObjList<ExpressionNode> fill) {
         for (int i = 0, n = fill.size(); i < n; i++) {
             if (isLinearKeyword(fill.getQuick(i).token)) {
@@ -3866,7 +3844,7 @@ public class SqlOptimiser implements Mutable {
     // That holds only while every context-free RIGHT/FULL join from the boundary on keeps its whole prefix
     // as context parents; a forward reference can leave one unpinned, and the edge then skips as well.
     private void constrainOuterJoinsAfterExpressionParents(IQueryModel parent) throws SqlException {
-        if (outerJoinExpressionParents.size() == 0 || hasLateralOuterRefBeforeRightOrFullJoin(parent)) {
+        if (outerJoinExpressionParents.size() == 0) {
             return;
         }
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
@@ -3922,23 +3900,22 @@ public class SqlOptimiser implements Mutable {
     // A RIGHT/FULL OUTER join takes its complete logical prefix as its master, so every model before
     // it must execute first. doReorderTables would otherwise append a context-free prefix model after
     // the outer join, or run a non-equi one, which it appends last only while nothing links it, ahead
-    // of its prefix. A prefix model keeps its order when its ON clause may read a model that cannot
-    // run before it: the outer join or a later model for an INNER/CROSS join, a later model outside
-    // the run of INNER/CROSS joins that directly follows a LEFT join, or a model of that run that
-    // reads the LEFT join back, or any later model for another outer or time-series join. A pinned
-    // LEFT join runs after the models of that run its ON clause reads. A non-equi outer join has no
-    // join key that keeps it after the prefix models it reads, so it keeps its order unless this
-    // method pins every prefix model, its ON clause reads no later model, and every later time-series
-    // join can run ahead of it. The level keeps its order when an ON clause anywhere on it has a name
-    // that does not resolve to one model: SqlCodeGenerator resolves that name against the models that
-    // execute before its join, and a pin can move a second holder of the name ahead.
-    // qualifyOuterJoinOnNamesSharedWithLaterModels qualifies an outer join's name that one model in
-    // scope and a later model share, so such a name is either a forward reference or shared by
-    // several models in scope.
+    // of its prefix. That holds for the outer-ref join of a LATERAL sub-query too: LateralJoinRewriter
+    // keeps it ahead of a RIGHT/FULL join only when a filter after the join drops the rows that the
+    // join NULL-extends on its master side, and the order as written is then exact. A prefix model
+    // keeps its order when its ON clause may read a model that cannot run before it: the outer join
+    // or a later model for an INNER/CROSS join, a later model outside the run of INNER/CROSS joins
+    // that directly follows a LEFT join, or a model of that run that reads the LEFT join back, or any
+    // later model for another outer or time-series join. A pinned LEFT join runs after the models of
+    // that run its ON clause reads. A non-equi outer join has no join key that keeps it after the
+    // prefix models it reads, so it keeps its order unless this method pins every prefix model, its ON
+    // clause reads no later model, and every later time-series join can run ahead of it. The level
+    // keeps its order when an ON clause anywhere on it has a name that does not resolve to one model:
+    // SqlCodeGenerator resolves that name against the models that execute before its join, and a pin
+    // can move a second holder of the name ahead. qualifyOuterJoinOnNamesSharedWithLaterModels
+    // qualifies an outer join's name that one model in scope and a later model share, so such a name
+    // is either a forward reference or shared by several models in scope.
     private void constrainRightAndFullJoinsAfterPrefix(IQueryModel parent) throws SqlException {
-        if (hasLateralOuterRefBeforeRightOrFullJoin(parent)) {
-            return;
-        }
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
         final int n = joinModels.size();
         final IntHashSet refs = intHashSetPool.next();
