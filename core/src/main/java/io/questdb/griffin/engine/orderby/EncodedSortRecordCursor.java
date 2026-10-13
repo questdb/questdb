@@ -44,6 +44,7 @@ import io.questdb.griffin.engine.LimitOverflowException;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -77,6 +78,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     // the chain ordinals of a sorted block's rows, see peekRecordBlock(); null until the first block
     private DirectLongList sortedBlockRows;
     private SortedBlock sortedBlock;
+    private MemoryTracker memoryTracker;
     private long currentAddr;
     private long endAddr;
     private int entrySize;
@@ -180,14 +182,20 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             isSorted = true;
         }
         final long remaining = (endAddr - currentAddr) / entrySize;
-        if (remaining < 1) {
+        // a block holds at least one row
+        if (remaining < 1 || maxRows < 1) {
             return null;
         }
         circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         final int n = (int) Math.min(Math.min(remaining, maxRows), SORTED_BLOCK_MAX_ROWS);
         final long stride = recordChain.getFixedRecordStride();
         if (sortedBlockRows == null) {
-            sortedBlockRows = new DirectLongList(n, MemoryTag.NATIVE_DEFAULT);
+            // charged to the query, as the entries and the chain are; freed by close()
+            sortedBlockRows = new DirectLongList(n, MemoryTag.NATIVE_DEFAULT, true);
+            sortedBlockRows.setMemoryTracker(memoryTracker);
+            sortedBlockRows.reopen();
+        }
+        if (sortedBlock == null) {
             sortedBlock = new SortedBlock();
         }
         sortedBlockRows.clear();
@@ -232,6 +240,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         // Wire only the row-count-scaled allocators; keyHeap stays global-counter only as it is
         // bounded by maxEntryMemBytes (see the throwLimitOverflow check below).
         entryMem.setMemoryTracker(executionContext.getMemoryTracker());
+        memoryTracker = executionContext.getMemoryTracker();
         recordChain.setMemoryTracker(executionContext.getMemoryTracker());
         if (!isOpen) {
             isOpen = true;

@@ -64,6 +64,8 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     private SelectedRowsBlock block;
     private long cursor = -1;
     private int dispatchLimit;
+    // the dispatch limit a gathered execution lowered, to restore on toTop(); -1 for none
+    private int dispatchLimitBeforeGather = -1;
     private int frameIndex;
     private int frameLimit;
     private long frameRowCount;
@@ -285,7 +287,13 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
                 // a block consumer from the start: the filtering threads gather the rows' fixed-size
                 // columns, which the blocks then offer as dense columns
                 final AsyncFilterAtom atom = (AsyncFilterAtom) frameSequence.getAtom();
-                atom.setGathering(atom.hasGatheredColumns());
+                atom.setGathering(true);
+                if (atom.isGathering()) {
+                    // the frames gathered ahead of the consumer wait in their tasks: a bounded run-ahead
+                    // keeps what they hold small, see AsyncFilterAtom#GATHER_MAX_BYTES
+                    dispatchLimitBeforeGather = dispatchLimit;
+                    dispatchLimit = Math.min(dispatchLimit, Math.max(4, 2 * defaultDispatchLimit));
+                }
             }
             // the first frame, as the first hasNext() fetches it
             fetchNextFrame(dispatchLimit, false);
@@ -416,6 +424,13 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     @Override
     public void toTop() {
         collectCursor(false);
+        // a re-read starts with rows, or a block, before the first frame; the frames are gathered
+        // only for a block consumer from the start, which toTop() cannot tell yet
+        ((AsyncFilterAtom) frameSequence.getAtom()).setGathering(false);
+        if (dispatchLimitBeforeGather != -1) {
+            dispatchLimit = dispatchLimitBeforeGather;
+            dispatchLimitBeforeGather = -1;
+        }
         filter.toTop();
         frameSequence.toTop();
         rowsRemaining = ogRowsRemaining;
@@ -440,6 +455,8 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
     private void collectCursor(boolean forceCollect) {
         if (cursor > -1) {
+            // a task the filtering thread gathered, whether or not its rows were read
+            ((AsyncFilterAtom) frameSequence.getAtom()).releaseGathered(frameSequence.getTask(cursor));
             frameSequence.collect(cursor, forceCollect);
             // It is necessary to clear 'cursor' value
             // because we updated frameIndex and loop can exit due to lack of frames.
@@ -554,6 +571,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         this.ogRowsRemaining = rowsRemaining;
         // put a cap the number of in-flight page frame tasks in case of LIMIT N query
         this.dispatchLimit = rowsRemaining != Long.MAX_VALUE ? defaultDispatchLimit : Integer.MAX_VALUE;
+        this.dispatchLimitBeforeGather = -1;
         this.frameIndex = -1;
         this.frameLimit = -1;
         this.frameRowIndex = -1;
