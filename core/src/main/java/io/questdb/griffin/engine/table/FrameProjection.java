@@ -395,10 +395,12 @@ public class FrameProjection implements QuietCloseable {
             assert testProjectedFrames.incrementAndGet() > 0;
             return true;
         } catch (CairoException e) {
-            if (e.isInterruption() || e.isCancellation() || e.isOutOfMemory()) {
+            if (e.isInterruption() || e.isCancellation()) {
                 throw e;
             }
-            // computed row by row by the projection's own thread, which raises it if it reads the row
+            // computed row by row by the projection's own thread, which raises it if it reads the row;
+            // past the query's memory limit (the values, the kernels' scratch), the values are only
+            // an optimisation that the projection's thread does without
             sink.clear();
             return false;
         } catch (RuntimeException e) {
@@ -425,10 +427,11 @@ public class FrameProjection implements QuietCloseable {
         testRowBatches.set(0);
     }
 
-    // Grows the frame's value list, charging the growth to the query's memory limit (a breach throws).
-    // The list belongs to a reduce task of the shared queue, which may free or reuse it after the
-    // query ends, so its frees are global-only and the charge is released when the query's tracker
-    // is reconciled, as covered decode buffers' are, see MemoryTracker.addCoveredBytes().
+    // Grows the frame's value list, charging the growth to the query's memory limit, whose breach
+    // project() turns into a frame left to the projection's own thread. The list belongs to a reduce
+    // task of the shared queue, which may free or reuse it after the query ends, so its frees are
+    // global-only and the charge is released when the query's tracker is reconciled, as covered
+    // decode buffers' are, see MemoryTracker.addCoveredBytes().
     private static void ensureCapacity(DirectLongList sink, long words, @Nullable MemoryTracker memoryTracker) {
         final long capacityBefore = sink.getCapacity();
         if (memoryTracker == null || capacityBefore >= words) {

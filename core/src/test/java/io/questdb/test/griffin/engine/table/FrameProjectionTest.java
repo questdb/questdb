@@ -74,6 +74,41 @@ public class FrameProjectionTest extends AbstractCairoTest {
     };
 
     @Test
+    public void testMemoryLimitLeavesTheValuesToTheProjection() throws Exception {
+        // The values the filtering threads project count against the query's memory limit: under a
+        // limit too small for a frame's values, no frame is projected (the projection's thread
+        // computes them), and the rows are the switch-off rows; without the limit, frames are.
+        final String query = "select ts, x * 3 a, x * 5 b, x * 7 c, x * 9 d, x * 11 e, x * 13 f, x * 17 g, x * 19 h from p where x % 2 = 0";
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1_000_000);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000_000);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                // one partition, one frame of 100,000 filtered rows: 6.4 MB of values, where the
+                // kernels' scratch is 576 KB a slot
+                engine.execute("create table p (x long, ts timestamp) timestamp(ts) partition by year bypass wal", ctx);
+                engine.execute("insert into p select x, (x * 1_000_000L)::timestamp from long_sequence(200_000)", ctx);
+                for (long limit : new long[]{0, 5L << 20}) {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, limit);
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "false");
+                    final String expected;
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        expected = read(factory, ctx, null);
+                    }
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        final FrameProjection projection = findProjection(factory);
+                        Assert.assertNotNull(projection);
+                        projection.resetTestCounter();
+                        TestUtils.assertEquals(query + " [limit " + limit + ']', expected, read(factory, ctx, null));
+                        Assert.assertEquals("limit " + limit, limit == 0, projection.getProjectedFrameCount() > 0);
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testOnTestContext() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext);
