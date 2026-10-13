@@ -24,10 +24,10 @@
 
 package io.questdb.test.griffin.engine.join;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -47,7 +47,8 @@ import java.util.Arrays;
  * which loses the designated timestamp. The prefix form wraps only the tables before the last join,
  * so the optimiser plans the prefix as written, time-series joins included. The queries use standard
  * SQL: every ON clause reads tables joined before it, and every name resolves to one table. The data
- * holds NULL keys and rows that do not match.
+ * holds NULL keys and rows that do not match. A reference may fail only where it cannot express its
+ * query, see isUnsupportedReference(); any other failure of either query fails the test.
  */
 public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(RightFullJoinPrefixFuzzTest.class);
@@ -153,6 +154,29 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         return new String[]{flat.toString(), nested, prefixSubQuery};
     }
 
+    // an ASOF or LT join written after a RIGHT or FULL join, so that its left side has no designated
+    // timestamp
+    private static boolean hasOuterJoinBeforeTimeSeriesJoin(String sql) {
+        final int timeSeriesJoin = Math.max(sql.lastIndexOf(" ASOF JOIN "), sql.lastIndexOf(" LT JOIN "));
+        final int rightJoin = sql.indexOf(" RIGHT JOIN ");
+        final int fullJoin = sql.indexOf(" FULL JOIN ");
+        return (rightJoin != -1 && rightJoin < timeSeriesJoin) || (fullJoin != -1 && fullJoin < timeSeriesJoin);
+    }
+
+    // A reference fails only where it cannot express its query. A time-series join after a RIGHT or
+    // FULL join has no designated timestamp on its left side. The prefix form also runs into #7700:
+    // SqlOptimiser may run a table that no join key ties to the others after an outer join whose ON
+    // clause reads it, and the valid query fails with "Invalid column". The nested form joins two
+    // models per level, so each ON clause reads only the models that its own join combines.
+    private static boolean isUnsupportedReference(String reference, int referenceIndex, SqlException e) {
+        final CharSequence message = e.getFlyweightMessage();
+        if (Chars.equals(message, "TIMESTAMP column is required but not provided")
+                || Chars.equals(message, "left side of time series join has no timestamp")) {
+            return hasOuterJoinBeforeTimeSeriesJoin(reference);
+        }
+        return referenceIndex == PREFIX_SUB_QUERY && Chars.startsWith(message, "Invalid column: ");
+    }
+
     private static String sortedRows(StringSink sink) {
         final String[] lines = sink.toString().split("\n");
         // the header differs: a sub-query renames the columns that several tables share
@@ -167,6 +191,7 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             createTables();
             final StringSink flatRows = new StringSink();
             final StringSink referenceRows = new StringSink();
+            int checkedCount = 0;
             for (int i = 0; i < queryCount; i++) {
                 final String[] queries = generateQueries(rnd, referenceIndex == PREFIX_SUB_QUERY);
                 final String flat = queries[0];
@@ -174,20 +199,25 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
                 try {
                     referenceRows.clear();
                     printSql(reference, referenceRows);
-                } catch (SqlException | CairoException e) {
-                    // the reference itself is not supported, e.g. a nested time-series join after an
-                    // outer join, which drops the designated timestamp
-                    continue;
+                } catch (Throwable e) {
+                    if (e instanceof SqlException sqlException && isUnsupportedReference(reference, referenceIndex, sqlException)) {
+                        continue;
+                    }
+                    throw new AssertionError("reference failed [reference=" + reference + ", flat=" + flat + ", error=" + e + ']', e);
                 }
                 try {
                     flatRows.clear();
                     printSql(flat, flatRows);
-                } catch (SqlException | CairoException e) {
+                } catch (Throwable e) {
                     throw new AssertionError("flat query failed, although its reference runs [flat=" + flat
-                            + ", reference=" + reference + ", error=" + e.getMessage() + ']', e);
+                            + ", reference=" + reference + ", error=" + e + ']', e);
                 }
                 Assert.assertEquals("flat=" + flat + ", reference=" + reference, sortedRows(referenceRows), sortedRows(flatRows));
+                checkedCount++;
             }
+            // Over 80% of the references run. A change that made most of them fail with an error
+            // that isUnsupportedReference() accepts would check few rows and pass.
+            Assert.assertTrue("only " + checkedCount + " of " + queryCount + " queries were checked", checkedCount * 2 >= queryCount);
         });
     }
 

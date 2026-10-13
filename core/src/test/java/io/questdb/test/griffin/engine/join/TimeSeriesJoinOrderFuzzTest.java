@@ -24,11 +24,11 @@
 
 package io.questdb.test.griffin.engine.join;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Chars;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -69,7 +69,8 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
 
     private static boolean isFullFatValueTypeError(Throwable e, boolean fullFatJoins) {
         // a full-fat join stores the non-key columns of the table it hashes, which cannot be VARCHAR
-        return fullFatJoins && e.getMessage() != null && e.getMessage().contains("is of unsupported type");
+        return fullFatJoins && e instanceof SqlException sqlException
+                && Chars.contains(sqlException.getFlyweightMessage(), "is of unsupported type");
     }
 
     private void assertFlatJoinReturnsRowsOfReference(boolean fullFatJoins) throws Exception {
@@ -78,6 +79,7 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
             createTables();
             final StringSink flatRows = new StringSink();
             final StringSink referenceRows = new StringSink();
+            int checkedCount = 0;
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 compiler.setFullFatJoins(fullFatJoins);
                 for (int i = 0; i < QUERY_COUNT; i++) {
@@ -86,22 +88,26 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
                     final String reference = queries[1];
                     try {
                         TestUtils.printSql(compiler, sqlExecutionContext, reference, referenceRows);
-                    } catch (SqlException | CairoException e) {
-                        // the reference itself is not supported, e.g. a key of two different types
-                        continue;
+                    } catch (Throwable e) {
+                        // key() pairs only columns that SqlCodeGenerator can join on, so every reference runs
+                        throw new AssertionError("reference failed [reference=" + reference + ", flat=" + flat + ", error=" + e + ']', e);
                     }
                     try {
                         TestUtils.printSql(compiler, sqlExecutionContext, flat, flatRows);
-                    } catch (SqlException | CairoException e) {
+                    } catch (Throwable e) {
                         if (isFullFatValueTypeError(e, fullFatJoins)) {
                             continue;
                         }
                         throw new AssertionError("flat query failed, although its reference runs [flat=" + flat
-                                + ", reference=" + reference + ", error=" + e.getMessage() + ']', e);
+                                + ", reference=" + reference + ", error=" + e + ']', e);
                     }
                     Assert.assertEquals("flat=" + flat + ", reference=" + reference, sortedRows(referenceRows), sortedRows(flatRows));
+                    checkedCount++;
                 }
             }
+            // Full-fat joins skip a query whose hash table would store a VARCHAR column. A change that
+            // made most queries do so would check few rows and pass.
+            Assert.assertTrue("only " + checkedCount + " of " + QUERY_COUNT + " queries were checked", checkedCount * 2 >= QUERY_COUNT);
         });
     }
 
