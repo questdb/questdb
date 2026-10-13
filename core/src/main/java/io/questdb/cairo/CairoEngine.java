@@ -310,9 +310,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private volatile boolean isCompleteInitDone;
     private boolean isSqlExecutionCooperativePollingEnabled;
     private @NotNull LiveViewStateStore liveViewStateStore = NoOpLiveViewStateStore.INSTANCE;
-    // volatile: setLiveViewCreateRollbackHooks arms these from a coordinating test thread,
-    // while createLiveView reads them on whichever worker thread SqlCompilerImpl runs the
-    // CREATE on. Matches the sibling volatile ddlListener.
+    // volatile: a test thread arms these while createLiveView reads them on a worker thread.
     private volatile @Nullable Runnable liveViewCreateRollbackAfterResetHook;
     private volatile @Nullable Runnable liveViewCreateRollbackBeforeFenceHook;
     private @NotNull MatViewStateStore matViewStateStore = NoOpMatViewStateStore.INSTANCE;
@@ -528,11 +526,8 @@ public class CairoEngine implements Closeable, WriterSource {
         final int fixedStateLength = f.checkpointStateFixedLength();
         if (fixedStateLength != -1
                 && (fixedStateLength <= 0 || !f.supportsCheckpointState() || f.supportsCheckpointRingState())) {
-            // Defensive: a declared fixed width is what a leaf-inlined entry is sized by, so
-            // only a positive width on a whole-state function says anything. A ring-shaped
-            // function's root entry names chunk pages instead of a whole-state image, a
-            // stateless one freezes nothing to measure, and a zero width is the one shape an
-            // empty scalar cannot be told apart from.
+            // A leaf-inlined entry is sized by the declared width, so only a whole-state, non-ring
+            // function may declare one, and it must be positive.
             throw SqlException.$(position, "live view window function ")
                     .put(f.getName())
                     .put("() declares an invalid fixed checkpoint state width");
@@ -937,13 +932,9 @@ public class CairoEngine implements Closeable, WriterSource {
                                     baseTableToken,
                                     metadata
                             );
-                            // The dedup flags live in the table's own _meta, and the copy
-                            // above carries them column for column, so the identity a repair
-                            // could publish on is known before the view refreshes once.
-                            // Deliberately not derived from the configuration: a view
-                            // CREATEd with the identity keeps it however the switch moves
-                            // afterwards, and a forward commit that read the switch instead
-                            // of the schema would deduplicate a view it was never meant to.
+                            // The dedup flags come from the table's own _meta, not the
+                            // configuration: a view CREATEd with the identity keeps it however the
+                            // switch moves afterwards.
                             LiveViewInstance instance = new LiveViewInstance(
                                     definition,
                                     tableToken,
@@ -1097,21 +1088,11 @@ public class CairoEngine implements Closeable, WriterSource {
                                                 true
                                         );
                                 if (reconciliation.isFormatUpgrade()) {
-                                    // The timeline declares an older layout version,
-                                    // which this build does not read. Reconciliation
-                                    // read the superblock and stopped there, as for a
-                                    // newer version, but the disposition is the
-                                    // opposite: live views were beta in the builds that
-                                    // wrote those layouts, so the view rebuilds from its
-                                    // base table on its first refresh instead of waiting
-                                    // for an operator's DROP and re-create, which would
-                                    // run the same recompute. Until then it stays active
-                                    // and queryable over the rows it has, and holds its
-                                    // base WAL floor from its consumed watermark as any
-                                    // view does at restart. The older superblock stays
-                                    // on disk until the rebuild retires it, so a restart
-                                    // before that reaches this arm again. Checked ahead
-                                    // of the block: an upgrade is a refinement of it.
+                                    // An older layout version, written while live views were beta:
+                                    // the view rebuilds from its base table on its first refresh
+                                    // and stays active and queryable until then. The older
+                                    // superblock stays on disk until the rebuild retires it.
+                                    // Checked ahead of isFormatBlocked(), which an upgrade refines.
                                     LOG.info().$("live view checkpoint timeline was written by an older format, rebuilding from base [view=")
                                             .$(tableToken)
                                             .$(", version=").$(reconciliation.getForeignFormatVersion())
@@ -1121,18 +1102,11 @@ public class CairoEngine implements Closeable, WriterSource {
                                     continue;
                                 }
                                 if (reconciliation.isFormatBlocked()) {
-                                    // The timeline declares a newer layout version than
-                                    // this build implements. Reconciliation read
-                                    // the superblock and stopped there, so the
-                                    // directory, the view's rows and its watermarks
-                                    // are all as the other build left them. Block the
-                                    // view: it stays queryable and droppable, reports
-                                    // itself invalid, and nothing rebuilds its output
-                                    // from source rows that may no longer be the ones
-                                    // it was built from. It releases its base WAL floor
-                                    // like any other stopped view - see
-                                    // LiveViewCheckpointRecoveryPhase for why, and for
-                                    // what that costs a view left blocked.
+                                    // A newer layout version than this build implements. The
+                                    // directory, rows and watermarks stay as the other build left
+                                    // them; the view stays queryable and droppable, reports itself
+                                    // invalid and releases its base WAL floor - see
+                                    // LiveViewCheckpointRecoveryPhase.
                                     LOG.error().$("live view checkpoint timeline declares an unsupported format version, blocking refresh [view=")
                                             .$(tableToken)
                                             .$(", version=").$(reconciliation.getForeignFormatVersion())
@@ -1509,10 +1483,8 @@ public class CairoEngine implements Closeable, WriterSource {
         // emits a plain FilteredRecordCursorFactory shape that the incremental refresh
         // path can handle.
         GenericRecordMetadata metadata;
-        // The output column a sparse repair publication would upsert on, beside the
-        // designated timestamp, or NO_KEY_COLUMN where the view carries no such key or the
-        // configuration declines the identity. Resolved here because it is a CREATE-time
-        // schema decision: the flags land in the view table's own _meta and stay there.
+        // The non-timestamp output column a sparse repair publication upserts on, or NO_KEY_COLUMN.
+        // A CREATE-time schema decision: the flags stay in the view's _meta.
         int sparsePublicationKeyColumnIndex = LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;
         // Base-column names the SELECT's filter + window inputs + designated ts
         // depend on. ApplyWal2TableJob's schema-change hook narrows invalidation
@@ -1552,11 +1524,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 metadata = GenericRecordMetadata.copyOfNew(factory.getMetadata());
                 validateLiveViewTimestamp(metadata, baseTimestampName, op.getViewNamePosition());
 
-                // The identity a repair could publish sparsely on. Resolved through the
-                // same helper the repair's own uniqueness check reads, so the pair the
-                // table deduplicates on and the pair a repair proves unique are the same
-                // pair; a view whose output carries no such key gets no dedup keys, and
-                // the repair counts itself unchecked for the same reason.
+                // Resolved by the same helper the repair's uniqueness check reads, so the pair the
+                // table deduplicates on and the pair a repair proves unique always match.
                 if (configuration.isLiveViewCheckpointRepairSparsePublicationEnabled()) {
                     sparsePublicationKeyColumnIndex =
                             LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(plan);
@@ -3302,13 +3271,9 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Issues the next process-local live view lifecycle identity. Every registration that
-     * builds a {@link LiveViewInstance} must take its identity from here, so that
-     * {@link LiveViewCheckpointLifecycleState} binds one generation per registration and
-     * never collapses two views onto a shared slot. Public because registrations also
-     * happen outside this class - a replica registers a replicated view from its
-     * downloaded metadata - and those must draw on this same counter rather than invent
-     * an identity of their own.
+     * Issues the next process-local live view lifecycle identity. Every registration of a
+     * {@link LiveViewInstance}, a replica's included, must draw its identity from here, so that
+     * {@link LiveViewCheckpointLifecycleState} never binds two views to one slot.
      */
     public long nextLiveViewLifecycleIdentity() {
         final long identity = nextLiveViewLifecycleIdentity.getAndIncrement();
@@ -3938,16 +3903,10 @@ public class CairoEngine implements Closeable, WriterSource {
 
     /**
      * The non-timestamp dedup key of a live view's own table, or
-     * {@link LiveViewCheckpointOutputUniqueness#NO_KEY_COLUMN} when it carries none.
-     * <p>
-     * The catalogue load a restart runs has to rediscover the identity a repair publishes
-     * sparsely on, and the table's {@code _meta} is the only place it lives: the current
-     * configuration cannot answer it, because a view CREATEd with the identity keeps it
-     * however the switch moves. CREATE resolves the same column through
-     * {@code LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex}, and a table that
-     * carries more than one such flag is refused a key rather than given the first one -
-     * a repair upserting on a pair that is not the table's whole key would collapse rows
-     * it never checked.
+     * {@link LiveViewCheckpointOutputUniqueness#NO_KEY_COLUMN} when it carries none or more than
+     * one. A restart reads it from {@code _meta} because a view keeps the identity however the
+     * configuration moves. More than one flag yields no key: an upsert on a pair that is not the
+     * table's whole key would collapse rows the repair never checked.
      */
     private static int dedupKeyColumnIndexOf(RecordMetadata metadata) {
         int keyColumnIndex = LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN;

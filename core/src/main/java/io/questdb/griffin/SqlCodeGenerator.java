@@ -11350,12 +11350,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         // may share one partition map, which is what the shadow plan built
                         // after this loop works out.
                         //
-                        // Not for a live-view compile. A compatible live-view function is
-                        // already owned by LiveViewWindow, through the plan built a few
-                        // lines below this loop, and binding it to a second generic owner
-                        // would create two sources of truth for one accumulator. Unifying
-                        // the two owners is a later refactor, not an implicit side effect
-                        // of compiling a second plan beside the first.
+                        // Not for a live-view compile: LiveViewWindow already owns a
+                        // compatible live-view function's accumulator, through the plan built
+                        // below this loop, and one accumulator may have only one owner.
                         if (windowMapSpecs != null) {
                             windowMapSpecs.extendAndSet(i, WindowMapSpec.of(
                                     executionContext.getWindowContext(),
@@ -11488,10 +11485,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // into a local the outer catch can free: the factory only takes ownership
                 // once its constructor has returned.
                 if (lvCompile) {
-                    // The identity every checkpoint-capable function shares, compiled once
-                    // and handed to everything that has to name a key. The ROWS plan takes
-                    // it when its own functions partition that way, which is every view
-                    // that has one identity at all.
+                    // The key identity every checkpoint-capable function shares, compiled
+                    // once and handed to every plan that names a key.
                     checkpointKeyProjector = LiveViewCheckpointFunctionCompiler.sharedKeyProjector(
                             functions,
                             columns,
@@ -11530,9 +11525,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         checkpointKeyProjector,
                         lvCompile ? LiveViewCheckpointFunctionCompiler.rangePlan(functions, columns) : null,
                         checkpointRowsPlan,
-                        // The fused window-state plan holds only non-owning references into
-                        // `functions`, so unlike the ROWS plan it needs no local the outer
-                        // catch has to free.
+                        // The fused window-state plan only references `functions`, so unlike
+                        // the ROWS plan it needs no local for the outer catch to free.
                         lvCompile
                                 ? LiveViewCheckpointFunctionCompiler.windowStatePlan(
                                 functions,
@@ -11634,11 +11628,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // compiler does not admit. The pair is what CachedWindowMapGroups reads to find
             // the spec of a function a sort group collected.
             //
-            // Not for a live-view compile, for the same reason the streaming path skips it: a
-            // compatible live-view function is already owned by LiveViewWindow, and one
-            // accumulator may have one owner. The guard is also defensive -
-            // validateLiveViewFactory rejects at CREATE every shape that compiles to a cached
-            // factory.
+            // Not for a live-view compile, for the same reason the streaming path skips it. The
+            // guard is defensive: validateLiveViewFactory rejects at CREATE every shape that
+            // compiles to a cached factory.
             final boolean isGroupingCachedWindows = !executionContext.isLiveViewCompile();
             final ObjList<WindowFunction> cachedWindowSpecFunctions = isGroupingCachedWindows ? new ObjList<>() : null;
             final ObjList<WindowMapSpec> cachedWindowMapSpecs = isGroupingCachedWindows ? new ObjList<>() : null;
@@ -13294,11 +13286,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // thread-safe (Func.isThreadSafe() == false). That is safe only because a union base is
             // serial: it supports neither page frames, filter stealing nor time frames, so no parallel
             // operator (async filter, parallel GROUP BY) ever clones or snapshots this projection.
-            // Enforce the invariant unconditionally rather than with an assert. QuestDB's Docker,
-            // shell-script and AMI launchers pass -ea, so an assert would fire for them, but the
-            // Windows service wrapper passes none and an embedding is free to disable assertions -
-            // and a future page-frame-capable union must fail loudly for those too, instead of
-            // shipping a stale, empty dictionary snapshot to a worker.
+            // Enforce the invariant unconditionally rather than with an assert: not every launcher
+            // or embedding enables assertions, and a future page-frame-capable union must fail
+            // loudly instead of shipping a stale, empty dictionary snapshot to a worker.
             if (unionFactory.supportsPageFrameCursor()
                     || unionFactory.supportsFilterStealing()
                     || unionFactory.supportsTimeFrameCursor()) {

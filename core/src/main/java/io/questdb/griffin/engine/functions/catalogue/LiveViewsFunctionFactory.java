@@ -57,182 +57,26 @@ import io.questdb.std.ObjList;
 
 /**
  * {@code live_views()} catalogue. Exposes per-view operator state derived from
- * {@link LiveViewInstance}'s in-memory mirror of {@code _lv} + {@code _lv.s}.
+ * {@link LiveViewInstance}'s in-memory mirror of {@code _lv} + {@code _lv.s}, plus the
+ * refresh worker's in-memory counters, which reset on restart.
  * <p>
- * {@code o3_rejected_count}, {@code below_lower_bound_count},
- * {@code seed_target_seqtxn}, {@code writer_stall_micros}, and
- * {@code in_mem_bytes} are wired to live values. {@code o3_rejected_count} and
- * {@code below_lower_bound_count} split the rows a view drops for sitting below
- * its lower bound by arrival path - O3 replay vs in-order forward-append - so
- * the two are disjoint and sum to the total dropped.
- * {@code in_mem_bytes} is the peak-sticky native footprint (allocated
- * capacity across both slots); {@code in_mem_rows} is the live row count of the
- * published slot, so the two together separate a view actively buffering rows
- * from one holding arena capacity retained from a past burst.
- * {@code last_processed_seqtxn} and {@code applied_watermark} are
- * surfaced as debug columns; both are useful for operators tracking
- * refresh-worker progress before the corresponding {@code lvConsumed} flow
- * catches up.
- * {@code o3_resume_replay_rows} and {@code o3_boundary_replay_rows} trail after
- * them as O3-replay observability: they split the rows an O3 re-emits by path -
- * bounded resume-from-anchor replays versus the residual O(view age) boundary
- * rebuild - so the two are disjoint. A resume count that grows while the boundary
- * count stays flat is the checkpoint timeline bounding O3 cost as intended; a
- * growing boundary count flags late rows the timeline holds no boundary below.
- * {@code o3_replay_scan_rows} counts base rows the O3 replay paths scanned, which
- * equals the emit counters without a WHERE filter and exceeds them with one. All
- * three are in-memory counters that reset on restart.
- * <p>
- * {@code o3_open_segment_keyed_resume_count} and
- * {@code o3_open_segment_cold_keyed_replay_count} expose the two keyed
- * open-segment executors per view. The first is the healthy steady-state path:
- * a preserved checkpoint root sits below the correction. The second starts
- * cold at the active anchor segment's origin because no usable root exists.
- * Both reset on restart; in steady state the resume count should grow while the
- * cold count stays flat.
- * <p>
- * {@code checkpoint_effective_duration_micros},
- * {@code checkpoint_last_correction_depth_micros}, and
- * {@code checkpoint_correction_depth_sample_count} describe adaptive checkpoint
- * cadence. Before the first out-of-order correction the effective duration is
- * the configured ceiling and the depth is NULL. Once samples arrive, the
- * effective duration may tighten below that ceiling to keep a checkpoint below
- * similarly late future rows. All learned state resets on restart.
- * <p>
- * Those three carry per-field freshness only, never a coherent tuple. Each group
- * below states for itself what its own columns guarantee jointly, which is more
- * often a disjoint split or a trend to read across rows than a tuple to read
- * within one. The refresh worker keeps these three in independent volatile fields
- * rather than in one published word or array, it bumps the sample count between
- * the depth store and the duration store, and it relaxes the duration on its own
- * at a seal that no correction preceded. A row can therefore pair one sample's
- * depth with the neighbouring sample's count, or either of them with a duration a
- * later seal already relaxed. Read each of the three on its own, and compare a
- * trend across rows rather than a ratio within one.
- * <p>
- * The {@code checkpoint_*} group describes the versioned checkpoint timeline, and
- * splits four ways.
+ * Each column carries per-field freshness unless it belongs to one of the groups
+ * {@code LiveViewsRecord.of()} reads once per row so that the group stays consistent:
  * <ul>
- *     <li>The generation's shape - {@code checkpoint_timeline_generation},
- *     {@code _entries}, {@code _normalized_base_seqtxn}, {@code _logical_bytes},
- *     {@code _physical_bytes}, {@code _shared_bytes}, {@code _sharing_ratio} and
- *     {@code _row_position_delta_bytes} - read off the superblock whichever seam
- *     last committed or adopted a generation: a cadence seal, a repair splice or
- *     startup reconciliation. Logical bytes is what the roots would cost as
- *     complete independent state images and physical bytes is what the timeline
- *     actually wrote, so the difference between them is the sharing the
- *     persistent chunk layer and the copy-on-write trees buy. All are NULL for a
- *     view holding no published generation.</li>
- *     <li>Collection - {@code checkpoint_data_segment_count},
- *     {@code checkpoint_obsolete_segment_bytes},
- *     {@code checkpoint_oldest_pinned_generation} and
- *     {@code checkpoint_gc_lag_generations}. The first two come from the ordered
- *     catalogue walk the purge sweep makes, which runs at startup and at a
- *     retrying publication rather than per seal, so they carry the last sweep's
- *     verdict. The count is data segments alone; the obsolete bytes span the
- *     metadata segments the copy-on-write trees retire as well, because both
- *     kinds wait on the same fallback slot and reader pins before their files can
- *     go. The last two are per-publication: the A/B pair retains the previous
- *     generation as its recovery fallback, so a healthy lag is 1.</li>
- *     <li>Cost - {@code checkpoint_last_write_micros},
- *     {@code checkpoint_last_restore_micros},
- *     {@code checkpoint_last_write_new_bytes} and
- *     {@code checkpoint_last_lookup_depth}. The last one is the tree height a
- *     point lookup descended, which should track the logarithm of the checkpoint
- *     count rather than the count.</li>
- *     <li>Localized out-of-order repair - {@code checkpoint_repair_in_progress}
- *     plus the bounds {@code _correction_timestamp} ({@code C}),
- *     {@code _low_timestamp} ({@code L}) and {@code _high_timestamp} ({@code H},
- *     NULL when the repair converges only at EOF), which are populated while a
- *     repair is suspended across refresh turns. The counters
- *     {@code checkpoint_repair_roots_versioned}, {@code _new_bytes},
- *     {@code _resumes} and {@code _failures} are lifetime totals and reset on
- *     restart. {@code checkpoint_repair_plan} follows with the shape of
- *     the repair rather than one repair's progress: it names the dependency plans
- *     the view's window functions carry - {@code range}, {@code rows},
- *     {@code anchor} or a {@code +}-joined combination - and reads {@code none}
- *     for a view no plan covers, which rebuilds its whole history for every
- *     out-of-order row below the head. It is NULL until the view compiles its
- *     SELECT, and it describes what the SQL admits rather than what the next
- *     repair does: a named plan can still be denied per refresh, a ROWS one over
- *     a base that deduplicates most commonly. {@code checkpoint_repair_last_disposition}
- *     and {@code checkpoint_repair_last_denial} close the group with that runtime
- *     outcome. The first names which executor the view's last repair ran -
- *     {@code localized rebuild}, {@code boundary rebuild} or
- *     {@code resume from anchor} - and the second why it read more than a localized
- *     rebuild would, such as {@code dedup}, {@code incomplete dependency},
- *     {@code scan budget} or {@code resume cheaper}. Both are NULL until the view runs
- *     a repair; the denial stays NULL for a repair that read exactly its localized
- *     interval. So a view reporting a {@code rows} plan beside a
- *     {@code boundary rebuild} / {@code dedup} pair is one whose SQL admits a bound
- *     that its base denies at every refresh. Both arrive with the {@code o3_*} rows the
- *     repair they name replayed, never ahead of them, so the route and its cost are
- *     always readable together; a repair still in flight - a localized one can park
- *     across refresh turns - reports the previous repair's pair, and
- *     {@code checkpoint_repair_in_progress} flags that staleness only once the new
- *     repair has parked: suspension is the one in-flight state this view publishes, so
- *     a repair that finishes inside its turn never raises the flag.</li>
- *     <li>Scoped repair of closed anchor segments - {@code checkpoint_segment_repair_gate}
- *     and {@code checkpoint_keyed_scan_gate}. Both describe the view's SQL rather
- *     than any repair. The first reads {@code available} when a correction landing in a
- *     closed anchor segment can be repaired over that segment alone, and otherwise names
- *     the gate standing in the way - most commonly {@code bounded frame}, a ROWS or
- *     RANGE window declared beside the anchored one whose frame keeps sliding across the
- *     segment boundary. The second reads {@code available} when such a repair's replay
- *     could follow the affected keys' rows through the base's posting index rather than
- *     reading every row of the segment, and otherwise names why not - {@code key not
- *     indexed} and {@code expression key} being the two an operator can act on. A
- *     rejected key is not a denial: the segment falls back to a whole-segment replay,
- *     which costs the same write and only a larger read. Both are NULL until the view
- *     compiles its SELECT.</li>
- *     <li>Whether the view's own bookkeeping still describes its output -
- *     {@code checkpoint_row_count_mismatches}. Every timeline root carries the rows the
- *     view has emitted as its cumulative row position, so a seal compares that count
- *     against the rows the view's table actually holds before it stamps one. Zero is the
- *     only healthy value: a bump means the two disagreed, that the seal declined rather
- *     than writing a ladder no reader could detect, and that the timeline was retired -
- *     so the view keeps serving while a restart or an out-of-order correction rebuilds
- *     the recovery state from the base.</li>
- *     <li>Where the view's recovery stands - {@code checkpoint_recovery_phase} and
- *     {@code checkpoint_recovery_reason}. Both are NULL for a view whose recovery finished
- *     or never had to run, which is the steady state. A {@code blocked} phase means this
- *     build read a checkpoint layout version newer than it implements, and
- *     {@code rebuild_blocked} that a rebuild from the base table would have dropped rows
- *     the view retains; either way refresh stopped with the view's checkpoints, rows and
- *     watermarks all intact, and the reason carries the evidence and the way out. Such a
- *     view reports {@code view_status} as {@code invalid} and repeats the reason through
- *     {@code invalidation_reason}, so the queries operators already run to find stopped
- *     views find it; the phase is what says it is a block rather than a durable
- *     invalidation, and so may clear on its own. A {@code rebuild_deferred} phase is not a
- *     block: the view owes a rebuild that waits for its base table to apply commits the
- *     view already holds output of, stays {@code active}, and resumes by itself once the
- *     base applies them. The reason names the base and the commit, which is what tells a
- *     view waiting on a base whose WAL apply is suspended apart from one merely lagging.
- *     {@code upgrade_rebuild_pending} is not a block either: the view was carried over
- *     from an older checkpoint layout, stays {@code active}, and rebuilds from its base
- *     table on its first refresh, after which both columns clear. An {@code invalid} view
- *     never reports it: such a view never refreshes again, so the rebuild never runs, and
- *     {@code invalidation_reason} says why it stopped. A rebuild that waits for the base's
- *     apply reports {@code rebuild_deferred} instead, naming the upgrade as its cause. Both
- *     are read once per row, phase first, so a row never pairs a phase with a reason from
- *     before it, and a NULL phase always comes with a NULL reason. See
- *     {@link io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase}.</li>
- *     <li>What the view's refresh is waiting for - {@code base_apply_wait_seqtxn} and
- *     {@code base_apply_wait_micros}. A refresh cycle that needs the base table applied
- *     past a seqTxn {@code ApplyWal2TableJob} has not reached yet defers rather than
- *     blocking on it, and retries on a back-off; while it waits these name the seqTxn and
- *     how long the view has been unable to get past it. Both are NULL as a pair whenever
- *     the view is not waiting, which is the steady state, and both reset on restart. A row
- *     read while one wait ends and the next begins can transiently pair the ended wait's
- *     seqTxn with the next wait's duration. The wait is ordinarily momentary, so it is the
- *     duration rather than the presence that matters: a base table whose WAL apply is
- *     suspended (see {@code wal_tables()}) keeps the view waiting until an operator resumes
- *     it, and the view stays {@code active} and lags meanwhile. Both the ordinary drain's
- *     deferral and a recovery's deferred rebuild report here; the second is the one that
- *     also reads {@code rebuild_deferred} in {@code checkpoint_recovery_phase}, so the two
- *     columns together say whether the view is merely waiting to drain or waiting to
- *     rebuild.</li>
+ *     <li>the {@code checkpoint_timeline_*} shape and the suspended repair's bounds, each
+ *     published as a whole array;</li>
+ *     <li>{@code checkpoint_recovery_phase} and {@code checkpoint_recovery_reason}, phase
+ *     first, so a NULL phase always comes with a NULL reason;</li>
+ *     <li>{@code base_apply_wait_seqtxn} and {@code base_apply_wait_micros}, NULL as a pair
+ *     while the view is not waiting;</li>
+ *     <li>{@code checkpoint_repair_last_disposition} and {@code checkpoint_repair_last_denial},
+ *     read before the {@code o3_*} replay counters so a route never pairs with an older
+ *     repair's cost.</li>
  * </ul>
+ * The three adaptive-cadence columns are independent volatile fields with no joint guarantee.
+ * A blocked view reports {@code view_status} as {@code invalid} and mirrors its block reason
+ * into {@code invalidation_reason}; see
+ * {@link io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase}.
  */
 public class LiveViewsFunctionFactory implements FunctionFactory {
 
@@ -248,11 +92,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
     }
 
     /**
-     * Renders the {@code REPAIR_PLAN_*} mask a view carries as the plan names a
-     * localized repair would union - {@code none} when it would union nothing and
-     * every out-of-order row below the head therefore rebuilds the whole view
-     * history. NULL, rather than {@code none}, while the view has not compiled its
-     * SELECT: the two say different things, and only the first is a latency cliff.
+     * Renders the {@code REPAIR_PLAN_*} mask as the plan names a localized repair would union.
+     * {@code none} means every out-of-order row below the head rebuilds the whole history; a view
+     * that has not compiled its SELECT yet renders NULL instead.
      */
     static String getRepairPlan(int plans) {
         return switch (plans) {
@@ -396,11 +238,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
 
             @Override
             public void close() {
-                // The factory is cached and outlives the query, so anything the last
-                // scan touched stays reachable until the next one replaces it. Drop
-                // the engine, the query's circuit breaker and every LiveViewInstance
-                // the walk collected - the instances in particular can be dropped
-                // views the registry has already retired.
+                // The factory is cached and outlives the query: drop the engine, the circuit
+                // breaker and the collected instances, which may be views the registry has already
+                // retired.
                 viewInstances.clear();
                 record.clear();
                 circuitBreaker = null;
@@ -494,10 +334,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     if (instance.isStub() || col != COLUMN_CHECKPOINT_TIMELINE_SHARING_RATIO) {
                         return Double.NaN;
                     }
-                    // Share of the logical state the timeline did not have to
-                    // write, so 0 means every root paid for its own complete
-                    // image. NULL rather than 0 while no generation exists, which
-                    // is a different statement from "shares nothing".
+                    // Share of the logical state the timeline did not have to write. NULL rather
+                    // than 0 while no generation exists, which is a different statement from
+                    // "shares nothing".
                     final long logical = checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_LOGICAL_BYTES];
                     if (checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL
                             || logical <= 0) {
@@ -510,45 +349,30 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                 @Override
                 public long getLong(int col) {
                     if (instance.isStub()) {
-                        // The stub has a null definition and default state; every
-                        // numeric column is NULL.
+                        // A stub has a null definition and default state: every numeric column is
+                        // NULL.
                         return Numbers.LONG_NULL;
                     }
                     return switch (col) {
                         case COLUMN_FLUSH_EVERY_INTERVAL -> definition.getFlushEveryInterval();
                         case COLUMN_IN_MEMORY_INTERVAL -> definition.getInMemoryInterval();
                         case COLUMN_IN_MEM_BYTES -> {
-                            // Peak-sticky native footprint of the in-mem tier (sum
-                            // across both N=2 slots). Reports allocated capacity, not
-                            // the live row content: MemoryCARWImpl grows by page and
-                            // reset() retains its pages for the next refill, so this is
-                            // a high-water mark that does not shrink once a burst has
-                            // sized the arena. Pair with in_mem_rows to tell a view
-                            // actively buffering a large lead from one holding capacity
-                            // from a past spike. Zero when the tier has not been
-                            // allocated yet (LV has not refreshed, or schema is
-                            // var-length and the tier is unused).
+                            // Peak-sticky allocated capacity across both slots, not live content:
+                            // MemoryCARWImpl.reset() keeps its pages. Zero before the tier is
+                            // allocated.
                             LiveViewInMemoryTier tier = instance.getInMemoryTier();
                             yield tier == null ? 0L : tier.footprintBytes();
                         }
                         case COLUMN_IN_MEM_ROWS -> {
-                            // Rows currently held in the published (reader-visible)
-                            // slot - the live logical content of the in-mem tier. Rows
-                            // age out of the IN MEMORY window on a slow-path swap, which
-                            // a refresh cycle drives - not wall-clock time. An idle view
-                            // holds its last-refreshed rows (which can exceed the IN
-                            // MEMORY window) until the next refresh trims them, so this
-                            // tracks refresh activity, not window age; in_mem_bytes
-                            // stays pinned at the peak arena capacity regardless. Zero
-                            // before the first refresh allocates the tier.
+                            // Rows in the published slot. They age out on a refresh-driven
+                            // slow-path swap, not on wall-clock time, so an idle view keeps its
+                            // last rows. Zero before the tier is allocated.
                             LiveViewInMemoryTier tier = instance.getInMemoryTier();
                             yield tier == null ? 0L : tier.publishedRowCount();
                         }
                         case COLUMN_LAG_SEQTXN -> {
-                            // base.sequencer.head - last_processed. The base token can be
-                            // transiently unresolved on a replica whose LV registered before
-                            // its base table downloaded (the refresh scan heals it); report
-                            // an unknown lag rather than NPE into the tracker lookup.
+                            // The base token can be unresolved on a replica whose view registered
+                            // before its base table downloaded; report an unknown lag.
                             TableToken baseToken = definition.getBaseTableToken();
                             if (baseToken == null) {
                                 yield Numbers.LONG_NULL;
@@ -559,11 +383,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                             yield head < 0 || lp < 0 ? Numbers.LONG_NULL : Math.max(0, head - lp);
                         }
                         case COLUMN_LAG_MICROS -> {
-                            // Now minus the wall-clock of the last successful flush.
-                            // lastFlushTimeUs is the
-                            // closest proxy we keep — the LV refresh runs immediately after a
-                            // base commit it can see, so this approximates "now - timestamp of
-                            // last processed base commit" for both caught-up and lagging views.
+                            // Now minus the last successful flush, a proxy for the age of the last
+                            // processed base commit.
                             long lastFlushUs = instance.getLastFlushTimeUs();
                             if (lastFlushUs == Numbers.LONG_NULL) {
                                 yield Numbers.LONG_NULL;
@@ -571,19 +392,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                             long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
                             yield Math.max(0, nowUs - lastFlushUs);
                         }
-                        // The base seqTxn the view's refresh is waiting to see applied, and
-                        // how long it has been waiting for it. NULL as a pair whenever the
-                        // view is not waiting - the snapshot takes both, and reports neither
-                        // unless both came back, so a transition cannot pair a live duration
-                        // with a target from another episode.
-                        //
-                        // A refresh cycle that needs the base applied past a seqTxn
-                        // ApplyWal2TableJob has not reached defers rather than blocking on it,
-                        // and retries on a back-off. The wait is normally momentary and self-
-                        // healing, which is what the duration is for: a base table whose WAL
-                        // apply is suspended (see wal_tables()) keeps the view waiting until an
-                        // operator resumes it, and only the duration tells the two apart.
-                        // In-memory, so a restart starts the count over.
+                        // The base seqTxn the refresh waits to see applied, and for how long; NULL
+                        // as a pair while the view is not waiting.
                         case COLUMN_BASE_APPLY_WAIT_SEQTXN -> applyLagDeferSinceUs == Numbers.LONG_NULL
                                 ? Numbers.LONG_NULL
                                 : applyLagDeferTargetSeqTxn;
@@ -598,10 +408,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_LAST_PROCESSED_SEQTXN -> instance.getLastProcessedSeqTxn();
                         case COLUMN_APPLIED_WATERMARK -> instance.getStateReader().getAppliedWatermark();
                         case COLUMN_LV_CONSUMED_SEQTXN -> instance.getStateReader().getLvConsumedSeqTxn();
-                        // Shape of the newest published timeline generation, read
-                        // as one tuple so a fresh generation number cannot pair
-                        // with the previous generation's byte totals. Every field
-                        // is NULL for a view holding no published generation.
+                        // The newest published generation's shape, read as one tuple in of(); NULL
+                        // while no generation is published.
                         case COLUMN_CHECKPOINT_TIMELINE_GENERATION ->
                                 checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION];
                         case COLUMN_CHECKPOINT_TIMELINE_ENTRIES -> {
@@ -622,9 +430,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                     : checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_PHYSICAL_BYTES];
                         }
                         case COLUMN_CHECKPOINT_TIMELINE_SHARED_BYTES -> {
-                            // Logical minus physical, floored at zero: a timeline
-                            // whose metadata outweighs the state it describes
-                            // shares nothing rather than a negative amount.
+                            // Floored at zero: the metadata can outweigh the state it describes.
                             if (checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION] == Numbers.LONG_NULL) {
                                 yield Numbers.LONG_NULL;
                             }
@@ -642,10 +448,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_CHECKPOINT_OLDEST_PINNED_GENERATION ->
                                 checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_OLDEST_RETAINED_GENERATION];
                         case COLUMN_CHECKPOINT_GC_LAG_GENERATIONS -> {
-                            // Generations the purge floor sits behind the current
-                            // one. The A/B pair keeps the previous generation as
-                            // its recovery fallback, so 1 is the healthy value and
-                            // a growing figure means retirement has stalled.
+                            // The A/B pair keeps the previous generation as its fallback, so 1 is
+                            // healthy and a growing value means retirement has stalled.
                             final long current = checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_GENERATION];
                             final long oldest =
                                     checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_OLDEST_RETAINED_GENERATION];
@@ -653,13 +457,10 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                     ? Numbers.LONG_NULL
                                     : Math.max(0, current - oldest);
                         }
-                        // What the last lifecycle reconciliation's purge sweep found
-                        // while walking the catalogue. LONG_NULL until one has run.
+                        // The last purge sweep's findings; LONG_NULL until one has run.
                         case COLUMN_CHECKPOINT_DATA_SEGMENT_COUNT -> instance.getCheckpointDataSegmentCount();
                         case COLUMN_CHECKPOINT_OBSOLETE_SEGMENT_BYTES -> instance.getCheckpointObsoleteSegmentBytes();
-                        // Seal / restore cost. The timings are LONG_NULL until the
-                        // event first runs (no root sealed yet / view never
-                        // restored), which passes through as NULL.
+                        // LONG_NULL until the event first runs.
                         case COLUMN_CHECKPOINT_LAST_WRITE_MICROS -> instance.getHeadCheckpointWriteMicros();
                         case COLUMN_CHECKPOINT_LAST_RESTORE_MICROS -> instance.getHeadCheckpointRestoreMicros();
                         case COLUMN_CHECKPOINT_LAST_WRITE_NEW_BYTES -> {
@@ -668,11 +469,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                     : checkpointTimeline[LiveViewInstance.CHECKPOINT_TIMELINE_LAST_WRITE_NEW_BYTES];
                         }
                         case COLUMN_CHECKPOINT_LAST_LOOKUP_DEPTH -> instance.getCheckpointLastLookupDepth();
-                        // Bounds of a localized repair suspended across refresh
-                        // turns, read as one tuple. All NULL when none is in
-                        // flight; the high bound is also NULL for a repair that
-                        // converges only at EOF, which is a tag rather than a
-                        // timestamp.
+                        // Bounds of a repair suspended across refresh turns, NULL when none is. The
+                        // high bound is also NULL for a repair that converges only at EOF.
                         case COLUMN_CHECKPOINT_REPAIR_CORRECTION_TIMESTAMP -> toMicros(
                                 checkpointRepair[LiveViewInstance.CHECKPOINT_REPAIR_CORRECTION_TS]
                         );
@@ -686,39 +484,19 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_CHECKPOINT_REPAIR_NEW_BYTES -> instance.getCheckpointRepairNewBytes();
                         case COLUMN_CHECKPOINT_REPAIR_RESUMES -> instance.getCheckpointRepairResumes();
                         case COLUMN_CHECKPOINT_REPAIR_FAILURES -> instance.getCheckpointRepairFailures();
-                        // Cadence seals this view has failed since the process started.
-                        // A growing value is the only in-band signal that the view is
-                        // serving correct results over stale restart-recovery state:
-                        // the refresh job swallows the fault, and once the streak
-                        // exhausts its budget the timeline is retired and the WAL purge
-                        // floor arms released. In-memory counter, resets on restart.
+                        // The only in-band signal that a view serves correct results over stale
+                        // restart-recovery state, since the refresh job swallows seal faults.
                         case COLUMN_CHECKPOINT_SEAL_FAILURES -> instance.getCheckpointSealFailures();
-                        // Base rows the O3 replay paths scanned (>= the emit counters
-                        // above; a WHERE filter makes scan exceed emit). In-memory
-                        // counter, resets on restart.
+                        // At least the emit counters; a WHERE filter makes the scan exceed them.
                         case COLUMN_O3_REPLAY_SCAN_ROWS -> o3ReplayScanRows;
-                        // Executions of the two keyed open-segment O3 paths. The
-                        // resume restores a root below the correction; the cold
-                        // replay starts from the active anchor segment's origin
-                        // because no such root exists. In-memory counters, reset
-                        // on restart.
+                        // The resume restores a root below the correction; the cold replay starts
+                        // from the open anchor segment's origin because no such root exists.
                         case COLUMN_O3_OPEN_SEGMENT_KEYED_RESUME_COUNT -> instance.getO3OpenSegmentKeyedResumeCount();
                         case COLUMN_O3_OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT ->
                                 instance.getO3OpenSegmentColdKeyedReplayCount();
-                        // Adaptive duration cadence learned from O3 correction
-                        // depth. The feature switch changes execution, so when
-                        // disabled the effective value is the configured fixed
-                        // cadence even if a future caller retains learned state.
-                        // Each of the three reads one independent volatile field,
-                        // and of() deliberately does not snapshot them the way it
-                        // pairs the o3_* tuple below. The refresh worker publishes
-                        // no word, array or version stamp spanning the three - it
-                        // bumps the sample count between the depth store and the
-                        // duration store, and relaxes the duration alone at a seal
-                        // - so a reader-side snapshot would move the same three
-                        // loads earlier without pairing anything, while reading
-                        // like the of() pairings, which are real. The class
-                        // javadoc scopes these columns to per-field freshness.
+                        // Independent volatile fields: the worker publishes nothing spanning the
+                        // three, so of() has nothing to snapshot. With the feature off the
+                        // effective value is the configured cadence.
                         case COLUMN_CHECKPOINT_EFFECTIVE_DURATION_MICROS -> {
                             final long configured =
                                     engine.getConfiguration().getLiveViewCheckpointMaxDurationMicros();
@@ -730,23 +508,15 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                 instance.getAdaptiveCheckpointLastCorrectionDepthMicros();
                         case COLUMN_CHECKPOINT_CORRECTION_DEPTH_SAMPLE_COUNT ->
                                 instance.getAdaptiveCheckpointCorrectionCount();
-                        // Seals refused because the rows the view emitted and the rows
-                        // its table holds disagreed. Zero is the only healthy value:
-                        // any bump means rows never reached the table (or reached it
-                        // without being emitted), that the seal declined to stamp the
-                        // drifted count into a root, and that the timeline was retired
-                        // rather than extended over it. The view keeps serving, and a
-                        // restart or an O3 correction rebuilds from the base.
-                        // In-memory counter, resets on restart.
+                        // Seals refused because the emitted and stored row counts disagreed; zero
+                        // is the only healthy value. The view keeps serving, and a restart or O3
+                        // correction rebuilds from the base.
                         case COLUMN_CHECKPOINT_ROW_COUNT_MISMATCHES -> instance.getCheckpointRowCountMismatches();
-                        // START FROM BEGINNING has no lower bound and persists
-                        // LONG_NULL, which passes through as NULL.
+                        // START FROM BEGINNING persists LONG_NULL, which passes through as NULL.
                         case COLUMN_VIEW_LOWER_BOUND_TIMESTAMP -> toMicros(definition.getViewLowerBoundTimestamp());
                         case COLUMN_WRITER_STALL_MICROS -> {
-                            // Current uninterrupted stall duration.
-                            // writerStallStartUs is set when the in-mem tier's slow-path
-                            // tryAcquireWrite fails (both slots reader-pinned); cleared on
-                            // the next successful publish. Zero when not stalled.
+                            // Set when both in-mem slots are reader-pinned, cleared on the next
+                            // publish.
                             long stallStart = instance.getWriterStallStartUs();
                             if (stallStart == Numbers.LONG_NULL) {
                                 yield 0L;
@@ -754,32 +524,20 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                             long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
                             yield Math.max(0, nowUs - stallStart);
                         }
-                        // Real target while the sweep is in progress; LONG_NULL
-                        // once the sweep completes and the state flips to ACTIVE
-                        // (the field is wiped on the SEEDING -> ACTIVE flip).
+                        // LONG_NULL once the seed sweep completes and the view turns ACTIVE.
                         case COLUMN_SEED_TARGET_SEQTXN -> instance.getStateReader().getSeedTargetSeqTxn();
-                        // Count of late O3 rows rejected for falling below
-                        // viewLowerBoundTimestamp. In-memory counter, resets on
-                        // restart.
+                        // Late O3 rows below viewLowerBoundTimestamp.
                         case COLUMN_O3_REJECTED_COUNT -> instance.getO3RejectedCount();
-                        // Count of in-order (forward-append) rows dropped for
-                        // falling below viewLowerBoundTimestamp - back-dated /
-                        // pre-CREATE data the floor excludes. In-memory counter,
-                        // resets on restart. Disjoint from o3_rejected_count.
+                        // In-order rows below viewLowerBoundTimestamp; disjoint from
+                        // o3_rejected_count.
                         case COLUMN_BELOW_LOWER_BOUND_COUNT -> instance.getBelowLowerBoundCount();
-                        // Rows re-emitted by bounded resume-from-anchor O3 replays -
-                        // "the win": each replay stays bounded to the tail above the
-                        // logical boundary it resumed from rather than recomputing the
-                        // whole view. In-memory counter, resets on restart.
+                        // Rows re-emitted by bounded resume-from-anchor replays.
                         case COLUMN_O3_RESUME_REPLAY_ROWS -> o3ResumeReplayRows;
-                        // Rows re-emitted by boundary-rebuild O3 replays - the residual
-                        // O(view age) fallback taken when the timeline holds no boundary
-                        // below the late row. In-memory counter, resets on restart.
-                        // Disjoint from o3_resume_replay_rows.
+                        // Rows re-emitted by the O(view age) boundary rebuild; disjoint from
+                        // o3_resume_replay_rows.
                         case COLUMN_O3_BOUNDARY_REPLAY_ROWS -> o3BoundaryReplayRows;
-                        // Every numeric column the metadata declares has an arm above.
-                        // A column added without one reads as NULL rather than as 0,
-                        // which for the TIMESTAMP columns would render 1970-01-01.
+                        // A numeric column without an arm reads as NULL rather than 0, which a
+                        // TIMESTAMP column would render as 1970-01-01.
                         default -> Numbers.LONG_NULL;
                     };
                 }
@@ -787,8 +545,7 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                 @Override
                 public CharSequence getStrA(int col) {
                     if (instance.isStub()) {
-                        // The stub has a null definition; surface only the name
-                        // (from the token) and the status, NULL for the rest.
+                        // A stub has a null definition: surface only the name and the status.
                         return switch (col) {
                             case COLUMN_VIEW_NAME -> instance.getLiveViewToken().getTableName();
                             case COLUMN_VIEW_TABLE_DIR_NAME -> instance.getLiveViewToken().getDirName();
@@ -805,15 +562,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                 getIntervalUnit(definition.getFlushEveryIntervalUnit());
                         case COLUMN_IN_MEMORY_INTERVAL_UNIT -> getIntervalUnit(definition.getInMemoryIntervalUnit());
                         case COLUMN_VIEW_SQL -> definition.getViewSql();
-                        // A blocked view - format or refused rebuild - reports its
-                        // block here as well as through the two recovery columns
-                        // below, because it reports view_status invalid and an
-                        // operator reading that status reads this column next. Read
-                        // off the instance rather than written into _lv.s:
-                        // LiveViewInstance.getInvalidationReason stays the durable
-                        // field, so a state copy cannot persist a derived block as a
-                        // terminal invalidation. A deferred rebuild is not mirrored:
-                        // the view is active, and nothing about it is invalid.
+                        // A blocked view reports invalid status, so its block reason shows here
+                        // too. It is read off the instance rather than persisted, so a state copy
+                        // cannot turn a block into a terminal invalidation.
                         case COLUMN_INVALIDATION_REASON -> {
                             final CharSequence reason = instance.getInvalidationReason();
                             if (reason != null) {
@@ -823,28 +574,17 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                                     ? checkpointRecoveryReason
                                     : null;
                         }
-                        // Why the view's recovery stopped - blocked on a format this
-                        // build cannot read, or rebuild_blocked on a rebuild that would
-                        // have dropped rows it retains - and what tells a blocked view
-                        // apart from a durably invalidated one under the same
-                        // view_status; or why it has not finished yet, rebuild_deferred
-                        // on a rebuild waiting for its base table's apply; or
-                        // upgrade_rebuild_pending on a view carried over from an older
-                        // checkpoint format that has not rebuilt from its base table yet.
-                        // Both NULL for a view whose recovery finished or never had to run.
+                        // NULL for a view whose recovery finished or never had to run.
                         case COLUMN_CHECKPOINT_RECOVERY_PHASE -> LiveViewCheckpointRecoveryPhase.name(
                                 checkpointRecoveryPhase,
                                 isCheckpointUpgradeRebuildPending
                         );
                         case COLUMN_CHECKPOINT_RECOVERY_REASON -> checkpointRecoveryReason;
-                        // The dependency plans a localized repair would union, read off
-                        // the compiled SELECT. NULL until the view compiles one.
+                        // NULL until the view compiles its SELECT.
                         case COLUMN_CHECKPOINT_REPAIR_PLAN ->
                                 getRepairPlan(instance.getCheckpointRepairDependencyPlans());
-                        // What the last repair actually did, and why it read more than
-                        // its plan admits. Both NULL until the view runs one; the denial
-                        // stays NULL for a repair that read exactly its localized
-                        // interval.
+                        // Both NULL until the view runs a repair; the denial stays NULL for a
+                        // repair that read exactly its localized interval.
                         case COLUMN_CHECKPOINT_REPAIR_LAST_DISPOSITION -> LiveViewCheckpointRepairPlan.dispositionName(
                                 LiveViewInstance.repairDispositionOf(checkpointRepairOutcome),
                                 LiveViewInstance.repairDenialReasonOf(checkpointRepairOutcome)
@@ -852,12 +592,8 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                         case COLUMN_CHECKPOINT_REPAIR_LAST_DENIAL -> LiveViewCheckpointRepairPlan.denialReasonName(
                                 LiveViewInstance.repairDenialReasonOf(checkpointRepairOutcome)
                         );
-                        // Whether the view's SQL admits deferring a correction that lands
-                        // in a closed anchor segment, and whether such a repair's replay
-                        // could follow the affected keys' rows rather than the whole
-                        // segment. Both describe the definition rather than any repair,
-                        // and neither changes what a repair does today. NULL until the
-                        // view compiles one.
+                        // Both describe the view's SQL rather than any repair; NULL until the view
+                        // compiles it.
                         case COLUMN_SEGMENT_REPAIR_GATE ->
                                 LiveViewSegmentRepairEnvelope.gateName(instance.getSegmentScopeGate());
                         case COLUMN_KEYED_SCAN_GATE ->
@@ -880,32 +616,20 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     this.engine = engine;
                     this.instance = instance;
                     this.definition = instance.getDefinition();
-                    // Snapshot both tuples once per row. The writer publishes each of
-                    // them by replacing the whole array, so one read per row gives the
-                    // columns a consistent view; a read per column would let a fresh
-                    // generation number pair with the previous generation's byte
-                    // totals, which is what the column comments promise it cannot.
+                    // The writer replaces each tuple array whole, so one read per row keeps its
+                    // columns consistent.
                     this.checkpointRepair = instance.getCheckpointRepair();
                     this.checkpointTimeline = instance.getCheckpointTimeline();
-                    // The recovery phase, then its reason, once per row. Every writer puts
-                    // a reason down before the phase it goes with and clears it before
-                    // clearing the phase, so this order reads the phase's own reason - or,
-                    // when a transition lands between the two reads, the next phase's or
-                    // none - but never a reason left over from before the phase. The gate on
-                    // NONE drops the one read the order cannot rule out alone: a reason
-                    // whose phase this read came too early to see.
+                    // Phase, then reason: writers set the reason before the phase and clear it
+                    // after, so this order never pairs a phase with an older reason. The NONE gate
+                    // drops a reason whose phase this read came too early to see.
                     this.checkpointRecoveryPhase = instance.getCheckpointRecoveryPhase();
                     this.checkpointRecoveryReason = checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.NONE
                             ? null
                             : instance.getCheckpointRecoveryReason();
-                    // A pending upgrade rebuild reports only where no phase does, and a
-                    // deferral outranks it, whose reason already names the upgrade. Nor
-                    // does an invalid view report it: the flag stays set while the older
-                    // superblock is on disk, but an invalid view never refreshes again, so
-                    // the rebuild it promises never runs. Flag then reason, for the order
-                    // argument above: the writer puts the reason down before the flag and
-                    // clears the flag before the reason. A NULL reason read beside a set
-                    // flag is the clear landing between the two reads, so it reports as no
+                    // A pending upgrade rebuild reports only where no phase does, and never for an
+                    // invalid view, which will not refresh again. Flag, then reason, as above: a
+                    // NULL reason beside a set flag is a clear in progress, so it reports as no
                     // longer pending.
                     if (checkpointRecoveryPhase == LiveViewCheckpointRecoveryPhase.NONE
                             && !instance.isInvalid()
@@ -915,27 +639,16 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                     } else {
                         this.isCheckpointUpgradeRebuildPending = false;
                     }
-                    // The apply-lag wait, target then stamp. The writer publishes the target
-                    // before the stamp and clears the stamp before the target, so a reader in
-                    // this order never pairs a target with an earlier episode's stamp, and the
-                    // NULL-target gate above drops a stamp whose target it read too early. The
-                    // order cannot rule out the reverse: a clear followed by a re-arm between
-                    // the two reads pairs the ended episode's target with the next episode's
-                    // stamp. The mismatch is transient and lasts for this read only.
+                    // Target, then stamp: the writer publishes the target first and clears the
+                    // stamp first. A clear and re-arm between the two reads can still pair one
+                    // wait's target with the next wait's stamp, for this read only.
                     this.applyLagDeferTargetSeqTxn = instance.getApplyLagDeferTargetSeqTxn();
                     this.applyLagDeferSinceUs = instance.getApplyLagDeferSinceUs();
-                    // The last repair's outcome and the rows it replayed, in that order
-                    // and no other. The refresh worker bumps the o3_* counters and only
-                    // then publishes the outcome word, so an outcome read here was
-                    // published after the counters read below - and this row's
-                    // disposition therefore names a repair whose rows those counters
-                    // carry. Reading the counters first would let a projection that
-                    // lists them before the disposition pair one repair's route with
-                    // the previous repair's cost. The writer half of this pairing is
-                    // asserted in LiveViewInstance.publishCheckpointRepairOutcome(); this
-                    // read half is load-bearing but unasserted - a single-threaded observer
-                    // cannot tell the two orders apart, so reversing the four lines below
-                    // leaves every test green.
+                    // Outcome before counters: the worker bumps the o3_* counters before it
+                    // publishes the outcome, so the disposition names a repair the counters already
+                    // include. The writer half is asserted in
+                    // LiveViewInstance.publishCheckpointRepairOutcome(); this read order is
+                    // load-bearing but unasserted.
                     this.checkpointRepairOutcome = instance.getCheckpointRepairLastOutcome();
                     this.o3ResumeReplayRows = instance.getO3ResumeReplayRows();
                     this.o3BoundaryReplayRows = instance.getO3BoundaryReplayRows();
@@ -943,11 +656,9 @@ public class LiveViewsFunctionFactory implements FunctionFactory {
                 }
 
                 /**
-                 * Converts a timestamp held in base-table units to the
-                 * TIMESTAMP_MICRO the catalogue declares - identity for MICRO
-                 * bases, rounding down to the MICRO grid for NS bases. LONG_NULL
-                 * passes through untouched rather than through the driver, whose
-                 * rescale would turn the sentinel into an arbitrary timestamp.
+                 * Converts a base-unit timestamp to the catalogue's TIMESTAMP_MICRO. LONG_NULL
+                 * passes through untouched, since the driver's rescale would turn the sentinel into
+                 * an arbitrary timestamp.
                  */
                 private long toMicros(long raw) {
                     return raw == Numbers.LONG_NULL

@@ -268,9 +268,8 @@ public class TablesFunctionFactory implements FunctionFactory {
                 public boolean getBool(int col) {
                     return switch (col) {
                         case WAL_ENABLED_COLUMN -> table.isWalEnabled();
-                        // A live view's dedup keys only serve its repair publications; its
-                        // forward commits keep rows that share those keys, so the view does
-                        // not deduplicate and the catalogue reports false for it.
+                        // A live view's dedup keys serve only its repair publications; its forward
+                        // commits do not deduplicate, so the catalogue reports false.
                         case DEDUP_NAME_COLUMN -> table.hasDedup() && !table.getTableToken().isLiveView();
                         case IS_MAT_VIEW_COLUMN -> table.getTableToken().isMatView();
                         case TABLE_SUSPENDED_COLUMN ->

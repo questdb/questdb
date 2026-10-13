@@ -789,8 +789,7 @@ public final class WindowAccumulatorDescriptor {
      * <p>
      * The field order and the unsigned comparison are the ones the live-view durable
      * encoding sorts by, so a plan ordered here and a manifest ordered by encoded bytes
-     * agree. The durable side additionally carries a codec version, which is a fact
-     * about the persisted image rather than about the state and is
+     * agree. The codec version the durable side also carries is
      * {@code LiveViewAccumulatorDescriptor}'s to compare.
      */
     public int compareIdentity(@NotNull WindowAccumulatorDescriptor other) {
@@ -1180,46 +1179,20 @@ public final class WindowAccumulatorDescriptor {
 
     /**
      * Whether a row this component's contribution predicate refuses leaves its state exactly as
-     * it was - so a group whose every component refuses a row has nothing to write for it, and
-     * {@link WindowMapState#computeNext} may leave that row's key out of the map altogether.
+     * it was, so {@link WindowMapState#computeNext} may leave the row's key out of the map when
+     * every component of the group refuses it.
      * <p>
-     * Deliberately narrower than "the predicate refuses the row", and the families it turns away
-     * are what say why:
-     * <ul>
-     *     <li>{@link #CONTRIBUTION_EVERY_ROW} has no refused row to be inert about, so a row
-     *     count and the two respect-nulls captures decline here through their predicate;</li>
-     *     <li>a <b>{@code last_value ignore nulls}</b> capture writes its slot on the first row of
-     *     a partition whatever that row held and only then begins refusing, so a refused row that
-     *     happens to be a partition's first one does change the state;</li>
-     *     <li>a <b>{@link #isRingBacked() ring-backed} bounded frame</b> allocates its ring on the
-     *     partition's first row and advances it on every row after, refused rows included,
-     *     because a refused row still occupies a position in the frame.</li>
-     * </ul>
-     * Only {@link #CONTRIBUTION_FINITE_DOUBLE} answers true, and that is the caller's constraint
-     * rather than a claim about the other predicates. The group evaluates the predicate itself,
-     * off the contributor's own argument, and {@code Numbers.isFinite(arg.getDouble(record))} is
-     * the whole of this one - where the type's own null test is a different expression per
-     * argument type and a second spelling of it here would be a second chance to disagree with
-     * the contributor. Families carrying the other kinds are inert in the same sense and may be
-     * admitted once a caller can evaluate them.
+     * Narrower than "the predicate refuses the row": {@link #CONTRIBUTION_EVERY_ROW} has no
+     * refused row, a {@code last_value ignore nulls} capture writes its slot on a partition's
+     * first row whatever it holds, and a {@link #isRingBacked() ring-backed} frame advances its
+     * ring on refused rows too. Only {@link #CONTRIBUTION_FINITE_DOUBLE} answers true, because
+     * the group evaluates the predicate itself and {@code Numbers.isFinite(arg.getDouble(record))}
+     * is the whole of this one; other kinds may be admitted once a caller can evaluate them.
      * <p>
-     * Five of the seven families this admits run ahead of any caller that reaches them, and so
-     * this admission of them carries no coverage: {@link #FAMILY_DOUBLE_MAX},
-     * {@link #FAMILY_DOUBLE_MIN}, {@link #FAMILY_DOUBLE_WELFORD},
-     * {@link #FAMILY_DOUBLE_KAHAN_SUM_COUNT} and
-     * {@link #FAMILY_DOUBLE_FIRST_NOT_NULL_VALUE}. The skip needs a two-pass group - see
-     * {@link WindowMapState#isPass1SkipEnabled()} - and the whole-partition {@code avg},
-     * {@code sum} and {@code count} functions are the only two-pass ones that declare a family,
-     * which leaves {@link #FAMILY_DOUBLE_SUM_COUNT} and {@link #FAMILY_NON_NULL_COUNT} as the
-     * whole of what a skipping group holds today. Every class declaring one of the five sits on
-     * a cumulative {@code *OverUnboundedPartitionRowsFrame*} frame and reports
-     * {@link WindowFunction#ZERO_PASS}, while {@link WindowMapSpec#isSameSpec} keys a group by
-     * its pass count - so no group carrying one of them is ever two-pass. Their identity
-     * encodings themselves do run, wherever {@link WindowMapState#computeNext} resets a new
-     * entry of a group carrying one; what no caller reaches is those same encodings read back
-     * off the identity buffer a skipping group answers a whole-skipped partition from - see
-     * {@link WindowMapState#projectPass2} - and reaching that takes a production change rather
-     * than a test.
+     * Of the seven admitted families only {@link #FAMILY_DOUBLE_SUM_COUNT} and
+     * {@link #FAMILY_NON_NULL_COUNT} reach a skipping group today: the skip needs a two-pass
+     * group ({@link WindowMapState#isPass1SkipEnabled()}), and every function declaring one of
+     * the other five reports {@link WindowFunction#ZERO_PASS}.
      */
     public boolean isRefusedRowInert() {
         if (contributionKind != CONTRIBUTION_FINITE_DOUBLE) {

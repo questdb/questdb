@@ -333,15 +333,9 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         /**
-         * Finalizes nothing: pass 1 already left the slot holding the sum this family answers
-         * with, and {@code getDouble} reads it straight back.
-         * <p>
-         * The method stays an override rather than being dropped because inheriting {@code avg}'s
-         * would divide the sum by the count and answer with the average. What its body used to do
-         * was walk every entry of the partition map to execute
-         * {@code value.putDouble(0, value.getDouble(0))} - a write of each slot back over itself -
-         * so a {@code sum() OVER (PARTITION BY k)} paid one full traversal of its map, between the
-         * two passes, that changed no byte of it.
+         * Finalizes nothing: pass 1 already left the slot holding the sum, which
+         * {@code getDouble} reads back. It stays an override because inheriting {@code avg}'s
+         * would divide the sum by the count.
          */
         @Override
         public void preparePass2() {
@@ -754,8 +748,7 @@ public class SumDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         /**
-         * The whole image is {@code (sum, nonNullCount)} - the frame start is unbounded, so
-         * there are no live rows behind the accumulator to carry.
+         * The image is {@code (sum, nonNullCount)}; an unbounded frame start retains no rows.
          */
         @Override
         public int checkpointStateFixedLength() {

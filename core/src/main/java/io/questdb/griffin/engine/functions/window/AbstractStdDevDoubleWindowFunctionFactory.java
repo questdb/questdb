@@ -1484,8 +1484,7 @@ public abstract class AbstractStdDevDoubleWindowFunctionFactory extends Abstract
         }
 
         /**
-         * The whole image is {@code (mean, m2, nonNullCount)} - the frame start is
-         * unbounded, so there are no live rows behind the accumulator to carry.
+         * The image is {@code (mean, m2, nonNullCount)}; an unbounded frame start retains no rows.
          */
         @Override
         public int checkpointStateFixedLength() {

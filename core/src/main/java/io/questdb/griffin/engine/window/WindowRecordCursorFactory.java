@@ -70,10 +70,9 @@ public class WindowRecordCursorFactory extends AbstractRecordCursorFactory {
     // the functions of its own kind - and the repair takes their union. This factory owns
     // the plan, because an expression-keyed projector holds compiled key functions.
     private final LiveViewCheckpointRowsPlan checkpointRowsPlan;
-    // The fused window-state plan: which accumulator components this live view's durable
-    // state is made of and which outputs project them. Null when the factory is not a
-    // live-view compile or when nothing in it can join a fused group. Holds only
-    // non-owning references into this factory's own functions, so it needs no cleanup.
+    // The live view's fused window-state plan, or null outside a live-view compile or when
+    // nothing can join a fused group. It only references this factory's functions, so it
+    // needs no cleanup.
     private final LiveViewWindowStatePlan checkpointWindowStatePlan;
     // One entry per window Map group this factory's functions form: the components the
     // group's map value would be made of, and the outputs that read them. Null when the

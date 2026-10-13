@@ -209,8 +209,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
                 checkpointLogicalStateBytes
         );
         checkpointDirtyPartitions = null;
-        // Goes with the map for the reason close() and reset() give: the flag is an
-        // invariant of a live dirty set, and this function no longer holds one.
+        // The flag is an invariant of a live dirty set, which this function no longer holds.
         hasCheckpointDirtyTracking = false;
         hasCheckpointEvictionsRecorded = false;
         checkpointBaselineGeneration = Numbers.LONG_NULL;
@@ -288,10 +287,8 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     @Override
     public boolean markCheckpointPartitionEvicted(Record record, RecordSink keySink) {
         if (isWindowStateOwned()) {
-            // The window holds this function's state in its own map, so the sweep drops
-            // the accumulator by dropping the fused entry and records the removal in the
-            // window's one dirty set. There is nothing of this function's left to record,
-            // and true is the honest answer: the removal is tracked, just not here.
+            // The window's fused entry holds this state; the sweep drops it and records the
+            // removal in the window's dirty set, so the removal is tracked, just not here.
             return true;
         }
         if (tombstoneValueIndex < 0 || !hasCheckpointDirtyTracking) {
@@ -314,13 +311,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
      * fires when at least one tombstoned entry exists, which means
      * processRow saw an anchor cross on some partition in the recent past.
      * <p>
-     * The dirty mark rides on {@code isFirstCadenceTouch} rather than on every row.
-     * That flag is the anchor's, read off a value the caller had already loaded, so a
-     * repeat row inside one cadence costs neither the key serialization the mark's sink
-     * does nor the probe into the dirty map that follows it. What the set has to name is
-     * every key whose state moved since the last publication, and the first row of a
-     * cadence names the key every later row of that cadence moves - see
-     * {@link #markCheckpointPartitionDirty(Record)} for the whole contract.
+     * The dirty mark fires only on {@code isFirstCadenceTouch}, which spares a repeat row
+     * inside one cadence the key serialization and the dirty-map probe; see
+     * {@link #markCheckpointPartitionDirty(Record)} for why that still names every moved key.
      * <p>
      * Subclasses that need to clear additional per-partition scratch state
      * may override; most do not. An override that keeps the checkpoint dirty
@@ -330,9 +323,7 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
     @Override
     public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
         if (isWindowStateOwned()) {
-            // Nothing of this function's is tombstoned or marked dirty any more: the
-            // window loads the one value this row touches, keeps it alive and marks it
-            // once, for the group.
+            // The window keeps the fused value alive and marks it dirty once, for the group.
             return;
         }
         if (isFirstCadenceTouch) {
@@ -379,11 +370,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
      */
     @Override
     public void onCheckpointRestoreBegin() {
-        // A fused function's map stays closed, for the reason reopen() leaves it closed:
-        // the window owns the group's one value layout, and the state a restore replaces is
-        // in that map rather than in this one. The legacy-checkpoint adapter is the single
-        // path that does restore into the private map, and it opens the map itself first -
-        // see LiveViewWindowStatePlan.reopenProjectionMaps - so the clear below is its.
+        // A fused function's map stays closed: a restore replaces the window's fused map
+        // instead. Only the legacy-checkpoint adapter restores into this map, and it opens
+        // the map first (LiveViewWindowStatePlan.reopenProjectionMaps).
         if (map != null && (!isWindowStateOwned() || map.isOpen())) {
             // On a fresh restart the lazy per-partition map is still closed: the
             // live-view restore path (restoreFromHead) runs before any cursor
@@ -414,10 +403,9 @@ public abstract class BasePartitionedWindowFunction extends BaseWindowFunction
 
     @Override
     public void reopen() {
-        // A fused function's map stays closed: the window allocated one value layout for
-        // the whole group and reopening this one would charge the per-view tracker for a
-        // map no row ever writes to. The legacy-checkpoint adapter is the one path that
-        // reopens it, and it closes it again as soon as it has hoisted the state across.
+        // A fused function's map stays closed: reopening it would charge the per-view
+        // tracker for a map no row writes to. Only the legacy-checkpoint adapter reopens it,
+        // briefly, to hoist the state across.
         if (map != null && !isWindowStateOwned()) {
             map.reopen();
         }

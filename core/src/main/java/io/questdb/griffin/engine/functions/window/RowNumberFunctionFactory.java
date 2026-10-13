@@ -230,8 +230,7 @@ public class RowNumberFunctionFactory implements FunctionFactory {
         }
 
         /**
-         * The whole image is the one counter: the row number is the partition's row count
-         * so far, and nothing behind it is retained.
+         * The image is the one row counter.
          */
         @Override
         public int checkpointStateFixedLength() {
@@ -387,10 +386,8 @@ public class RowNumberFunctionFactory implements FunctionFactory {
 
         @Override
         public void markPartitionAlive(Record record, boolean isFirstCadenceTouch) {
-            // The flag goes unread on purpose: this override keeps no checkpoint dirty
-            // set, so every seal full-scans it. See BasePartitionedWindowFunction's
-            // markCheckpointPartitionDirty - naming some of a cadence's keys and not the
-            // rest is the one outcome that is worse than naming none.
+            // The flag goes unread: this override keeps no checkpoint dirty set, so every seal
+            // full-scans it.
             if (isWindowStateOwned()) {
                 // Nothing of this function's is tombstoned any more: the window keeps the
                 // one value this row touches alive, for the whole group.

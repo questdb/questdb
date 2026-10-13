@@ -4645,13 +4645,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // The whole block applies as one O3 operation that stamps every touched partition with one
         // seqTxn, so use the block's last (the committed seqTxn).
         walApplySeqTxn = startSeqTxn + blockTransactionCount - 1;
-        // One block applies under one dedup mode, and this path leaves it at the default.
-        // WalTxnDetails is what keeps a non-default one out - it stamps FORCE_FULL_COMMIT
-        // on such a transaction AND on the one before it, so calculateInsertTransactionBlock
-        // ends the block below it - and this asserts what that buys rather than trusting it:
-        // a NO_DEDUP transaction applied here would be deduplicated against the table's keys
-        // after asking not to be, and an UPSERT_NEW one would be inserted beside the rows it
-        // means to replace.
+        // WalTxnDetails stamps FORCE_FULL_COMMIT on a transaction with a non-default dedup mode and
+        // on its predecessor, so a block always applies under the default mode. A NO_DEDUP
+        // transaction applied here would be deduplicated, and an UPSERT_NEW one inserted beside the
+        // rows it replaces.
         assert isBlockDedupModeDefault(startSeqTxn, blockTransactionCount);
         segmentCopyInfo.clear();
         walTxnDetails.prepareCopySegments(startSeqTxn, blockTransactionCount, segmentCopyInfo, denseSymbolMapWriters.size() > 0);
@@ -10902,25 +10899,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             return true;
         } else {
-            // Carry the commit's own mode into the apply. It matters for exactly one of
-            // them - WAL_DEDUP_MODE_NO_DEDUP, which a producer stamps to keep its rows off
-            // the table's dedup keys - and isCommitDedupMode() is what reads it. Left at
-            // the default, a NO_DEDUP commit on a dedup-keyed table would collapse the
-            // very rows it asked to keep.
-            //
-            // WalTxnDetails stamps a commit carrying any non-default mode
-            // FORCE_FULL_COMMIT, and stamps its predecessor too, so this commit applies
-            // alone rather than inside a block that would carry one mode for all of it.
-            // That is all the stamp buys. It says nothing about rows an earlier
-            // DEFAULT-mode commit already left in the WAL lag: this apply flushes those
-            // under the mode set here, and a predecessor already applied into the lag has
-            // left transactionMeta, so nothing can stamp it after the fact.
-            //
-            // LiveViewRefreshJob.commitLiveViewBlock() is what closes that case today. It
-            // routes every forward block of a dedup-keyed view to NO_DEDUP, so a table
-            // whose dedup keys matter never carries a DEFAULT-mode data commit for a later
-            // NO_DEDUP commit to meet in the lag. A future NO_DEDUP producer has to
-            // establish that property for itself; the stamp will not do it.
+            // isCommitDedupMode() reads the commit's own mode; left at the default, a NO_DEDUP
+            // commit on a dedup-keyed table would collapse the rows it asked to keep. The
+            // FORCE_FULL_COMMIT stamp keeps such a commit out of a block, but not away from rows an
+            // earlier DEFAULT-mode commit left in the WAL lag, which this apply flushes under its
+            // own mode. LiveViewRefreshJob avoids that by committing every forward block of a
+            // dedup-keyed view as NO_DEDUP; a new NO_DEDUP producer must establish the same
+            // property.
             this.dedupMode = dedupMode;
             try {
                 return processWalCommit(

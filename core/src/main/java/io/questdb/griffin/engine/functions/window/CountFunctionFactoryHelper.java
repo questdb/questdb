@@ -379,21 +379,12 @@ public class CountFunctionFactoryHelper {
         }
 
         /**
-         * The same absorption, off an argument the caller has already evaluated. The group's
-         * pass-1 skip evaluates exactly this {@code arg} to decide whether the row reaches the
-         * map, so taking its answer here is what stops the row's argument being read twice -
-         * see {@link io.questdb.griffin.engine.window.WindowMapState#computeNext(Record)}.
-         * <p>
-         * The test is {@code Numbers.isFinite} rather than {@link #isNotNullFunc} because the
-         * caller that supplies an argument has already narrowed the predicate to that one. It
-         * offers this form only for a component
-         * {@link WindowAccumulatorDescriptor#isRefusedRowInert() inert on a refused row}, which
-         * this class reaches only as a {@link WindowAccumulatorDescriptor#FAMILY_NON_NULL_COUNT}
-         * carrying {@link WindowAccumulatorDescriptor#CONTRIBUTION_FINITE_DOUBLE} - and every
-         * argument type that kind admits reaches {@code count(D)}, whose {@code isNotNullFunc}
-         * is this very test. A count over a SYMBOL, VARCHAR or DECIMAL argument names a
-         * different predicate and a different contribution kind, so no caller hands one a
-         * pre-read argument; such a call keeps the two-argument body above.
+         * Absorbs an argument the caller already read: the group's pass-1 skip evaluates this
+         * same {@code arg}; see
+         * {@link io.questdb.griffin.engine.window.WindowMapState#computeNext(Record)}. The test
+         * is {@code Numbers.isFinite} rather than {@link #isNotNullFunc} because only a
+         * {@link WindowAccumulatorDescriptor#CONTRIBUTION_FINITE_DOUBLE} count, i.e.
+         * {@code count(D)}, is offered this form, and that is its predicate.
          */
         @Override
         public void accumulateWindowState(Record record, MapValue value, double argument) {
@@ -2209,8 +2200,7 @@ public class CountFunctionFactoryHelper {
         }
 
         /**
-         * The whole image is the one counter - the frame start is unbounded, so there are no
-         * live rows behind it to carry.
+         * The image is the one counter; an unbounded frame start retains no rows.
          */
         @Override
         public int checkpointStateFixedLength() {

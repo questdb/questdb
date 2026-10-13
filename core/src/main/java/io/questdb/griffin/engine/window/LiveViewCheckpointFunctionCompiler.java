@@ -74,66 +74,41 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class LiveViewCheckpointFunctionCompiler {
     private static final String STATE_PAGE_CODEC_FAMILY = "live-view-state-page";
-    // The UTC offset desugarDailyAnchor always emits beside the zone name. The zone
-    // carries the whole shift, so any other value is a hand-written anchor this does not
-    // describe rather than one it can fold into the zone's own grid.
+    // The UTC offset desugarDailyAnchor emits beside the zone name; any other value is a
+    // hand-written anchor this does not describe.
     private static final String UTC_ZERO_OFFSET = "+00:00";
 
     private LiveViewCheckpointFunctionCompiler() {
     }
 
     /**
-     * Builds the fixed segment boundary an anchored live view resets on, or null when
-     * the anchor has none or does not govern the whole view. The anchor counterpart of
-     * {@link #rangePlan} and {@link #rowsPlan}: those read the frame descriptors the
-     * window functions carry, this one reads the anchor expression the definition
-     * carries, because an anchored window's dependency is the segment rather than any
-     * function's frame.
-     * <p>
-     * The recognized shape is a calendar-period floor of the base's designated
-     * timestamp, in the two forms the definition can hold it:
+     * Builds the fixed segment boundary an anchored live view resets on, or null when the anchor
+     * has none or does not govern the whole view. It reads the anchor expression rather than any
+     * frame and recognizes a calendar-period floor of the designated timestamp in three forms:
      * <ul>
      *     <li>{@code timestamp_floor('<stride><unit>', ts)} - a hand-written
-     *     {@code ANCHOR EXPRESSION}, and equally what {@code ANCHOR DAILY} at UTC
-     *     midnight desugars to. The buckets are epoch-aligned;</li>
-     *     <li>{@code timestamp_floor('1d', ts, <origin>)} - what {@code ANCHOR DAILY}
-     *     at any other time of day desugars to. The origin is a constant the AST
-     *     carries as a cast expression, so this reads it from the definition's own
-     *     {@code anchorDailyTimeUs} instead of folding the node, which is also why the
-     *     three-argument form is accepted only for a DAILY anchor.</li>
-     *     <li>{@code timestamp_floor_utc('1d', ts, <origin>, '+00:00', '<zone>')} - what
-     *     {@code ANCHOR DAILY} with an IANA time zone desugars to. The buckets follow
-     *     the zone's civil day, so they are 23 or 25 hours wide across a DST transition
-     *     rather than a fixed stride, and
-     *     {@link LiveViewCheckpointAnchorPlan#ofTimeZone} computes them from the zone's
-     *     transition table. The origin and the DAILY-only restriction are read the same
-     *     way the three-argument form reads them; the offset argument is checked rather
-     *     than assumed, since only {@code desugarDailyAnchor}'s own output is known to
-     *     carry {@code '+00:00'}.</li>
+     *     {@code ANCHOR EXPRESSION}, or {@code ANCHOR DAILY} at UTC midnight, on epoch-aligned
+     *     buckets;</li>
+     *     <li>{@code timestamp_floor('1d', ts, <origin>)} - {@code ANCHOR DAILY} at any other time
+     *     of day;</li>
+     *     <li>{@code timestamp_floor_utc('1d', ts, <origin>, '+00:00', '<zone>')} -
+     *     {@code ANCHOR DAILY} with an IANA time zone, whose buckets
+     *     {@link LiveViewCheckpointAnchorPlan#ofTimeZone} follows across DST transitions.</li>
      * </ul>
-     * Everything else declines, and so does a zone name this cannot resolve. Declining
-     * costs a view only the localized repair path.
+     * The last two carry their origin as a cast expression, so it is read from the definition's
+     * {@code anchorDailyTimeUs} instead, which is why they are accepted only for a DAILY anchor.
+     * Everything else declines, which costs the view only its localized repair path.
      * <p>
-     * The segment arithmetic is only half the contract. It bounds a repair because the
-     * anchor resets state at every boundary, so the plan is withheld unless
-     * {@link #isAnchorSegmentLocal} confirms that every <i>anchored</i> window function
-     * is one the anchor actually resets. A bounded ROWS/RANGE window declared beside the
-     * anchored one keeps sliding across bucket crossings and is no more segment-local
-     * than the anchor is frame-local, so it is not this plan's to bound - it is
-     * {@link #rowsPlan}'s or {@link #rangePlan}'s, and
-     * {@link #isDependencyComplete} is what proves the three plans between them cover
-     * the whole factory.
+     * The plan is withheld unless {@link #isAnchorSegmentLocal} confirms the anchor resets every
+     * anchored window function. A bounded ROWS/RANGE window beside the anchored one is
+     * {@link #rowsPlan}'s or {@link #rangePlan}'s to bound, and {@link #isDependencyComplete}
+     * proves the plans between them cover the factory.
      *
-     * @param spec                      the definition's captured anchored window
-     * @param anchorNode                the parsed anchor expression, already desugared
-     *                                  for a DAILY anchor
-     * @param projectedMetadata         the metadata the anchor expression resolves
-     *                                  against - the same one the runtime anchor
-     *                                  function is compiled with
-     * @param windowFunctions           every window function the compiled factory
-     *                                  carries
-     * @param anchorableWindowFunctions the subset the anchor dispatches
-     *                                  {@code resetPartition} to
+     * @param anchorNode                the parsed anchor expression, already desugared for a
+     *                                  DAILY anchor
+     * @param projectedMetadata         the metadata the runtime anchor function is compiled
+     *                                  against
+     * @param anchorableWindowFunctions the subset the anchor dispatches {@code resetPartition} to
      */
     public static @Nullable LiveViewCheckpointAnchorPlan anchorPlan(
             @NotNull LiveViewDefinition.LvAnchorSpec spec,
@@ -181,10 +156,8 @@ public final class LiveViewCheckpointFunctionCompiler {
             // The same inverted args, two entries deeper: unit, ts, origin, offset, zone.
             unitNode = anchorNode.args.getQuick(4);
             timestampNode = anchorNode.args.getQuick(3);
-            // The zone the plan resolves has to be the zone the expression names, and the
-            // offset beside it has to be the zero the desugaring emits - a hand-written
-            // ANCHOR EXPRESSION could carry a different one, and a plan that ignored it
-            // would describe a grid the runtime does not use.
+            // A hand-written ANCHOR EXPRESSION could name another zone or offset, and a plan
+            // ignoring them would describe a grid the runtime does not use.
             if (!ColumnType.isTimestamp(timestampType)
                     || !isQuotedConstant(anchorNode.args.getQuick(1), UTC_ZERO_OFFSET)
                     || !isQuotedConstant(anchorNode.args.getQuick(0), spec.anchorDailyTimeZone)) {
@@ -215,19 +188,15 @@ public final class LiveViewCheckpointFunctionCompiler {
         final String orderSignature = expressionListSignature(window.getOrderBy(), window.getOrderByDirection());
         final boolean anchored = window.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE
                 || window.isResolvedWindowAnchored();
-        // The kind of a stateless function follows the function rather than the frame, because
-        // the frame is precisely what such a function does not read: last_value over
-        // ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW and over ROWS BETWEEN 10 PRECEDING
-        // AND CURRENT ROW compile to one class whose computeNext reads the row it was handed.
+        // A stateless function's kind follows the function rather than the frame, which it does not
+        // read.
         final boolean isStateless = function.isCheckpointStateless();
         final DependencyKind kind = isStateless
                 ? DependencyKind.STATELESS_CURRENT_ROW
                 : dependencyKind(function.getName(), window);
         final boolean keyed = function.getCheckpointKeyColumnTypes() != null;
-        // The RANGE kind is only assigned to a W PRECEDING frame ending at or below the
-        // current row, and SqlCodeGenerator has already run validateRange() over every
-        // live-view window expression, so such a frame is known to be ordered by the
-        // designated timestamp ascending and its width is safe to read as a timestamp offset.
+        // validateRange() has already ensured a RANGE frame is ordered by the designated timestamp
+        // ascending, so its width reads as a timestamp offset.
         final boolean isRange = kind == DependencyKind.RANGE_W_PRECEDING_BOUNDED_HI;
         // A fixed row-count state extent the function declares for itself, independent of its
         // frame - lag's offset. Long.MIN_VALUE means it has none and the frame decides the extent.
@@ -237,19 +206,14 @@ public final class LiveViewCheckpointFunctionCompiler {
         final long frameHi;
         final long stateExtentLo;
         if (isStateless) {
-            // Zeros throughout rather than the bounds the user wrote: the declared frame
-            // describes no row this function reads and no bound a repair derives, and a zero
-            // needs no unit to be commensurable with the other two.
+            // Zeros: the declared frame describes no row this function reads, and zero needs no
+            // unit.
             frameLo = 0;
             frameHi = 0;
             stateExtentLo = 0;
         } else if (hasRowsStateExtentOverride && !isRange) {
-            // lag ignores its frame outright: it reads the row `offset` back and emits at the
-            // current row, whatever ROWS frame it was written over. Describe it as exactly that -
-            // low bound and extent both -offset, high bound the current row - so the ROWS
-            // discovery bounds it the way it bounds an accumulator over
-            // ROWS BETWEEN offset PRECEDING AND CURRENT ROW. The declared frame's own bounds (a
-            // lagging high bound, an EXCLUDE clause) are decorative for lag and are not carried.
+            // lag ignores its frame and reads the row `offset` back, so it is described as ROWS
+            // BETWEEN offset PRECEDING AND CURRENT ROW, extent included.
             frameLo = rowsStateExtentOverride;
             frameHi = 0;
             stateExtentLo = rowsStateExtentOverride;
@@ -257,24 +221,19 @@ public final class LiveViewCheckpointFunctionCompiler {
             frameLo = isRange
                     ? rangeFrameLo(function.getName(), window, timestampType)
                     : window.getRowsLo();
-            // Both RANGE bounds carry the unit the user wrote, so both go through the same
-            // conversion, and the descriptor holds two commensurable timestamp offsets. A ROWS
-            // frame counts rows at either end and carries no unit, so its bounds stay as the
-            // model records them.
+            // Both RANGE bounds convert from the user's unit so they stay commensurable; ROWS
+            // bounds count rows and stay as recorded.
             frameHi = isRange
                     ? rangeFrameHi(function.getName(), window, timestampType)
                     : effectiveRowsHi(window);
-            // An accumulator's state is the frame's own contents, so the look-behind that feeds
-            // the frame is also the one a warm-up replays and the extent is the frame's low
-            // bound. last_value reads a single row instead, the one its high bound names, so its
-            // extent is that lag however far back the frame nominally starts.
+            // An accumulator's extent is the frame's low bound; last_value reads only the row its
+            // high bound names, so its extent is that lag.
             stateExtentLo = hasHighBoundStateExtent(function.getName(), window, frameHi)
                     ? frameHi
                     : frameLo;
         }
-        // A function whose extent is a fixed row count (lag) cannot bound a RANGE frame, whose
-        // repair works in timestamp width: decline the frame-local claim there so rangePlan
-        // falls back to the from-boundary rebuild rather than localize against wrong units.
+        // A row-count extent (lag) cannot bound a RANGE frame, whose repair works in timestamp
+        // width, so the frame-local claim is declined there.
         final boolean hasFrameLocalState = function.hasFrameLocalCheckpointState()
                 && !(hasRowsStateExtentOverride && isRange);
         final LiveViewCheckpointDependency dependency = new LiveViewCheckpointDependency(
@@ -310,24 +269,11 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Whether the three dependency plans between them cover every window function in the
-     * factory, which is what lets a repair bound them all at once.
-     * <p>
-     * Each plan describes the functions of its own kind and says nothing about the
-     * others: {@link #rangePlan} bounds the finite RANGE frames, {@link #rowsPlan} the
-     * finite ROWS ones, {@link #anchorPlan} the anchored ones. A localized repair takes
-     * the union - the earliest {@code L} and the latest {@code H} any of them proves -
-     * and a union is only a bound over the view's output when every function that
-     * produced that output is inside it. One uncovered function is therefore a whole
-     * repair declined: the replacement over {@code [R, H)} is timestamp-global, so it
-     * re-emits every function's output from the same replay, and a function whose state
-     * that replay cannot reconstruct would be re-emitted wrong.
-     * <p>
-     * A function is uncovered when its kind has no plan (its own contract failed, or the
-     * factory's functions of that kind disagreed on the key/order domain), when it
-     * carries no dependency contract at all - a window function without checkpoint state
-     * support - or when its kind is one no plan can bound. A factory with no window
-     * function answers false: there is nothing for a dependency contract to be about.
+     * Whether the three dependency plans between them cover every window function in the factory. A
+     * repair needs that before it bounds them all at once: its replacement is timestamp-global, so
+     * a function whose state the replay cannot reconstruct would be re-emitted wrong. A function is
+     * uncovered when its kind has no plan, when it carries no dependency contract, or when no plan
+     * can bound its kind. A factory with no window function answers false.
      */
     public static boolean isDependencyComplete(
             @NotNull ObjList<WindowFunction> windowFunctions,
@@ -345,10 +291,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                 return false;
             }
             final boolean covered;
-            // The RANGE plan describes a stateless function too, at the zero width its empty
-            // extent proves. Such a function always contributes that arm, so the plan is
-            // missing here only when another RANGE function in the same factory declined it -
-            // and then nothing localizes, which is the answer this returns.
+            // The RANGE plan covers stateless functions too, at zero width.
             if (dependency.isStateless() || dependency.isFiniteRange()) {
                 covered = hasRangePlan;
             } else if (dependency.isFiniteRows()) {
@@ -364,28 +307,15 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Builds the union of the finite RANGE dependencies a streaming live-view factory
-     * carries, or null when it carries none or one of them fails its own contract. The
-     * plan describes the RANGE functions and only those - a factory mixing them with ROWS
-     * or anchored windows still gets one, and {@link #isDependencyComplete} is what
-     * decides whether the three plans together bound the whole view. Two RANGE functions
-     * must nevertheless agree on the key/order domain, so a later planner can never
-     * combine incompatible descriptors into one repair interval.
+     * Builds the union of the finite RANGE dependencies a streaming live-view factory carries, or
+     * null when it carries none or one of them lacks
+     * {@link LiveViewCheckpointDependency#hasFrameLocalState() frame-local state}. Two RANGE
+     * functions must agree on the key/order domain, or the compile fails, so no repair interval
+     * mixes incompatible descriptors.
      * <p>
-     * The frame shape is necessary but not sufficient: every RANGE function must also hold
-     * {@link LiveViewCheckpointDependency#hasFrameLocalState() frame-local state}, since a
-     * repair warms up over the declared state extent and nothing below it. The domain check
-     * still runs for a factory a non-frame-local function declines, so an incompatible pair
-     * is named at CREATE either way.
-     * <p>
-     * A {@link LiveViewCheckpointDependency#isStateless() stateless} function joins the union
-     * as a zero-width arm, which is why this plan and not a fourth one describes it. Zero is
-     * the identity of the width the union maximizes, so such a function never widens the
-     * interval another one proves; the bounds it is left with when it is all the factory
-     * carries are {@code L = R} and {@code H = changeMaxTs + 1}, which is what its empty state
-     * extent proves. It sits outside the domain check for the same reason - a function reading
-     * one row agrees with every key and order domain - so declaring one beside a RANGE window
-     * over a different domain is not a compile error.
+     * A {@link LiveViewCheckpointDependency#isStateless() stateless} function joins as a zero-width
+     * arm: it never widens the union and agrees with every domain, and on its own it yields
+     * {@code L = R} and {@code H = changeMaxTs + 1}.
      */
     @Nullable
     public static LiveViewCheckpointRangePlan rangePlan(
@@ -407,10 +337,8 @@ public final class LiveViewCheckpointFunctionCompiler {
             }
             final LiveViewCheckpointDependency dependency = windowFunction.checkpointDependency();
             if (dependency != null && dependency.isStateless()) {
-                // A zero-width arm. It widens nothing - zero is the identity of the width
-                // union - and it takes no part in the domain check either, because a function
-                // that reads one row agrees with every key and order domain there is. What it
-                // does is make the plan exist for a view carrying nothing else.
+                // A zero-width arm: it widens nothing and agrees with every domain, but makes the
+                // plan exist for a view carrying nothing else.
                 if (firstStateless == null) {
                     firstStateless = dependency;
                 }
@@ -445,10 +373,8 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (!allFrameLocal) {
             return null;
         }
-        // The domain the plan reports is a RANGE function's when the factory has one; a
-        // stateless-only factory reports the one its own function was declared over, which
-        // nothing downstream reads - the repair takes only the width - and which keeps the
-        // plan's fields describing a window the view actually carries.
+        // A stateless-only factory reports its own function's domain, which nothing downstream
+        // reads.
         final LiveViewCheckpointDependency first = firstRange != null ? firstRange : firstStateless;
         if (first == null) {
             return null;
@@ -463,42 +389,21 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Builds the union of the finite ROWS dependencies a streaming live-view factory
-     * carries, or null when the view has no bounded ROWS repair contract. The ROWS
-     * counterpart of {@link #rangePlan}, with one deliberate difference: an unusable
-     * shape declines the plan instead of failing the compile.
+     * Builds the union of the finite ROWS dependencies a streaming live-view factory carries, or
+     * null when the view has no bounded ROWS repair contract. Unlike {@link #rangePlan}, an
+     * unusable shape declines the plan rather than failing the compile: every ROWS shape is
+     * accepted at CREATE, and declining costs the view only its localized repair path.
      * <p>
-     * That asymmetry is the point. {@code validateRange} already narrowed what
-     * {@code CREATE LIVE VIEW} accepts for RANGE, so a mismatched RANGE domain is a
-     * shape the product has decided to reject. Every ROWS shape below is accepted today
-     * and must stay accepted; declining the plan costs such a view only the localized
-     * repair path, which is what it has now.
-     * <p>
-     * Like the RANGE plan, this describes the finite ROWS functions and only those; a
-     * mixed factory still gets one, and {@link #isDependencyComplete} decides whether the
-     * plans together bound the whole view. The plan is declined when a ROWS function does
-     * not hold {@link LiveViewCheckpointDependency#hasFrameLocalState() frame-local state}
-     * and so reads rows the warm-up over {@code [L, R)} never feeds it, when two of them
-     * disagree on the key/order domain, when a window is not ordered by the designated
-     * timestamp ascending (the row positions {@code Nmax} counts would then be positions
-     * in an order the replay's cursor does not produce), or when the frame is keyless or
-     * zero-wide.
-     * <p>
-     * A PARTITION BY term that is not a plain base column is projected through a compiled
-     * function instead, so an expression key costs the view its index seek rather than its
-     * repair bound (see {@link LiveViewCheckpointRowsPlan}). The one expression the plan
-     * still declines is a {@link Function#isNonDeterministic() non-deterministic} one: the
-     * two searches read the same row from two cursors and have to land on the same key
-     * both times, and a key that answers {@code now()} does not.
+     * The plan declines when a ROWS function lacks frame-local state, when two of them disagree on
+     * the key/order domain, when a window is not ordered by the designated timestamp ascending,
+     * when the frame is keyless or zero-wide, or when a key expression is
+     * {@link Function#isNonDeterministic() non-deterministic}. Other expression keys project
+     * through compiled functions; see {@link #keyProjector}.
      *
-     * @param baseMetadata     the base factory's metadata, which the key projector's
-     *                         columns, its key functions and the designated timestamp are
-     *                         resolved against
-     * @param configuration    for the projector's codegen
-     * @param asm              the compiler's bytecode assembler
-     * @param functionParser   compiles an expression key into the plan's own function,
-     *                         separate from the copy the window runtime partitions by
-     * @param executionContext the live-view compile context the key functions parse under
+     * @param sharedProjector the view's shared key projector, used when it matches the ROWS
+     *                        partition signature; otherwise the plan compiles and owns its own
+     * @param functionParser  compiles an expression key into the plan's own function, separate
+     *                        from the copy the window runtime partitions by
      */
     @Nullable
     public static LiveViewCheckpointRowsPlan rowsPlan(
@@ -550,19 +455,15 @@ public final class LiveViewCheckpointFunctionCompiler {
             rowsFunctionCount++;
         }
 
-        // An empty PARTITION BY leaves nothing to count per key, and a zero-wide frame
-        // has no look-behind to bound. Neither is reachable through a checkpoint-capable
-        // function today - both compile to scalar window functions that carry no
-        // checkpoint state - so declining them costs no view its repair path.
+        // An empty PARTITION BY or a zero-wide frame has nothing to bound; neither reaches here
+        // through a checkpoint-capable function today.
         if (firstRows == null || partitionBy.size() == 0 || maxPrecedingRows < 1) {
             return null;
         }
         LiveViewCheckpointKeyProjector projector = sharedProjector;
         if (projector == null || !projector.getPartitionSignature().equals(firstRows.getPartitionSignature())) {
-            // The view's checkpoint-capable functions do not all partition the way its ROWS
-            // functions do, so there is no one identity to share and the plan compiles - and
-            // owns - the ROWS one for itself. A keyed repair is unavailable to such a view
-            // anyway; the discovery is not.
+            // No shared identity matches the ROWS functions' partitioning, so the plan compiles and
+            // owns its own projector.
             projector = keyProjector(
                     partitionBy,
                     firstRows.getPartitionSignature(),
@@ -597,27 +498,19 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Compiles the partition identity {@code partitionBy} names into the projector every
-     * repair of the view reads its keys through, or returns null when the shape cannot be
-     * projected at all.
-     * <p>
-     * Two shapes, decided by whether every term is a plain column of {@code baseMetadata}:
+     * Compiles the partition identity {@code partitionBy} names into the projector every repair
+     * of the view reads its keys through, or returns null when it cannot be projected.
      * <ul>
-     *     <li><b>Plain columns.</b> The projector is a sink over their column indexes, and
-     *     those indexes are also what lets a repair seek one key's rows through a SYMBOL
-     *     index instead of walking every key's. A SYMBOL column is projected as its
-     *     table-local integer, which is stable for one reader's lifetime - exactly the
-     *     scope one repair plans and replays in - and a second sink writes the resolved
-     *     string a checkpoint partition map keys its entries by.</li>
-     *     <li><b>Expressions.</b> One term written as {@code upper(sym)} or {@code x % 10}
-     *     has no column index to read or to seek through, so <i>every</i> term is projected
-     *     through a compiled function instead. A SYMBOL-typed key function is projected
-     *     through its resolved string, because the integers a function hands out index its
-     *     own map rather than the reader's, and two cursors would not agree on them.</li>
+     *     <li><b>Plain columns</b> project through a sink over their column indexes, which also
+     *     lets a repair seek one key's rows through a SYMBOL index. A SYMBOL projects as its
+     *     table-local integer, stable for one reader's lifetime - the scope one repair runs in -
+     *     and a second sink writes the resolved string a checkpoint partition map keys by.</li>
+     *     <li><b>Expressions</b>: one non-column term puts every term on a compiled key function.
+     *     A SYMBOL-typed key function projects its resolved string, since its integers index its
+     *     own map rather than the reader's.</li>
      * </ul>
-     * A non-deterministic expression key is refused: two cursors read the same base row and
-     * have to land on the same key both times, and a key that answers {@code now()} does
-     * not.
+     * A non-deterministic expression key is refused: two cursors reading one base row must land
+     * on the same key.
      */
     public static @Nullable LiveViewCheckpointKeyProjector keyProjector(
             @NotNull ObjList<ExpressionNode> partitionBy,
@@ -636,10 +529,8 @@ public final class LiveViewCheckpointFunctionCompiler {
         final IntList partitionByColumnIndexes = new IntList(partitionBy.size());
         final ListColumnFilter keyColumnFilter = new ListColumnFilter(partitionBy.size());
         final ArrayColumnTypes keyColumnTypes = new ArrayColumnTypes();
-        // The second projector's shape: what the view's window functions key their own
-        // maps by, which is this list with every SYMBOL resolved to a STRING. Left null
-        // while no key column is a SYMBOL, because the two projectors are then the same
-        // one and generating a second sink would buy nothing.
+        // The checkpoint projector's key types: this list with every SYMBOL resolved to STRING.
+        // Null while no key column is a SYMBOL, when the two projectors are the same.
         ArrayColumnTypes checkpointKeyColumnTypes = null;
         BitSet writeSymbolAsString = null;
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
@@ -648,9 +539,8 @@ public final class LiveViewCheckpointFunctionCompiler {
                     ? SqlUtil.getColumnIndexQuiet(baseMetadata, node.token)
                     : -1;
             if (columnIndex == -1) {
-                // One term the sink cannot read off a page-frame record puts every term on
-                // a key function, so the projector stays one shape rather than two halves
-                // whose SYMBOL keys would live in different spaces.
+                // One non-column term puts every term on a key function, so SYMBOL keys share one
+                // space.
                 return expressionKeyProjector(
                         partitionBy,
                         partitionSignature,
@@ -679,14 +569,10 @@ public final class LiveViewCheckpointFunctionCompiler {
                 checkpointKeyColumnTypes.add(columnType);
             }
         }
-        // No writeSymbolAsString is set, so a SYMBOL key column is projected as its
-        // table-local integer. That is stable for one reader's lifetime, which is exactly
-        // the scope one repair plans and replays in.
+        // SYMBOL keys project as table-local integers here.
         final RecordSink keySink = RecordSinkFactory.getInstance(configuration, asm, baseMetadata, keyColumnFilter);
-        // The checkpoint projector does set it, because the key it writes has to compare
-        // equal to the one a window function's partition map already holds, and those
-        // maps key a SYMBOL partition column by its resolved string. A projector with no
-        // SYMBOL key column needs no second sink at all.
+        // The checkpoint sink writes SYMBOL keys as strings, to compare equal to the keys the
+        // window functions' own partition maps hold.
         final RecordSink checkpointKeySink = writeSymbolAsString == null
                 ? keySink
                 : RecordSinkFactory.getInstance(configuration, asm, baseMetadata, keyColumnFilter, writeSymbolAsString);
@@ -703,16 +589,10 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Compiles the partition identity every checkpoint-capable window function in the
-     * factory shares, or returns null when they do not share one.
-     * <p>
-     * The compiler encodes each function's identity as a signature precisely so two of
-     * them can be compared without re-deriving either one's key layout, and this is the
-     * one place that comparison decides an object rather than a diagnostic:
-     * {@link io.questdb.cairo.lv.LiveViewSegmentRepairEnvelope#keyedScanGate}
-     * reports the same answer as {@code GATE_MIXED_PARTITION_KEYS}. A view with no shared
-     * identity keeps every repair it has today - what it loses is the ability to name one
-     * key domain for the whole view, which a keyed repair would have to rebuild.
+     * Compiles the partition identity every checkpoint-capable window function in the factory
+     * shares, or returns null when they do not share one, which
+     * {@link io.questdb.cairo.lv.LiveViewSegmentRepairEnvelope#keyedScanGate} reports as
+     * {@code GATE_MIXED_PARTITION_KEYS}. Such a view keeps every other repair route.
      */
     public static @Nullable LiveViewCheckpointKeyProjector sharedKeyProjector(
             @NotNull ObjList<Function> functions,
@@ -750,62 +630,26 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Compiles the fused window-state plan for a live view: the accumulator components
-     * its durable state is made of, the projections that read them, and the residual
-     * functions that keep their own legacy roots. Returns null when nothing in the
-     * factory can join a fused group, which is an ordinary answer and leaves every
-     * function exactly where it is today.
+     * Compiles the fused window-state plan for a live view: the accumulator components its
+     * durable state is made of, the projections that read them, and the residual functions that
+     * keep their own legacy roots. Returns null when nothing can join a fused group.
      * <p>
-     * Six things have to hold of a function before it may contribute a component, and
-     * each is a separate way of not being fusible:
-     * <ul>
-     *     <li>it is one of the functions the anchor resets. {@code SqlCodeGenerator}
-     *     has already collected that subset on the frame shape plus the anchor's
-     *     ownership of it, so membership here is both tests at once, read off the same
-     *     list the runtime dispatches through;</li>
-     *     <li>its dependency is the anchor segment and its per-partition state is one
-     *     the anchor can put back to identity;</li>
-     *     <li>it holds whole-state, non-ring checkpoint state - a ring-backed function's
-     *     root names chunk pages rather than an image, and a stateless one has no image
-     *     at all;</li>
-     *     <li>that image is fixed width and fits the per-component inline budget;</li>
-     *     <li>it declares an accumulator family and a projection off it;</li>
-     *     <li>its argument is a direct compiled column reference of a type whose
-     *     contribution predicate {@link WindowAccumulatorDescriptor} can name - or,
-     *     for a family that takes no argument, it has no argument at all.</li>
-     * </ul>
-     * Anything else is a residual. In particular an argument reached through an implicit
-     * cast is not a direct column reference. {@code count(*)} joins as a
-     * {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT row count} rather than as a
-     * {@code count(x)}, and the two never merge: one counts rows and the other counts a
-     * column's non-null values, which agree only on data where that column is never
-     * null.
+     * A function contributes a component only when the anchor resets it, its dependency is the
+     * anchor segment with key-resettable state, it holds whole-state, non-ring checkpoint state of
+     * a fixed width within the inline budget, it declares an accumulator family and projection,
+     * and its argument is a direct column reference whose contribution predicate
+     * {@link WindowAccumulatorDescriptor} can name, or it takes none. Anything else, an
+     * implicitly cast argument included, is a residual.
      * <p>
-     * One {@code count(x)} nevertheless joins that row count, and it is the case the
-     * window rather than the argument settles: {@code x} being the very column the window
-     * partitions by makes it constant across a partition, so the call reads
-     * {@code partition-key-is-null ? 0 : rowCount}. See
-     * {@link WindowAccumulatorCandidate}, which sets out the conditions that keep the
-     * equality honest, and {@link #isCountOverTheWindowsOwnPartitionKey} for the one of them
-     * a live view proves differently from an ordinary query.
-     * <p>
-     * Sharing is proved from the component identity alone and never from SQL text.
-     * {@code sum(x)} and {@code avg(x)} over one window merge because both declare the
-     * same {@code (family, argument, contribution predicate, codec)}, and a
-     * {@code count(x)} over the same argument folds onto their counter because that
-     * counter is provably the one it would have persisted alone. The target shape's
-     * {@code sum(amt)} and {@code count(acct)} do neither, because their arguments
-     * differ and so, on any row where exactly one is null, do their counters. Which of
-     * the two relations applies is the runtime accumulator plan
-     * {@link LiveViewWindowStatePlan.Builder} composes to decide; this method's job is to
-     * hand it a component only where every part of the identity can be named.
+     * Sharing is proved from the component identity alone, never from SQL text: {@code sum(x)}
+     * and {@code avg(x)} merge on the same {@code (family, argument, predicate, codec)}, and
+     * {@code count(*)} joins as a row count. A {@code count(k)} over the window's own partition
+     * key joins that row count too; see {@link WindowAccumulatorCandidate} and
+     * {@link #isCountOverTheWindowsOwnPartitionKey}.
      *
      * @param functions                 every SELECT-list function, in output order
-     * @param anchorableWindowFunctions the subset the anchor dispatches
-     *                                  {@code resetPartition} to, or null for a factory
-     *                                  with no anchored window
-     * @param baseMetadata              the metadata the window functions and their
-     *                                  arguments were compiled against
+     * @param anchorableWindowFunctions the subset the anchor dispatches {@code resetPartition}
+     *                                  to, or null for a factory with no anchored window
      */
     public static @Nullable LiveViewWindowStatePlan windowStatePlan(
             @NotNull ObjList<Function> functions,
@@ -815,24 +659,17 @@ public final class LiveViewCheckpointFunctionCompiler {
         if (anchorableWindowFunctions == null || anchorableWindowFunctions.size() == 0) {
             return null;
         }
-        // Read before a single projection is added, because whether a count over the
-        // partition key may join a row count depends on the group holding an unguarded
-        // reading of that same row count - and the count may precede it in the SELECT
-        // list. Everything else about a projection follows from the function alone.
+        // Read before any projection is added: a count over the partition key may precede its
+        // row-count host in the SELECT list.
         final WindowFunction rowCountHost = rowCountHost(functions, anchorableWindowFunctions);
-        // A live view compiles no WindowMapSpec, so the group's key is proved from what each
-        // function carries for the checkpoint instead - its encoded key layout and its own
-        // PARTITION BY functions - plus the two belonging to one window group, which the
-        // builder's identity latch is what says for every other projection.
+        // A live view compiles no WindowMapSpec, so the guard proves the key from each function's
+        // checkpoint key layout and PARTITION BY functions.
         final WindowAccumulatorCandidate.PartitionKeyGuard partitionKeyGuard =
                 (function, argumentColumnIndex, host) ->
                         isCountOverTheWindowsOwnPartitionKey(function, argumentColumnIndex, host, baseMetadata);
         final LiveViewWindowStatePlan.Builder builder = new LiveViewWindowStatePlan.Builder();
-        // The window names itself before a single projection is offered, so a window whose
-        // every function turns out to be a residual - an anchored DECIMAL sum is the
-        // standing example - still gets the storage plan its checkpoints are laid out by.
-        // Inferring the pair from whichever projection happened to join first would make
-        // the plan's existence depend on the SELECT list rather than on the window.
+        // Name the window first, so a window whose every function is a residual still gets the
+        // storage plan its checkpoints are laid out by.
         if (!nameAnchoredWindow(builder, anchorableWindowFunctions)) {
             return null;
         }
@@ -857,21 +694,10 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Validates the ordering domain of a {@code RANGE W PRECEDING} frame ending at or below
-     * the current row - the RANGE shapes whose forward influence boundary {@code H} follows
-     * from timestamp arithmetic, and therefore the only ones this phase plans a localized
-     * repair against. The width is meaningless unless the frame is ordered by the designated
-     * timestamp ascending, so a frame that claims the shape but orders by something else is
-     * turned away at CREATE rather than silently given a bound that does not describe it.
-     * <p>
-     * Every other RANGE shape - an unbounded look-behind, a {@code FOLLOWING} bound, an
-     * exclusion mode the runtime does not implement - keeps its existing behavior. Those
-     * frames simply do not produce a finite RANGE descriptor, so no repair plan claims them;
-     * narrowing what a live view accepts is a separate, deliberate scope decision.
-     * <p>
-     * The caller runs this for every live-view window expression, before the function itself
-     * is parsed, so an unsupported frame is named at its own position rather than surfacing
-     * later as a missing-checkpoint-metadata failure.
+     * Rejects at CREATE a {@code RANGE W PRECEDING} frame ending at or below the current row that
+     * is not ordered by the designated timestamp ascending, since its width would not bound a
+     * repair. Other RANGE shapes produce no finite RANGE descriptor and keep their behavior. The
+     * caller runs this before parsing the function, so the error names the frame's position.
      */
     public static void validateRange(
             @NotNull WindowExpression window,
@@ -884,17 +710,11 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Names the anchored window on {@code builder} from the functions the anchor dispatches
-     * to, and reports whether one could be named.
-     * <p>
-     * Every anchorable function belongs to the one window the view anchors - the runtime
-     * builds a single {@code LiveViewWindow} from a single PARTITION BY and a single anchor
-     * expression - so the first that carries checkpoint metadata names it for all of them.
-     * A function disagreeing with what it names is still declined into the residual list by
-     * the builder's own identity test, which is what that test is for.
+     * Names the anchored window on {@code builder} from the first anchorable function carrying
+     * checkpoint metadata. A view has one {@code LiveViewWindow}, so that function names the window
+     * for all of them, and the builder's identity test declines any that disagree.
      *
-     * @return false when no anchorable function carries an identity and key layout, which
-     * is a window whose state no root could describe
+     * @return false when no anchorable function carries an identity and key layout
      */
     private static boolean nameAnchoredWindow(
             LiveViewWindowStatePlan.Builder builder,
@@ -921,9 +741,8 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Offers {@code function} to the fused group, and reports whether it joined. Every
-     * rejection below is an ordinary answer: the caller records the function as a
-     * residual and it keeps the legacy root it has today.
+     * Offers {@code function} to the fused group and reports whether it joined; a rejected function
+     * becomes a residual.
      */
     private static boolean addAccumulatorProjection(
             LiveViewWindowStatePlan.Builder builder,
@@ -977,30 +796,15 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Classifies a frame into the dependency kind whose bounds a repair can prove, reading
-     * the high bound the runtime evaluates rather than the one the model records - see
-     * {@link #effectiveRowsHi}.
+     * Classifies a frame into the dependency kind whose bounds a repair can prove, reading the high
+     * bound the runtime evaluates ({@link #effectiveRowsHi}).
      * <p>
-     * The two eligible kinds admit any high bound at or below the current row, not just the
-     * current row itself. A frame that ends {@code V} below its own row reads a subset of
-     * what the same-width frame ending at that row reads, so the bounds both plans derive
-     * from the look-behind alone stay valid: the RANGE floor {@code R - W} still feeds every
-     * base row the frame admits, the RANGE ceiling {@code changeMaxTs + W + 1} still sits
-     * above every output a changed row can reach, and the ROWS discovery still converges
-     * from a key's {@code (Nmax + 1)}-th row above the change because a lagging bound only
-     * removes rows from the affected set. Both are looser than a lagging frame needs, which
-     * widens the repair interval and never narrows it.
-     * <p>
-     * The look-behind the eligible kinds require is the state extent's rather than the
-     * frame's, which is why {@link #hasFiniteStateLookBehind} rather than the frame's own low
-     * bound decides it: {@code last_value} over a ROWS frame reads the one row its high bound
-     * names, so an unbounded frame start still leaves a finite extent and both bounds follow
-     * from it.
-     * <p>
-     * A {@code FOLLOWING} high bound is what must keep falling through to
-     * {@code FOLLOWING_OR_DATA_DEPENDENT}: a base row at {@code m} then joins the frame of
-     * output below {@code m}, and neither bound holds. That case stays a visible branch here
-     * rather than a sign folded into the eligible test.
+     * The eligible kinds admit any high bound at or below the current row: a lagging frame reads a
+     * subset of what the same-width frame ending at the current row reads, so the bounds derived
+     * from the look-behind stay valid, only looser. The look-behind is the state extent's
+     * ({@link #hasFiniteStateLookBehind}) rather than the frame's. A {@code FOLLOWING} high bound
+     * falls through to {@code FOLLOWING_OR_DATA_DEPENDENT}, since a base row then joins the frames
+     * of earlier output.
      */
     private static DependencyKind dependencyKind(CharSequence functionName, WindowExpression window) {
         if (window.getAnchorKind() != WindowExpression.ANCHOR_KIND_NONE || window.isResolvedWindowAnchored()) {
@@ -1012,12 +816,9 @@ public final class LiveViewCheckpointFunctionCompiler {
                 && rowsHi == Long.MAX_VALUE) {
             return DependencyKind.UNANCHORED_RANK;
         }
-        // Long.MIN_VALUE is the encoding an unbounded look-behind uses, and
-        // SqlOptimiser.normalizeWindowFrame() reaches it on the high bound of a ROWS frame - a
-        // literal Long.MAX_VALUE PRECEDING negates into it, leaving a frame that ends below its
-        // own start. Such a bound names no finite lag, so it is turned away here alongside the
-        // unbounded frame starts. A RANGE frame end of the same width negates exactly instead,
-        // to Long.MIN_VALUE + 1, and reaches this as the finite lag it names.
+        // SqlOptimiser.normalizeWindowFrame() can negate a literal Long.MAX_VALUE PRECEDING high
+        // bound into Long.MIN_VALUE, the unbounded encoding, which names no finite lag. A RANGE end
+        // of that width negates to Long.MIN_VALUE + 1 instead.
         if (hasFiniteStateLookBehind(functionName, window, rowsHi)
                 && rowsHi != Long.MIN_VALUE && rowsHi <= 0
                 && hasSupportedExclusion(window)) {
@@ -1038,39 +839,21 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Returns the frame's high bound as the runtime evaluates it, which is what the
-     * descriptor has to describe. {@link WindowExpression#getRowsHi()} answers the raw model
-     * value, so an {@code EXCLUDE CURRENT ROW} frame still reads {@code 0} there even though
-     * {@code WindowContextImpl.getRowsHi()} rewrites it to {@code -1} before any factory sees
-     * it - the runtime frame ends one unit below the current row, one tick for RANGE and one
-     * row for ROWS.
-     * <p>
-     * Reading the model value instead leaves the descriptor claiming a frame the runtime does
-     * not evaluate, and it stops being harmless the moment a bound is derived from
-     * {@link LiveViewCheckpointDependency#getFrameHi()} itself. Folding the exclusion into the
-     * high bound here is also what lets {@link #dependencyKind} classify the exclusion with
-     * one test on both arms rather than turning it away on the RANGE arm alone: an
-     * {@code EXCLUDE CURRENT ROW} frame is a lagging high bound with the smallest possible lag,
-     * and the eligible kinds already admit those.
-     * <p>
-     * {@link #hasSupportedExclusion} is what keeps the other two exclusion modes out; this
-     * method describes only the one the runtime turns into a frame adjustment.
+     * Returns the frame's high bound as the runtime evaluates it.
+     * {@code WindowContextImpl.getRowsHi()} rewrites an {@code EXCLUDE CURRENT ROW} frame's
+     * {@code 0} to {@code -1} - one tick for RANGE, one row for ROWS - while
+     * {@link WindowExpression#getRowsHi()} still answers {@code 0}. Folding it here lets
+     * {@link #dependencyKind} treat the exclusion as the smallest lagging bound;
+     * {@link #hasSupportedExclusion} keeps the other exclusion modes out.
      */
     private static long effectiveRowsHi(WindowExpression window) {
         return effectiveRowsHi(window, window.getRowsHi());
     }
 
     /**
-     * Folds {@code EXCLUDE CURRENT ROW} into a high bound a caller has already converted into
-     * the designated timestamp's units, which is the order the runtime applies the two
-     * adjustments in: {@code WindowContextImpl.of()} converts the unit, and its
-     * {@code getRowsHi()} rewrites the {@code 0} afterwards.
-     * <p>
-     * That order is what the {@code -1} requires. It is already a normalized quantity - one
-     * tick for RANGE, one row for ROWS - so a conversion running after it would scale it a
-     * second time. Converting first happens to agree today because {@code CURRENT ROW} carries
-     * no time unit and {@link #rangeFrameBound} returns early without one, but the two stop
-     * agreeing the moment the parser attaches a unit to a bound that reads as zero.
+     * Folds {@code EXCLUDE CURRENT ROW} into a high bound already converted into the designated
+     * timestamp's units. That is the runtime's order: the {@code -1} is already normalized, and a
+     * later conversion would scale it again.
      */
     private static long effectiveRowsHi(WindowExpression window, long rowsHi) {
         return window.getExclusionKind() == WindowExpression.EXCLUDE_CURRENT_ROW && rowsHi == 0
@@ -1079,19 +862,9 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Builds the projector of a view whose PARTITION BY holds at least one expression, by
-     * compiling every term into a key function of the projector's own. The window runtime
-     * keeps its separate copies, so the two never share evaluation state.
-     * <p>
-     * There is no index seek on this path and no column list to name one: the projector's
-     * column indexes stay empty, and a repair that would have sought one key's rows walks
-     * every key's instead. The key types follow what the generated sink writes rather than
-     * what the function returns - a SYMBOL-typed key function is written through its
-     * resolved string, because the integers it hands out index its own map rather than the
-     * reader's, and two cursors would not agree on them.
-     * <p>
-     * The functions are freed unless the projector takes ownership of them, so a parse
-     * failure, a declined key or a codegen failure leaves nothing behind.
+     * Builds the projector of a view whose PARTITION BY holds an expression, compiling every term
+     * into a key function of the projector's own, separate from the window runtime's copies. This
+     * path has no index seek. The functions are freed unless the projector takes ownership of them.
      */
     private static @Nullable LiveViewCheckpointKeyProjector expressionKeyProjector(
             ObjList<ExpressionNode> partitionBy,
@@ -1109,9 +882,8 @@ public final class LiveViewCheckpointFunctionCompiler {
                 final Function function = functionParser.parseFunction(partitionBy.getQuick(i), baseMetadata, executionContext);
                 keyFunctions.add(function);
                 if (function.isNonDeterministic()) {
-                    // The forward pass and the backward search read the same base row from
-                    // two cursors, so a key that answers differently each time would count
-                    // one row's predecessors against another row's key.
+                    // The forward pass and the backward search read one base row through two
+                    // cursors, so the key must not change between reads.
                     return null;
                 }
                 final int type = function.getType();
@@ -1130,9 +902,7 @@ public final class LiveViewCheckpointFunctionCompiler {
                     keyFunctions,
                     keyColumnTypes,
                     keySink,
-                    // The expression projector already resolves a SYMBOL key function
-                    // through its string, which is what a window function's own map
-                    // holds, so the checkpoint form is the same projector.
+                    // SYMBOL keys already project as strings, so the checkpoint form is the same.
                     keyColumnTypes,
                     keySink,
                     partitionSignature,
@@ -1170,14 +940,8 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Whether the frame names a finite look-behind for the function's <i>state</i>, which is
-     * what the eligible kinds need and what a warm-up replays. For an accumulator that is the
-     * frame's own low bound; for a function whose state the high bound bounds it is the lag,
-     * and the frame's start does not participate.
-     * <p>
-     * Keeping the two arms apart is what confines the widening to the second: an unbounded
-     * frame start still leaves every accumulator with no floor to discover, and its own arm
-     * turns it away here exactly as before.
+     * Whether the frame names a finite look-behind for the function's state: the frame's low bound
+     * for an accumulator, or the lag for a function whose state the high bound bounds.
      */
     private static boolean hasFiniteStateLookBehind(CharSequence functionName, WindowExpression window, long rowsHi) {
         return hasHighBoundStateExtent(functionName, window, rowsHi)
@@ -1185,41 +949,16 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Whether the function's state extent is the frame's high bound rather than its low one.
+     * Whether the function's state extent is the frame's high bound rather than its low one. It
+     * holds only for {@code last_value} over a ROWS frame ending below the current row without
+     * {@code IGNORE NULLS}: it emits the single row its high bound names, so the lag is all a
+     * warm-up replays. The test names the function because an accumulator over the same frame would
+     * be under-replayed.
      * <p>
-     * This reads the function and not just the frame, which inverts the rule the CREATE-time
-     * reject follows, and the inversion is the point. A frame bounds what an accumulator
-     * depends on, so reading the frame alone covers every accumulator written later without
-     * listing any of them. {@code last_value} does not accumulate: it emits the single row its
-     * high bound names, so the lag is the whole of what a warm-up has to replay and the
-     * frame's start says nothing about it. Reading {@code -frameHi} for an accumulator sharing
-     * that same frame would under-replay it and emit a wrong value, which is why the test
-     * names the function.
-     * <p>
-     * Three things narrow it to the shape whose state really is the ring of the last
-     * {@code K} values. {@code IGNORE NULLS} scans the whole frame for the last non-null and
-     * is bounded by the frame's start like any accumulator. A high bound at the current row -
-     * as the runtime evaluates it, so an {@code EXCLUDE CURRENT ROW} frame is a lag of one
-     * rather than one of these - leaves no ring at all: that shape compiles to a stateless
-     * per-row projection, which carries no checkpoint surface and never reaches this compiler.
-     * <p>
-     * And a RANGE frame ends at a timestamp offset rather than at a row, so its lag names no
-     * row for this to read. Over an unbounded start the emitted value is the newest base row
-     * at or below {@code t - V}, and a row inserted at {@code m} moves every output from
-     * {@code m + V} up to the {@code + V} of the next base row that supersedes it - a distance
-     * the data sets rather than the lag. Rows at 0s, 100s and 200s under a one-second lag put
-     * a change at 50s and the moved output at 100s, which neither {@code changeMaxTs + V + 1}
-     * nor any other closed form off {@code V} reaches; the state runs as far back as that
-     * superseded row, so the floor misses it too. The RANGE family therefore keeps the
-     * CREATE-time reject over an unbounded start. What it does have is the bounded start,
-     * where the frame's own width bounds both sides and the extent stays {@code -frameLo} -
-     * that arm needs nothing from this method.
-     * <p>
-     * The function's own {@link WindowFunction#hasFrameLocalCheckpointState()} stands behind
-     * this: the partitioned ROWS-frame {@code last_value} implementations declare it outright
-     * and the RANGE-frame ones declare it only for a bounded frame start, so a shape this
-     * admits that compiles to some other class declines the plan rather than taking one
-     * against an extent it does not hold.
+     * {@code IGNORE NULLS} scans back to the frame's start like an accumulator, a high bound at the
+     * current row compiles to a stateless projection, and a RANGE lag names a timestamp offset
+     * whose moved outputs the data rather than the lag bounds. The function's own
+     * {@link WindowFunction#hasFrameLocalCheckpointState()} still has to agree.
      */
     private static boolean hasHighBoundStateExtent(CharSequence functionName, WindowExpression window, long rowsHi) {
         return rowsHi < 0
@@ -1229,13 +968,9 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Whether the frame exclusion is one the window runtime implements.
-     * {@code WindowContextImpl.validate()} accepts {@code EXCLUDE NO OTHERS} and
-     * {@code EXCLUDE CURRENT ROW} and rejects the other two, so a descriptor claiming an
-     * {@code EXCLUDE GROUP} or {@code EXCLUDE TIES} frame would describe a frame no factory
-     * evaluates. The two the runtime does implement need no separate handling here:
-     * {@link #effectiveRowsHi} has already folded {@code EXCLUDE CURRENT ROW} into the high
-     * bound, which is the whole of what it does to the frame.
+     * Whether the frame exclusion is one the window runtime implements: {@code EXCLUDE NO OTHERS}
+     * or {@code EXCLUDE CURRENT ROW}, which {@link #effectiveRowsHi} has already folded into the
+     * high bound. {@code WindowContextImpl.validate()} rejects the other two.
      */
     private static boolean hasSupportedExclusion(WindowExpression window) {
         return window.getExclusionKind() == WindowExpression.EXCLUDE_NO_OTHERS
@@ -1243,33 +978,12 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Whether the anchor's segment determines the state of every <i>anchored</i> window
-     * function in the factory, which is what lets a repair reconstruct that state by
-     * replaying one segment. Two independent things have to hold of each of them, and
-     * each has its own way of failing:
-     * <ul>
-     *     <li>the anchor actually resets it. The runtime dispatches
-     *     {@code resetPartition} only to the functions whose frame is
-     *     {@code UNBOUNDED PRECEDING ... CURRENT ROW}, so an anchored function outside
-     *     that subset carries state reaching below the segment start;</li>
-     *     <li>its state is keyed and resettable. A per-partition state the anchor cannot
-     *     put back to identity is not described by the reset the replay relies on, and
-     *     {@code supportsKeyReset} is the descriptor for exactly that.</li>
-     * </ul>
-     * A bounded ROWS/RANGE window declared beside the anchored one keeps sliding across
-     * bucket crossings, so it is not the segment's to bound - its own frame plan bounds
-     * it, and {@link #isDependencyComplete} checks that one exists. A factory with no
-     * anchored function at all answers false: there is nothing for the anchor to be a
-     * dependency contract over.
-     * <p>
-     * The containment is checked in both directions. Forward: every anchored function has
-     * to be in the subset, or the anchor does not in fact reset it. Reverse: every member
-     * of the subset has to be anchored or checkpoint-stateless, because a member that is
-     * neither carries per-partition state the anchor resets without owning - the segment
-     * then does not describe that function's state either, and the replay a repair builds
-     * on it would rehydrate the wrong values. {@code SqlCodeGenerator} already collects on
-     * exactly that rule; this is the checkpoint side refusing to plan over a subset that
-     * broke it.
+     * Whether the anchor's segment determines the state of every anchored window function, so a
+     * repair can rebuild that state by replaying one segment. It is checked both ways: every
+     * anchored function must be in the subset the anchor resets, with key-resettable state, and
+     * every member of that subset must be anchored or checkpoint-stateless, or the anchor resets
+     * state it does not own. A bounded ROWS/RANGE window beside the anchored one is its own frame
+     * plan's to bound. A factory with no anchored function answers false.
      */
     private static boolean isAnchorSegmentLocal(
             ObjList<WindowFunction> windowFunctions,
@@ -1304,11 +1018,8 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Whether the window's rows arrive in the order both repair bounds are expressed
-     * in: the base table's designated timestamp, ascending. A frame ordered by anything
-     * else counts row positions the replay's own ts-ordered cursor does not reproduce,
-     * so neither the RANGE width nor the ROWS count describes the frame the user asked
-     * for.
+     * Whether the window is ordered by the designated timestamp ascending - the order the replay's
+     * cursor produces and both repair bounds are expressed in.
      */
     private static boolean isOrderedByDesignatedTimestampAsc(WindowExpression window, RecordMetadata baseMetadata) {
         final ObjList<ExpressionNode> orderBy = window.getOrderBy();
@@ -1320,29 +1031,12 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * The live view's answer to
-     * {@link WindowAccumulatorCandidate.PartitionKeyGuard}: whether {@code function}'s own
-     * window partitions by exactly the one column {@code argumentColumnIndex} names, and
-     * {@code rowCountHost} belongs to that same window.
-     * <p>
-     * It is asked only of a {@code count(k)} whose argument type can carry the guard, and
-     * only where the group already holds an unguarded row count - the candidate has settled
-     * both by the time it gets here. What is left is the key, which a live view proves from
-     * what each function carries for the checkpoint rather than from a compiled
-     * {@link WindowMapSpec}:
-     * <ul>
-     *     <li><b>the partition key is one term and that term is the argument's own
-     *     column</b>, proved through {@link WindowAccumulatorDescriptor#directColumnIndex}
-     *     rather than through the rendered partition signature - two spellings of one
-     *     column are still one column, and one spelling of two is not;</li>
-     *     <li><b>the encoded key is one column too</b>, so the guard has one value to
-     *     read rather than a tuple whose null-ness is a different question;</li>
-     *     <li><b>the host is a function of the same window group.</b> An ordinary query
-     *     buckets by specification before it offers anything, so belonging to the builder is
-     *     what having that identity means there. Here every anchorable function of the
-     *     factory is offered to one builder, and the identity is not latched until the first
-     *     projection joins, so the two are compared directly.</li>
-     * </ul>
+     * The live view's {@link WindowAccumulatorCandidate.PartitionKeyGuard}: whether
+     * {@code function}'s window partitions by exactly the one column {@code argumentColumnIndex}
+     * names and {@code rowCountHost} belongs to that same window. The column is proved through
+     * {@link WindowAccumulatorDescriptor#directColumnIndex} rather than the rendered signature, the
+     * encoded key must be one column, and the host is compared directly because the builder has not
+     * latched a window identity yet.
      */
     private static boolean isCountOverTheWindowsOwnPartitionKey(
             WindowFunction function,
@@ -1397,11 +1091,9 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Whether two functions belong to one fused window group: the same named window, the
-     * same partition and order domains, and the same encoded partition-key layout. It is
-     * the test {@code LiveViewWindowStatePlan.Builder} applies when a projection joins,
-     * read here from the two identities directly because the row-count pre-pass runs
-     * before any of them has been offered to the builder.
+     * Whether two functions belong to one fused window group: the same named window, partition and
+     * order domains, and encoded key layout. It is the test {@code LiveViewWindowStatePlan.Builder}
+     * applies, read directly because the row-count pre-pass runs before the builder sees either.
      */
     private static boolean isSameWindowGroup(WindowFunction left, WindowFunction right) {
         final LiveViewCheckpointFunctionIdentity a = left.checkpointFunctionIdentity();
@@ -1432,11 +1124,8 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     private static NumericConvergence numericConvergence(WindowFunction function) {
-        // These functions maintain floating accumulators whose add/remove order can
-        // leave an allowed sub-ULP suffix difference after localized replay. The type
-        // check is what confines the tolerance to that case: the same functions over a
-        // DECIMAL add and subtract scaled integers, which is exact, so their state and
-        // output converge bit-for-bit and they stay EXACT here.
+        // Floating accumulators may leave a sub-ULP difference after a localized replay; the same
+        // functions over DECIMAL are exact.
         final CharSequence name = function.getName();
         return ColumnType.tagOf(function.getType()) == ColumnType.DOUBLE
                 && (Chars.equalsIgnoreCase(name, "avg")
@@ -1448,28 +1137,12 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Converts one RANGE frame bound from the unit the user wrote into the designated
-     * timestamp's native units, repeating exactly the conversion {@code WindowContextImpl.of()}
-     * applies to build the runtime frame. Both bounds run through here because the descriptor
-     * is only sound while it and the compiled frame agree bit-for-bit, and because a
-     * descriptor mixing a converted low bound with a raw high one holds two numbers that
-     * cannot be compared to each other.
-     * <p>
-     * Two ways of writing a bound produce a runtime frame that is not the one the user asked
-     * for, and the compiler turns both away rather than checkpointing a view against a frame
-     * nobody wrote:
-     * <ul>
-     *     <li>a bound wider than the timestamp's units can carry, which {@code from()} wraps or
-     *     narrows onto a legal-looking width. The ceiling the test reads is
-     *     {@link TimestampDriver#getMaxUnitValue(char)}, the same primitive
-     *     {@code WindowContextImpl.of()} guards the compiled frame with - one ceiling serves
-     *     both, because two parallel range checks would agree only by inspection;</li>
-     *     <li>a bound finer than the timestamp's resolution, which divides down to zero. The
-     *     runtime accepts that one: it rounds the frame rather than corrupting it, and a query
-     *     asking for a nanosecond lag over a micros column keeps working. A live view cannot,
-     *     because the descriptor would record a dependency the user did not ask for and the
-     *     repair would then be bounded by it.</li>
-     * </ul>
+     * Converts one RANGE frame bound from the user's unit into the designated timestamp's units,
+     * exactly as {@code WindowContextImpl.of()} builds the runtime frame, so the descriptor and the
+     * compiled frame agree bit-for-bit. It rejects a bound wider than
+     * {@link TimestampDriver#getMaxUnitValue(char)}, the ceiling the runtime guards with, and a
+     * nonzero bound finer than the timestamp's resolution, which the runtime would round to zero
+     * and a repair would then be bounded by.
      */
     private static long rangeFrameBound(
             CharSequence functionName,
@@ -1504,13 +1177,8 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Resolves the descriptor's {@code frameHi} to the negated finite lag {@code V} the frame
-     * ends at, in the designated timestamp's native units, with {@code EXCLUDE CURRENT ROW}
-     * folded in after the conversion - see {@link #effectiveRowsHi(WindowExpression, long)}
-     * for why that order is the one that holds.
-     * <p>
-     * A frame ending at the current row carries no unit and reaches 0 unchanged, so the
-     * conversion costs nothing for the shape that was admitted before the lagging ones were.
+     * Resolves the descriptor's {@code frameHi} to the negated finite lag {@code V} in the
+     * designated timestamp's units, folding {@code EXCLUDE CURRENT ROW} in after the conversion.
      */
     private static long rangeFrameHi(
             CharSequence functionName,
@@ -1550,19 +1218,11 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * The first function of {@code functions} that would join the group as an unguarded
-     * {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT row count} - a
-     * {@code count(*)} or a partitioned {@code row_number()} - or null when the factory
-     * holds none.
-     * <p>
-     * It is the host a {@code count} over the window's own partition key may join, and
-     * the reason the search runs before any projection is added: such a count may precede
-     * its host in the SELECT list, and whether it fuses must not depend on that.
-     * <p>
-     * The gates are the same ones {@link #addAccumulatorProjection} applies, so this
-     * cannot name a host that walk would decline. Its own arm is deliberately narrow: the
-     * family must be the argumentless one and the function must actually hold no argument,
-     * which is what keeps a {@code count(x)} from being read as a row count here.
+     * The first function that would join the group as an unguarded
+     * {@link WindowAccumulatorDescriptor#FAMILY_ROW_COUNT row count} - {@code count(*)} or a
+     * partitioned {@code row_number()} - or null. It is searched before any projection is added,
+     * because a {@code count} over the partition key may precede its host in the SELECT list, and
+     * applies the same gates as {@link #addAccumulatorProjection}.
      */
     private static @Nullable WindowFunction rowCountHost(
             ObjList<Function> functions,
@@ -1590,16 +1250,9 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * Reads a {@code timestamp_floor} period literal - {@code '1d'}, {@code '15m'} - into
-     * the segment plan it describes, or null when the token is not one. The literal is the
-     * function's own first argument, so this repeats the split
-     * {@code TimestampFloorFunctionFactory} applies to it: a trailing unit character, and an
-     * optional leading count that defaults to one. A non-constant, unquoted, or
-     * unparseable token declines rather than throws - an anchor this cannot read is an
-     * anchor with no fixed segment, which is an answer rather than a compile error.
-     * <p>
-     * A non-null {@code timeZone} builds the same period on that zone's civil grid
-     * instead of on the epoch-aligned one.
+     * Reads a {@code timestamp_floor} period literal - {@code '1d'}, {@code '15m'} - into a segment
+     * plan, split as {@code TimestampFloorFunctionFactory} splits it, on the zone's civil grid when
+     * {@code timeZone} is non-null. An unreadable token declines rather than throws.
      */
     private static LiveViewCheckpointAnchorPlan segmentPlan(
             ExpressionNode unitNode,
@@ -1631,21 +1284,15 @@ public final class LiveViewCheckpointFunctionCompiler {
     }
 
     /**
-     * The origin a DAILY anchor's buckets align to, in the designated timestamp's own
-     * units. The desugared expression carries it as a cast expression rather than as a
-     * foldable constant, so both DAILY forms read it off the definition's captured wall
-     * time instead - which is also why neither form is accepted for a hand-written
-     * {@code ANCHOR EXPRESSION}, where there is no captured wall time to read.
+     * The origin a DAILY anchor's buckets align to, in the designated timestamp's units, read off
+     * the definition's captured wall time because the desugared expression carries it as a cast.
      */
     private static long dailyAnchorOrigin(LiveViewDefinition.LvAnchorSpec spec, int timestampType) {
         return ColumnType.getTimestampDriver(timestampType).from(spec.anchorDailyTimeUs, ColumnType.TIMESTAMP_MICRO);
     }
 
     /**
-     * Whether {@code node} is the quoted string literal {@code expected} spells. The
-     * offset and time zone of a time-zone-aware daily anchor reach this as constants of
-     * that shape; a bind variable, an expression, or a different literal is not one, and
-     * an anchor this cannot read whole is an anchor with no fixed segment.
+     * Whether {@code node} is the quoted string literal {@code expected}.
      */
     private static boolean isQuotedConstant(@Nullable ExpressionNode node, @NotNull CharSequence expected) {
         if (node == null || node.type != ExpressionNode.CONSTANT || node.token == null) {

@@ -374,7 +374,7 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
      * base-WAL retention.
      * <p>
      * For a view whose table carries dedup keys the caller commits
-     * {@link #commitLiveViewWithoutDedup(long)} instead; see there for why.
+     * {@link #commitLiveViewWithoutDedup(long)} instead.
      */
     public void commitLiveView(long maxBaseSeqTxnInBlock) {
         commit0(
@@ -389,19 +389,11 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * {@link #commitLiveView(long)} for a view whose own table carries dedup keys, which
-     * stamps {@code WAL_DEDUP_MODE_NO_DEDUP} so the apply leaves the block's rows alone.
-     * <p>
-     * The keys exist so a <b>repair</b> can upsert on {@code (timestamp, key)}; the forward
-     * path has no such identity to offer. A view may legitimately emit two rows sharing
-     * that pair - two base rows of one account at one instant produce two output rows
-     * carrying different window values - and a default-mode commit on a dedup-keyed table
-     * would collapse them into one, silently losing a row and leaving the cadence
-     * boundaries counting rows nothing wrote.
-     * <p>
-     * Which table carries the keys is the caller's to know: the dedup flags live in the
-     * table's own {@code _meta}, and the sequencer metadata this writer reads does not
-     * carry them.
+     * {@link #commitLiveView(long)} for a view whose own table carries dedup keys. It stamps
+     * {@code WAL_DEDUP_MODE_NO_DEDUP} so the apply keeps rows sharing a {@code (timestamp, key)}
+     * pair, which a view may legitimately emit. The caller knows which tables carry the keys: they
+     * live in the table's {@code _meta}, which the sequencer metadata this writer reads does not
+     * carry.
      */
     public void commitLiveViewWithoutDedup(long maxBaseSeqTxnInBlock) {
         commit0(
@@ -416,27 +408,16 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
     }
 
     /**
-     * Commits a live view's WAL block that upserts the rows it carries onto the view's
-     * previously applied output, on the view table's own dedup keys - the designated
-     * timestamp and the projected partition key.
-     * <p>
-     * This is the <b>sparse</b> publication a repair of a closed anchor segment can use
-     * instead of {@link #commitLiveViewWithReplaceRange(long, long, long)}: the replacement
-     * deletes its whole interval and so has to carry every row of it, while an upsert
-     * carries only the rows the repair recomputed and leaves every other stored row where
-     * it stands. What it cannot do is remove a stored row the corrected output no longer
-     * produces, so a caller owes two things before it commits one - that the view's output
-     * is insert-only over the range, and that no two rows of the block share a dedup-key
-     * pair, which {@code LiveViewCheckpointOutputUniqueness} is what decides. A third is
-     * that the view's table carries the keys at all: this writer cannot check it, because
-     * the dedup flags live in the table's own {@code _meta} and the sequencer metadata it
-     * reads does not carry them. Without them the apply would insert the block's rows
-     * beside the stored ones it means to supersede rather than over them.
+     * Commits a live view's WAL block that upserts its rows onto the view's applied output on
+     * the view table's dedup keys - the designated timestamp and the projected partition key.
+     * It is a repair's sparse alternative to
+     * {@link #commitLiveViewWithReplaceRange(long, long, long)} and cannot remove a stored row.
+     * The caller must ensure that the view's output is insert-only over the range, that no two
+     * rows of the block share a dedup-key pair ({@code LiveViewCheckpointOutputUniqueness}), and
+     * that the view's table carries the dedup keys, which this writer cannot check.
      *
      * @param maxBaseSeqTxnInBlock highest base sequencer txn whose rows this block
-     *                             reflects; advances {@code lvConsumedSeqTxn} only after
-     *                             the block is applied (same rule as
-     *                             {@link #commitLiveView(long)})
+     *                             reflects; same rule as {@link #commitLiveView(long)}
      */
     public void commitLiveViewWithUpsert(long maxBaseSeqTxnInBlock) {
         commit0(

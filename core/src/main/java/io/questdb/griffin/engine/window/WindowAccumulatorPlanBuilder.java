@@ -448,12 +448,9 @@ public final class WindowAccumulatorPlanBuilder {
      * {@link WindowAccumulatorCandidate#isRowCountHost}'s - the same one the live-view
      * compiler's own pre-pass reads.
      * <p>
-     * {@code members} is the group's own membership, which the bucketing pass already
-     * established, so this walks the group rather than the SELECT list and asks no function
-     * about its spec: bucketing means membership. Scanning all of {@code functions} here and
-     * re-testing {@code isSameSpec} made the phase quadratic in the window-function count -
-     * every group against every function - for an answer already in hand. Members arrive in
-     * ascending SELECT-list order, so the first host found is the same one either walk names.
+     * {@code members} is the group's membership from the bucketing pass, in ascending
+     * SELECT-list order, so the walk stays within the group and names the same first host a
+     * scan of the whole SELECT list would.
      */
     private static @Nullable WindowFunction rowCountHost(
             ObjList<? extends Function> functions,

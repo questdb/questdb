@@ -78,20 +78,14 @@ import org.jetbrains.annotations.TestOnly;
  * itself, off state the group never rewrites.
  *
  * <h2>What a refused row costs</h2>
- * The one lookup a row is a saving over the several a group replaces, and it is not a saving
- * over none. Unfused {@code sum} and {@code avg} test their DOUBLE argument before they touch
- * their maps, so a NULL-heavy partition costs them an argument evaluation a row and no probe at
- * all, while the fused sequence above writes the key, creates the value and dispatches to the
- * contributor before the contributor decides the row was never its business. Measurement on
- * mostly-NULL DOUBLE input found that unconditional work outweighed the probe the group
- * consolidates, which is what {@link #isPass1SkipEnabled()} answers to: a two-pass group whose
- * components are every one
+ * Unfused {@code sum} and {@code avg} test their DOUBLE argument before touching their maps,
+ * while the fused sequence writes the key and creates the value before the contributor refuses
+ * the row; on mostly-NULL input that outweighs the probe the group saves. So a two-pass group
+ * whose components are all
  * {@link WindowAccumulatorDescriptor#isRefusedRowInert() inert on a refused row} evaluates the
- * predicate itself and leaves the row alone when the answer is no. A partition every row of
- * which the group refused then has no entry at all, and keeps none: pass 2 projects the
- * components' identity off a buffer of the group's own - see {@link #projectPass2(Record)} - so
- * the map a skipping group ends with holds the contributing partitions rather than every
- * partition the traversal saw. That is the whole of what the skip changes about the map.
+ * predicate itself and skips such rows ({@link #isPass1SkipEnabled()}). A partition every row of
+ * which was refused then has no entry, and pass 2 projects identity for it off a buffer of the
+ * group's own; see {@link #projectPass2(Record)}.
  *
  * <h2>Ownership</h2>
  * The group owns its map and its key projection and nothing else. The functions it binds keep
@@ -147,19 +141,15 @@ import org.jetbrains.annotations.TestOnly;
 public final class WindowMapState implements QuietCloseable, Reopenable {
     private final int componentCount;
     /**
-     * The contributors' arguments, one per component, in component order - borrowed exactly as
-     * {@link #keyRecord}'s terms are, and null unless {@link #isPass1SkipEnabled()} holds. Read
-     * to evaluate the components' shared contribution predicate ahead of the map work, and the
-     * one value that evaluation ends on is then handed to that component's contributor rather
-     * than read again; the window functions own these and free them.
+     * The contributors' arguments in component order, or null unless
+     * {@link #isPass1SkipEnabled()} holds. Borrowed like {@link #keyRecord}'s terms: the window
+     * functions own and free them. The skip evaluates them ahead of the map work.
      */
     private final ObjList<Function> contributorArguments;
     /**
-     * The value {@link #projectPass2(Record)} projects a missing partition off, over a buffer
-     * of the group's own rather than an entry of the map - or null unless
-     * {@link #isPass1SkipEnabled()} holds, which is the only way pass 2 can miss. One buffer
-     * serves every missing partition: what a partition nothing contributed to projects is the
-     * components' identity, and that does not vary by key.
+     * The value {@link #projectPass2(Record)} projects a missing partition off, over a buffer of
+     * the group's own, or null unless {@link #isPass1SkipEnabled()} holds. Identity does not
+     * vary by key, so one buffer serves every miss.
      */
     private final FlyweightPackedMapValue identityValue;
     private final long identityValueSize;
@@ -233,9 +223,8 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
         }
         final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
         plan.buildMapValueTypes(valueTypes);
-        // Only a skipping group can miss in pass 2, so only one carries the flyweight the miss
-        // projects off. Its layout is this buffer's own and never the map's: nothing inserts it,
-        // and the components address it by slot exactly as they address an entry.
+        // Only a skipping group can miss in pass 2, so only one carries the identity flyweight.
+        // Nothing inserts it; the components address it by slot as they would a map entry.
         this.identityValue = isPass1SkipEnabled ? new FlyweightPackedMapValue(valueTypes) : null;
         this.identityValueSize = isPass1SkipEnabled ? identityValue.getSizeInBytes() : 0;
         // Built before the map so a failure here cannot strand a tracked allocation.
@@ -334,31 +323,17 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * from the spec every member shares, so it is the group's shape rather than a caller's
      * choice.
      * <p>
-     * A two-pass group whose components are all {@link WindowAccumulatorDescriptor#isRefusedRowInert()
-     * inert on a refused row} skips the whole sequence for a row not one of them would absorb -
-     * the key write, the lookup, the identity put and the contributor dispatch alike - because
-     * every one of those would leave the value exactly as it found it. What the row costs then
-     * is one evaluation of the shared contribution predicate per component, which is what the
-     * unfused functions charge a refused row and less than the fused probe was charging it.
-     * Pass 2 answers for the partitions this leaves out of the map: see {@link #projectPass2}.
-     * <p>
-     * The predicate is {@link WindowAccumulatorDescriptor#CONTRIBUTION_FINITE_DOUBLE}'s, which
-     * every component of a skipping group carries, so one expression answers for all of them
-     * and the walk stops at the first component that would absorb the row. That component's
-     * argument then reaches its contributor as the value the walk already read, through
-     * {@link WindowFunction#accumulateWindowState(Record, MapValue, double)} - so an accepted
-     * row costs the skip nothing at all on a dense input, where the walk stops at the first
-     * component and the contributor it stopped on is handed what it would otherwise read a
-     * second time. The contributor dispatch starts at that component, because the walk has
-     * already read and refused the argument of every component it passed over, and a component
-     * inert on a refused row would only read the same column again to leave its state as it
-     * found it. The components the walk never reached read their own arguments exactly as they
-     * always did: their arguments are their own columns and the walk holds no value for them.
+     * A group with {@link #isPass1SkipEnabled()} skips the whole sequence for a row no component
+     * would absorb, since every step would leave the value as it found it; such a row costs one
+     * {@link WindowAccumulatorDescriptor#CONTRIBUTION_FINITE_DOUBLE} predicate evaluation per
+     * component. The walk stops at the first component that accepts the row, hands its
+     * contributor the value already read through
+     * {@link WindowFunction#accumulateWindowState(Record, MapValue, double)}, and starts the
+     * contributor dispatch there.
      */
     public void computeNext(Record record) {
-        // The component whose argument the skip evaluated and found present, and the value it
-        // read. -1 for a group whose pass 1 skips nothing, which is what starts the contributor
-        // loop below at the first component and leaves every contributor on the plain call.
+        // The component the skip found accepting and the value it read; -1 when pass 1 skips
+        // nothing.
         int acceptingComponent = -1;
         double acceptedArgument = Double.NaN;
         if (isPass1SkipEnabled) {
@@ -382,10 +357,8 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
                 plan.getComponent(c).resetState(value, plan.getComponentSlotBase(c));
             }
         }
-        // The walk read and refused the argument of every component ahead of the accepting one,
-        // and each of them is inert on a refused row, so their contributors have nothing to
-        // write. The loop starts at the accepting component rather than make them read their
-        // columns a second time to find that out.
+        // Components ahead of the accepting one refused the row and are inert on it, so the
+        // loop starts at the accepting one.
         for (int c = Math.max(acceptingComponent, 0); c < componentCount; c++) {
             if (c == acceptingComponent) {
                 plan.getContributor(c).accumulateWindowState(record, value, acceptedArgument);
@@ -411,8 +384,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
-     * The number of distinct keys the group currently holds. Tests use this to observe the
-     * pass-1 key domain directly without adding work to the per-row production path.
+     * The number of distinct keys the group currently holds.
      */
     @TestOnly
     public long getMapSize() {
@@ -445,10 +417,7 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
-     * Whether the group currently holds the buffer {@link #projectPass2(Record)} projects a
-     * missing partition off. Always false for a group whose pass 1 skips nothing, which needs
-     * none; for one whose pass 1 skips, it moves with the map, so it is what says a failed open
-     * or a closed cursor left the group holding nothing.
+     * Whether the group currently holds the identity buffer, which moves with the map.
      */
     @TestOnly
     public boolean isIdentityValueAllocated() {
@@ -456,11 +425,9 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
-     * Whether this group skips the pass-1 map work for a row every one of its components
-     * refuses. A compile-time fact: it holds for a two-pass group whose components are every one
-     * {@link WindowAccumulatorDescriptor#isRefusedRowInert() inert on a refused row}, and the
-     * group's pass 2 projects the partitions it leaves out off the identity buffer rather than
-     * putting them back in the map - see {@link #projectPass2}.
+     * Whether this group skips the pass-1 map work for a row every component refuses. A
+     * compile-time fact: true for a two-pass group whose components are all
+     * {@link WindowAccumulatorDescriptor#isRefusedRowInert() inert on a refused row}.
      */
     @TestOnly
     public boolean isPass1SkipEnabled() {
@@ -485,36 +452,23 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
      * not - so there is nothing to insert for a group that skips nothing, and inserting would
      * grow a key domain that is supposed to be closed by now.
      * <p>
-     * A group that does skip leaves the miss where it is. Pass 1 omits exactly the partitions
-     * nothing contributed to, so a missing entry is that partition's own answer rather than a
-     * lost one, and what it projects is the identity every component would still be sitting at
-     * had pass 1 created it - a NULL sum, a NULL average, a zero count. The projections read
-     * that identity off {@link #identityValue}, a buffer of the group's own, so the row costs
-     * one failed lookup and nothing else: no second key write, no {@code createValue()}, and no
-     * entry the map then carries for a partition that has no state to keep. That is the whole
-     * of the saving, and it is concentrated exactly where the skip already pays - a wide key
-     * domain whose rows are mostly refused, where materializing the misses cost an insertion a
-     * row and a map the size of the key domain rather than of the contributing partitions.
-     * <p>
-     * What it costs is that the two bindings no longer agree on the map's <b>size</b>: a
-     * skipping group's map holds the contributing partitions alone, where the unskipped one
-     * holds every partition the traversal saw. They agree on every answer, which is what the
-     * fused/unfused comparison rests on, and nothing but a test reads the size.
+     * A skipping group leaves the miss alone: pass 1 omits exactly the partitions nothing
+     * contributed to, so their answer is the components' identity - a NULL sum, a NULL average,
+     * a zero count - which the projections read off {@link #identityValue} without inserting an
+     * entry. Its map therefore holds only the contributing partitions; the answers match an
+     * unskipped group's, the map size does not.
      * <p>
      * There is deliberately no accumulation. A projection reads slots and writes no state, so
      * running this over a row a second time is idempotent, which is what a cached cursor's
-     * random access and its second drain need - and the identity path is idempotent by
-     * construction, since it reads a buffer put back to identity ahead of every projection loop
-     * that uses it.
+     * random access and its second drain need; the identity path resets its buffer before
+     * every use.
      */
     public void projectPass2(Record record) {
         final MapKey key = map.withKey();
         putKey(key, record);
         MapValue value = key.findValue();
         if (value == null) {
-            // A group that skips nothing created an entry for every row the two passes walk, so
-            // only a skipping group can miss here - and it misses exactly on the partitions
-            // whose every row its components refused.
+            // Only a skipping group can miss, on a partition whose every row it refused.
             assert isPass1SkipEnabled;
             value = resetIdentityValue();
         }
@@ -564,21 +518,12 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
-     * Returns the contributors' arguments, in component order, for a plan whose pass 1 may skip
-     * a refused row - or null for one whose may not, which is the answer for every plan holding
-     * a component that is not
-     * {@link WindowAccumulatorDescriptor#isRefusedRowInert() inert on a refused row}.
-     * <p>
-     * One component that is not inert disables the skip for the whole group rather than for
-     * itself: the group makes one decision per row, and a row {@code sum(x)} refuses is still a
-     * row {@code count(*)} beside it counts.
-     * <p>
-     * The argument is the <b>contributor's</b> and not the component's, which is the same column
-     * read through the object that already reads it: an inert component's identity carries a
-     * direct column reference of the record's own type, and the contributor's own
-     * {@code accumulateWindowState} evaluates exactly this function. A contributor that reports
-     * no argument declines the group, which cannot happen for the families admitted here - every
-     * one of them takes an argument - and is the honest answer rather than a cast.
+     * Returns the contributors' arguments in component order, or null when pass 1 may not
+     * skip. One component not
+     * {@link WindowAccumulatorDescriptor#isRefusedRowInert() inert on a refused row} disables
+     * the skip for the whole group: a row {@code sum(x)} refuses is still one {@code count(*)}
+     * counts. The argument is the contributor's, the very function its
+     * {@code accumulateWindowState} evaluates; a contributor reporting none declines the group.
      */
     private static @Nullable ObjList<Function> contributorArgumentsForSkip(@NotNull WindowAccumulatorPlan plan) {
         final int componentCount = plan.getComponentCount();
@@ -638,17 +583,9 @@ public final class WindowMapState implements QuietCloseable, Reopenable {
     }
 
     /**
-     * Puts every component of the group's own buffer back to identity and hands it to
-     * {@link #projectPass2(Record)}, which is what a partition pass 1 skipped whole projects
-     * off instead of an entry of the map.
-     * <p>
-     * Put back on every miss rather than once per open, at a few slot stores a missed row. The
-     * projections that read it write no state, so a buffer put to identity once would answer
-     * for every miss the cursor makes - but that is a property of every projection family
-     * admitted to a skipping group rather than of this method, and one a family added later
-     * could quietly break, in a shape whose only symptom is one partition's output leaking into
-     * another's. Restoring it here costs less than the failed lookup that precedes it and
-     * leaves nothing to break.
+     * Puts the identity buffer back to identity and returns it for {@link #projectPass2(Record)}.
+     * Reset on every miss rather than once per open, so a projection family that writes state
+     * cannot leak one partition's output into another's.
      */
     private MapValue resetIdentityValue() {
         for (int c = 0; c < componentCount; c++) {

@@ -2204,10 +2204,7 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         }
 
         /**
-         * The running extremum, one DOUBLE, which is the whole of the state the
-         * {@link #windowAccumulatorFamily() family} declares. Declaring it is what offers the
-         * function to a live view's fused window state: the group carries the same one slot,
-         * and the component codec writes this very image out of it.
+         * The image is the running extremum, one DOUBLE - the family's one slot.
          */
         @Override
         public int checkpointStateFixedLength() {
@@ -2216,10 +2213,8 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
 
         @Override
         public int checkpointStateFormatVersion() {
-            // 2: the "initialized" byte left both the value layout and the image, and NaN
-            // says what it used to. A root written under version 1 carries a byte this build
-            // would read as part of the next entry, so it must not resolve to this function
-            // at all.
+            // Version 2 dropped the "initialized" byte from the layout and the image, so a
+            // version-1 root must not resolve here: its extra byte would read as the next entry.
             return 2;
         }
 
@@ -2389,12 +2384,10 @@ public class MaxDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         MAX_COLUMN_TYPES = new ArrayColumnTypes();
         MAX_COLUMN_TYPES.add(ColumnType.DOUBLE); // max value
 
-        // Live-view ANCHOR contract: resetPartition re-arms a partition the anchor has
-        // retired by writing NaN back into the value slot, which is a state no contributing
-        // row can produce - only a finite value ever reaches the slot. The tombstone byte is
-        // what only a live view carries: resetPartition never runs outside one, so adding it
-        // to MAX_COLUMN_TYPES would widen the map entry of every ordinary max()/min() query
-        // for a flag it can never read.
+        // Live-view ANCHOR contract: resetPartition re-arms a retired partition by writing NaN
+        // into the value slot, which no contributing row can produce. Only a live view carries
+        // the tombstone byte: resetPartition never runs outside one, so adding it to
+        // MAX_COLUMN_TYPES would widen every ordinary max()/min() map entry for nothing.
         MAX_COLUMN_TYPES_LV = new ArrayColumnTypes();
         MAX_COLUMN_TYPES_LV.add(ColumnType.DOUBLE); // max value
         MAX_COLUMN_TYPES_LV.add(ColumnType.BYTE);   // tombstone (anchor-driven compaction)

@@ -2369,23 +2369,12 @@ public class SqlParser {
      *     using the UTC-encoded variant so DST fall-back keeps bucket distinctness.</li>
      * </ul>
      * <p>
-     * <b>Run semantics across a DST fall-back.</b> The desugared floor is not monotone in
-     * the base timestamp when the anchor wall time falls inside an hour that a zone's
-     * fall-back repeats. Under {@code ANCHOR DAILY '02:30' 'Europe/Berlin'} the rows of
-     * 2026-10-25 carry {@code 2026-10-24T00:30Z}, then {@code 2026-10-25T00:30Z} from
-     * 00:30Z, then {@code 2026-10-24T00:30Z} AGAIN from the 01:00Z fall-back instant - that
-     * row reads 02:00 local under CET, below the day's own 02:30 - and finally
-     * {@code 2026-10-25T01:30Z}. Only a day-or-larger period whose anchor time lands in the
-     * repeated hour reaches this; the UTC-encoded variant above keeps sub-day buckets
-     * distinct and increasing.
-     * <p>
-     * A live view segment is one maximal RUN of adjacent rows sharing an anchor value, NOT
-     * one bucket per distinct value, so the second run of a repeated value opens its own
-     * accumulator ({@code LiveViewWindow.processRow} resets on inequality rather than on an
-     * increase). That is the deliberate contract, and it differs from SAMPLE BY over the
-     * same floor: the optimiser rewrites SAMPLE BY to a GROUP BY whose hash aggregation has
-     * no notion of adjacency and therefore rejoins the two runs into a single bucket.
-     * {@code LiveViewAnchorResetScopeTest} holds both readings side by side.
+     * A day-or-larger period whose anchor time lands in the hour a DST fall-back repeats
+     * (e.g. {@code ANCHOR DAILY '02:30' 'Europe/Berlin'}) makes the floor non-monotone: an
+     * anchor value can recur after a later one. A live view segment is one maximal run of
+     * adjacent rows sharing an anchor value, so the second run opens its own accumulator
+     * ({@code LiveViewWindow.processRow} resets on inequality). SAMPLE BY over the same floor
+     * differs by design: its hash aggregation rejoins both runs into one bucket.
      */
     private static String desugarDailyAnchor(WindowExpression w) throws SqlException {
         ObjList<ExpressionNode> orderBy = w.getOrderBy();

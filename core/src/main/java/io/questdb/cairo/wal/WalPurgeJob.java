@@ -555,9 +555,8 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         }
 
         // Live views publish lv_consumed_seqTxn through this purge floor
-        // alongside mat-view consumers. Dropped, invalid and blocked views - a
-        // newer checkpoint format or a refused rebuild - all release their floor,
-        // mirroring the mat-view arm above. Invalidation
+        // alongside mat-view consumers. Dropped, invalid and blocked views release
+        // their floor, mirroring the mat-view arm above. Invalidation
         // is terminal for a live view - there is no in-place revalidation path,
         // the refresh worker permanently skips an invalid view, and its
         // lvConsumed / head checkpoint would otherwise freeze forever. Keeping
@@ -565,19 +564,10 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
         // block base WAL purging indefinitely while the base keeps ingesting.
         // Re-CREATE requires a DROP first and seeds through an MVCC snapshot
         // reader, not the raw base WAL, so the retained WAL is never load-bearing.
-        // A blocked view releases for the same reason and not because its WAL is
-        // worthless: its floor is frozen too, so any hold it takes grows without
-        // bound, and it grows the base table WAL that every other writer and view
-        // on that base shares. See LiveViewCheckpointRecoveryPhase for what that
-        // costs a view whose recovery could later have resumed from its timeline.
-        // A view whose rebuild waits for the base's apply is not blocked and keeps
-        // its floor, as any refreshing view does. Its hold is bounded where a block's
-        // is not: the wait ends once the base applies the commit it names, so the
-        // applied WAL it keeps from purge never runs past that commit. A view carried
-        // over from an older checkpoint format whose upgrade rebuild has not run is not
-        // blocked either: it holds the floor its consumed watermark names, as any view
-        // does at restart, and the rebuild's commit moves the watermark past it. The
-        // rebuild reads the applied base, so that WAL is held without being read.
+        // A blocked view releases too: its floor is frozen, so any hold would grow
+        // the shared base WAL without bound. A view whose rebuild waits for the
+        // base's apply, or whose upgrade rebuild has not run, is not blocked and
+        // keeps its floor; the rebuild's commit bounds that hold.
         // Skip the LV arm when no LiveViewRefreshJob will run - the feature is off, or the
         // dedicated live view refresh pool has no workers. In either case nothing advances
         // lvConsumedSeqTxn / headCheckpointBaseSeqTxn, and clamping to those frozen values would
@@ -639,11 +629,9 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
             // purged out from under the next restart's replay. Capping at
             // headBaseSeqTxn keeps the replay WAL until a later seal moves the head
             // past it. LONG_NULL (no head, or one an O3 repair cleared) adds no floor
-            // here. A view with no timeline recovers by rebuilding from the applied
-            // base table, which needs no raw base WAL. An O3 head miss clears the head
-            // on its first turn but leaves the timeline intact until its replacement
-            // commit, so until then the timeline floor arm below holds the WAL a
-            // restart's restore replays.
+            // here: a view with no timeline rebuilds from the applied base table, and
+            // until an O3 head miss's replacement commits, the timeline floor arm
+            // below holds the WAL a restart's restore replays.
             final long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
             if (headBaseSeqTxn > -1) {
                 safeToPurgeTxn = Math.min(safeToPurgeTxn, headBaseSeqTxn);
