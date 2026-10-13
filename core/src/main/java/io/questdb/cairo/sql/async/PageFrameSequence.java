@@ -806,6 +806,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
 
     private void buildAddressCache() {
         PageFrame frame;
+        if (deferFrameAddresses) {
+            // sized once for the frames the cursor expects, see PageFrameAddressCache.reserveFrames()
+            frameAddressCache.reserveFrames(frameCursor.getFrameCountHint());
+        }
         while ((frame = frameCursor.next()) != null) {
             frameRowCounts.add(frame.getPartitionHi() - frame.getPartitionLo());
             frameAddressCache.add(frameCount++, frame);

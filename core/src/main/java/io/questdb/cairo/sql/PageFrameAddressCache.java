@@ -588,6 +588,21 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     }
 
     /**
+     * Makes room for {@code frameCount} frames in the flat column lists, so that adding them does
+     * not grow the lists one doubling, and one copy, at a time; a cache closed between executions
+     * starts from its lists' initial capacities again.
+     */
+    public void reserveFrames(long frameCount) {
+        if (frameCount > 0) {
+            final long n = frameCount * columnCount;
+            pageAddresses.ensureCapacity(n);
+            pageSizes.ensureCapacity(n);
+            auxPageAddresses.ensureCapacity(n);
+            auxPageSizes.ensureCapacity(n);
+        }
+    }
+
+    /**
      * Converts a frame index to an offset into the flat column arrays.
      * Usage: {@code cache.getPageAddresses().getQuick(cache.toColumnOffset(frameIndex) + columnIndex)}
      */

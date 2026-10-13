@@ -92,6 +92,31 @@ public class PageFrameDeferredAddressTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFrameCountHint() throws Exception {
+        // the hint that sizes a sequence's address cache: a frame per partition the scan reads,
+        // the interval's bound under an interval; frames split at a row cap exceed it
+        assertMemoryLeak(() -> {
+            execute("create table h (x long, ts timestamp) timestamp(ts) partition by HOUR");
+            execute("insert into h select x, (x * 360_000_000L)::timestamp from long_sequence(1000)");
+            for (int order : new int[]{PartitionFrameCursorFactory.ORDER_ASC, PartitionFrameCursorFactory.ORDER_DESC}) {
+                for (String query : new String[]{"select * from h", "select * from h where ts in '1970-01-01T03;2h'"}) {
+                    try (RecordCursorFactory factory = select(query); PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, order)) {
+                        final long hint = cursor.getFrameCountHint();
+                        long frames = 0;
+                        while (cursor.next() != null) {
+                            frames++;
+                        }
+                        Assert.assertTrue(query + ": hint " + hint + ", frames " + frames, hint >= frames && hint > 0);
+                        if (!query.contains("where")) {
+                            Assert.assertEquals(query, 101, hint);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFramesOfTwoCursorsInOneCache() throws Exception {
         // a wrapper that chains two cursors into one cache: each deferred frame is filled from its own reader
         assertMemoryLeak(() -> {
