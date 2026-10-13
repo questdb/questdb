@@ -2376,20 +2376,20 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                         final ObjList<String> queries = new ObjList<>(
                                 // Keyed: the s3 trades find no quote.
                                 """
-                                SELECT t.id, h.offset, q.bid FROM trades t
-                                HORIZON JOIN (quotes WHERE concat(sym, '_') != 's3_') q ON (sym) LIST (-1s, 0s, 1s) AS h
-                                """,
+                                        SELECT t.id, h.offset, q.bid FROM trades t
+                                        HORIZON JOIN (quotes WHERE concat(sym, '_') != 's3_') q ON (sym) LIST (-1s, 0s, 1s) AS h
+                                        """,
                                 // Unkeyed: only 2 of the 31 quote symbols pass.
                                 """
-                                SELECT t.id, h.offset, q.bid, q.sym FROM trades t
-                                HORIZON JOIN (quotes WHERE concat(sym, '_') IN ('s1_', 's2_')) q LIST (-1s, 0s, 1s) AS h
-                                """,
+                                        SELECT t.id, h.offset, q.bid, q.sym FROM trades t
+                                        HORIZON JOIN (quotes WHERE concat(sym, '_') IN ('s1_', 's2_')) q LIST (-1s, 0s, 1s) AS h
+                                        """,
                                 // Two slaves, each with clones of its own filter.
                                 """
-                                SELECT t.id, h.offset, q.bid, r.bid FROM trades t
-                                HORIZON JOIN (quotes WHERE concat(sym, '_') != 's3_') q ON (sym)
-                                HORIZON JOIN (quotes WHERE concat(sym, '_') IN ('s1_', 's2_')) r LIST (-1s, 1s) AS h
-                                """
+                                        SELECT t.id, h.offset, q.bid, r.bid FROM trades t
+                                        HORIZON JOIN (quotes WHERE concat(sym, '_') != 's3_') q ON (sym)
+                                        HORIZON JOIN (quotes WHERE concat(sym, '_') IN ('s1_', 's2_')) r LIST (-1s, 1s) AS h
+                                        """
                         );
                         final StringSink expected = new StringSink();
                         for (int i = 0, n = queries.size(); i < n; i++) {
@@ -2632,16 +2632,16 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
         // Trades and quotes span several hourly partitions and interleave in time.
         engine.execute("CREATE TABLE trades (id LONG, ts TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR", context);
         engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR", context);
-        engine.execute(
-                "INSERT INTO trades SELECT x, '2026-01-01'::TIMESTAMP + x * (10_800_000_000L / " + tradeRows + "), "
-                        + "('s' || rnd_int(0, " + (symbols - 1) + ", 0))::SYMBOL, rnd_double() FROM long_sequence(" + tradeRows + ")",
-                context
-        );
-        engine.execute(
-                "INSERT INTO quotes SELECT '2026-01-01'::TIMESTAMP - 60_000_000L + x * (10_900_000_000L / " + quoteRows + "), "
-                        + "('s' || rnd_int(0, " + symbols + ", 0))::SYMBOL, rnd_double() FROM long_sequence(" + quoteRows + ")",
-                context
-        );
+        engine.execute("""
+                INSERT INTO trades
+                SELECT x, '2026-01-01'::TIMESTAMP + x * (10_800_000_000L / %d), ('s' || rnd_int(0, %d, 0))::SYMBOL, rnd_double()
+                FROM long_sequence(%d)
+                """.formatted(tradeRows, symbols - 1, tradeRows), context);
+        engine.execute("""
+                INSERT INTO quotes
+                SELECT '2026-01-01'::TIMESTAMP - 60_000_000L + x * (10_900_000_000L / %d), ('s' || rnd_int(0, %d, 0))::SYMBOL, rnd_double()
+                FROM long_sequence(%d)
+                """.formatted(quoteRows, symbols, quoteRows), context);
     }
 
     // One trade a second, ids from 1, with the symbols s0, s1 and s2 taking turns. From the
@@ -2651,16 +2651,16 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
     private static void createSteppedTradesAndQuotes(CairoEngine engine, SqlExecutionContext context, int tradeCount) throws Exception {
         engine.execute("CREATE TABLE trades (id LONG, ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY", context);
         engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY", context);
-        engine.execute(
-                "INSERT INTO trades SELECT x, '2026-01-01'::TIMESTAMP + x * 1_000_000L, ('s' || (x % 3))::SYMBOL "
-                        + "FROM long_sequence(" + tradeCount + ")",
-                context
-        );
-        engine.execute(
-                "INSERT INTO quotes SELECT '2026-01-01'::TIMESTAMP + (x + 3) * 1_000_000L, ('s' || (x % 3))::SYMBOL, (x + 3)::DOUBLE "
-                        + "FROM long_sequence(" + tradeCount + ")",
-                context
-        );
+        engine.execute("""
+                INSERT INTO trades
+                SELECT x, '2026-01-01'::TIMESTAMP + x * 1_000_000L, ('s' || (x %% 3))::SYMBOL
+                FROM long_sequence(%d)
+                """.formatted(tradeCount), context);
+        engine.execute("""
+                INSERT INTO quotes
+                SELECT '2026-01-01'::TIMESTAMP + (x + 3) * 1_000_000L, ('s' || (x %% 3))::SYMBOL, (x + 3)::DOUBLE
+                FROM long_sequence(%d)
+                """.formatted(tradeCount), context);
     }
 
     // Reads every row once and returns the number of reduce tasks the pass publishes: one per

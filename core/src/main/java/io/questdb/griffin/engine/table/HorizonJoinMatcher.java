@@ -246,11 +246,12 @@ public class HorizonJoinMatcher implements QuietCloseable, Mutable {
      * <p>
      * The key caches keep their entries and their capacity. The first lookup of the walk clears
      * the cache before it reads it, see {@link HorizonJoinTimeFrameHelper#findKeyedAsOfMatch}, so
-     * every walk starts with one clear of the largest capacity that the lookups of the query have
-     * grown the cache to so far, by backward scans, forward scans or the entries that a drop of
-     * the cache keeps. The cache keeps that capacity until {@link #clear()}, so a walk grows it
-     * only past the capacity that an earlier walk reached. Each growth rehashes the entries of
-     * the cache.
+     * every walk starts with one clear of the largest capacity that the earlier walks on this
+     * matcher have grown the cache to, by backward scans, forward scans or the entries that a drop
+     * of the cache keeps. Each matcher owns its caches, so the walks on other matchers, such as
+     * those of other worker slots, do not grow them. The cache keeps that capacity until
+     * {@link #clear()}, so a walk grows it only past the capacity that an earlier walk on this
+     * matcher reached. Each growth rehashes the entries of the cache.
      */
     public void toTop() {
         for (int s = 0; s < slaveCount; s++) {

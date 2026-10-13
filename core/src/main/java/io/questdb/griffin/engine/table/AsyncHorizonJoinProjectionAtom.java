@@ -256,12 +256,12 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
             ownerFilter.init(symbolTableSource, executionContext);
         }
         if (perWorkerFilters != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
+            final boolean isCloneSymbolTables = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
                 Function.init(perWorkerFilters, symbolTableSource, executionContext, ownerFilter);
             } finally {
-                executionContext.setCloneSymbolTables(current);
+                executionContext.setCloneSymbolTables(isCloneSymbolTables);
             }
         }
         if (bindVarFunctions != null) {
@@ -290,12 +290,12 @@ public class AsyncHorizonJoinProjectionAtom implements StatefulAtom, PerWorkerLo
             slaveFilter.init(slavePageFrameCursor, executionContext);
         }
         if (state.getPerWorkerFilters() != null) {
-            final boolean current = executionContext.getCloneSymbolTables();
+            final boolean isCloneSymbolTables = executionContext.getCloneSymbolTables();
             executionContext.setCloneSymbolTables(true);
             try {
                 Function.init(state.getPerWorkerFilters(), slavePageFrameCursor, executionContext, slaveFilter);
             } finally {
-                executionContext.setCloneSymbolTables(current);
+                executionContext.setCloneSymbolTables(isCloneSymbolTables);
             }
         }
         // The matchers walk horizon timestamps in order, so MONOTONIC caps the decode buffers of a

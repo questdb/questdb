@@ -81,7 +81,6 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
     private final MultiHorizonJoinSymbolTableSource symbolTableSource;
     // Matches of the frame rows past the ones a task matched, see matchTailChunk().
     private final DirectLongList tailSlots;
-    private boolean allFramesActive;
     // Address of the slave row ids of the rows [chunkLo, chunkHi) of the current frame.
     private long chunkAddress;
     private long chunkHi;
@@ -97,6 +96,7 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
     private long frameRowCount;
     private PageFrameSequence<AsyncHorizonJoinProjectionAtom> frameSequence;
     private long frameTimestampAddress;
+    private boolean isAllFramesActive;
     private boolean isOpen;
     private boolean isSlaveTimeFrameCacheBuilt;
     private long masterTimestamp;
@@ -181,7 +181,7 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
                 rowPosition = frameRowCount;
                 collectCursor(false);
             }
-            if (!allFramesActive) {
+            if (!isAllFramesActive) {
                 throw buildInterruptionException();
             }
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
@@ -294,7 +294,7 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
                     continue;
                 }
             }
-            if (!allFramesActive) {
+            if (!isAllFramesActive) {
                 throw buildInterruptionException();
             }
             return false;
@@ -334,7 +334,7 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
         frameRowCount = 0;
         rowPosition = 0;
         offsetPosition = 0;
-        allFramesActive = true;
+        isAllFramesActive = true;
     }
 
     private void buildSlaveTimeFrameCacheConditionally() {
@@ -391,9 +391,9 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
         offsetPosition = 0;
     }
 
-    private void collectCursor(boolean forceCollect) {
+    private void collectCursor(boolean isForceCollect) {
         if (cursor > -1) {
-            frameSequence.collect(cursor, forceCollect);
+            frameSequence.collect(cursor, isForceCollect);
             // Clear 'cursor': the frame index moved on and the loop can exit for lack of
             // frames, so a stale value would collect the task twice.
             cursor = -1;
@@ -423,7 +423,7 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
                         throw task.buildError();
                     }
 
-                    allFramesActive &= frameSequence.isActive();
+                    isAllFramesActive &= frameSequence.isActive();
                     frameIndex = task.getFrameIndex();
                     frameRowCount = task.getFilteredRowCount();
                     rowPosition = 0;
@@ -526,7 +526,7 @@ class AsyncHorizonJoinProjectionRecordCursor implements NoRandomAccessRecordCurs
         chunkLo = 0;
         chunkHi = 0;
         filteredRows = null;
-        allFramesActive = true;
+        isAllFramesActive = true;
         isSlaveTimeFrameCacheBuilt = false;
         dispatchLimit = Integer.MAX_VALUE;
         for (int s = 0; s < slaveCount; s++) {

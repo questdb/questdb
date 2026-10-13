@@ -611,14 +611,16 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         // 3_600_000 us = 3.6s per row with at most 200us of jitter, so trade timestamps are unique
         // and ascending, and span several hourly partitions.
         engine.execute(
-                "INSERT INTO trades"
-                        + "  SELECT "
-                        + "      '2020-01-01T00:05'::TIMESTAMP + (3_600_000*x) + rnd_long(-200, 200, 0) AS ts, "
-                        + "      rnd_symbol_zipf(100, 2.0) AS sym, "
-                        + "      rnd_symbol('buy', 'sell') AS side, "
-                        + "      rnd_double() * 20 + 10 AS price, "
-                        + "      rnd_double() * 20 + 10 AS amount "
-                        + "  FROM long_sequence(" + ROW_COUNT + ");",
+                """
+                        INSERT INTO trades
+                        SELECT
+                            '2020-01-01T00:05'::TIMESTAMP + (3_600_000*x) + rnd_long(-200, 200, 0) AS ts,
+                            rnd_symbol_zipf(100, 2.0) AS sym,
+                            rnd_symbol('buy', 'sell') AS side,
+                            rnd_double() * 20 + 10 AS price,
+                            rnd_double() * 20 + 10 AS amount
+                        FROM long_sequence(%d);
+                        """.formatted(ROW_COUNT),
                 sqlExecutionContext
         );
     }
