@@ -371,8 +371,8 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             case "sync" -> " msyncSync=" + (3 + files);
             default -> "";
         };
-        // Without mixed I/O, copying a WAL column maps its destination instead of writing through its fd.
-        // The timestamp destination is already mapped; v.d and the three variable-size columns need more maps.
+        // Without mixed I/O, copying a WAL column maps its lazy source instead of copying through file descriptors.
+        // Destination pages are already warm; source WAL v.d and the three variable-size columns need more maps.
         final int maps = 3 + files / 2 + (isMixedIO ? 0 : 1 + files / 2);
         // A V2 apply pass also opens the sequencer part file "0".
         return "calls: close=" + ((isV2 ? 11 : 10) + 2 * files) + " madvise=3 mmap=" + maps

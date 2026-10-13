@@ -1359,8 +1359,8 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     /**
      * Once armed, fails one {@code fsync} or {@code fsyncAndClose} called from {@code caller}, or one synchronous
-     * {@code msync} when {@code isMsync}, the first after {@code skipCount} such calls, with a genuine data-sync
-     * failure, then behaves normally.
+     * or asynchronous {@code msync} when {@code isMsync}, selected by {@code isAsyncMsync}. Fails the first after
+     * {@code skipCount} such calls with a genuine data-sync failure, then behaves normally.
      */
     private static final class FsyncFailureFacade extends TestFilesFacadeImpl {
         private final String caller;
