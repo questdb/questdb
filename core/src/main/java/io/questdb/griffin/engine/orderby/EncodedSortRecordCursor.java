@@ -26,10 +26,12 @@ package io.questdb.griffin.engine.orderby;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.RecordChain;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.sql.DelegatingRecordCursor;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -57,6 +59,13 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     private RecordCursor baseCursor;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private long count;
+    // the previous execution's entry count, a capacity hint for the next
+    private long lastCount;
+    private long lastChainBytes;
+    // the value sizes of the chain's columns when every one is of a fixed-size, non-symbol type
+    // the chain lays out at a fixed offset, so that a block of the base's rows is copied into it
+    // column by column; null otherwise
+    private final int[] blockColumnSizes;
     private long currentAddr;
     private long endAddr;
     private int entrySize;
@@ -98,6 +107,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                     (int) Math.min(valueMaxPagesFromBytes, Integer.MAX_VALUE),
                     PropertyKey.CAIRO_SQL_SORT_VALUE_MAX_BYTES.getPropertyPath()
             );
+            this.blockColumnSizes = blockColumnSizes(metadata);
             this.isOpen = true;
         } finally {
             if (!this.isOpen) forceClose();
@@ -213,6 +223,11 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                 throwLimitOverflow();
             }
             entryMem.setCapacity(estimatedSize * longsPerEntry);
+        } else if (lastCount > 0 && !isVariable) {
+        // A size the base does not know is guessed from the previous execution's, so that a
+        // repeated large sort does not grow its entries (and copy them) a doubling at a time.
+            entryMem.setCapacity(Math.min(lastCount, maxEntries) * longsPerEntry);
+            recordChain.reserve(lastChainBytes);
         }
 
         entryMem.clear();
@@ -232,6 +247,8 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                     throwLimitOverflow();
                 }
             }
+        } else if (blockColumnSizes != null && baseCursor.supportsRecordBlocks()) {
+            copyBlocks(record, maxEntries);
         } else if (estimatedSize > 0) {
             while (baseCursor.hasNext()) {
                 circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
@@ -275,8 +292,123 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             // emit reads only chain offsets; the key heap is not needed past the sort
             keyHeap.close();
         }
+        lastCount = count;
+        lastChainBytes = recordChain.usedBytes();
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
+    }
+
+    private static int[] blockColumnSizes(RecordMetadata metadata) {
+        final int n = metadata.getColumnCount();
+        final int[] sizes = new int[n];
+        for (int c = 0; c < n; c++) {
+            sizes[c] = switch (ColumnType.tagOf(metadata.getColumnType(c))) {
+                case ColumnType.BOOLEAN, ColumnType.BYTE -> 1;
+                case ColumnType.SHORT, ColumnType.CHAR -> 2;
+                case ColumnType.INT, ColumnType.FLOAT -> 4;
+                case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE -> 8;
+                default -> -1;
+            };
+            if (sizes[c] < 0) {
+                return null;
+            }
+        }
+        return n > 0 ? sizes : null;
+    }
+
+    /**
+     * Fills the chain and the entries from the base's record blocks: a block's rows are appended
+     * to the chain together and their values copied in column by column, then their keys are
+     * encoded from the chain's records. The rows of a block that does not lay a column out in
+     * memory are taken one by one, as without blocks.
+     */
+    private void copyBlocks(Record record, long maxEntries) {
+        final int columnCount = blockColumnSizes.length;
+        final long stride = recordChain.getFixedRecordStride();
+        final Record chainRecord = recordChain.getRecordB();
+        while (true) {
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
+            final RecordBlock block = baseCursor.peekRecordBlock(4096);
+            if (block == null) {
+                if (!baseCursor.hasNext()) {
+                    return;
+                }
+                putRow(record, maxEntries);
+                continue;
+            }
+            final int n = block.getRowCount();
+            boolean laidOut = true;
+            for (int c = 0; c < columnCount; c++) {
+                if (block.getColumnAddress(c) == 0) {
+                    laidOut = false;
+                    break;
+                }
+            }
+            if (!laidOut) {
+                // the block's rows are the next n rows of the cursor
+                for (int r = 0; r < n && baseCursor.hasNext(); r++) {
+                    putRow(record, maxEntries);
+                }
+                continue;
+            }
+            if (count + n > maxEntries) {
+                throwLimitOverflow();
+            }
+            final long first = recordChain.appendFixedRecords(-1L, n);
+            final long base = recordChain.addressOf(first);
+            for (int c = 0; c < columnCount; c++) {
+                final long src = block.getColumnAddress(c);
+                final long srcStride = block.getColumnStride(c);
+                final long rowIndexes = block.getColumnRowIndexesAddress(c);
+                final long dst = base + recordChain.getOffsetOfColumn(0, c);
+                switch (blockColumnSizes[c]) {
+                    case 1:
+                        for (int r = 0; r < n; r++) {
+                            final long i = rowIndexes != 0 ? Unsafe.getLong(rowIndexes + ((long) r << 3)) : r;
+                            Unsafe.putByte(dst + r * stride, Unsafe.getByte(src + i * srcStride));
+                        }
+                        break;
+                    case 2:
+                        for (int r = 0; r < n; r++) {
+                            final long i = rowIndexes != 0 ? Unsafe.getLong(rowIndexes + ((long) r << 3)) : r;
+                            Unsafe.putShort(dst + r * stride, Unsafe.getShort(src + i * srcStride));
+                        }
+                        break;
+                    case 4:
+                        for (int r = 0; r < n; r++) {
+                            final long i = rowIndexes != 0 ? Unsafe.getLong(rowIndexes + ((long) r << 3)) : r;
+                            Unsafe.putInt(dst + r * stride, Unsafe.getInt(src + i * srcStride));
+                        }
+                        break;
+                    default:
+                        for (int r = 0; r < n; r++) {
+                            final long i = rowIndexes != 0 ? Unsafe.getLong(rowIndexes + ((long) r << 3)) : r;
+                            Unsafe.putLong(dst + r * stride, Unsafe.getLong(src + i * srcStride));
+                        }
+                        break;
+                }
+            }
+            baseCursor.skipRecordBlock(n);
+            entryMem.ensureCapacity((long) n * longsPerEntry);
+            for (int r = 0; r < n; r++) {
+                final long chainOffset = first + r * stride;
+                recordChain.recordAt(chainRecord, chainOffset);
+                encoder.encode(chainRecord, entryMem.getAppendAddress(), chainOffset);
+                entryMem.skip(longsPerEntry);
+            }
+            count += n;
+        }
+    }
+
+    private void putRow(Record record, long maxEntries) {
+        if (count >= maxEntries) {
+            throwLimitOverflow();
+        }
+        final long chainOffset = recordChain.put(record, -1L);
+        entryMem.ensureCapacity(longsPerEntry);
+        encoder.encode(record, entryMem.getAppendAddress(), chainOffset);
+        entryMem.skip(longsPerEntry);
+        count++;
     }
 
     private void forceClose() {

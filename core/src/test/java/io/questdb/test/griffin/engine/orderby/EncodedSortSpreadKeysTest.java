@@ -97,6 +97,109 @@ public class EncodedSortSpreadKeysTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCapacityHintAcrossExecutions() throws Exception {
+        // a cursor sized from its previous execution, smaller or larger than this one's
+        assertMemoryLeak(() -> {
+            execute(
+                    "create table t as (select rnd_int(0, 1000, 0) i, rnd_double(0) d, rnd_str(3, 8, 1) s, " +
+                            "timestamp_sequence('2026-04-01', 1_000_000L) ts from long_sequence(20000)) timestamp(ts) partition by hour"
+            );
+            final String[] queries = {
+                    "select ts, d, s from t where i > $1 order by d desc",
+                    "select ts, d, s from (select ts, d, s from t where i > $1 union all select ts, d, s from t where i < 0) order by d",
+            };
+            final int[] bounds = {10, 900, 990, 0, 500, 1000, 3};
+            for (String query : queries) {
+                final String[] expected = new String[bounds.length];
+                for (int j = 0; j < bounds.length; j++) {
+                    bindVariableService.clear();
+                    bindVariableService.setInt(0, bounds[j]);
+                    try (io.questdb.cairo.sql.RecordCursorFactory factory = select(query)) {
+                        expected[j] = rowsOf(factory);
+                    }
+                }
+                try (io.questdb.cairo.sql.RecordCursorFactory factory = select(query)) {
+                    for (int j = 0; j < bounds.length; j++) {
+                        bindVariableService.clear();
+                        bindVariableService.setInt(0, bounds[j]);
+                        TestUtils.assertEquals(query + " $1=" + bounds[j], expected[j], rowsOf(factory));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testMaterializedFromBlocksOnTestContext() throws Exception {
+        assertMemoryLeak(() -> assertMaterializedFromBlocks(engine, sqlExecutionContext));
+    }
+
+    @Test
+    public void testMaterializedFromBlocksOnWorkerPool() throws Exception {
+        assertMemoryLeak(() -> {
+            final io.questdb.mp.WorkerPool pool = new io.questdb.test.mp.TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> assertMaterializedFromBlocks(engine, ctx), configuration, LOG);
+        });
+    }
+
+    // A materialized sort (the sorted rows of a union, which is not random access) fills its chain
+    // from the union's branch blocks when every column is of a fixed-size type: the same rows,
+    // in the same order, as the light sort of the branch alone.
+    private static void assertMaterializedFromBlocks(io.questdb.cairo.CairoEngine engine, io.questdb.griffin.SqlExecutionContext ctx) throws Exception {
+        engine.execute(
+                "create table q as (select rnd_symbol('A', 'B', 'C') sym, rnd_float() bid, rnd_float() ask, rnd_int(1, 1000, 3) bsize, " +
+                        "rnd_boolean() b, rnd_short() sh, rnd_byte() by, rnd_char() ch, rnd_long(0, 100, 2) l, " +
+                        "(x * 3_000_000L)::timestamp ts from long_sequence(60000)) timestamp(ts) partition by day bypass wal",
+                ctx
+        );
+        final String[] projections = {
+                "ts, (bid + ask) / 2 mid",
+                "ts, bid, bsize, b, sh, by, ch, l, ts::date d",
+                "ts, (bid + ask) / 2 mid, bsize * 2 b2",
+        };
+        final String[] orders = {"mid desc", "bid, ts desc", "b2, mid desc"};
+        final String[] filters = {"sym = 'A'", "bsize > 10", "sym in ('A', 'B') and bid > 0.2"};
+        int compared = 0;
+        for (int i = 0; i < projections.length; i++) {
+            for (String filter : filters) {
+                for (String dispatch : new String[]{"false", "true"}) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, dispatch);
+                    final String light = "select " + projections[i] + " from q where " + filter + " order by " + orders[i];
+                    final String materialized = "select * from (select " + projections[i] + " from q where " + filter +
+                            " union all select " + projections[i] + " from q where 1 = 0) order by " + orders[i];
+                    final String expected;
+                    try (io.questdb.cairo.sql.RecordCursorFactory factory = engine.select(light, ctx)) {
+                        expected = rowsOf(factory, ctx);
+                    }
+                    try (io.questdb.cairo.sql.RecordCursorFactory factory = engine.select(materialized, ctx)) {
+                        for (int run = 0; run < 2; run++) {
+                            TestUtils.assertEquals(materialized + " [" + dispatch + ", run " + run + "]", expected, rowsOf(factory, ctx));
+                        }
+                    }
+                    compared++;
+                }
+            }
+        }
+        Assert.assertEquals(18, compared);
+    }
+
+    private static String rowsOf(io.questdb.cairo.sql.RecordCursorFactory factory, io.questdb.griffin.SqlExecutionContext ctx) throws Exception {
+        final StringSink sink = new StringSink();
+        try (io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(ctx)) {
+            println(factory.getMetadata(), cursor, sink);
+        }
+        return sink.toString();
+    }
+
+    private static String rowsOf(io.questdb.cairo.sql.RecordCursorFactory factory) throws Exception {
+        final StringSink sink = new StringSink();
+        try (io.questdb.cairo.sql.RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            println(factory.getMetadata(), cursor, sink);
+        }
+        return sink.toString();
+    }
+
     private static String rows(String query) throws Exception {
         final StringSink sink = new StringSink();
         printSql(query, sink);

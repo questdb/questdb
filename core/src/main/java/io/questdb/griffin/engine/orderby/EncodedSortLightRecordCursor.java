@@ -61,6 +61,8 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     private Record baseRecord;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private long count;
+    // the previous execution's entry count, a capacity hint for the next
+    private long lastCount;
     private long currentAddr;
     private long endAddr;
     private int entrySize;
@@ -247,6 +249,10 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
                 SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
             }
             entryMem.setCapacity(estimatedSize * longsPerEntry);
+        } else if (lastCount > 0 && !isVariable) {
+        // A size the base does not know is guessed from the previous execution's, so that a
+        // repeated large sort does not grow its entries (and copy them) a doubling at a time.
+            entryMem.setCapacity(Math.min(lastCount, maxEntries) * longsPerEntry);
         }
 
         // Collect (key, rowId) entries
@@ -304,6 +310,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
             // emit reads only rowIds; the key heap is not needed past the sort
             keyHeap.close();
         }
+        lastCount = count;
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
         if (count > 0) {

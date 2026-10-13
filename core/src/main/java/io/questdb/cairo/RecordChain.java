@@ -183,6 +183,23 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
         counter.add(result);
     }
 
+    /**
+     * The chain's memory, empty or not, grows to hold at least {@code bytes} from its start, so
+     * that appending that much does not reallocate (and copy) it on the way.
+     */
+    public void reserve(long bytes) {
+        if (bytes > mem.size()) {
+            mem.extend(bytes);
+        }
+    }
+
+    /**
+     * The bytes the chain's records take, fixed and variable parts.
+     */
+    public long usedBytes() {
+        return mem.getAppendOffset();
+    }
+
     public void clear() {
         // memory will self-extend on write
         // reads are prevented by setting nextRecordOffset to -1
