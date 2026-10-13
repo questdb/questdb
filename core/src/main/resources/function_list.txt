@@ -827,11 +827,14 @@ io.questdb.griffin.engine.functions.groupby.ApproxPercentileLongGroupByDefaultFu
 
 # 'percentile_disc', 'percentile_cont' and their 'quantile_*' aliases: an untyped bind variable
 # percentile ties the DOUBLE and DOUBLE[] overloads, and a NULL value ties the DOUBLE and LONG
-# overloads of 'percentile_disc'. Both ties must resolve to the scalar DOUBLE overload.
+# overloads of 'percentile_disc'. Both ties must resolve to the scalar DOUBLE overload. The
+# window forms of 'percentile_disc' and 'quantile_disc' have the same DOUBLE and LONG tie.
 io.questdb.griffin.engine.functions.groupby.PercentileDiscDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.PercentileContDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.QuantileDiscDoubleGroupByFunctionFactory
 io.questdb.griffin.engine.functions.groupby.QuantileContDoubleGroupByFunctionFactory
+io.questdb.griffin.engine.functions.window.PercentileDiscDoubleWindowFunctionFactory
+io.questdb.griffin.engine.functions.window.QuantileDiscDoubleWindowFunctionFactory
 
 # Change string case
 io.questdb.griffin.engine.functions.str.ToUppercaseFunctionFactory

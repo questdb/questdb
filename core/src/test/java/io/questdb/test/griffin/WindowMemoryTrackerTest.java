@@ -166,7 +166,9 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
                     "percentile_disc(v, 0.5)",
                     "percentile_cont(v, 0.5)",
                     "quantile_disc(v, 0.5)",
-                    "quantile_cont(v, 0.5)"
+                    "quantile_cont(v, 0.5)",
+                    "percentile_disc(v::long, 0.5)",
+                    "quantile_disc(v::long, 0.5)"
             };
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 for (String function : functions) {
@@ -538,6 +540,7 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
                     "percentile_disc(v, 0.5)",
                     "percentile_cont(v, 0.5)",
                     "quantile_disc(v, 0.5)",
+                    "percentile_disc(v::long, 0.5)",
                     "percentile_disc(v, ARRAY[0.5, 0.9])",
                     "percentile_cont(v, ARRAY[0.5, 0.9])"
             };
@@ -573,6 +576,7 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
             final String[] functions = {
                     "percentile_disc(v, 0.5)",
                     "percentile_cont(v, 0.5)",
+                    "percentile_disc(v::long, 0.5)",
                     "percentile_disc(v, ARRAY[0.5, 0.9])",
                     "percentile_cont(v, ARRAY[0.5, 0.9])"
             };
@@ -611,6 +615,7 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
             final String[] functions = {
                     "percentile_disc(v, 0.5)",
                     "percentile_cont(v, 0.5)",
+                    "percentile_disc(v::long, 0.5)",
                     "percentile_disc(v, ARRAY[0.5, 0.9])",
                     "percentile_cont(v, ARRAY[0.5, 0.9])"
             };
@@ -650,7 +655,11 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
                     "SELECT k, percentile_disc(v, 0.5) OVER () FROM tab",
                     "SELECT k, percentile_cont(v, 0.5) OVER () FROM tab",
                     "SELECT k, percentile_disc(NULL::double, 0.5) OVER (PARTITION BY k) FROM tab",
-                    "SELECT k, percentile_disc(NULL::double, 0.5) OVER () FROM tab"
+                    "SELECT k, percentile_disc(NULL::double, 0.5) OVER () FROM tab",
+                    "SELECT k, percentile_disc(v::long, 0.5) OVER (PARTITION BY k) FROM tab",
+                    "SELECT k, percentile_disc(v::long, 0.5) OVER () FROM tab",
+                    "SELECT k, percentile_disc(NULL::long, 0.5) OVER (PARTITION BY k) FROM tab",
+                    "SELECT k, percentile_disc(NULL::long, 0.5) OVER () FROM tab"
             };
             final String[] arrayQueries = {
                     "SELECT k, percentile_disc(v, ARRAY[0.5, 0.9]) OVER (PARTITION BY k) FROM tab",
@@ -660,6 +669,7 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
             };
             final String[] emptyQueries = {
                     "SELECT k, percentile_disc(v, 0.5) OVER (PARTITION BY k) FROM empty_tab",
+                    "SELECT k, percentile_disc(k, 0.5) OVER () FROM empty_tab",
                     "SELECT k, percentile_cont(v, ARRAY[0.5, 0.9]) OVER () FROM empty_tab"
             };
             try (SqlCompiler compiler = engine.getSqlCompiler()) {

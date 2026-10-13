@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.std.LongSort;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import org.jetbrains.annotations.TestOnly;
@@ -45,15 +46,7 @@ public class GroupByLongList {
     private static final long HEADER_SIZE = 2 * Integer.BYTES;
     private static final int INSERTION_SORT_THRESHOLD = 47;
     private static final int MIN_INITIAL_CAPACITY = 2;
-    // Ranges above this size pick the quickselect pivot with a Tukey ninther (median of
-    // the medians of three spaced triples). A single median-of-three sample picks the
-    // minimum of a rise-then-fall range, which made each partition pass strip only a
-    // few elements.
-    private static final int NINTHER_THRESHOLD = 128;
     private static final long SIZE_OFFSET = Integer.BYTES;
-    // Test-only observability for the quickselect heapsort fallback, reached only when a
-    // partition chain exhausts the depth budget. Tests assert on deltas.
-    private static long heapSortCallCount;
     private final int initialCapacity;
     private final long noEntryValue;
     private GroupByAllocator allocator;
@@ -69,14 +62,15 @@ public class GroupByLongList {
     }
 
     /**
-     * Returns the number of quickselect heapsort-fallback activations since class load.
+     * Returns the number of quickselect heapsort-fallback activations since class load,
+     * counted by {@link LongSort}, which runs the selection.
      * The counter is monotonic: capture it before a selection and assert on the delta afterwards.
      *
      * @return count of heapsort-fallback activations
      */
     @TestOnly
     public static long getHeapSortCallCountForTesting() {
-        return heapSortCallCount;
+        return LongSort.getHeapSortCallCountForTesting();
     }
 
     /**
@@ -174,8 +168,7 @@ public class GroupByLongList {
      * will be greater than or equal to it.
      * <p>
      * This is more efficient than full sorting when only specific elements are needed.
-     * Time complexity: O(n) average case, O(n log n) worst case: a partition chain deeper
-     * than 2*log2(n) levels finishes its range with heapsort.
+     * Time complexity: O(n) average case, O(n log n) worst case, see {@link LongSort}.
      *
      * @param lo the index of the first element, inclusive
      * @param hi the index of the last element, inclusive
@@ -186,7 +179,7 @@ public class GroupByLongList {
             throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", k=" + k + ", size=" + size());
         }
         if (lo < hi) {
-            quickSelectImpl(lo, hi, k, depthBudget(hi - lo + 1));
+            LongSort.quickSelect(dataPtr(), lo, hi, k);
         }
     }
 
@@ -209,7 +202,7 @@ public class GroupByLongList {
         if (lo < 0 || hi >= size()) {
             throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", size=" + size());
         }
-        quickSelectMultipleImpl(lo, hi, indices, from, to, depthBudget(hi - lo + 1));
+        LongSort.quickSelectMultiple(dataPtr(), lo, hi, indices, from, to);
     }
 
     public void resetPtr() {
@@ -239,159 +232,12 @@ public class GroupByLongList {
         Vect.sortULongAscInPlace(ptr() + HEADER_SIZE, size());
     }
 
-    // 2 * (floor(log2(length)) + 1) partition levels before the heapsort fallback
-    private static int depthBudget(int length) {
-        return length > 0 ? 2 * (32 - Integer.numberOfLeadingZeros(length)) : 0;
-    }
-
     private void fillNoEntryValue(long address, int count) {
         if (noEntryValue == 0) {
             Vect.memset(address, 8L * count, 0);
         } else {
             for (long p = address, lim = address + 8L * count; p < lim; p += 8L) {
                 Unsafe.putLong(p, noEntryValue);
-            }
-        }
-    }
-
-    private void heapSort(int lo, int hi) {
-        heapSortCallCount++;
-        final int count = hi - lo + 1;
-        for (int i = (count >> 1) - 1; i >= 0; i--) {
-            siftDown(lo, i, count);
-        }
-        for (int end = count - 1; end > 0; end--) {
-            swap(lo, lo + end);
-            siftDown(lo, 0, end);
-        }
-    }
-
-    private int medianOfThree(int a, int b, int c) {
-        long va = getQuick(a);
-        long vb = getQuick(b);
-        long vc = getQuick(c);
-        if (va <= vb) {
-            if (vb <= vc) {
-                return b;
-            }
-            return va <= vc ? c : a;
-        }
-        if (va <= vc) {
-            return a;
-        }
-        return vb <= vc ? c : b;
-    }
-
-    /**
-     * DNF three-way partition of [lo, hi] around a sampled pivot: median of three, or a
-     * Tukey ninther on ranges above {@link #NINTHER_THRESHOLD} elements.
-     * Returns packed lt|gt as a long: lt in upper 32 bits, gt in lower 32 bits.
-     */
-    private long partition3Way(int lo, int hi) {
-        final int mid = lo + (hi - lo) / 2;
-        final int length = hi - lo + 1;
-        final int pivotIndex;
-        if (length > NINTHER_THRESHOLD) {
-            final int eps = length / 8;
-            pivotIndex = medianOfThree(
-                    medianOfThree(lo, lo + eps, lo + 2 * eps),
-                    medianOfThree(mid - eps, mid, mid + eps),
-                    medianOfThree(hi - 2 * eps, hi - eps, hi)
-            );
-        } else {
-            pivotIndex = medianOfThree(lo, mid, hi);
-        }
-        final long pivot = getQuick(pivotIndex);
-        int lt = lo;
-        int gt = hi;
-        int i = lo;
-        while (i <= gt) {
-            long v = getQuick(i);
-            if (v < pivot) {
-                swap(lt, i);
-                lt++;
-                i++;
-            } else if (v > pivot) {
-                swap(i, gt);
-                gt--;
-            } else {
-                i++;
-            }
-        }
-        return ((long) lt << 32) | (gt & 0xFFFFFFFFL);
-    }
-
-    /**
-     * Internal QuickSelect implementation using DNF three-way partition.
-     * Iterative to avoid StackOverflowError on degenerate inputs.
-     * Handles all-equal data in O(n) because the equal partition is skipped entirely.
-     */
-    private void quickSelectImpl(int lo, int hi, int k, int depth) {
-        while (lo < hi) {
-            if (depth == 0) {
-                heapSort(lo, hi);
-                return;
-            }
-            depth--;
-            long packed = partition3Way(lo, hi);
-            int lt = (int) (packed >>> 32);
-            int gt = (int) packed;
-
-            if (k < lt) {
-                hi = lt - 1;
-            } else if (k > gt) {
-                lo = gt + 1;
-            } else {
-                break; // k is in the equal partition
-            }
-        }
-    }
-
-    private void quickSelectMultipleImpl(int lo, int hi, int[] indices, int from, int to, int depth) {
-        while (from < to && lo < hi) {
-            if (depth == 0) {
-                // sorting the range places every requested index in it
-                heapSort(lo, hi);
-                return;
-            }
-            depth--;
-            long packed = partition3Way(lo, hi);
-            int lt = (int) (packed >>> 32);
-            int gt = (int) packed;
-
-            // Find which indices fall into each region: <lt, [lt..gt], >gt
-            int splitLeft = from;
-            while (splitLeft < to && indices[splitLeft] < lt) {
-                splitLeft++;
-            }
-
-            // Skip indices in the equal partition [lt..gt]
-            int splitRight = splitLeft;
-            while (splitRight < to && indices[splitRight] <= gt) {
-                splitRight++;
-            }
-
-            boolean hasLeft = splitLeft > from;
-            boolean hasRight = splitRight < to;
-
-            if (hasLeft && hasRight) {
-                if ((lt - lo) <= (hi - gt)) {
-                    quickSelectMultipleImpl(lo, lt - 1, indices, from, splitLeft, depth);
-                    lo = gt + 1;
-                    from = splitRight;
-                } else {
-                    quickSelectMultipleImpl(gt + 1, hi, indices, splitRight, to, depth);
-                    hi = lt - 1;
-                    to = splitLeft;
-                }
-            } else if (hasLeft) {
-                hi = lt - 1;
-                to = splitLeft;
-            } else if (hasRight) {
-                lo = gt + 1;
-                from = splitRight;
-            } else {
-                break;
             }
         }
     }
@@ -406,27 +252,6 @@ public class GroupByLongList {
 
     private void setValueAt(long index, long value) {
         Unsafe.putLong(ptr + HEADER_SIZE + 8L * index, value);
-    }
-
-    private void siftDown(int lo, int root, int count) {
-        final long value = getQuick(lo + root);
-        for (; ; ) {
-            int child = 2 * root + 1;
-            if (child >= count) {
-                break;
-            }
-            if (child + 1 < count && getQuick(lo + child) < getQuick(lo + child + 1)) {
-                child++;
-            }
-            final long childValue = getQuick(lo + child);
-            if (value < childValue) {
-                setValueAt(lo + root, childValue);
-                root = child;
-            } else {
-                break;
-            }
-        }
-        setValueAt(lo + root, value);
     }
 
     private void sort(int left, int right, boolean leftmost) {

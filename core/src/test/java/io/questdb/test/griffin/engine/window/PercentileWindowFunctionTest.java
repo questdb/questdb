@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlCompiler;
@@ -1675,6 +1676,368 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             1.0\tnull\tnull
                             2.0\tnull\tnull
                             3.0\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testPercentileDiscLongAbove2Pow53() throws Exception {
+        // A double holds integers exactly only up to 2^53. The window form selects an input value,
+        // as the aggregate does. Partition 'b' holds 2^53, 2^53+1 and 2^53+3, which round to
+        // 2^53, 2^53 and 2^53+4 as doubles, so a double selection returns 2^53 instead of 2^53+1.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (g SYMBOL, l LONG)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 9_007_199_254_740_993), ('a', 9_007_199_254_740_995), ('a', 9_007_199_254_740_997),
+                    ('b', 9_007_199_254_740_992), ('b', 9_007_199_254_740_993), ('b', 9_007_199_254_740_995)
+                    """);
+            assertQuery("SELECT g, percentile_disc(l, 0.5) p FROM t ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tp
+                            a\t9007199254740995
+                            b\t9007199254740993
+                            """);
+            assertQuery("""
+                    SELECT g, l, percentile_disc(l, 0.5) OVER (PARTITION BY g) pg, quantile_disc(l, 0.5) OVER (PARTITION BY g) qg,
+                        percentile_disc(l, 0.5) OVER () p, quantile_disc(l, 0.5) OVER () q
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tl\tpg\tqg\tp\tq
+                            a\t9007199254740993\t9007199254740995\t9007199254740995\t9007199254740993\t9007199254740993
+                            a\t9007199254740995\t9007199254740995\t9007199254740995\t9007199254740993\t9007199254740993
+                            a\t9007199254740997\t9007199254740995\t9007199254740995\t9007199254740993\t9007199254740993
+                            b\t9007199254740992\t9007199254740993\t9007199254740993\t9007199254740993\t9007199254740993
+                            b\t9007199254740993\t9007199254740993\t9007199254740993\t9007199254740993\t9007199254740993
+                            b\t9007199254740995\t9007199254740993\t9007199254740993\t9007199254740993\t9007199254740993
+                            """);
+        });
+    }
+
+    @Test
+    public void testPercentileDiscLongBoundaryValues() throws Exception {
+        // Long.MIN_VALUE is the LONG NULL, so Long.MIN_VALUE + 1 is the smallest value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, l LONG)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 9_223_372_036_854_775_807), ('a', -9_223_372_036_854_775_807), ('a', 0), ('s', 42)
+                    """);
+            assertQuery("""
+                    SELECT k, l, percentile_disc(l, 0) OVER () p0, percentile_disc(l, 1) OVER () p1,
+                        percentile_disc(l, 0.5) OVER (PARTITION BY k) pk, quantile_disc(l, 1.0) OVER (PARTITION BY k) qk
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tl\tp0\tp1\tpk\tqk
+                            a\t9223372036854775807\t-9223372036854775807\t9223372036854775807\t0\t9223372036854775807
+                            a\t-9223372036854775807\t-9223372036854775807\t9223372036854775807\t0\t9223372036854775807
+                            a\t0\t-9223372036854775807\t9223372036854775807\t0\t9223372036854775807
+                            s\t42\t-9223372036854775807\t9223372036854775807\t42\t42
+                            """);
+        });
+    }
+
+    @Test
+    public void testPercentileDiscLongEmptyFrame() throws Exception {
+        // a frame that ends before it starts holds no rows, so the LONG percentile is a LONG NULL
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('a', 2, '2024-01-01T00:01:00.000000Z'),
+                    ('b', 3, '2024-01-01T00:02:00.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT l,
+                        percentile_disc(l, 0.5) OVER (ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) p,
+                        quantile_disc(l, 0.5) OVER (PARTITION BY k ORDER BY ts ROWS BETWEEN 1 PRECEDING AND 2 PRECEDING) qk
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .columnType(1, ColumnType.LONG)
+                    .columnType(2, ColumnType.LONG)
+                    .withPlanContaining("percentile_disc(l) over ( rows between 1 preceding and 2 preceding)")
+                    .returns("""
+                            l\tp\tqk
+                            1\tnull\tnull
+                            2\tnull\tnull
+                            3\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testPercentileDiscLongEmptyTable() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE e (k SYMBOL, l LONG)");
+            assertQuery("SELECT k, l, percentile_disc(l, 0.5) OVER () p, quantile_disc(l, 0.5) OVER (PARTITION BY k) q FROM e")
+                    .noLeakCheck()
+                    .expectSize()
+                    .columnType(2, ColumnType.LONG)
+                    .columnType(3, ColumnType.LONG)
+                    .returns("k\tl\tp\tq\n");
+        });
+    }
+
+    @Test
+    public void testPercentileDiscLongNulls() throws Exception {
+        // NULL values never reach selection, an all-NULL partition returns NULL, and a NULL
+        // partition key is a partition of its own
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, l LONG)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 1), ('a', null), ('b', null), (null, 7), ('a', 3), ('b', null), (null, 9), ('a', 5)
+                    """);
+            assertQuery("SELECT k, l, percentile_disc(l, 0.5) OVER (PARTITION BY k) pk, quantile_disc(l, 0.5) OVER () q FROM t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining(
+                            "percentile_disc(l, 0.5) over (partition by [k])",
+                            "quantile_disc(l, 0.5) over ()"
+                    )
+                    .returns("""
+                            k\tl\tpk\tq
+                            a\t1\t3\t5
+                            a\tnull\t3\t5
+                            b\tnull\tnull\t5
+                            \t7\t7\t5
+                            a\t3\t3\t5
+                            b\tnull\tnull\t5
+                            \t9\t7\t5
+                            a\t5\t3\t5
+                            """);
+            assertQuery("SELECT l, percentile_disc(l, 0.5) OVER () p, quantile_disc(l, 0.5) OVER (PARTITION BY k) q FROM t WHERE k = 'b'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .columnType(1, ColumnType.LONG)
+                    .columnType(2, ColumnType.LONG)
+                    .returns("""
+                            l\tp\tq
+                            null\tnull\tnull
+                            null\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testPercentileDiscLongOverloadKeepsDoubleForDoubleInput() throws Exception {
+        // DOUBLE and FLOAT input, and an untyped bind variable, still resolve to the DOUBLE window
+        // overload; an untyped NULL literal stays ambiguous and is rejected
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, d DOUBLE, f FLOAT)");
+            execute("INSERT INTO t VALUES ('a', 1.5, 2.5), ('a', 3.5, 4.5), ('b', 5.5, 6.5)");
+            assertQuery("""
+                    SELECT k, percentile_disc(d, 0.5) OVER () pd, percentile_disc(f, 0.5) OVER (PARTITION BY k) pf,
+                        quantile_disc(d, 0.5) OVER (PARTITION BY k) qd, quantile_disc(f, 0.5) OVER () qf
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .columnType(1, ColumnType.DOUBLE)
+                    .columnType(2, ColumnType.DOUBLE)
+                    .columnType(3, ColumnType.DOUBLE)
+                    .columnType(4, ColumnType.DOUBLE)
+                    .returns("""
+                            k\tpd\tpf\tqd\tqf
+                            a\t3.5\t2.5\t1.5\t4.5
+                            a\t3.5\t2.5\t1.5\t4.5
+                            b\t3.5\t6.5\t5.5\t4.5
+                            """);
+
+            bindVariableService.clear();
+            try (RecordCursorFactory factory = select("SELECT k, percentile_disc($1, 0.5) OVER () p, quantile_disc($2, 0.5) OVER (PARTITION BY k) q FROM t")) {
+                Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(0).getType());
+                Assert.assertEquals(ColumnType.DOUBLE, bindVariableService.getFunction(1).getType());
+                bindVariableService.setDouble(0, 2.5);
+                bindVariableService.setDouble(1, 7.5);
+                assertFactory(factory)
+                        .withContext(sqlExecutionContext)
+                        .expectSize()
+                        .columnType(1, ColumnType.DOUBLE)
+                        .columnType(2, ColumnType.DOUBLE)
+                        .returns("""
+                                k\tp\tq
+                                a\t2.5\t7.5
+                                a\t2.5\t7.5
+                                b\t2.5\t7.5
+                                """);
+            }
+
+            assertExceptionNoLeakCheck(
+                    "SELECT percentile_disc(NULL, 0.5) OVER () FROM t",
+                    7,
+                    "window function percentile_disc does not support an untyped NULL argument"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT quantile_disc(NULL, 0.5) OVER (PARTITION BY k) FROM t",
+                    7,
+                    "window function quantile_disc does not support an untyped NULL argument"
+            );
+        });
+    }
+
+    @Test
+    public void testPercentileDiscLongRejectsInvalidPercentileAndFrame() throws Exception {
+        // the LONG overload rejects the same arguments and frames as the DOUBLE one, under the
+        // name the query called
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k SYMBOL, l LONG, p DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 'a', 1, 0.5), ('2024-01-01T01:00:00.000000Z', 'b', 2, 0.5)");
+            String sql = "SELECT percentile_disc(l, p) OVER () FROM t";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("p)"), "percentile argument must be a constant");
+            sql = "SELECT quantile_disc(l, p) OVER (PARTITION BY k) FROM t";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("p)"), "percentile argument must be a constant");
+            sql = "SELECT percentile_disc(l, -0.5) OVER () FROM t";
+            assertExceptionNoLeakCheck(sql, sql.indexOf('-'), "invalid percentile [expected=range(0.0, 1.0), actual=-0.5]");
+            sql = "SELECT quantile_disc(l, 1.5) OVER (PARTITION BY k) FROM t";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("1.5"), "invalid percentile [expected=range(0.0, 1.0), actual=1.5]");
+            assertExceptionNoLeakCheck(
+                    "SELECT quantile_disc(l, 0.5) OVER (PARTITION BY k ORDER BY ts) FROM t",
+                    7,
+                    "quantile_disc window function only supports whole partition frames"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT percentile_disc(l, 0.5) OVER (ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t",
+                    7,
+                    "percentile_disc window function only supports whole partition frames"
+            );
+        });
+    }
+
+    @Test
+    public void testPercentileDiscLongTimestampNsAcrossWalPartitions() throws Exception {
+        // rows land in three daily partitions, two of them through an out-of-order commit
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE w (ts TIMESTAMP, g SYMBOL, tn TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO w VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', '2024-01-01T00:00:00.000000001Z'),
+                    ('2024-01-02T00:00:00.000000Z', 'b', '2024-01-01T00:00:00.000000003Z'),
+                    ('2024-01-03T00:00:00.000000Z', 'a', '2024-01-01T00:00:00.000000005Z')
+                    """);
+            drainWalQueue();
+            execute("""
+                    INSERT INTO w VALUES
+                    ('2024-01-02T12:00:00.000000Z', 'b', '2024-01-01T00:00:00.000000007Z'),
+                    ('2024-01-01T12:00:00.000000Z', 'a', '2024-01-01T00:00:00.000000009Z')
+                    """);
+            drainWalQueue();
+            assertQuery("SELECT g, percentile_disc(tn, 0.5) p FROM w ORDER BY g")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tp
+                            a\t1704067200000000005
+                            b\t1704067200000000003
+                            """);
+            assertQuery("SELECT ts, g, percentile_disc(tn, 0.5) OVER () p, quantile_disc(tn, 0.5) OVER (PARTITION BY g) qg FROM w")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tg\tp\tqg
+                            2024-01-01T00:00:00.000000Z\ta\t1704067200000000005\t1704067200000000005
+                            2024-01-01T12:00:00.000000Z\ta\t1704067200000000005\t1704067200000000005
+                            2024-01-02T00:00:00.000000Z\tb\t1704067200000000005\t1704067200000000003
+                            2024-01-02T12:00:00.000000Z\tb\t1704067200000000005\t1704067200000000003
+                            2024-01-03T00:00:00.000000Z\ta\t1704067200000000005\t1704067200000000005
+                            """);
+        });
+    }
+
+    @Test
+    public void testPercentileDiscLongTimestampNsMatchesAggregate() throws Exception {
+        // Every present-day TIMESTAMP_NS value is above 2^53, where doubles are 256 ns apart, so a
+        // double selection returns a value that is not in the data.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ttn (g SYMBOL, tn TIMESTAMP_NS)");
+            execute("""
+                    INSERT INTO ttn VALUES
+                    ('a', '2024-01-01T00:00:00.000000001Z'),
+                    ('b', '2024-01-01T00:00:00.000000003Z'),
+                    ('a', '2024-01-01T00:00:00.000000005Z')
+                    """);
+            assertQuery("SELECT percentile_disc(tn, 0.5) p, quantile_disc(tn, 0.5) q FROM ttn")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            p\tq
+                            1704067200000000003\t1704067200000000003
+                            """);
+            assertQuery("""
+                    SELECT g, percentile_disc(tn, 0.5) OVER () p, quantile_disc(tn, 0.5) OVER () q,
+                        percentile_disc(tn, 0.5) OVER (PARTITION BY g) pg, quantile_disc(tn, 0.5) OVER (PARTITION BY g) qg
+                    FROM ttn
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            g\tp\tq\tpg\tqg
+                            a\t1704067200000000003\t1704067200000000003\t1704067200000000001\t1704067200000000001
+                            b\t1704067200000000003\t1704067200000000003\t1704067200000000003\t1704067200000000003
+                            a\t1704067200000000003\t1704067200000000003\t1704067200000000001\t1704067200000000001
+                            """);
+            assertQuery("SELECT count() FROM (SELECT tn, percentile_disc(tn, 0.5) OVER () p FROM ttn) WHERE tn::LONG = p")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            1
+                            """);
+        });
+    }
+
+    @Test
+    public void testPercentileDiscLongTypeMatchesAggregate() throws Exception {
+        // The aggregate returns LONG for integer, date and timestamp input; the window form must too
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, l LONG, i INT, s SHORT, b BYTE, d DATE, ts TIMESTAMP, tn TIMESTAMP_NS)");
+            execute("INSERT INTO t VALUES ('a', 1, 2, 3, 4, '2024-01-01', '2024-01-01', '2024-01-01')");
+            execute("""
+                    CREATE TABLE r AS (
+                        SELECT percentile_disc(l, 0.5) OVER () pl, percentile_disc(i, 0.5) OVER () pi,
+                            percentile_disc(s, 0.5) OVER () ps, percentile_disc(b, 0.5) OVER () pb,
+                            percentile_disc(d, 0.5) OVER () pd, percentile_disc(ts, 0.5) OVER () pts,
+                            percentile_disc(tn, 0.5) OVER () ptn, quantile_disc(l, 0.5) OVER () ql,
+                            percentile_disc(i, 0.5) OVER (PARTITION BY k) pki, quantile_disc(ts, 0.5) OVER (PARTITION BY k) qkts
+                        FROM t
+                    )""");
+            assertQuery("SELECT \"column\", type FROM table_columns('r')")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            column\ttype
+                            pl\tLONG
+                            pi\tLONG
+                            ps\tLONG
+                            pb\tLONG
+                            pd\tLONG
+                            pts\tLONG
+                            ptn\tLONG
+                            ql\tLONG
+                            pki\tLONG
+                            qkts\tLONG
+                            """);
+            assertQuery("SELECT * FROM r")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            pl\tpi\tps\tpb\tpd\tpts\tptn\tql\tpki\tqkts
+                            1\t2\t3\t4\t1704067200000\t1704067200000000\t1704067200000000000\t1\t2\t1704067200000000
                             """);
         });
     }

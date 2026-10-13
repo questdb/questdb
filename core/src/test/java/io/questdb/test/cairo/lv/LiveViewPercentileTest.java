@@ -301,6 +301,8 @@ public class LiveViewPercentileTest extends AbstractLiveViewTest {
             assertPartitionedCallRejected("percentile_cont(v, 0.5)");
             assertPartitionedCallRejected("quantile_disc(v, 0.5)");
             assertPartitionedCallRejected("quantile_cont(v, 0.5)");
+            assertPartitionedCallRejected("percentile_disc(l, 0.5)");
+            assertPartitionedCallRejected("quantile_disc(l, 0.5)");
             assertPartitionedCallRejected("percentile_disc(v, ARRAY[0.25, 0.75])");
             assertPartitionedCallRejected("percentile_cont(v, ARRAY[0.25, 0.75])");
             assertPartitionedCallRejected("quantile_disc(v, ARRAY[0.25, 0.75])");
@@ -319,6 +321,8 @@ public class LiveViewPercentileTest extends AbstractLiveViewTest {
             assertWholeResultSetCallRejected("percentile_cont(v, 0.5)");
             assertWholeResultSetCallRejected("quantile_disc(v, 0.5)");
             assertWholeResultSetCallRejected("quantile_cont(v, 0.5)");
+            assertWholeResultSetCallRejected("percentile_disc(l, 0.5)");
+            assertWholeResultSetCallRejected("quantile_disc(l, 0.5)");
             assertWholeResultSetCallRejected("percentile_disc(v, ARRAY[0.25, 0.75])");
             assertWholeResultSetCallRejected("percentile_cont(v, ARRAY[0.25, 0.75])");
             assertWholeResultSetCallRejected("quantile_disc(v, ARRAY[0.25, 0.75])");

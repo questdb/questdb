@@ -35,12 +35,12 @@ SELECT percentile_cont(-i, ARRAY[0.25, 0.5, 0.75]) * -1 FROM (SELECT x - 1 i FRO
 {75.000000,50.000000,25.000000}
 
 # the same as window functions
-query RRR
+query IRR
 SELECT -percentile_disc(-i, 0.25) OVER (), -percentile_cont(-i, 0.25) OVER (), percentile_cont(-i, ARRAY[0.25, 0.5, 0.75]) OVER () * -1
 FROM (SELECT x - 1 i FROM long_sequence(101))
 LIMIT 1
 ----
-75.000000 75.000000 {75.000000,50.000000,25.000000}
+75 75.000000 {75.000000,50.000000,25.000000}
 
 # DESC boundary condition: 0.5 * 6 is a whole number, so the descending median
 # differs from the ascending one, 2800
