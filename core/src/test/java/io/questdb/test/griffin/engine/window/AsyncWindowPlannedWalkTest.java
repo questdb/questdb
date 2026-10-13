@@ -318,6 +318,79 @@ public class AsyncWindowPlannedWalkTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRoundsReturnComputedTasksEarly() throws Exception {
+        // A round is not a barrier: its computed tasks return, in order, while its later tasks
+        // still compute. Every shape, with keys split and whole, must still match the serial
+        // window, and some task must have returned before its round finished.
+        setSizes(100, 2_000, 0, 2_000);
+        assertMemoryLeak(() -> inPool(4, (engine, ctx) -> {
+            createQuote(engine, ctx, "DAY", 40_000, "posting");
+            long early = 0;
+            for (int run = 0; run < 4; run++) {
+                for (String shape : SHAPES) {
+                    final String query = "select " + shape + " from q where sym in ('S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'BIG', null) order by sym";
+                    final String expected = serial(engine, ctx, query);
+                    setFrameDispatch(true);
+                    ctx.setParallelWindowEnabled(true);
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        final AsyncWindowRecordCursor asyncCursor = findAsyncCursor(factory);
+                        asyncPlans++;
+                        try (RecordCursor cursor = factory.getCursor(ctx)) {
+                            TestUtils.assertEquals(query, expected, print(cursor, factory));
+                            early += asyncCursor.getEarlyEmittedTaskCount();
+                        }
+                        assertSlotsReleased(factory);
+                    }
+                    // switched off, no task returns early
+                    setFrameDispatch(false);
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        final AsyncWindowRecordCursor asyncCursor = findAsyncCursor(factory);
+                        try (RecordCursor cursor = factory.getCursor(ctx)) {
+                            TestUtils.assertEquals(query, expected, print(cursor, factory));
+                            Assert.assertEquals(0, asyncCursor.getEarlyEmittedTaskCount());
+                        }
+                    }
+                }
+            }
+            Assert.assertTrue("no task returned before its round finished", early > 0);
+        }));
+    }
+
+    @Test
+    public void testPrefixIsCappedWithTheSwitchOn() throws Exception {
+        // min.rows and prefix.rows above the cap: the query's thread streams at most
+        // PREFIX_ROWS_DISPATCH rows alone with the switch on, prefix.rows with it off
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, 1_000);
+        // min.rows also gates the parallel plan by the table's rows
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, 20_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_PREFIX_ROWS, 16_384);
+        assertMemoryLeak(() -> {
+            createQuote(engine, sqlExecutionContext, "DAY", 80_000, "posting");
+            final String query = "select " + SHAPES[1] + " from q where sym in ('S1', 'BIG', 'S2', 'S3', 'S4', 'S5') order by sym";
+            final String expected = serial(engine, sqlExecutionContext, query);
+            for (boolean on : new boolean[]{true, false}) {
+                setFrameDispatch(on);
+                sqlExecutionContext.setParallelWindowEnabled(true);
+                try (RecordCursorFactory factory = select(query)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.assertEquals(query, expected, print(cursor, factory));
+                    }
+                    final AsyncWindowRecordCursor asyncCursor = findAsyncCursor(factory);
+                    asyncPlans++;
+                    final long prefix = asyncCursor.getPrefixRowCount();
+                    if (on) {
+                        // the prefix ends within the chunk that reaches the cap: a chunk is at most task.rows
+                        Assert.assertTrue("prefix " + prefix, prefix > 0 && prefix <= 2048 + 1_000);
+                    } else {
+                        Assert.assertTrue("prefix " + prefix, prefix > 2048 + 1_000 && prefix <= 16_384 + 1_000);
+                    }
+                    Assert.assertTrue(asyncCursor.getParallelTaskCount() > 0);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSwitchedOffCollectsOnTheQueryThread() throws Exception {
         assertMemoryLeak(() -> {
             createQuote(engine, sqlExecutionContext, "DAY", 3_000, "posting");

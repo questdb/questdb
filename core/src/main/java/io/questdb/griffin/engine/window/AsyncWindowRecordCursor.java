@@ -76,6 +76,13 @@ import java.util.function.LongConsumer;
  * way the serial window does, over the first {@code cairo.sql.parallel.window.min.rows} rows of the
  * walk. It takes the walk in chunks that start small and double, so the first row costs what it
  * costs serially, and a LIMIT or a small result never reaches a worker or opens a worker slot.
+ * The prefix is at most {@code cairo.sql.parallel.window.prefix.rows} rows, and with
+ * {@code cairo.sql.parallel.frame.dispatch.enabled} at most {@link #PREFIX_ROWS_DISPATCH}: rows
+ * the query's thread computes alone while every worker waits.
+ * <p>
+ * <b>Rounds return as their tasks finish.</b> With the frame dispatch switch on, the head round's
+ * tasks are returned in order as each one is computed, not once the whole round is: the round is
+ * no barrier between the query's thread and the workers still computing its later tasks.
  * <p>
  * <b>Pipeline.</b> Past the prefix, the query's thread collects the walk's row ids into tasks of
  * about {@code cairo.sql.parallel.window.task.rows} rows, and the tasks into rounds of at most
@@ -106,6 +113,12 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     static final UnorderedPageFrameReducer REDUCER = AsyncWindowRecordCursor::reduce;
     // the first prefix chunk; each next one is twice as large, up to task.rows
     private static final long FIRST_CHUNK_ROWS = 256;
+    // The prefix's rows with the frame dispatch switch on: it ends within the chunk that reaches
+    // them, so after 256 + 512 + 1024 + 2048 rows at the default task.rows. A LIMIT or a result of
+    // up to about 1,800 rows still never reaches a worker, while a large result has every worker
+    // busy after a few thousand rows rather than after prefix.rows rows the query's thread
+    // computes alone; see the class doc.
+    static final long PREFIX_ROWS_DISPATCH = 2048;
     private static final int MODE_PARALLEL = 2;
     private static final int MODE_SERIAL = 1;
     private static final int MODE_UNDECIDED = 0;
@@ -145,6 +158,10 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     // whether the walk may be planned, so that workers read their tasks' row ids, see
     // KeyMajorPageFrameRecordCursor.enablePlannedWalk()
     private final boolean plannedWalkEnabled;
+    // whether a round's computed tasks return before the round has finished, see hasNext()
+    private final boolean earlyEmitEnabled;
+    // tests: tasks returned before their round finished, since the cursor opened or rewound
+    private long earlyEmittedTaskCount;
     // tests: see getPlannedTaskCount(), counted under -ea only
     private final AtomicLong plannedTaskCount = new AtomicLong();
     // the walk is planned: tasks hold plans, and the worker that computes a task reads its rows
@@ -247,9 +264,13 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         this.hasCarryOp = hasCarryOp;
         this.taskRows = configuration.getSqlParallelWindowTaskRows();
         this.maxKeyRows = Math.max(taskRows, configuration.getSqlParallelWindowMaxKeyRows());
-        // the prefix: no more than min.rows, which also gates the parallel plan, see prefix.rows
+        // the prefix: no more than min.rows, which also gates the parallel plan, see prefix.rows;
+        // with the frame dispatch switch on, no more than PREFIX_ROWS_DISPATCH either
         final long minRows = configuration.getSqlParallelWindowMinRows();
-        this.minRows = minRows > 0 ? Math.min(minRows, configuration.getSqlParallelWindowPrefixRows()) : 0;
+        final long prefixRows = configuration.isSqlParallelFrameDispatchEnabled()
+                ? Math.min(PREFIX_ROWS_DISPATCH, configuration.getSqlParallelWindowPrefixRows())
+                : configuration.getSqlParallelWindowPrefixRows();
+        this.minRows = minRows > 0 ? Math.min(minRows, prefixRows) : 0;
         this.roundRows = Math.max(taskRows, configuration.getSqlParallelWindowRoundRows());
         // a few tasks per worker, so that the round's tasks balance across the workers; the
         // round's row budget, not this count, bounds the round's memory
@@ -280,6 +301,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         }
         this.rowKernelsEnabled = configuration.isSqlParallelWindowKeyRunsEnabled();
         this.plannedWalkEnabled = configuration.isSqlParallelFrameDispatchEnabled();
+        this.earlyEmitEnabled = configuration.isSqlParallelFrameDispatchEnabled();
         // a round can bring a streamed key with it, and the walk can meet several in a row
         final int segmentCapacity = 4 * roundCount;
         this.segmentKinds = new int[segmentCapacity];
@@ -357,6 +379,14 @@ public class AsyncWindowRecordCursor implements RecordCursor {
     @TestOnly
     public long getKeptChainCount() {
         return keptChainCount;
+    }
+
+    /**
+     * Tasks returned before their round had finished, since the cursor opened or rewound.
+     */
+    @TestOnly
+    public long getEarlyEmittedTaskCount() {
+        return earlyEmittedTaskCount;
     }
 
     /**
@@ -530,6 +560,13 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             if (headKind == SEGMENT_ROUND) {
                 final Round round = headRound;
                 if (round.state == Round.STATE_IN_FLIGHT) {
+                    if (earlyEmitEnabled && emitTaskIndex < round.taskCount && round.tasks.getQuick(emitTaskIndex).isComputed) {
+                        // A round is not a barrier: its tasks return in order as each is
+                        // computed, while the later ones still compute.
+                        earlyEmittedTaskCount++;
+                        startEmitting(round.tasks.getQuick(emitTaskIndex++));
+                        continue;
+                    }
                     awaitRound(round);
                     // a round finished: its slots can take the next one
                     produce();
@@ -728,6 +765,12 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         final ReplayChain replayChain = roundAtom.replayChain;
         if (replayChain != null && sequence.isActive()) {
             replayChain.computed(task, workerId > -1);
+        }
+        // Published last, after the walk-order pass knows the task is computed: the query's
+        // thread may return the task's rows once it reads this, see hasNext(). A task of a
+        // cancelled round may have stopped early; its rows are never returned, so it is not marked.
+        if (sequence.isActive()) {
+            task.isComputed = true;
         }
     }
 
@@ -1266,6 +1309,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
 
     private void resetCounters() {
         plannedTaskCount.set(0);
+        earlyEmittedTaskCount = 0;
         maxRoundRows = 0;
         keptChainCount = 0;
         largeKeyRowsStreamed = 0;
@@ -1852,6 +1896,8 @@ public class AsyncWindowRecordCursor implements RecordCursor {
         private volatile boolean passComputed;
         private volatile boolean passDone;
         private long passSeq = -1;
+        // every row of the task is in its chain, written last by the computing thread
+        private volatile boolean isComputed;
 
         private Task(RecordChain chain, DirectLongList rows) {
             this.chain = chain;
@@ -1882,6 +1928,7 @@ public class AsyncWindowRecordCursor implements RecordCursor {
             plannedRows = 0;
             keyStarts.clear();
             computedByWorker = false;
+            isComputed = false;
             isBoundaryProcessed = false;
             if (groupSplit != null) {
                 groupSplit.reset();
