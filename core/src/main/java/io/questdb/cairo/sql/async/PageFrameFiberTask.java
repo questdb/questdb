@@ -306,14 +306,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
 
     private void completeOwnership() {
         if (orderedFrameSequence != null) {
-            // read before done(): a collected slot no longer carries its group size
-            final int taskFrames = orderedReduceTask != null ? orderedReduceTask.getGroupSize() : 1;
-            try {
-                orderedSubSeq.done(orderedCursor);
-            } finally {
-                orderedFrameSequence.getReduceFinishedCounter().addAndGet(taskFrames);
-                dispatcher.signalProgress(orderedFrameSequence);
-            }
+            PageFrameSequence.releaseReducedSlot(orderedSubSeq, orderedCursor, orderedReduceTask, orderedFrameSequence, dispatcher);
         } else if (unorderedFrameSequence != null) {
             try {
                 unorderedFrameSequence.getDoneLatch().countDown();
@@ -359,17 +352,10 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
             this.orderedCursor = -1;
             this.orderedReduceTask = null;
             this.orderedFrameSequence = null;
-            // read before done(): a collected slot no longer carries its group size
-            final int taskFrames = reduceTask.getGroupSize();
             try {
                 MemoryTracker.detachResourceMemoryCurrentThread();
             } finally {
-                try {
-                    subSeq.done(cursor);
-                } finally {
-                    frameSequence.getReduceFinishedCounter().addAndGet(taskFrames);
-                    dispatcher.signalProgress(frameSequence);
-                }
+                PageFrameSequence.releaseReducedSlot(subSeq, cursor, reduceTask, frameSequence, dispatcher);
             }
         }
     }

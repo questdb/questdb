@@ -295,6 +295,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         pageSizes.close();
         auxPageAddresses.close();
         auxPageSizes.close();
+        // the fillers reference the frame cursors' readers, which a closed cache must not keep
+        frameFillers.clear();
     }
 
     /**

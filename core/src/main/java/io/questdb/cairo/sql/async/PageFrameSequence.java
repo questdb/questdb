@@ -58,11 +58,13 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 
 public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable {
     private static final AtomicLong ID_SEQ = new AtomicLong();
@@ -81,6 +83,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private static final int RETAINED_GROUP_TASKS = 8;
     // tests: runs before a group task is allocated, see reserveGroupTasks()
     private static volatile Runnable groupTaskAllocationHook;
+    // tests: runs after a reduced slot is released and before its frames are counted, see releaseReducedSlot()
+    private static volatile Consumer<PageFrameReduceTask> reducedSlotReleaseHook;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private final MillisecondClock clock;
     // native frames come without column addresses, which the threads processing them compute, see
@@ -94,6 +98,9 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     private final ObjList<PageFrameReduceTask> groupTasks = new ObjList<>();
     private final PageFrameReduceTaskFactory localTaskFactory;
     private final MessageBus messageBus;
+    // the shared query workers the factory was built for; a limited dispatch splits its frames
+    // among them, see groupLimit()
+    private final int queryWorkerCount;
     private final AtomicInteger reduceFinishedCounter = new AtomicInteger(0);
     private final AtomicInteger reduceStartedCounter = new AtomicInteger(0);
     private final PageFrameReducer reducer;
@@ -152,6 +159,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             this.deferFrameAddresses = configuration.isSqlParallelFrameDispatchEnabled();
             this.groupFrames = deferFrameAddresses && taskType == PageFrameReduceTask.TYPE_FILTER;
             this.localTaskFactory = localTaskFactory;
+            this.queryWorkerCount = Math.max(1, sharedQueryWorkerCount);
             this.workStealingStrategy = configuration.getFactoryProvider()
                     .getWorkStealingStrategy(configuration, sharedQueryWorkerCount, atom);
             this.taskType = taskType;
@@ -407,8 +415,58 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         groupTaskAllocationHook = hook;
     }
 
+    /**
+     * Sets a hook that runs on the releasing thread after a reduced slot of the ordered reduce queue
+     * is released and before its frames are counted, see {@link #releaseReducedSlot}. A test can hold
+     * it there until the collector has collected the slot.
+     */
+    @TestOnly
+    public static void setReducedSlotReleaseHook(Consumer<PageFrameReduceTask> hook) {
+        reducedSlotReleaseHook = hook;
+    }
+
     void releaseGroupTask(PageFrameReduceTask task) {
         freeGroupTasks.add(task);
+    }
+
+    /**
+     * Releases a slot of the ordered reduce queue that a reducer took, and counts its frames. Every
+     * path that takes a slot from the ordered queue and is done with it, reduced or not, ends here:
+     * the worker and stealing reduce, the fiber reduce, the failed fiber acquisition and the
+     * dispatcher's drain.
+     * <p>
+     * The slot's frame count is read before {@code done()}. Once the slot is released, the collector
+     * may collect it, which resets its group size to 1, or dispatch it again with another group. A
+     * finished counter short of the dispatched frames, or past them, leaves {@link #await()} spinning.
+     *
+     * @param task          the slot's task, null when unknown, which counts as one frame
+     * @param frameSequence the sequence that dispatched the slot, read before the release too
+     * @param dispatcher    the fiber dispatcher to signal, or null
+     */
+    static void releaseReducedSlot(
+            MCSequence subSeq,
+            long cursor,
+            @Nullable PageFrameReduceTask task,
+            PageFrameSequence<?> frameSequence,
+            @Nullable PageFrameReduceDispatcher dispatcher
+    ) {
+        final int taskFrames = task != null ? task.getGroupSize() : 1;
+        try {
+            subSeq.done(cursor);
+        } finally {
+            try {
+                final Consumer<PageFrameReduceTask> hook = reducedSlotReleaseHook;
+                if (hook != null && task != null) {
+                    hook.accept(task);
+                }
+            } finally {
+                // counted only once the slot is available to the collector; it counts frames
+                frameSequence.getReduceFinishedCounter().addAndGet(taskFrames);
+                if (dispatcher != null) {
+                    dispatcher.signalProgress(frameSequence);
+                }
+            }
+        }
     }
 
     public PageFrameReduceTask getTask(long cursor) {
@@ -821,7 +879,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                         // The group's tasks are in hand before its slot is claimed: an allocation
                         // failure between next() and done() would leave the slot claimed and never
                         // published, and stall every consumer of the shard's queue.
-                        groupSize = groupSize(i, dispatchLimit - totalDispatched);
+                        groupSize = groupSize(i, Math.min(dispatchLimit - totalDispatched, groupLimit(dispatchLimit)));
                         reserveGroupTasks(groupSize - 1);
                         cursor = reducePubSeq.next();
                         if (cursor > -1) {
@@ -932,6 +990,16 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             }
             freeGroupTasks.add(task);
         }
+    }
+
+    // The most frames one group may take under a dispatch limit. A limited iteration (LIMIT, negative
+    // LIMIT, expectLimitedIteration()) caps the frames in flight, by default at the query worker count.
+    // A group that took them all would leave one slot in flight, one worker busy, and the collector
+    // walking that group while nothing else is dispatched. So the limit is split among the workers:
+    // with the default limit every slot carries one frame, as without groups, and a larger limit
+    // still groups. An unlimited dispatch (Integer.MAX_VALUE) is capped by MAX_GROUP_FRAMES alone.
+    private int groupLimit(int dispatchLimit) {
+        return Math.max(1, dispatchLimit / queryWorkerCount);
     }
 
     // The frames the next task takes from frameIndex on: a group of small native frames, see
