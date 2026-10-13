@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -45,6 +46,7 @@ import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 
 import java.util.concurrent.TimeUnit;
@@ -55,10 +57,79 @@ import static org.junit.Assert.assertTrue;
 
 public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
 
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        // A small supported ring makes notification overflow deterministic without thousands of tables.
+        setProperty(PropertyKey.CAIRO_WAL_TXN_NOTIFICATION_QUEUE_CAPACITY, 4);
+        AbstractCairoTest.setUpStatic();
+    }
+
     @Before
     public void setUp() {
         super.setUp();
         node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+    }
+
+    @Test
+    public void testDurabilityValuesAfterNotificationQueueOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            for (int i = 0; i < 6; i++) {
+                execute("CREATE TABLE overflow" + i + " (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            }
+            for (int commit = 0; commit < 2; commit++) {
+                for (int i = 0; i < 6; i++) {
+                    execute("INSERT INTO overflow" + i + " VALUES (" + commit + ", '2024-01-01')");
+                }
+                drainWalQueue();
+            }
+            engine.releaseInactive();
+            final TableToken token = engine.verifyTableName("overflow5");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            // Distinguish a retained recovery counter from the uninitialized branch's fabricated zero.
+            tracker.bumpRecoveryIncarnation();
+            Assert.assertTrue(tracker.isInitialised());
+            for (int i = 0; i < 6; i++) {
+                execute("INSERT INTO overflow" + i + " VALUES (3, '2024-01-02')");
+            }
+            engine.releaseInactive();
+            Assert.assertFalse("the notification ring must actually overflow", tracker.isInitialised());
+            assertTrackerDurabilityValues("overflow5", tracker);
+            new CheckWalTransactionsJob(engine).run();
+            Assert.assertFalse("the full queue must still prevent initialization", tracker.isInitialised());
+            assertTrackerDurabilityValues("overflow5", tracker);
+            drainWalQueue();
+            Assert.assertTrue(tracker.isInitialised());
+            assertTrackerDurabilityValues("overflow5", tracker);
+        });
+    }
+
+    @Test
+    public void testDurabilityValuesAfterRecoveryBeforeApply() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        // Keep a known recovery cut behind the live writer, without cadence or close replacing it.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE recovered (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO recovered VALUES (1, '2024-01-01')");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("recovered");
+            try (var writer = engine.getWriter(token, "establish recovery cut")) {
+                writer.completeDurableEpochAfter("test recovery cut");
+            }
+            execute("INSERT INTO recovered VALUES (2, '2024-01-02')");
+            drainWalQueue();
+            engine.clear();
+            try (CairoEngine restarted = new CairoEngine(configuration)) {
+                final SeqTxnTracker tracker = restarted.getTableSequencerAPI().getTxnTracker(token);
+                Assert.assertFalse(tracker.isInitialised());
+                Assert.assertTrue(tracker.getRecoveryIncarnation() > 0);
+                Assert.assertTrue(tracker.getDurableEpochSeqTxn() > 0);
+                Assert.assertEquals(0, tracker.getLastEpochTs());
+                assertTrackerDurabilityValues(restarted, "recovered", tracker);
+                restarted.clear();
+            }
+        });
     }
 
     @Test
@@ -182,8 +253,12 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                         .returns("""
                                 name\tsuspended\twriterTxn\ttorn
                                 A\tfalse\t1\tfalse
-                                B\ttrue\tnull\ttrue
+                                B\tfalse\tnull\ttrue
                                 """);
+                final SeqTxnTracker tracker = restarted.getTableSequencerAPI().getTxnTracker(restarted.verifyTableName("B"));
+                Assert.assertFalse(tracker.isInitialised());
+                Assert.assertFalse(tracker.isSuspended());
+                assertTrackerDurabilityValues(restarted, "B", tracker);
                 restarted.clear();
             }
         });
@@ -401,6 +476,21 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
                 .noRandomAccess()
                 .returns("memoryPressure\n" +
                         expectedMemoryPressureLevel + "\n");
+    }
+
+    private void assertTrackerDurabilityValues(String table, SeqTxnTracker tracker) throws Exception {
+        assertTrackerDurabilityValues(engine, table, tracker);
+    }
+
+    private void assertTrackerDurabilityValues(CairoEngine queryEngine, String table, SeqTxnTracker tracker) throws Exception {
+        final String expected = "durableEpochSeqTxn\trecoveryIncarnation\tlocalDurableSeqTxn\tlastEpochMicros\n"
+                + tracker.getDurableEpochSeqTxn() + '\t' + tracker.getRecoveryIncarnation() + '\t'
+                + tracker.getLocalDurableSeqTxn() + '\t'
+                + (tracker.getLastEpochTs() > 0 ? tracker.getLastEpochTs() * 1000 : "null") + '\n';
+        assertQuery("SELECT durableEpochSeqTxn, recoveryIncarnation, localDurableSeqTxn, "
+                + "lastEpochTs::LONG lastEpochMicros FROM wal_tables() WHERE name = '" + table + "'")
+                .withEngine(queryEngine).withContext(TestUtils.createSqlExecutionCtx(queryEngine))
+                .noLeakCheck().noRandomAccess().returns(expected);
     }
 
     private void createTable(final String tableName, boolean isWal) throws SqlException {

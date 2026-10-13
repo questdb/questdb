@@ -283,19 +283,18 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                         SeqTxnTracker seqTxnTracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                         memoryPressureLevel = seqTxnTracker.getMemPressureControl().getMemoryPressureLevel();
                         tableName = tableToken.getTableName();
+                        durableEpochSeqTxn = seqTxnTracker.getDurableEpochSeqTxn();
+                        recoveryIncarnation = seqTxnTracker.getRecoveryIncarnation();
+                        localDurableSeqTxn = seqTxnTracker.getLocalDurableSeqTxn();
+                        // The tracker records publication time in millis; the TIMESTAMP column uses micros.
+                        // Zero means no time is known, independently of applied-writer initialization.
+                        long lastEpochMs = seqTxnTracker.getLastEpochTs();
+                        lastEpochTs = lastEpochMs > 0 ? lastEpochMs * 1000 : Numbers.LONG_NULL;
                         if (seqTxnTracker.isInitialised()) {
                             suspendedFlag = seqTxnTracker.isSuspended();
                             sequencerTxn = seqTxnTracker.getSeqTxn();
                             writerTxn = seqTxnTracker.getWriterTxn();
                             bufferedTxnSize = seqTxnTracker.getLagTxnCount();
-                            durableEpochSeqTxn = seqTxnTracker.getDurableEpochSeqTxn();
-                            recoveryIncarnation = seqTxnTracker.getRecoveryIncarnation();
-                            localDurableSeqTxn = seqTxnTracker.getLocalDurableSeqTxn();
-                            // getLastEpochTs() is wall-clock millis, 0 when there is no epoch yet; the
-                            // column is a microsecond TIMESTAMP. Render NULL for no epoch rather than
-                            // 1970-01-01, and scale millis to micros otherwise.
-                            long lastEpochMs = seqTxnTracker.getLastEpochTs();
-                            lastEpochTs = lastEpochMs > 0 ? lastEpochMs * 1000 : Numbers.LONG_NULL;
                             if (suspendedFlag) {
                                 // only read error details from seqTxnTracker if the table is suspended
                                 // when the table is not suspended, it is not guaranteed that error details are immediately cleared
@@ -307,12 +306,6 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                             }
                             return true;
                         }
-
-                        // Tracker not yet initialised: epoch/retention fields default to 0
-                        durableEpochSeqTxn = 0;
-                        recoveryIncarnation = 0;
-                        localDurableSeqTxn = 0;
-                        lastEpochTs = Numbers.LONG_NULL;
 
                         try {
                             // We used to have suspended flag saved in the sequencer metadata file
@@ -355,12 +348,11 @@ public class WalTableListFunctionFactory implements FunctionFactory {
                                     throw e;
                                 }
                                 // One table whose files cannot be read must not fail the listing of every other
-                                // table. Report it as a suspended table, keeping the error of an apply that
+                                // table. Keep its actual suspension state and the error of an apply that
                                 // already failed on it: that one names the cause rather than the symptom.
                                 writerTxn = Numbers.LONG_NULL;
                                 bufferedTxnSize = Numbers.LONG_NULL;
                                 if (!suspendedFlag) {
-                                    suspendedFlag = true;
                                     errorTag = "";
                                     errorMessage = e.getFlyweightMessage().toString();
                                 }
