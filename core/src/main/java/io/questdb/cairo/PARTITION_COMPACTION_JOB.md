@@ -90,6 +90,24 @@ and the writer drops a command whose partition has moved on; the next sweep deci
 before its swap removes its own staging directory. MAKE-PLAIN's reader-safety wait still applies, so the
 sweep's reader is closed before the writer runs.
 
+## Requests
+
+Other jobs can ask for a logical partition to be folded into one plain folder through the engine's
+`PartitionCompactionRequestQueue`: bounded (256), any thread may offer, the job is the only consumer, and a
+full queue refuses rather than blocks. The enterprise storage policy is the requester: a WAL table's split or
+composite partition must be one plain folder before it converts to parquet, so the conversion offers a request,
+gives up its cycle and finds the partition again on the next one, asking again until the fold has landed.
+
+- Served at the start of every `runSerially()`, ahead of the sweep and outside its budgets, even with the sweep
+  disabled. Requests that need no fold - mostly repeats - are drained in one go; the call stops after the first
+  request that dispatches a fold and returns `true`, so the worker comes back without idling and a backlog of
+  copies cannot hold the sweep off.
+- No idle threshold applies: the requester decided the partition is cold. Everything else does - WAL tables
+  only, no READ ONLY / REMOTE / Parquet folder, never a MERGE of the active logical partition - and the request
+  goes through the same `dispatchMerge` / `dispatchMakePlain` / `dispatchComposite` and in-flight record as
+  the sweep, so a request for a logical partition whose swap is still queued never rebuilds its staged copy.
+- A request for a logical partition that is already one plain folder is dropped.
+
 ## Config
 
 | key | default | meaning |

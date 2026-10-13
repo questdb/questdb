@@ -122,6 +122,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     private final Path other = new Path();
     private final ParquetMetaFileReader parquetMetaReader = new ParquetMetaFileReader();
     private final Path path = new Path();
+    // Scratch for the requests serveCompactionRequests() takes off the engine's queue.
+    private final PartitionCompactionRequestQueue.Request request = new PartitionCompactionRequestQueue.Request();
     private final LongList rewriteRanges = new LongList();
     private final Rnd rnd;
     private final Utf8StringSink sidecarName = new Utf8StringSink();
@@ -712,6 +714,94 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             folders.add(txFile.getPartitionNameTxn(partitionIndex));
             folders.add(folderGeneration(txFile, partitionGeometry, partitionIndex));
             folders.add(txFile.getPartitionSize(partitionIndex));
+        }
+    }
+
+    /**
+     * Folds the requested logical partition into one plain folder, whatever its age: a MERGE when it is split into
+     * several folders, a MAKE-PLAIN or REWRITE when its single folder is composite. The requester has already
+     * decided the partition is cold, so none of the sweep's idle thresholds apply; everything that makes a fold
+     * unsafe still does. A request this cannot act on - the logical partition is already one plain folder, has a
+     * swap in flight, is the active one, or holds a folder no native copy can carry - is dropped, and the requester
+     * asks again on its next cycle if it still needs the fold.
+     *
+     * @return true when a fold was dispatched, false for a request that cost no more than a {@code _txn} read
+     */
+    private boolean compactRequestedPartition(TableToken tableToken, long logicalPartitionTimestamp, long nowMicros) {
+        if (!tableToken.isWal()) {
+            // See scanTable: a swap built off a reader snapshot is not safe to hand a non-WAL writer.
+            return false;
+        }
+        path.of(configuration.getDbRoot()).concat(tableToken).concat(TableUtils.TXN_FILE_NAME);
+        if (!ff.exists(path.$())) {
+            return false;
+        }
+        drainExpiredSwaps(tableToken, nowMicros);
+
+        try (TableMetadata metadata = engine.getTableMetadata(tableToken)) {
+            final int timestampType = metadata.getTimestampType();
+            final int partitionBy = metadata.getPartitionBy();
+            if (!PartitionBy.isPartitioned(partitionBy)) {
+                return false;
+            }
+
+            isGeometryOpen = false;
+            txReader.ofRO(path.$(), timestampType, partitionBy);
+            TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
+            prunePendingSwaps(tableToken, timestampType, partitionBy);
+            if (isSwapPending(tableToken, logicalPartitionTimestamp)) {
+                // Its swap owns the staging directory a rebuild would clear - see prunePendingSwaps.
+                return false;
+            }
+
+            final int lo = findLogicalPartitionRunStart(txReader, logicalPartitionTimestamp);
+            if (lo < 0) {
+                return false;
+            }
+            final int hi = findLogicalPartitionRunEnd(txReader, lo, logicalPartitionTimestamp);
+            if (hi - lo == 1 && !txReader.isPartitionComposite(lo)) {
+                // Already one plain folder: squashed and not composite, which is what the request asked for.
+                return false;
+            }
+            for (int partitionIndex = lo; partitionIndex < hi; partitionIndex++) {
+                if (txReader.isPartitionReadOnly(partitionIndex)
+                        || txReader.isPartitionRemote(partitionIndex)
+                        || txReader.isPartitionParquet(partitionIndex)) {
+                    // See scanLogicalPartition: none of these is this job's to rewrite or merge.
+                    return false;
+                }
+            }
+
+            if (hi - lo > 1) {
+                if (hi == txReader.getPartitionCount()) {
+                    // The active logical partition: the writer's own squash folds it - see scanLogicalPartition.
+                    return false;
+                }
+                long liveRows = 0;
+                for (int partitionIndex = lo; partitionIndex < hi; partitionIndex++) {
+                    liveRows += txReader.getPartitionSize(partitionIndex);
+                }
+                if (liveRows == 0) {
+                    return false;
+                }
+                openGeometry(tableToken, timestampType, partitionBy);
+                collectFolders(txReader, geometry, lo, hi);
+                dispatchMerge(tableToken, logicalPartitionTimestamp, logicalPartitionState(folders));
+                return true;
+            }
+
+            // Dispatched by the folder's OWN start, which is a split's when the main folder is missing.
+            final long partitionTimestamp = txReader.getPartitionTimestampByIndex(lo);
+            openGeometry(tableToken, timestampType, partitionBy);
+            final boolean isMakePlain = PartitionCompactionPolicy.isMakePlainShape(txReader, geometry, lo);
+            collectFolders(txReader, geometry, lo, hi);
+            final long state = logicalPartitionState(folders);
+            if (isMakePlain) {
+                dispatchMakePlain(tableToken, logicalPartitionTimestamp, partitionTimestamp, state);
+            } else {
+                dispatchComposite(tableToken, logicalPartitionTimestamp, partitionTimestamp, state);
+            }
+            return true;
         }
     }
 
@@ -1660,6 +1750,35 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
+     * Serves requests off the engine's {@link PartitionCompactionRequestQueue}, ahead of and apart from the sweep:
+     * it runs even when the sweep is disabled, and charges neither of the sweep's budgets. Requests that need no
+     * fold - mostly repeats, since a requester keeps asking until it sees the fold land - are drained in one go;
+     * it stops after the first one that dispatches a fold, so a backlog of copies cannot hold the sweep off.
+     *
+     * @return true when a fold was dispatched, so the worker comes back for the next request without idling
+     */
+    private boolean serveCompactionRequests(long nowMicros) {
+        final PartitionCompactionRequestQueue queue = engine.getPartitionCompactionRequestQueue();
+        while (queue.poll(request)) {
+            final TableToken tableToken = request.getTableToken();
+            final long logicalPartitionTimestamp = request.getLogicalPartitionTimestamp();
+            try {
+                if (compactRequestedPartition(tableToken, logicalPartitionTimestamp, nowMicros)) {
+                    return true;
+                }
+            } catch (CairoException | TableReferenceOutOfDateException e) {
+                LOG.info().$("skipping requested partition compaction [table=").$(tableToken)
+                        .$(", logicalPartitionTimestamp=").$(logicalPartitionTimestamp)
+                        .$(", error=").$(e.getMessage()).I$();
+                return true;
+            } finally {
+                txReader.clear();
+            }
+        }
+        return false;
+    }
+
+    /**
      * Writes a logical partition merge's staging directory path into {@code sink}: {@code
      * <logicalPartition>.<firstFolderNameTxn>.merging<folderCount>}. A marker of its own, because the writer's
      * startup purge tests a merge's staging directory for liveness against the whole run of folders, not against
@@ -1734,10 +1853,11 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     @Override
     protected boolean runSerially() {
+        final boolean isRequestServed = serveCompactionRequests(clock.getTicks());
         if (checkInterval < 0) {
             // A negative cairo.partition.compaction.check.interval disables the background sweep;
-            // writer-side compaction is unaffected. Zero still means "sweep on every call".
-            return false;
+            // writer-side compaction and explicit requests are unaffected. Zero still means "sweep on every call".
+            return isRequestServed;
         }
         final long t = clock.getTicks();
         if (last + checkInterval < t) {
@@ -1749,6 +1869,6 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 last = clock.getTicks();
             }
         }
-        return false;
+        return isRequestServed;
     }
 }

@@ -259,6 +259,118 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
+     * A request skips every idle threshold - the requester decided the partition is cold - and is served with
+     * the sweep itself disabled: here a split day is merged into one folder under timeouts it is nowhere near.
+     */
+    @Test
+    public void testRequestMergesASplitDayWithTheSweepOffAndTheTimeoutsUnmet() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            createSplitDayTable("cx");
+            final TableToken token = engine.verifyTableName("cx");
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+
+            final long liveRowsBefore;
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertEquals("the O3 insert must have split 2020-01-01", 3, tx.getPartitionCount());
+                liveRowsBefore = tx.getPartitionSize(0) + tx.getPartitionSize(1);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1000h");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT, "1000h");
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                Assert.assertFalse("nothing is requested yet and the sweep is off", job.run());
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(token, day));
+                Assert.assertTrue("the request must dispatch the merge", job.run());
+                Assert.assertFalse("the queue must be empty after the request", job.run());
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertEquals("the day's two folders must have become one", 2, tx.getPartitionCount());
+                Assert.assertFalse("the merged folder must be plain", tx.isPartitionComposite(0));
+                Assert.assertEquals("the merge must not change the row count", liveRowsBefore, tx.getPartitionSize(0));
+            }
+            assertQuery("SELECT count() c FROM cx").noRandomAccess().expectSize().returns("c\n6010\n");
+        });
+    }
+
+    /**
+     * A requester keeps asking until it sees the fold land, so a request can arrive for a partition that is
+     * already one plain folder, or for a non-WAL table the job never folds. Neither costs more than a {@code _txn}
+     * read, and one run drains them all.
+     */
+    @Test
+    public void testRequestOnlyFoldsAWalCompositePartitionOnce() throws Exception {
+        final AtomicInteger stagingMkdirs = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int mkdirs(Path path, int mode) {
+                if (Utf8s.containsAscii(path, TableUtils.COMPACTING_DIR_MARKER)) {
+                    stagingMkdirs.incrementAndGet();
+                }
+                return super.mkdirs(path, mode);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            createCompositeDayTable("cn");
+            createCompositeDayTable("cw");
+            execute("ALTER TABLE cn SET TYPE BYPASS WAL");
+            engine.releaseInactive();
+            engine.load();
+
+            final TableToken nonWalToken = engine.verifyTableName("cn");
+            final TableToken walToken = engine.verifyTableName("cw");
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            try (TableReader reader = engine.getReader(nonWalToken)) {
+                Assert.assertTrue(reader.getTxFile().isPartitionComposite(0));
+            }
+            try (TableReader reader = engine.getReader(walToken)) {
+                Assert.assertTrue(reader.getTxFile().isPartitionComposite(0));
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine, ff, configuration.getMicrosecondClock())) {
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(nonWalToken, day));
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(walToken, day));
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(walToken, day));
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(nonWalToken, day));
+                Assert.assertTrue("the WAL request must dispatch the fold", job.run());
+                Assert.assertFalse("the repeat and the non-WAL request must be drained as no-ops", job.run());
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader(walToken)) {
+                Assert.assertFalse("the WAL partition must be folded", reader.getTxFile().isPartitionComposite(0));
+            }
+            try (TableReader reader = engine.getReader(nonWalToken)) {
+                Assert.assertTrue("a non-WAL partition must not be folded", reader.getTxFile().isPartitionComposite(0));
+            }
+            engine.releaseAllReaders();
+            Assert.assertEquals("exactly one staged copy is expected - the WAL table's, once", 1, stagingMkdirs.get());
+
+            TestUtils.assertSqlCursors(
+                    engine, sqlExecutionContext, "SELECT * FROM cn ORDER BY ts, i", "SELECT * FROM cw ORDER BY ts, i", LOG
+            );
+        });
+    }
+
+    /**
      * A composite partition REWRITE stages its copy in a {@code .compacting<writerTxn>} directory that
      * {@link TableWriter#swapCompactedCompositePartition} either renames in or deletes. A crash between
      * the two leaves a full copy of the partition on disk that nothing ever adopts: its name carries a
