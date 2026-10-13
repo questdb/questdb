@@ -104,6 +104,8 @@ public class FrameProjectionTest extends AbstractCairoTest {
     private static void assertArms(CairoEngine engine, SqlExecutionContext ctx, boolean pool) throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         long projectedFrames = 0;
+        long kernelBatches = 0;
+        long rowBatches = 0;
         for (String query : QUERIES) {
             bindVariableService.clear();
             bindVariableService.setDouble(0, 1.5);
@@ -126,10 +128,15 @@ public class FrameProjectionTest extends AbstractCairoTest {
                 }
                 if (projection != null) {
                     projectedFrames += projection.getProjectedFrameCount();
+                    kernelBatches += projection.getBatchCounts()[0];
+                    rowBatches += projection.getBatchCounts()[1];
                 }
             }
         }
         Assert.assertTrue("no frame was projected", projectedFrames > 0);
+        // arithmetic is computed column-wise; a boolean, a cast and a column top row by row
+        Assert.assertTrue("no column-wise batch", kernelBatches > 0);
+        Assert.assertTrue("no row batch", rowBatches > 0);
     }
 
     private static void createTable(CairoEngine engine, SqlExecutionContext ctx) throws Exception {

@@ -104,6 +104,9 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
 
     @Override
     public void clear() {
+        if (projection != null) {
+            projection.clear();
+        }
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
         memoryTracker = null;

@@ -14359,7 +14359,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             throw th;
         }
-        final FrameProjection projection = new FrameProjection(configuration, copies, projected, projectedTypes, reserved, crossIndex);
+        final RecordMetadata baseMetadata = virtual.getBaseFactory().getMetadata();
+        final IntList baseColumnTypes = new IntList(baseMetadata.getColumnCount());
+        for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
+            baseColumnTypes.add(baseMetadata.getColumnType(i));
+        }
+        final FrameProjection projection = new FrameProjection(configuration, copies, projected, projectedTypes, baseColumnTypes, reserved, crossIndex);
         if (base instanceof AsyncJitFilteredRecordCursorFactory jit) {
             jit.setFrameProjection(projection);
         } else {

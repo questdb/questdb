@@ -30,6 +30,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -37,8 +38,10 @@ import io.questdb.cairo.sql.VirtualFunctionRecord;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -57,9 +60,12 @@ import java.util.concurrent.atomic.AtomicLong;
  * <b>What is computed.</b> Columns of a fixed-size numeric type (boolean to double, date,
  * timestamp) whose expression is not a plain column. Each slot (the owner's, and one per worker)
  * computes them with a copy of the projection's functions of its own, compiled from the same
- * expressions and checked to be of the same classes and types, over a
- * {@link VirtualFunctionRecord} of its own, so a value is the one the projection's own function
- * gives for the row, bit for bit. Values are stored column after column, each a dense array of
+ * expressions and checked to be of the same classes and types: column-wise, over batches of the
+ * frame's filtered rows, where {@link GroupByBatchKernels#compileProjection} compiles the column
+ * (as the projection's own cursor computes a block of it), and row by row, over a
+ * {@link VirtualFunctionRecord} of its own, for the others and for a batch whose columns the
+ * kernels cannot read (a column top, a type cast). Either way a value is the one the projection's
+ * own record gives for the row, bit for bit. Values are stored column after column, each a dense array of
  * its type, one value per filtered row in the rows' order, so that a block of the frame's rows
  * exposes them as plain columns, see {@link #getBlockAddress(int)}.
  * <p>
@@ -73,15 +79,25 @@ import java.util.concurrent.atomic.AtomicLong;
  * random-access read) and any other cursor (the negative-LIMIT one) compute as before.
  */
 public class FrameProjection implements QuietCloseable {
+    // the rows of a batch the kernels compute at once, as the projection's cursor's blocks
+    private static final int KERNEL_BATCH_ROWS = 4096;
     // the output columns of the projection that are computed here, in stride order
     private final IntList columns;
     private final IntList columnTypes;
+    // the sizes of the projection's base columns, which the kernels read, see ProjectionBlock
+    private final IntList baseColumnSizes;
+    private final ObjList<ProjectionBlock> slotBlocks;
+    // per slot, the column-wise evaluator of the projection's copy, or null when it has none
+    private final ObjList<GroupByBatchKernels> slotKernels;
     private final PerWorkerLocks locks;
     // the base record each slot's projection record reads: the frame record, or a selection over it
     private final ObjList<Record> slotBaseRecords;
     private final ObjList<ObjList<Function>> slotFunctions;
     private final ObjList<VirtualFunctionRecord> slotRecords;
     private final AtomicLong testProjectedFrames = new AtomicLong();
+    // tests: column batches computed column-wise, and row by row, see getBatchCounts()
+    private final AtomicLong testKernelBatches = new AtomicLong();
+    private final AtomicLong testRowBatches = new AtomicLong();
     private final int reservedSlots;
     private final @Nullable IntList crossIndex;
     // the record whose reads are served, the projection cursor's own, see bind()
@@ -107,6 +123,7 @@ public class FrameProjection implements QuietCloseable {
             @NotNull ObjList<ObjList<Function>> slotFunctions,
             @NotNull IntList columns,
             @NotNull IntList columnTypes,
+            @NotNull IntList baseColumnTypes,
             int reservedSlots,
             @Nullable IntList crossIndex
     ) {
@@ -124,12 +141,22 @@ public class FrameProjection implements QuietCloseable {
             bytes += columnSizes[j];
         }
         this.rowBytes = bytes;
+        this.baseColumnSizes = new IntList(baseColumnTypes.size());
+        for (int c = 0, m = baseColumnTypes.size(); c < m; c++) {
+            final int type = baseColumnTypes.getQuick(c);
+            baseColumnSizes.add(ColumnType.isVarSize(type) ? 0 : ColumnType.sizeOf(type));
+        }
         final int slotCount = slotFunctions.size();
         this.slotRecords = new ObjList<>(slotCount);
         this.slotBaseRecords = new ObjList<>(slotCount);
+        this.slotKernels = new ObjList<>(slotCount);
+        this.slotBlocks = new ObjList<>(slotCount);
         for (int i = 0; i < slotCount; i++) {
             slotRecords.add(new VirtualFunctionRecord(slotFunctions.getQuick(i), reservedSlots));
             slotBaseRecords.add(crossIndex != null ? new SelectedRecord(crossIndex) : null);
+            final GroupByBatchKernels kernels = GroupByBatchKernels.compileProjection(slotFunctions.getQuick(i), reservedSlots, KERNEL_BATCH_ROWS);
+            slotKernels.add(kernels);
+            slotBlocks.add(kernels != null ? new ProjectionBlock() : null);
         }
         // the workers' slots; the owner always has its own
         this.locks = new PerWorkerLocks(configuration, Math.max(1, slotCount - 1));
@@ -154,11 +181,24 @@ public class FrameProjection implements QuietCloseable {
         ofFrame(0, 0);
     }
 
+    /**
+     * The execution ended: frees the kernels' buffers, which the next batch allocates again.
+     */
+    public void clear() {
+        for (int i = 0, n = slotKernels.size(); i < n; i++) {
+            final GroupByBatchKernels kernels = slotKernels.getQuick(i);
+            if (kernels != null) {
+                kernels.clear();
+            }
+        }
+    }
+
     @Override
     public void close() {
         for (int i = 0, n = slotFunctions.size(); i < n; i++) {
             Misc.freeObjList(slotFunctions.getQuick(i));
         }
+        Misc.freeObjList(slotKernels);
         boundRecord = null;
     }
 
@@ -182,6 +222,13 @@ public class FrameProjection implements QuietCloseable {
      * Initializes every slot's copies for an execution, as the filter's per-worker copies are.
      */
     public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
+        final MemoryTracker memoryTracker = executionContext.getMemoryTracker();
+        for (int i = 0, n = slotKernels.size(); i < n; i++) {
+            final GroupByBatchKernels kernels = slotKernels.getQuick(i);
+            if (kernels != null) {
+                kernels.setMemoryTracker(memoryTracker);
+            }
+        }
         final SymbolTableSource source = new BaseSymbolTableSource(symbolTableSource);
         final boolean current = executionContext.getCloneSymbolTables();
         executionContext.setCloneSymbolTables(true);
@@ -309,12 +356,31 @@ public class FrameProjection implements QuietCloseable {
             sink.clear();
             sink.ensureCapacity(words);
             final long dst = sink.getAddress();
-            for (long i = 0; i < rowCount; i++) {
-                frameRecord.setRowIndex(rows.get(i));
+            final GroupByBatchKernels kernels = slotKernels.getQuick(slot + 1);
+            final ProjectionBlock block = slotBlocks.getQuick(slot + 1);
+            for (long batchLo = 0; batchLo < rowCount; batchLo += KERNEL_BATCH_ROWS) {
+                final int batchRows = (int) Math.min(KERNEL_BATCH_ROWS, rowCount - batchLo);
+                if (kernels != null) {
+                    block.of(frameRecord, rows, batchLo, batchRows);
+                    kernels.ofBlock(block, batchRows);
+                }
                 long colDst = dst;
                 for (int j = 0; j < n; j++) {
+                    final int col = columns.getQuick(j);
                     final int size = columnSizes[j];
-                    write(record, columns.getQuick(j), columnTypes.getQuick(j), colDst + i * size);
+                    final GroupByBatchKernels.Args args = kernels != null && kernels.isKernel(col) ? kernels.prepare(col) : null;
+                    if (args != null) {
+                        // the column's values for the batch, as the projection's own block computes them
+                        Unsafe.copyMemory(args.address(0), colDst + batchLo * size, (long) batchRows * size);
+                        assert testKernelBatches.incrementAndGet() > 0;
+                    } else {
+                        assert testRowBatches.incrementAndGet() > 0;
+                        final int type = columnTypes.getQuick(j);
+                        for (long i = batchLo, hi = batchLo + batchRows; i < hi; i++) {
+                            frameRecord.setRowIndex(rows.get(i));
+                            write(record, col, type, colDst + i * size);
+                        }
+                    }
                     colDst += rowCount * size;
                 }
             }
@@ -337,9 +403,19 @@ public class FrameProjection implements QuietCloseable {
         }
     }
 
+    /**
+     * Column batches computed column-wise and row by row, since the last {@link #resetTestCounter()}.
+     */
+    @TestOnly
+    public long[] getBatchCounts() {
+        return new long[]{testKernelBatches.get(), testRowBatches.get()};
+    }
+
     @TestOnly
     public void resetTestCounter() {
         testProjectedFrames.set(0);
+        testKernelBatches.set(0);
+        testRowBatches.set(0);
     }
 
     private static void write(Record record, int col, int type, long address) {
@@ -355,6 +431,55 @@ public class FrameProjection implements QuietCloseable {
             case ColumnType.FLOAT -> Unsafe.putFloat(address, record.getFloat(col));
             case ColumnType.DOUBLE -> Unsafe.putDouble(address, record.getDouble(col));
             default -> throw new UnsupportedOperationException();
+        }
+    }
+
+    // A batch of a frame's filtered rows as the kernels read them: the frame's columns, through the
+    // selection when there is one, at the rows' indexes. A column the frame does not hold in place
+    // (a column top, a type cast, a var-size column) has no address: the kernels then leave the
+    // batch to the row path.
+    private class ProjectionBlock implements RecordBlock {
+        private PageFrameMemoryRecord frameRecord;
+        private int rowCount;
+        private long rowsAddr;
+        private DirectLongList rows;
+        private long rowLo;
+
+        @Override
+        public long getColumnAddress(int columnIndex) {
+            if (baseColumnSizes.getQuick(columnIndex) == 0) {
+                return 0;
+            }
+            return frameRecord.getPageAddress(crossIndex != null ? crossIndex.getQuick(columnIndex) : columnIndex);
+        }
+
+        @Override
+        public long getColumnStride(int columnIndex) {
+            return baseColumnSizes.getQuick(columnIndex);
+        }
+
+        @Override
+        public Record getRecordAt(int row) {
+            frameRecord.setRowIndex(rows.get(rowLo + row));
+            return frameRecord;
+        }
+
+        @Override
+        public int getRowCount() {
+            return rowCount;
+        }
+
+        @Override
+        public long getRowIndexesAddress() {
+            return rowsAddr;
+        }
+
+        void of(PageFrameMemoryRecord frameRecord, DirectLongList rows, long rowLo, int rowCount) {
+            this.frameRecord = frameRecord;
+            this.rows = rows;
+            this.rowLo = rowLo;
+            this.rowCount = rowCount;
+            this.rowsAddr = rows.getAddress() + rowLo * Long.BYTES;
         }
     }
 
