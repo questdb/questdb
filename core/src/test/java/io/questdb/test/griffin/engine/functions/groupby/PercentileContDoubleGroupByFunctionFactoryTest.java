@@ -466,14 +466,14 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
 
     @Test
     public void testPercentileWithPercentileBindVariable() throws Exception {
-        bindVariableService.setDouble(0, 0.5);
+        bindVariableService.setDouble(0, 0.25);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT 5.0 x FROM long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");
             assertQuery("SELECT percentile_cont(x, $1) FROM test")
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .returns("percentile_cont\n5.0\n");
+                    .returns("percentile_cont\n25.75\n");
         });
     }
 

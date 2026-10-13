@@ -173,6 +173,8 @@ SELECT approx_percentile(r::double, ARRAY[0.5, -0.1]) FROM quantile
 statement error
 SELECT approx_percentile(r, ARRAY[-0.5], 3) FROM quantile
 
+# parallel execution - QuestDB skips the pragma, the next queries repeat the above,
+# except the multiple groups query
 statement ok
 pragma threads=4
 

@@ -169,6 +169,7 @@ statement error
 SELECT quantile_disc(r, q) FROM quantile
 
 
+# parallel execution - QuestDB skips the pragma, the next queries repeat the above
 statement ok
 pragma threads=4
 

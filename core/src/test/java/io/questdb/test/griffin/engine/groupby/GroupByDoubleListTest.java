@@ -181,8 +181,8 @@ public class GroupByDoubleListTest extends AbstractCairoTest {
                 list.setAllocator(allocator);
                 list.of(0);
 
-                // Sorting empty range should do nothing
-                // No elements, so we can't sort
+                // sort() on an empty range must be a no-op, not a bounds error
+                list.sort(0, -1);
                 Assert.assertEquals(0, list.size());
             }
         });

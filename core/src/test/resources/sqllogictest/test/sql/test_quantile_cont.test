@@ -203,7 +203,7 @@ statement error
 SELECT quantile_cont(r, 0.1, 50) FROM quantile
 
 
-# Parallel execution tests
+# parallel execution - QuestDB skips the pragma, the next queries repeat the above
 statement ok
 pragma threads=4
 
