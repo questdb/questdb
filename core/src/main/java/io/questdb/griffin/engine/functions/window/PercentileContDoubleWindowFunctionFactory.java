@@ -261,7 +261,7 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
 
         @Override
         public void preparePass2() {
-            // Sort all lists and calculate percentiles with interpolation
+            // Select the bracketing values of every list and interpolate the percentile
             RecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
 
@@ -274,13 +274,19 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
                     // Get percentile value
                     double percentile = SqlUtil.validatePercentile(percentileFunc.getDouble(record), percentilePos);
 
-                    // Sort the list (values start at listPtr + DATA_OFFSET)
-                    DoubleSort.sort(listMemory.getPageAddress(0) + listPtr + DATA_OFFSET, 0, size - 1);
-
                     // Calculate continuous percentile with interpolation
                     double position = percentile * (size - 1);
                     int lowerIndex = (int) Math.floor(position);
                     int upperIndex = (int) Math.ceil(position);
+
+                    // Select the bracketing values (values start at listPtr + DATA_OFFSET).
+                    // Everything right of lowerIndex is >= its value after the first selection,
+                    // so the second one finds the next order statistic.
+                    long dataPtr = listMemory.getPageAddress(0) + listPtr + DATA_OFFSET;
+                    DoubleSort.quickSelect(dataPtr, 0, size - 1, lowerIndex);
+                    if (upperIndex != lowerIndex) {
+                        DoubleSort.quickSelect(dataPtr, lowerIndex + 1, size - 1, upperIndex);
+                    }
 
                     double result;
                     if (lowerIndex == upperIndex) {
@@ -399,13 +405,18 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
 
             double percentile = SqlUtil.validatePercentile(percentileFunc.getDouble(null), percentilePos);
 
-            // Sort the list
-            DoubleSort.sort(listMemory.getPageAddress(0), 0, size - 1);
-
             // Calculate continuous percentile with interpolation
             double position = percentile * (size - 1);
             int lowerIndex = (int) Math.floor(position);
             int upperIndex = (int) Math.ceil(position);
+
+            // Select the bracketing values. Everything right of lowerIndex is >= its value
+            // after the first selection, so the second one finds the next order statistic.
+            long dataPtr = listMemory.getPageAddress(0);
+            DoubleSort.quickSelect(dataPtr, 0, size - 1, lowerIndex);
+            if (upperIndex != lowerIndex) {
+                DoubleSort.quickSelect(dataPtr, lowerIndex + 1, size - 1, upperIndex);
+            }
 
             if (lowerIndex == upperIndex) {
                 result = listMemory.getDouble(lowerIndex * 8L);

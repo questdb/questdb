@@ -403,6 +403,92 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
         });
     }
 
+    @Test(timeout = 120_000)
+    public void testPercentileOrganPipeLarge() throws Exception {
+        // Rise-then-fall stored order, each of 0..1_999_999 twice. A median-of-first-middle-last
+        // pivot without a depth limit made selection O(n^2) on this shape: many minutes per query.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT (CASE WHEN x <= 2_000_000 THEN x - 1 ELSE 4_000_000 - x END)::DOUBLE v,
+                        (CASE WHEN x <= 2_000_000 THEN x - 1 ELSE 4_000_000 - x END)::LONG lv
+                        FROM long_sequence(4_000_000)
+                    )""");
+            assertQuery("""
+                    SELECT percentile_disc(v, 0.5) pd, percentile_cont(v, 0.5) pc, percentile_disc(lv, 0.5) pl,
+                    percentile_cont(v, ARRAY[0.1, 0.5, 0.9]) pa
+                    FROM t
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            pd\tpc\tpl\tpa
+                            999999.0\t999999.5\t999999\t[199999.90000000002,999999.5,1799999.1]
+                            """);
+        });
+    }
+
+    @Test(timeout = 120_000)
+    public void testPercentileOrganPipeLargeParallel() throws Exception {
+        // merge() concatenates the per-worker lists, so selection sees a different order than
+        // the stored one; results must not depend on it
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("""
+                        CREATE TABLE t AS (
+                            SELECT (CASE WHEN x <= 2_000_000 THEN x - 1 ELSE 4_000_000 - x END)::DOUBLE v,
+                            (CASE WHEN x <= 2_000_000 THEN x - 1 ELSE 4_000_000 - x END)::LONG lv
+                            FROM long_sequence(4_000_000)
+                        )""", sqlExecutionContext);
+                assertQuery("""
+                        SELECT percentile_disc(v, 0.5) pd, percentile_cont(v, 0.5) pc, percentile_disc(lv, 0.5) pl,
+                        percentile_cont(v, ARRAY[0.1, 0.5, 0.9]) pa
+                        FROM t
+                        """)
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("Async Group By workers: 4")
+                        .returns("""
+                                pd\tpc\tpl\tpa
+                                999999.0\t999999.5\t999999\t[199999.90000000002,999999.5,1799999.1]
+                                """);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testPercentileOrganPipeWithNulls() throws Exception {
+        // NULLs interleaved with rise-then-fall values never reach selection; the 'n' group
+        // holds only NULLs and still returns NULL
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT (CASE WHEN x % 5 = 0 THEN 'n' ELSE 's' END)::SYMBOL k,
+                        (CASE WHEN x % 5 = 0 OR x % 7 = 0 THEN NULL WHEN x <= 500_000 THEN x - 1 ELSE 1_000_000 - x END)::DOUBLE v,
+                        (CASE WHEN x % 5 = 0 OR x % 7 = 0 THEN NULL WHEN x <= 500_000 THEN x - 1 ELSE 1_000_000 - x END)::LONG lv
+                        FROM long_sequence(1_000_000)
+                    )""");
+            assertQuery("""
+                    SELECT k, percentile_disc(v, 0.5) pd, percentile_cont(v, 0.5) pc, percentile_disc(lv, 0.5) pl,
+                    percentile_cont(v, ARRAY[0.1, 0.5, 0.9]) pa
+                    FROM t
+                    ORDER BY k
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tpd\tpc\tpl\tpa
+                            n\tnull\tnull\tnull\tnull
+                            s\t250000.0\t250000.5\t250000\t[49999.600000000006,250000.5,449998.70000000007]
+                            """);
+        });
+    }
+
     @Test
     public void testPercentileSomeNulls() throws Exception {
         assertMemoryLeak(() -> {

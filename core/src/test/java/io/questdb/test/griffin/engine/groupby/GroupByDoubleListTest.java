@@ -34,6 +34,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 public class GroupByDoubleListTest extends AbstractCairoTest {
 
     @Test
@@ -547,6 +549,41 @@ public class GroupByDoubleListTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test(timeout = 30_000)
+    public void testQuickSelectOrganPipeLarge() throws Exception {
+        // Complexity canary: a median-of-first-middle-last pivot picks the minimum of a
+        // rise-then-fall range, so selection without a depth limit runs in O(n^2) here.
+        assertMemoryLeak(() -> {
+            final int n = 4_000_000;
+            final double[] expected = new double[n];
+            for (int i = 0; i < n; i++) {
+                expected[i] = i < n / 2 ? i : n - i;
+            }
+            Arrays.sort(expected);
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64 * 1024, Numbers.SIZE_1GB)) {
+                GroupByDoubleList list = new GroupByDoubleList(n, Double.NaN);
+                list.setAllocator(allocator);
+
+                addOrganPipe(list.of(0), n);
+                list.quickSelect(0, n - 1, n / 2);
+                Assert.assertEquals(expected[n / 2], list.getQuick(n / 2), 0.0);
+
+                final int[] indices = {0, n / 10, n / 2, 9 * (n / 10), n - 1};
+                addOrganPipe(list.of(0), n);
+                list.quickSelectMultiple(0, n - 1, indices, 0, indices.length);
+                for (int index : indices) {
+                    Assert.assertEquals("index " + index, expected[index], list.getQuick(index), 0.0);
+                }
+            }
+        });
+    }
+
+    private static void addOrganPipe(GroupByDoubleList list, int n) {
+        for (int i = 0; i < n; i++) {
+            list.add(i < n / 2 ? i : n - i);
+        }
     }
 
     private static void assertList(GroupByDoubleList list, double... expected) {

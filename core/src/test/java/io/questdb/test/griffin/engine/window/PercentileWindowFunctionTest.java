@@ -1874,6 +1874,79 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
         });
     }
 
+    @Test(timeout = 120_000)
+    public void testPercentileOrganPipeLarge() throws Exception {
+        // Rise-then-fall stored order, each of 0..1_999_999 twice. The window functions sorted
+        // the partition with a median-of-first-middle-last pivot and no depth limit, which is
+        // O(n^2) on this shape: many minutes per query.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT (CASE WHEN x <= 2_000_000 THEN x - 1 ELSE 4_000_000 - x END)::DOUBLE v,
+                        ('s' || (x % 4))::SYMBOL k
+                        FROM long_sequence(4_000_000)
+                    )""");
+            assertQuery("SELECT DISTINCT percentile_disc(v, 0.5) OVER () pd, percentile_cont(v, 0.5) OVER () pc FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            pd\tpc
+                            999999.0\t999999.5
+                            """);
+            assertQuery("""
+                    SELECT DISTINCT k, percentile_disc(v, 0.5) OVER (PARTITION BY k) pd,
+                    percentile_cont(v, 0.5) OVER (PARTITION BY k) pc
+                    FROM t
+                    ORDER BY k
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tpd\tpc
+                            s0\t999999.0\t999999.5
+                            s1\t999999.0\t999999.5
+                            s2\t999998.0\t999999.5
+                            s3\t999998.0\t999999.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testPercentileOrganPipeWithNulls() throws Exception {
+        // NULLs interleaved with rise-then-fall values never reach selection; the 'n'
+        // partition holds only NULLs and still returns NULL
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT (CASE WHEN x % 5 = 0 THEN 'n' ELSE 's' END)::SYMBOL k,
+                        (CASE WHEN x % 5 = 0 OR x % 7 = 0 THEN NULL WHEN x <= 500_000 THEN x - 1 ELSE 1_000_000 - x END)::DOUBLE v
+                        FROM long_sequence(1_000_000)
+                    )""");
+            assertQuery("SELECT DISTINCT percentile_disc(v, 0.5) OVER () pd, percentile_cont(v, 0.5) OVER () pc FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            pd\tpc
+                            250000.0\t250000.5
+                            """);
+            assertQuery("""
+                    SELECT DISTINCT k, percentile_disc(v, 0.5) OVER (PARTITION BY k) pd,
+                    percentile_cont(v, 0.5) OVER (PARTITION BY k) pc
+                    FROM t
+                    ORDER BY k
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tpd\tpc
+                            n\tnull\tnull
+                            s\t250000.0\t250000.5
+                            """);
+        });
+    }
+
     @Test
     public void testPercentileLargePartitionCapacityGrowth() throws Exception {
         // Exercises capacity growth path in partitioned window percentile:

@@ -206,7 +206,7 @@ public class GroupByDoubleList {
      * will be greater than or equal to it.
      * <p>
      * This is more efficient than full sorting when only specific elements are needed.
-     * Time complexity: O(n) average case, O(n²) worst case.
+     * Time complexity: O(n) average case, O(n log n) worst case, see {@link DoubleSort}.
      *
      * @param lo the index of the first element, inclusive
      * @param hi the index of the last element, inclusive
@@ -217,7 +217,7 @@ public class GroupByDoubleList {
             throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", k=" + k + ", size=" + size());
         }
         if (lo < hi) {
-            quickSelectImpl(lo, hi, k);
+            DoubleSort.quickSelect(addressOf(0), lo, hi, k);
         }
     }
 
@@ -240,107 +240,6 @@ public class GroupByDoubleList {
         if (lo < 0 || hi >= size()) {
             throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", size=" + size());
         }
-        while (from < to && lo < hi) {
-            long packed = partition3Way(lo, hi);
-            int lt = (int) (packed >>> 32);
-            int gt = (int) packed;
-
-            // Find which indices fall into each region: <lt, [lt..gt], >gt
-            int splitLeft = from;
-            while (splitLeft < to && indices[splitLeft] < lt) {
-                splitLeft++;
-            }
-
-            // Skip indices in the equal partition [lt..gt] — already in correct position
-            int splitRight = splitLeft;
-            while (splitRight < to && indices[splitRight] <= gt) {
-                splitRight++;
-            }
-
-            boolean hasLeft = splitLeft > from;
-            boolean hasRight = splitRight < to;
-
-            if (hasLeft && hasRight) {
-                if ((lt - lo) <= (hi - gt)) {
-                    quickSelectMultiple(lo, lt - 1, indices, from, splitLeft);
-                    lo = gt + 1;
-                    from = splitRight;
-                } else {
-                    quickSelectMultiple(gt + 1, hi, indices, splitRight, to);
-                    hi = lt - 1;
-                    to = splitLeft;
-                }
-            } else if (hasLeft) {
-                hi = lt - 1;
-                to = splitLeft;
-            } else if (hasRight) {
-                lo = gt + 1;
-                from = splitRight;
-            } else {
-                break;
-            }
-        }
-    }
-
-    /**
-     * Internal QuickSelect implementation using DNF three-way partition.
-     * Iterative to avoid StackOverflowError on degenerate inputs.
-     * Handles all-equal data in O(n) because the equal partition is skipped entirely.
-     */
-    private void quickSelectImpl(int lo, int hi, int k) {
-        while (lo < hi) {
-            long packed = partition3Way(lo, hi);
-            int lt = (int) (packed >>> 32);
-            int gt = (int) packed;
-
-            if (k < lt) {
-                hi = lt - 1;
-            } else if (k > gt) {
-                lo = gt + 1;
-            } else {
-                break; // k is in the equal partition
-            }
-        }
-    }
-
-    /**
-     * DNF three-way partition for quickSelectMultiple.
-     * Returns packed lt|gt as a long: lt in upper 32 bits, gt in lower 32 bits.
-     */
-    private long partition3Way(int lo, int hi) {
-        int mid = lo + (hi - lo) / 2;
-        if (getQuick(mid) < getQuick(lo)) {
-            swap(lo, mid);
-        }
-        if (getQuick(hi) < getQuick(lo)) {
-            swap(lo, hi);
-        }
-        if (getQuick(mid) < getQuick(hi)) {
-            swap(mid, hi);
-        }
-        double pivot = getQuick(hi);
-        int lt = lo;
-        int gt = hi;
-        int i = lo;
-        while (i <= gt) {
-            double v = getQuick(i);
-            if (v < pivot) {
-                swap(lt, i);
-                lt++;
-                i++;
-            } else if (v > pivot) {
-                swap(i, gt);
-                gt--;
-            } else {
-                i++;
-            }
-        }
-        return ((long) lt << 32) | (gt & 0xFFFFFFFFL);
-    }
-
-    private void swap(int a, int b) {
-        double tmp = getQuick(a);
-        setValueAt(a, getQuick(b));
-        setValueAt(b, tmp);
+        DoubleSort.quickSelectMultiple(addressOf(0), lo, hi, indices, from, to);
     }
 }

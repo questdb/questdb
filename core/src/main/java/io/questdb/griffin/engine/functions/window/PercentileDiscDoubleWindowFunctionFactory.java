@@ -261,7 +261,7 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
 
         @Override
         public void preparePass2() {
-            // Sort all lists and calculate percentiles
+            // Select the percentile of every list
             RecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
 
@@ -274,11 +274,9 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
                     // Get percentile value
                     double percentile = SqlUtil.validatePercentile(percentileFunc.getDouble(record), percentilePos);
 
-                    // Sort the list (values start at listPtr + DATA_OFFSET)
-                    DoubleSort.sort(listMemory.getPageAddress(0) + listPtr + DATA_OFFSET, 0, size - 1);
-
-                    // Calculate index
+                    // Select the N-th smallest value (values start at listPtr + DATA_OFFSET)
                     long N = SqlUtil.getPercentileDiscIndex(percentile, size);
+                    DoubleSort.quickSelect(listMemory.getPageAddress(0) + listPtr + DATA_OFFSET, 0, size - 1, N);
                     double result = listMemory.getDouble(listPtr + DATA_OFFSET + N * 8L);
 
                     // Store result back at first value position
@@ -389,11 +387,9 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
 
             double percentile = SqlUtil.validatePercentile(percentileFunc.getDouble(null), percentilePos);
 
-            // Sort the list
-            DoubleSort.sort(listMemory.getPageAddress(0), 0, size - 1);
-
-            // Calculate index
+            // Select the N-th smallest value
             long N = SqlUtil.getPercentileDiscIndex(percentile, size);
+            DoubleSort.quickSelect(listMemory.getPageAddress(0), 0, size - 1, N);
             result = listMemory.getDouble(N * 8L);
         }
 

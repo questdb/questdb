@@ -525,6 +525,127 @@ public class GroupByLongListTest extends AbstractCairoTest {
         });
     }
 
+    @Test(timeout = 30_000)
+    public void testQuickSelectOrganPipeLarge() throws Exception {
+        // Complexity canary: a median-of-first-middle-last pivot picks the minimum of a
+        // rise-then-fall range, so selection without a depth limit runs in O(n^2) here.
+        assertMemoryLeak(() -> {
+            final int n = 4_000_000;
+            final long[] expected = new long[n];
+            for (int i = 0; i < n; i++) {
+                expected[i] = i < n / 2 ? i : n - i;
+            }
+            Arrays.sort(expected);
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64 * 1024, Numbers.SIZE_1GB)) {
+                GroupByLongList list = new GroupByLongList(n, 0L);
+                list.setAllocator(allocator);
+
+                addOrganPipe(list.of(0), n);
+                list.quickSelect(0, n - 1, n / 2);
+                Assert.assertEquals(expected[n / 2], list.getQuick(n / 2));
+
+                final int[] indices = {0, n / 10, n / 2, 9 * (n / 10), n - 1};
+                addOrganPipe(list.of(0), n);
+                list.quickSelectMultiple(0, n - 1, indices, 0, indices.length);
+                for (int index : indices) {
+                    Assert.assertEquals("index " + index, expected[index], list.getQuick(index));
+                }
+            }
+        });
+    }
+
+    @Test(timeout = 30_000)
+    public void testQuickSelectSawtoothFallsBackToHeapsort() throws Exception {
+        // The period divides len / 8, so all nine ninther samples hit the same value and
+        // pivots stay poor; the depth budget must hand such ranges to heapsort.
+        assertMemoryLeak(() -> {
+            final int n = 4_000_000;
+            final long[] expected = new long[n];
+            for (int i = 0; i < n; i++) {
+                expected[i] = i % 1000;
+            }
+            Arrays.sort(expected);
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64 * 1024, Numbers.SIZE_1GB)) {
+                GroupByLongList list = new GroupByLongList(n, 0L);
+                list.setAllocator(allocator);
+
+                addSawtooth(list.of(0), n);
+                long heapSortCallsBefore = GroupByLongList.getHeapSortCallCountForTesting();
+                list.quickSelect(0, n - 1, n / 2);
+                Assert.assertTrue(GroupByLongList.getHeapSortCallCountForTesting() > heapSortCallsBefore);
+                Assert.assertEquals(expected[n / 2], list.getQuick(n / 2));
+
+                final int[] indices = {0, n / 10, n / 2, 9 * (n / 10), n - 1};
+                addSawtooth(list.of(0), n);
+                heapSortCallsBefore = GroupByLongList.getHeapSortCallCountForTesting();
+                list.quickSelectMultiple(0, n - 1, indices, 0, indices.length);
+                Assert.assertTrue(GroupByLongList.getHeapSortCallCountForTesting() > heapSortCallsBefore);
+                for (int index : indices) {
+                    Assert.assertEquals("index " + index, expected[index], list.getQuick(index));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testQuickSelectSizesAroundNintherThreshold() throws Exception {
+        // every k and the full index set around the ninther threshold (128), with extreme values
+        assertMemoryLeak(() -> {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final long[] specials = {Long.MIN_VALUE + 1, Long.MAX_VALUE, -1, 0, 1};
+            try (GroupByAllocator allocator = new FastGroupByAllocator(64, Numbers.SIZE_1GB)) {
+                GroupByLongList list = new GroupByLongList(16, 0L);
+                list.setAllocator(allocator);
+                for (int n : new int[]{1, 2, 3, 127, 128, 129, 130, 300}) {
+                    for (int shape = 0; shape < 3; shape++) {
+                        final long[] values = new long[n];
+                        for (int i = 0; i < n; i++) {
+                            values[i] = switch (shape) {
+                                case 0 -> i < n / 2 ? i : n - i;
+                                case 1 -> specials[rnd.nextInt(specials.length)];
+                                default -> rnd.nextLong();
+                            };
+                        }
+                        final long[] expected = values.clone();
+                        Arrays.sort(expected);
+
+                        final int[] indices = new int[n];
+                        for (int k = 0; k < n; k++) {
+                            indices[k] = k;
+                            list.of(0);
+                            for (long v : values) {
+                                list.add(v);
+                            }
+                            list.quickSelect(0, n - 1, k);
+                            Assert.assertEquals("n " + n + ", shape " + shape + ", k " + k, expected[k], list.getQuick(k));
+                        }
+
+                        list.of(0);
+                        for (long v : values) {
+                            list.add(v);
+                        }
+                        list.quickSelectMultiple(0, n - 1, indices, 0, n);
+                        for (int k = 0; k < n; k++) {
+                            Assert.assertEquals("n " + n + ", shape " + shape + ", index " + k, expected[k], list.getQuick(k));
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    private static void addOrganPipe(GroupByLongList list, int n) {
+        for (int i = 0; i < n; i++) {
+            list.add(i < n / 2 ? i : n - i);
+        }
+    }
+
+    private static void addSawtooth(GroupByLongList list, int n) {
+        for (int i = 0; i < n; i++) {
+            list.add(i % 1000);
+        }
+    }
+
     private static void assertList(GroupByLongList list, long... expected) {
         Assert.assertEquals(expected.length, list.size());
         for (int i = 0; i < expected.length; i++) {
