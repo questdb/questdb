@@ -64,6 +64,8 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     private SelectedRowsBlock block;
     private long cursor = -1;
     private int dispatchLimit;
+    // the dispatch limit a gathered execution lowered, to restore on toTop(); -1 for none
+    private int dispatchLimitBeforeGather = -1;
     private int frameIndex;
     private int frameLimit;
     private long frameRowCount;
@@ -75,6 +77,10 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     private PageFrameMemoryRecord recordB;
     // the projection over this cursor whose columns the filtering threads computed, or null
     private FrameProjection projection;
+    // per column, the current frame's gathered values (see AsyncFilterAtom#gather), 0 for a column
+    // read at the frame's rows; null until a frame is gathered
+    private long[] gatheredAddresses;
+    private boolean isFrameGathered;
     private DirectLongList rows;
     // Artificial limit on remaining rows to be returned from this cursor.
     // It is typically copied from LIMIT clause on SQL statement.
@@ -277,6 +283,18 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             return null;
         }
         if (frameIndex == -1) {
+            if (frameLimit == -1) {
+                // a block consumer from the start: the filtering threads gather the rows' fixed-size
+                // columns, which the blocks then offer as dense columns
+                final AsyncFilterAtom atom = (AsyncFilterAtom) frameSequence.getAtom();
+                atom.setGathering(true);
+                if (atom.isGathering()) {
+                    // the frames gathered ahead of the consumer wait in their tasks: a bounded run-ahead
+                    // keeps what they hold small, see AsyncFilterAtom#GATHER_MAX_BYTES
+                    dispatchLimitBeforeGather = dispatchLimit;
+                    dispatchLimit = Math.min(dispatchLimit, Math.max(4, 2 * defaultDispatchLimit));
+                }
+            }
             // the first frame, as the first hasNext() fetches it
             fetchNextFrame(dispatchLimit, false);
         }
@@ -406,6 +424,13 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     @Override
     public void toTop() {
         collectCursor(false);
+        // a re-read starts with rows, or a block, before the first frame; the frames are gathered
+        // only for a block consumer from the start, which toTop() cannot tell yet
+        ((AsyncFilterAtom) frameSequence.getAtom()).setGathering(false);
+        if (dispatchLimitBeforeGather != -1) {
+            dispatchLimit = dispatchLimitBeforeGather;
+            dispatchLimitBeforeGather = -1;
+        }
         filter.toTop();
         frameSequence.toTop();
         rowsRemaining = ogRowsRemaining;
@@ -430,6 +455,8 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
     private void collectCursor(boolean forceCollect) {
         if (cursor > -1) {
+            // a task the filtering thread gathered, whether or not its rows were read
+            ((AsyncFilterAtom) frameSequence.getAtom()).releaseGathered(frameSequence.getTask(cursor));
             frameSequence.collect(cursor, forceCollect);
             // It is necessary to clear 'cursor' value
             // because we updated frameIndex and loop can exit due to lack of frames.
@@ -438,6 +465,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             // We also need to clear the record as it's initialized with the task's
             // page frame memory that is now closed.
             record.clear();
+            isFrameGathered = false;
             if (projection != null) {
                 // the task's values may be the next frame's now
                 projection.ofFrame(0, 0);
@@ -484,6 +512,14 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
                     }
                     if (frameRowCount > 0 && frameSequence.isActive()) {
                         record.init(task.getFrameMemory());
+                        isFrameGathered = rows != null && task.isGathered();
+                        if (isFrameGathered) {
+                            final AsyncFilterAtom atom = (AsyncFilterAtom) frameSequence.getAtom();
+                            if (gatheredAddresses == null || gatheredAddresses.length < atom.getColumnCount()) {
+                                gatheredAddresses = new long[atom.getColumnCount()];
+                            }
+                            atom.gatheredColumnAddresses(record, task.getGatheredValues().getAddress(), frameRowCount, gatheredAddresses);
+                        }
                         break;
                     } else {
                         // Force reset frame size if frameSequence was canceled or failed.
@@ -535,6 +571,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         this.ogRowsRemaining = rowsRemaining;
         // put a cap the number of in-flight page frame tasks in case of LIMIT N query
         this.dispatchLimit = rowsRemaining != Long.MAX_VALUE ? defaultDispatchLimit : Integer.MAX_VALUE;
+        this.dispatchLimitBeforeGather = -1;
         this.frameIndex = -1;
         this.frameLimit = -1;
         this.frameRowIndex = -1;
@@ -542,6 +579,8 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         this.allFramesActive = true;
         frameMemoryPool.setMemoryTracker(frameSequence.getMemoryTracker());
         ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(null);
+        ((AsyncFilterAtom) frameSequence.getAtom()).setGathering(false);
+        this.isFrameGathered = false;
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {
@@ -561,10 +600,19 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             if (ColumnType.isVarSize(metadata.getColumnType(columnIndex))) {
                 return 0;
             }
+            if (isFrameGathered && gatheredAddresses[columnIndex] != 0) {
+                // the filtered rows' values, one after another, from the frame's first row on
+                return gatheredAddresses[columnIndex] + (long) frameRowIndex * ColumnType.sizeOf(metadata.getColumnType(columnIndex));
+            }
             // the address the record's getters read at row index x * stride: 0 for a column
             // absent from the frame (a column top) and for a column read with a type cast,
             // both then read through getRecordAt(), as the getters read them
             return record.getPageAddress(columnIndex);
+        }
+
+        @Override
+        public long getColumnRowIndexesAddress(int columnIndex) {
+            return isFrameGathered && gatheredAddresses[columnIndex] != 0 ? 0 : getRowIndexesAddress();
         }
 
         @Override

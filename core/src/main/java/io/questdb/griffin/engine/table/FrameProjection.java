@@ -432,7 +432,7 @@ public class FrameProjection implements QuietCloseable {
     // task of the shared queue, which may free or reuse it after the query ends, so its frees are
     // global-only and the charge is released when the query's tracker is reconciled, as covered
     // decode buffers' are, see MemoryTracker.addCoveredBytes().
-    private static void ensureCapacity(DirectLongList sink, long words, @Nullable MemoryTracker memoryTracker) {
+    static void ensureCapacity(DirectLongList sink, long words, @Nullable MemoryTracker memoryTracker) {
         final long capacityBefore = sink.getCapacity();
         if (memoryTracker == null || capacityBefore >= words) {
             sink.ensureCapacity(words);

@@ -35,6 +35,9 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.AsyncFilterAtom;
+import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.window.AsyncWindowRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.Long256;
@@ -185,6 +188,53 @@ public class RecordBlockTest extends AbstractCairoTest {
                     assertFilterBlocks(engine, ctx, rnd);
                 }
             }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testAsyncFilterGathersColumnsOnWorkerPool() throws Exception {
+        // a cursor whose first call is a peek has its filtering threads gather the selected rows'
+        // fixed-size columns: the blocks offer them as dense columns (no row indexes), and the
+        // var-size columns, and the column tops, still at the frame's rows
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, context) -> {
+                final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) context;
+                ctx.changePageFrameSizes(1, 64);
+                createAllTypes(engine, ctx);
+                final Rnd rnd = TestUtils.generateRandom(LOG);
+                for (String query : new String[]{"select * from at where l > 5000", "select * from at where s = 'k7'", "select * from at where v like '%3%'"}) {
+                    Assert.assertTrue(query, assertGathered(engine, ctx, query, true) > 0);
+                    // a row read first: the frames are not gathered, the blocks read the frames' rows
+                    Assert.assertEquals(query, 0, assertGathered(engine, ctx, query, false));
+                    for (int run = 0; run < 3; run++) {
+                        Assert.assertTrue(query, assertBlocksMatchRows(engine, ctx, query, rnd) > 0);
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testMaterializedSortOffersSortedRows() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllTypes();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            final String fixed = "b, by, sh, ch, i, l, d, ts, tn, f, db";
+            final String[] queries = {
+                    "select " + fixed + " from (select " + fixed + " from at union all select " + fixed + " from at where 1 = 0) order by db desc, l",
+                    "select ts, mid from (select ts, (f + db) / 2 mid from at where l > 50 union all select ts, db from at where 1 = 0) order by mid",
+            };
+            for (String query : queries) {
+                assertPlanContains(query, "Encode sort");
+                assertSupportsBlocks(true, query);
+                for (int k = 0; k < 3; k++) {
+                    Assert.assertTrue(query, assertBlocksMatchRows(engine, sqlExecutionContext, query, rnd) > 0);
+                }
+            }
+            // a SYMBOL column: the chain holds its keys, no block
+            final String withSymbol = "select s, l from (select s, l from at union all select s, l from at where 1 = 0) order by l desc";
+            assertSupportsBlocks(false, withSymbol);
         });
     }
 
@@ -432,6 +482,100 @@ public class RecordBlockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncFilterGatherIsChargedToTheQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllTypes();
+            final String query = "select * from at where l > 5000";
+            try (RecordCursorFactory factory = select(query)) {
+                final long[] growth = new long[2];
+                for (int k = 0; k < 4; k++) {
+                    final boolean peekFirst = (k & 1) == 0;
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final MemoryTracker tracker = sqlExecutionContext.getMemoryTracker();
+                        Assert.assertNotNull(tracker);
+                        final long usedBefore = tracker.getUsed();
+                        if (!peekFirst) {
+                            Assert.assertTrue(cursor.hasNext());
+                        }
+                        final RecordBlock block = cursor.peekRecordBlock(1000);
+                        Assert.assertNotNull(block);
+                        // a gathered column has no row indexes
+                        final int l = factory.getMetadata().getColumnIndex("l");
+                        Assert.assertEquals(peekFirst, block.getColumnRowIndexesAddress(l) == 0);
+                        growth[peekFirst ? 0 : 1] = Math.max(growth[peekFirst ? 0 : 1], tracker.getUsed() - usedBefore);
+                    }
+                }
+                Assert.assertTrue("the gathered values are charged to the query: " + growth[0] + " vs " + growth[1], growth[0] > growth[1]);
+            }
+        });
+    }
+
+    @Test
+    public void testAsyncFilterGatherIsBounded() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllTypes();
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            // only the columns the consumer reads are gathered
+            final String narrow = "select l, db from at where l > 5000";
+            try (RecordCursorFactory factory = select(narrow)) {
+                final AsyncFilterAtom atom = filterAtom(factory);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertNotNull(cursor.peekRecordBlock(100));
+                    Assert.assertTrue(atom.isGathering());
+                    final RecordMetadata base = factory.getBaseFactory().getMetadata();
+                    final int[] sizes = atom.getExecutionGatherSizes();
+                    for (int c = 0; c < sizes.length; c++) {
+                        final String name = base.getColumnName(c);
+                        Assert.assertEquals(name, name.equals("l") || name.equals("db"), sizes[c] != 0);
+                    }
+                    // read to the end through blocks: every task's values are given back
+                    while (true) {
+                        final RecordBlock block = cursor.peekRecordBlock(1000);
+                        if (block != null) {
+                            cursor.skipRecordBlock(block.getRowCount());
+                        } else if (!cursor.hasNext()) {
+                            break;
+                        }
+                    }
+                    Assert.assertEquals(0, atom.getGatheredBytes());
+                    // a re-read after toTop() is not gathered
+                    cursor.toTop();
+                    Assert.assertFalse(atom.isGathering());
+                }
+                Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, narrow, rnd) > 0);
+            }
+            // past the byte cap, the frames are read where they are, with the same rows
+            final String all = "select * from at where l > 5000";
+            try (RecordCursorFactory factory = select(all)) {
+                final AsyncFilterAtom atom = filterAtom(factory);
+                atom.setGatherMaxBytes(1);
+                try {
+                    Assert.assertEquals(0, assertGathered(engine, sqlExecutionContext, all, true, factory));
+                    for (int k = 0; k < 3; k++) {
+                        Assert.assertTrue(assertBlocksMatchRows(engine, sqlExecutionContext, factory, all, rnd) > 0);
+                    }
+                    Assert.assertEquals(0, atom.getGatheredBytes());
+                } finally {
+                    atom.setGatherMaxBytes(Long.MAX_VALUE);
+                }
+                Assert.assertTrue(assertGathered(engine, sqlExecutionContext, all, true, factory) > 0);
+            }
+        });
+    }
+
+    @Test
+    public void testMaterializedSortOffersNoEmptyBlock() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllTypes();
+            final String query = "select l, db from (select l, db from at union all select l, db from at where 1 = 0) order by db";
+            try (RecordCursorFactory factory = select(query); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertNull(cursor.peekRecordBlock(0));
+                Assert.assertNotNull(cursor.peekRecordBlock(1));
+            }
+        });
+    }
+
+    @Test
     public void testScanOffersFrames() throws Exception {
         assertMemoryLeak(() -> {
             createAllTypes();
@@ -619,10 +763,16 @@ public class RecordBlockTest extends AbstractCairoTest {
      * @return rows read from blocks
      */
     private static long assertBlocksMatchRows(CairoEngine engine, SqlExecutionContext ctx, String query, Rnd rnd) throws Exception {
+        try (RecordCursorFactory factory = engine.select(query, ctx)) {
+            return assertBlocksMatchRows(engine, ctx, factory, query, rnd);
+        }
+    }
+
+    private static long assertBlocksMatchRows(CairoEngine engine, SqlExecutionContext ctx, RecordCursorFactory factory, String query, Rnd rnd) throws Exception {
         final StringSink expected = new StringSink();
         final StringSink actual = new StringSink();
         long blockRows = 0;
-        try (RecordCursorFactory factory = engine.select(query, ctx)) {
+        {
             final RecordMetadata metadata = factory.getMetadata();
             try (RecordCursor cursor = factory.getCursor(ctx)) {
                 final Record record = cursor.getRecord();
@@ -659,6 +809,83 @@ public class RecordBlockTest extends AbstractCairoTest {
         }
         TestUtils.assertEquals(query, expected, actual);
         return blockRows;
+    }
+
+    /**
+     * Reads the query through blocks, after a first row when {@code peekFirst} is false, and checks
+     * each block's values against its records.
+     *
+     * @return the block rows whose fixed-size columns were all dense (gathered)
+     */
+    private static AsyncFilterAtom filterAtom(RecordCursorFactory factory) {
+        for (RecordCursorFactory f = factory; f != null; f = f.getBaseFactory()) {
+            if (f instanceof AsyncJitFilteredRecordCursorFactory jit) {
+                return jit.getAtom();
+            }
+            if (f instanceof AsyncFilteredRecordCursorFactory async) {
+                return async.getAtom();
+            }
+        }
+        throw new AssertionError("no Async Filter");
+    }
+
+    private static long assertGathered(CairoEngine engine, SqlExecutionContext ctx, String query, boolean peekFirst) throws Exception {
+        try (RecordCursorFactory factory = engine.select(query, ctx)) {
+            return assertGathered(engine, ctx, query, peekFirst, factory);
+        }
+    }
+
+    private static long assertGathered(CairoEngine engine, SqlExecutionContext ctx, String query, boolean peekFirst, RecordCursorFactory factory) throws Exception {
+        long gatheredRows = 0;
+        try (RecordCursor cursor = factory.getCursor(ctx)) {
+            final RecordMetadata metadata = factory.getMetadata();
+            if (!peekFirst) {
+                Assert.assertTrue(cursor.hasNext());
+            }
+            while (true) {
+                final RecordBlock block = cursor.peekRecordBlock(1000);
+                if (block == null) {
+                    if (!cursor.hasNext()) {
+                        break;
+                    }
+                    continue;
+                }
+                Assert.assertNotEquals(0, block.getRowIndexesAddress());
+                boolean dense = true;
+                for (int c = 0, n = metadata.getColumnCount(); c < n; c++) {
+                    final int type = metadata.getColumnType(c);
+                    if (ColumnType.isVarSize(type)) {
+                        Assert.assertEquals(0, block.getColumnAddress(c));
+                        continue;
+                    }
+                    final long address = block.getColumnAddress(c);
+                    if (address == 0) {
+                        // a column top
+                        continue;
+                    }
+                    final boolean gatheredType = switch (ColumnType.tagOf(type)) {
+                        case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT,
+                             ColumnType.IPv4, ColumnType.FLOAT, ColumnType.SYMBOL, ColumnType.LONG, ColumnType.DATE,
+                             ColumnType.TIMESTAMP, ColumnType.DOUBLE -> true;
+                        default -> false;
+                    };
+                    final long rowIndexes = block.getColumnRowIndexesAddress(c);
+                    if (gatheredType) {
+                        dense &= rowIndexes == 0;
+                    } else {
+                        Assert.assertEquals(metadata.getColumnName(c), block.getRowIndexesAddress(), rowIndexes);
+                    }
+                }
+                for (int r = 0, n = block.getRowCount(); r < n; r++) {
+                    assertAddresses(block, r, block.getRecordAt(r), metadata);
+                }
+                if (dense) {
+                    gatheredRows += block.getRowCount();
+                }
+                cursor.skipRecordBlock(block.getRowCount());
+            }
+        }
+        return gatheredRows;
     }
 
     private static void assertFilterBlocks(CairoEngine engine, SqlExecutionContext ctx, Rnd rnd) throws Exception {

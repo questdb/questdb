@@ -309,6 +309,74 @@ public class QwpCursorBlockFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncFilterGatheredColumns() throws Exception {
+        // a block consumer from the cursor's start: the filtering threads gather the selected rows'
+        // fixed-size columns (SYMBOL keys too), which the blocks offer as dense columns; the wire
+        // must be the row fill's, byte for byte, over NULLs, column tops and both filter kinds
+        assertMemoryLeak(() -> {
+            final Rnd driver = TestUtils.generateRandom(LOG);
+            sqlExecutionContext.changePageFrameSizes(1, 64);
+            sqlExecutionContext.setRandom(new Rnd(driver.nextLong(), driver.nextLong()));
+            execute("create table g (b boolean, by byte, sh short, ch char, i int, ip ipv4, l long, dt date, " +
+                    "ts timestamp, f float, d double, s symbol, s2 symbol) timestamp(ts) partition by DAY");
+            execute("insert into g select x % 3 = 0, (x % 120)::byte, (x * 7 % 30000)::short, rnd_char(), " +
+                    "case when x % 11 = 0 then null else x::int end, case when x % 13 = 0 then null else rnd_ipv4() end, " +
+                    "case when x % 5 = 0 then null else x * 1000003 end, case when x % 9 = 0 then null else (x * 86400000)::date end, " +
+                    "(x * 90000000)::timestamp, case when x % 4 = 0 then null else (x / 3.0)::float end, " +
+                    "case when x % 7 = 0 then null else x * 1.5 end, case when x % 17 = 0 then null else 'k' || (x % 13) end, " +
+                    "rnd_symbol(300, 3, 9, 5) from long_sequence(400)");
+            // the first rows have column tops for these
+            execute("alter table g add column tn timestamp_ns, s3 symbol, i2 int, v varchar");
+            execute("insert into g select x % 3 = 0, (x % 120)::byte, (x * 7 % 30000)::short, rnd_char(), " +
+                    "case when x % 11 = 0 then null else x::int end, case when x % 13 = 0 then null else rnd_ipv4() end, " +
+                    "case when x % 5 = 0 then null else x * 1000003 end, case when x % 9 = 0 then null else (x * 86400000)::date end, " +
+                    "((x + 400) * 90000000)::timestamp, case when x % 4 = 0 then null else (x / 3.0)::float end, " +
+                    "case when x % 7 = 0 then null else x * 1.5 end, case when x % 17 = 0 then null else 'k' || (x % 13) end, " +
+                    "rnd_symbol(300, 3, 9, 5), case when x % 6 = 0 then null else (x * 1000)::timestamp_ns end, " +
+                    "rnd_symbol(40, 2, 5, 3), case when x % 8 = 0 then null else x::int end, 'v' || (x % 31) from long_sequence(6000)");
+            final String[] queries = {
+                    // JIT filters
+                    "select * from g where s = 'k7'",
+                    "select s, ts, bid, s2, i from (select s, ts, d bid, s2, i from g where s = 'k7')",
+                    "select * from g where l % 7 = 0 and s2 <> 'z1'",
+                    "select s3, i2, tn, s, b from g where i2 > 10",
+                    "select * from g where s = 'k7' limit 3, 700",
+                    // a Java filter
+                    "select * from g where v like '%3%'",
+                    "select s, d * 2, s2, l + i from g where s in ('k1', 'k7')",
+            };
+            for (String query : queries) {
+                assertBytesMatch(driver, query, 6, true);
+            }
+        });
+    }
+
+    @Test
+    public void testMaterializedSortOffersSortedRows() throws Exception {
+        // a materialized encoded sort of fixed-size, non-SYMBOL columns offers its sorted rows as
+        // blocks gathered from its chain: the wire must be the row fill's, byte for byte
+        assertMemoryLeak(() -> {
+            final Rnd driver = TestUtils.generateRandom(LOG);
+            sqlExecutionContext.changePageFrameSizes(1, 64);
+            createTable(driver);
+            execute("create table st as (select x % 3 = 0 b, (x % 120)::byte by, (x * 7 % 30000)::short sh, rnd_char() ch, " +
+                    "case when x % 11 = 0 then null else x::int end i, case when x % 5 = 0 then null else x * 1000003 end l, " +
+                    "case when x % 9 = 0 then null else (x * 86400000)::date end dt, (x * 90000000)::timestamp ts, " +
+                    "case when x % 6 = 0 then null else (x * 1000)::timestamp_ns end tn, " +
+                    "case when x % 4 = 0 then null else (x / 3.0)::float end f, case when x % 7 = 0 then null else rnd_double() end d, " +
+                    "rnd_symbol(30, 2, 5, 3) s from long_sequence(7000)) timestamp(ts) partition by DAY");
+            final String[] queries = {
+                    "select ts, d from (select ts, (d + f) / 2 d from st where s <> 'zz' union all select ts, d from st where 1 = 0) order by d desc",
+                    "select b, by, sh, ch, i, l, dt, ts, tn, f, d from (select b, by, sh, ch, i, l, dt, ts, tn, f, d from st union all select b, by, sh, ch, i, l, dt, ts, tn, f, d from st where 1 = 0) order by f, l desc",
+                    "select l, d from (select l, d from t union all select l, d from t where 1 = 0) order by d desc limit 5000",
+            };
+            for (String query : queries) {
+                assertBytesMatch(driver, query, 6, true);
+            }
+        });
+    }
+
+    @Test
     public void testStatefulProjectionsKeepRowOrder() throws Exception {
         assertMemoryLeak(() -> {
             final Rnd driver = TestUtils.generateRandom(LOG);
