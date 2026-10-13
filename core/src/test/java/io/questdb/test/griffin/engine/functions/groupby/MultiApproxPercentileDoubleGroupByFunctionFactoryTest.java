@@ -251,6 +251,19 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     }
 
     @Test
+    public void testNullPercentiles() throws Exception {
+        // a NULL percentile list fails like a NULL percentile does, rather than yielding [];
+        // precision 3 selects the packed variants
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::DOUBLE d, x l FROM long_sequence(100))");
+            for (String args : new String[]{"d, %s", "d, %s, 3", "l, %s", "l, %s, 3"}) {
+                final String sql = "SELECT approx_percentile(" + args.formatted("NULL::DOUBLE[]") + ") FROM t";
+                assertQuery(sql).noLeakCheck().fails(sql.indexOf("::"), "percentile array must not be NULL");
+            }
+        });
+    }
+
+    @Test
     public void testPercentilesNotOneDimensionalEmptyTable() throws Exception {
         // over an empty table the function never reads the percentile list, so only the
         // factory can reject it

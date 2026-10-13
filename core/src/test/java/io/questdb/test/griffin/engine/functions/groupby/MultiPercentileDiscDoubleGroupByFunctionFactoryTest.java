@@ -276,16 +276,76 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
 
     @Test
     public void testNullPercentiles() throws Exception {
+        // a NULL percentile list fails like a NULL percentile does, rather than yielding []
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");
-            assertQuery("SELECT percentile_disc(x, NULL::DOUBLE[]) p FROM test")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("""
-                            p
-                            []
-                            """);
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x, (x % 2)::INT k FROM long_sequence(100))");
+            for (String function : new String[]{"percentile_disc", "quantile_disc"}) {
+                String sql = "SELECT " + function + "(x, NULL::DOUBLE[]) p FROM test";
+                assertQuery(sql).noLeakCheck().fails(sql.indexOf("::"), "percentile array must not be NULL");
+                sql = "SELECT k, " + function + "(x, NULL::DOUBLE[]) p FROM test";
+                assertQuery(sql).noLeakCheck().fails(sql.indexOf("::"), "percentile array must not be NULL");
+            }
+        });
+    }
+
+    @Test
+    public void testNullPercentilesBindVariable() throws Exception {
+        // PGWire binds a NULL array parameter as an array bind variable without a value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x, (x % 2)::INT k FROM long_sequence(100))");
+            final String sql = "SELECT k, percentile_disc(x, $1) p FROM test ORDER BY k";
+            bindVariableService.clear();
+            bindVariableService.define(0, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1), 0);
+            assertQuery(sql).noLeakCheck().fails(sql.indexOf('$'), "percentile array must not be NULL");
+
+            try (DirectArray percentiles = new DirectArray()) {
+                percentiles.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                percentiles.setDimLen(0, 1);
+                percentiles.applyShape();
+                percentiles.putDouble(0, 0.5);
+                bindVariableService.setArray(0, percentiles);
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tp
+                                0\t[50.0]
+                                1\t[49.0]
+                                """);
+
+                // PGWire re-binds the variable of the cached factory to NULL on the next execute
+                try (RecordCursorFactory factory = select(sql)) {
+                    bindVariableService.setArray(0, null);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        while (cursor.hasNext()) {
+                            cursor.getRecord().getArray(1, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                        }
+                        Assert.fail("expected 'percentile array must not be NULL'");
+                    } catch (CairoException e) {
+                        Assert.assertEquals(sql.indexOf('$'), e.getPosition());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "percentile array must not be NULL");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNullPercentilesEmptyTable() throws Exception {
+        // like a NULL percentile, a NULL list fails only when a group has values to compute
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (null), (null)");
+            for (String filter : new String[]{"WHERE false", ""}) {
+                assertQuery("SELECT percentile_disc(x, NULL::DOUBLE[]) p FROM test " + filter)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                p
+                                null
+                                """);
+            }
         });
     }
 
@@ -967,6 +1027,32 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                                 2\t[98.0,1098.0,2098.0]
                                 3\t[99.0,1099.0,2099.0]
                                 """);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testParallelGroupByNullPercentiles() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("CREATE TABLE tab AS (SELECT x::DOUBLE v, (x % 2)::INT k FROM long_sequence(1_000))", sqlExecutionContext);
+                for (String sql : new String[]{
+                        "SELECT percentile_disc(v, NULL::DOUBLE[]) p FROM tab",
+                        "SELECT k, percentile_disc(v, NULL::DOUBLE[]) p FROM tab"
+                }) {
+                    assertQuery(sql)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .assertsPlanContaining("Async Group By workers: 4");
+                    assertQuery(sql)
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .fails(sql.indexOf("::"), "percentile array must not be NULL");
+                }
             }, configuration, LOG);
         });
     }

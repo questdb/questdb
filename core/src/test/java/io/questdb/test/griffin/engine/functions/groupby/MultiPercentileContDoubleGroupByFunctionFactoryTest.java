@@ -215,6 +215,20 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
     }
 
     @Test
+    public void testNullPercentiles() throws Exception {
+        // a NULL percentile list fails like a NULL percentile does, rather than yielding []
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x, (x % 2)::INT k FROM long_sequence(100))");
+            for (String function : new String[]{"percentile_cont", "quantile_cont"}) {
+                String sql = "SELECT " + function + "(x, NULL::DOUBLE[]) p FROM test";
+                assertQuery(sql).noLeakCheck().fails(sql.indexOf("::"), "percentile array must not be NULL");
+                sql = "SELECT k, " + function + "(x, NULL::DOUBLE[]) p FROM test";
+                assertQuery(sql).noLeakCheck().fails(sql.indexOf("::"), "percentile array must not be NULL");
+            }
+        });
+    }
+
+    @Test
     public void testPercentilesNotOneDimensionalEmptyTable() throws Exception {
         // over an empty table the function never reads the percentile list, so only the
         // factory can reject it

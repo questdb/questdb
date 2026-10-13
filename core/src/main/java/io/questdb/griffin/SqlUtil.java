@@ -1008,9 +1008,10 @@ public class SqlUtil {
     }
 
     /**
-     * Returns the number of percentiles in a percentile list, or 0 for a NULL list. The list
-     * must be one-dimensional: the result array of the percentile functions is always
-     * one-dimensional, so flattening a deeper list would silently lose its shape.
+     * Returns the number of percentiles in a percentile list. A NULL list fails, as a NULL
+     * percentile does in {@link #validatePercentile}. The list must be one-dimensional: the
+     * result array of the percentile functions is always one-dimensional, so flattening a
+     * deeper list would silently lose its shape.
      *
      * @param percentiles   the percentile list
      * @param percentilePos the position of the percentile argument in the SQL text
@@ -1018,7 +1019,7 @@ public class SqlUtil {
      */
     public static int getPercentileCount(ArrayView percentiles, int percentilePos) {
         if (percentiles.isNull()) {
-            return 0;
+            throw CairoException.nonCritical().position(percentilePos).put("percentile array must not be NULL");
         }
         if (percentiles.getDimCount() != 1) {
             throw CairoException.nonCritical().position(percentilePos).put("array is not one-dimensional");

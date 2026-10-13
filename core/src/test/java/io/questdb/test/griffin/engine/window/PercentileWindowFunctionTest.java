@@ -964,6 +964,47 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiPercentileRejectsNullPercentiles() throws Exception {
+        // a NULL percentile list fails like a NULL percentile does, rather than yielding []
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::DOUBLE v, (x % 2)::INT k FROM long_sequence(4))");
+            for (String function : new String[]{"percentile_disc", "quantile_disc", "percentile_cont", "quantile_cont"}) {
+                String sql = "SELECT v, " + function + "(v, NULL::DOUBLE[]) OVER (PARTITION BY k) p FROM t";
+                assertQuery(sql).noLeakCheck().fails(sql.indexOf("::"), "percentile array must not be NULL");
+                sql = "SELECT v, " + function + "(v, NULL::DOUBLE[]) OVER () p FROM t";
+                assertQuery(sql).noLeakCheck().fails(sql.indexOf("::"), "percentile array must not be NULL");
+            }
+        });
+    }
+
+    @Test
+    public void testMultiPercentileNullPercentilesWithoutValues() throws Exception {
+        // like a NULL percentile, a NULL list fails only when a partition has values to compute
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v DOUBLE)");
+            execute("INSERT INTO t VALUES ('a', 1.0), ('b', null), ('a', 2.0), ('b', null)");
+            for (String function : new String[]{"percentile_disc", "percentile_cont"}) {
+                assertQuery("SELECT k, v, " + function + "(v, NULL::DOUBLE[]) OVER (PARTITION BY k) p FROM t WHERE k = 'b'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tv\tp
+                                b\tnull\tnull
+                                b\tnull\tnull
+                                """);
+                assertQuery("SELECT v, " + function + "(v, NULL::DOUBLE[]) OVER () p FROM t WHERE k = 'b'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                v\tp
+                                null\tnull
+                                null\tnull
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testMultiPercentileRejectsMultiDimensionalPercentiles() throws Exception {
         // the result is always one-dimensional, so a deeper percentile list would lose its shape
         assertMemoryLeak(() -> {
