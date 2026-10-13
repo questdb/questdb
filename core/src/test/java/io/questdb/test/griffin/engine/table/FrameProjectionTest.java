@@ -93,6 +93,58 @@ public class FrameProjectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOtherRecordsAreComputedByTheProjection() throws Exception {
+        // Only reads through the projection cursor's own record, at its own row, are served from
+        // the frame: a record B, and record A moved by recordAt(), compute the row's values.
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+            final String query = "select ts, (bid + ask) / 2 mid, bsize * 3 b3 from q where sym = 'A'";
+            try (RecordCursorFactory factory = select(query)) {
+                Assert.assertNotNull(findProjection(factory));
+                Assert.assertTrue(factory.recordCursorSupportsRandomAccess());
+                final io.questdb.std.LongList rowIds = new io.questdb.std.LongList();
+                final io.questdb.std.LongList mids = new io.questdb.std.LongList();
+                final io.questdb.std.LongList b3s = new io.questdb.std.LongList();
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        rowIds.add(record.getRowId());
+                        mids.add(Double.doubleToRawLongBits(record.getDouble(1)));
+                        b3s.add(record.getInt(2));
+                    }
+                }
+                Assert.assertTrue(rowIds.size() > 1000);
+                final Rnd rnd = TestUtils.generateRandom(LOG);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    final Record record = cursor.getRecord();
+                    final Record recordB = cursor.getRecordB();
+                    int i = 0;
+                    while (cursor.hasNext()) {
+                        if (i % 97 == 0) {
+                            // record B at another row, while record A stands on a projected row
+                            final int j = rnd.nextInt(rowIds.size());
+                            cursor.recordAt(recordB, rowIds.getQuick(j));
+                            Assert.assertEquals("B at " + j, mids.getQuick(j), Double.doubleToRawLongBits(recordB.getDouble(1)));
+                            Assert.assertEquals("B at " + j, b3s.getQuick(j), recordB.getInt(2));
+                            Assert.assertEquals("A at " + i, mids.getQuick(i), Double.doubleToRawLongBits(record.getDouble(1)));
+                        }
+                        if (i % 1001 == 500) {
+                            // record A itself moved to another row
+                            final int j = rnd.nextInt(rowIds.size());
+                            cursor.recordAt(record, rowIds.getQuick(j));
+                            Assert.assertEquals("A moved to " + j, mids.getQuick(j), Double.doubleToRawLongBits(record.getDouble(1)));
+                            Assert.assertEquals("A moved to " + j, b3s.getQuick(j), record.getInt(2));
+                            break;
+                        }
+                        i++;
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testParquetFramesAreComputedByTheProjection() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext);

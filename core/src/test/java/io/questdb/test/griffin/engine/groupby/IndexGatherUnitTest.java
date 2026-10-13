@@ -200,6 +200,16 @@ public class IndexGatherUnitTest extends AbstractCairoTest {
              RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory()) {
             final IndexGatherRecordCursorFactory gather = findGather(factory);
             Assert.assertNotNull(sql, gather);
+            if (units) {
+                // the readers the units read are frozen before any worker reads them, also from a
+                // fresh table reader whose index memory no earlier query mapped
+                engine.releaseAllReaders();
+                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    cursor.hasNext();
+                    final IndexGatherPageFrameCursor frames = gather.getPageFrameCursorForTesting();
+                    Assert.assertTrue(sql, !frames.isUnitMode() || frames.getFrozenReaderCount() > 0);
+                }
+            }
             TestUtils.assertEquals(sql + (units ? " [units]" : " [counted]"), expected, print(factory, ctx));
             final IndexGatherPageFrameCursor cursor = gather.getPageFrameCursorForTesting();
             Assert.assertNotNull(sql + "\n" + explain(compiler, ctx, sql), cursor);

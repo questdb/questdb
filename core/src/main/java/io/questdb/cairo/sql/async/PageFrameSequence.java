@@ -87,8 +87,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // (about 0.4 ms of a 6 ms scan of 8,000 partitions at 4 workers, 14 % of its samples at 16).
     private static final int RETAINED_GROUP_TASKS = 8;
     // Group tasks a sequence keeps parked past those: a parked task holds no native memory, only its
-    // objects, and gets its lists back when it is reserved again, see reserveGroupTasks(). Past
-    // both, tasks are freed at reset.
+    // objects, and gets its lists back from the thread that reduces its next frame, see
+    // reserveGroupTasks(). Past both, tasks are freed at reset.
     private static final int PARKED_GROUP_TASKS = 1024;
     // tests: runs before a group task is allocated, see reserveGroupTasks()
     private static volatile Runnable groupTaskAllocationHook;
@@ -992,11 +992,8 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // Makes sure that n group tasks are free to lend, allocating what is missing. The dispatcher calls it
     // before it claims a queue slot, see dispatch0(); a task left over after a failure stays free.
     private void reserveGroupTasks(int n) {
-        // the tasks takeGroupTask() pops next, from the end: a parked one gets its lists back now,
-        // before the slot's claim, since nothing may allocate between the claim and the publish
-        for (int i = Math.max(0, freeGroupTasks.size() - n), m = freeGroupTasks.size(); i < m; i++) {
-            freeGroupTasks.getQuick(i).unpark();
-        }
+        // A parked task is lent as it is: lending it allocates nothing, and the thread that
+        // reduces its frame gives it its lists back (PageFrameReduceJob), off the query's thread.
         while (freeGroupTasks.size() < n) {
             final Runnable hook = groupTaskAllocationHook;
             if (hook != null) {
