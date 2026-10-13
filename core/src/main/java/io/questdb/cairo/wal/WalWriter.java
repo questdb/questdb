@@ -2107,8 +2107,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private void validateIndexCreation(AlterOperation alterOp) {
         // This soft check reads only this instance's applied state. It cannot guarantee
-        // successful apply after a switch or on replicas. TableWriter.checkIndexCreation
-        // records the accepted trade-off until cold/Delta index creation is supported.
+        // successful apply after a switch or on replicas. TableWriter.addColumn and
+        // checkIndexCreation record the accepted trade-offs. A new column needs no index
+        // build, so remotely served partitions block only ADD INDEX.
+        final boolean isAddIndex = alterOp.getCommand() == AlterOperation.ADD_INDEX;
         final MillisecondClock milliClock = configuration.getMillisecondClock();
         final long spinLockTimeout = configuration.getSpinLockTimeout();
         final Path txPath = Path.PATH2.get();
@@ -2118,10 +2120,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             tableTxReader.ofRO(txPath.$(), metadata.getTimestampType(), PartitionBy.DAY);
             TableUtils.safeReadTxn(tableTxReader, milliClock, spinLockTimeout);
             for (int i = 0, n = tableTxReader.getPartitionCount(); i < n; i++) {
-                if (tableTxReader.isPartitionDeltaActive(i) || tableTxReader.isPartitionRemotelyServed(i)) {
+                if (tableTxReader.isPartitionDeltaActive(i) || (isAddIndex && tableTxReader.isPartitionRemotelyServed(i))) {
                     throw CairoException.critical(CairoException.METADATA_VALIDATION_RECOVERABLE)
                             .position(alterOp.getTableNamePosition())
-                            .put("cannot create index, table has a delta-active or remotely served partition [table=")
+                            .put(isAddIndex
+                                    ? "cannot create index, table has a delta-active or remotely served partition [table="
+                                    : "cannot create index, table has a delta-active partition [table=")
                             .put(tableToken.getTableName())
                             .put(']');
                 }
