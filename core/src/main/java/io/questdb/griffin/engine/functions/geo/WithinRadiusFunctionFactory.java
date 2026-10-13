@@ -194,6 +194,10 @@ public class WithinRadiusFunctionFactory implements FunctionFactory {
         public boolean isNonDeterministic() {
             return xFunc.isNonDeterministic() || yFunc.isNonDeterministic();
         }
+        @Override
+        public boolean hasPerCallState() {
+            return xFunc.hasPerCallState() || yFunc.hasPerCallState();
+        }
 
         @Override
         public boolean isRandom() {
@@ -338,6 +342,14 @@ public class WithinRadiusFunctionFactory implements FunctionFactory {
                     || centerXFunc.isNonDeterministic()
                     || centerYFunc.isNonDeterministic()
                     || radiusFunc.isNonDeterministic();
+        }
+        @Override
+        public boolean hasPerCallState() {
+            return xFunc.hasPerCallState()
+                    || yFunc.hasPerCallState()
+                    || centerXFunc.hasPerCallState()
+                    || centerYFunc.hasPerCallState()
+                    || radiusFunc.hasPerCallState();
         }
 
         @Override

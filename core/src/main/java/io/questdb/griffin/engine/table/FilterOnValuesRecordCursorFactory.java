@@ -172,6 +172,13 @@ public class FilterOnValuesRecordCursorFactory extends AbstractPageFrameRecordCu
         return cursor instanceof KeyMajorPageFrameRecordCursor && followedOrderByAdvice && orderDirection == IQueryModel.ORDER_DIRECTION_ASCENDING;
     }
 
+    /**
+     * The rest of the filter this scan applies to the rows its index selects, null for none.
+     */
+    public @Nullable Function getResidualFilter() {
+        return filter;
+    }
+
     @Override
     public int getKeyMajorTimestampIndex() {
         return cursor instanceof KeyMajorPageFrameRecordCursor ? keyMajorTimestampIndex : -1;

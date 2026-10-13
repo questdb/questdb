@@ -89,6 +89,10 @@ public interface TernaryFunction extends Function {
     default boolean isNonDeterministic() {
         return getLeft().isNonDeterministic() || getCenter().isNonDeterministic() || getRight().isNonDeterministic();
     }
+    @Override
+    default boolean hasPerCallState() {
+        return getLeft().hasPerCallState() || getCenter().hasPerCallState() || getRight().hasPerCallState();
+    }
 
     @Override
     default boolean isRandom() {

@@ -103,6 +103,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
         }
 
         @Override
+        public boolean hasPerCallState() {
+            return true;
+        }
+
+        @Override
         public boolean shouldMemoize() {
             return true;
         }
@@ -159,6 +164,11 @@ public class TimestampSequenceFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean isNonDeterministic() {
+            return true;
+        }
+
+        @Override
+        public boolean hasPerCallState() {
             return true;
         }
 

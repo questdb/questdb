@@ -87,6 +87,13 @@ public interface QuaternaryFunction extends Function {
                 || getFunc2().isNonDeterministic()
                 || getFunc3().isNonDeterministic();
     }
+    @Override
+    default boolean hasPerCallState() {
+        return getFunc0().hasPerCallState()
+                || getFunc1().hasPerCallState()
+                || getFunc2().hasPerCallState()
+                || getFunc3().hasPerCallState();
+    }
 
     @Override
     default boolean isRandom() {

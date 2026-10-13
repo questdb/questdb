@@ -79,6 +79,10 @@ public interface UnaryFunction extends Function {
     default boolean isNonDeterministic() {
         return getArg().isNonDeterministic();
     }
+    @Override
+    default boolean hasPerCallState() {
+        return getArg().hasPerCallState();
+    }
 
     @Override
     default boolean isRandom() {

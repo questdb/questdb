@@ -375,6 +375,10 @@ public class ProjectedColumnFunction implements Function {
     public boolean isNonDeterministic() {
         return function.isNonDeterministic();
     }
+    @Override
+    public boolean hasPerCallState() {
+        return function.hasPerCallState();
+    }
 
     @Override
     public boolean isNullConstant() {

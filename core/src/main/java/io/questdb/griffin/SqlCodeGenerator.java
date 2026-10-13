@@ -5282,7 +5282,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         backupWhereClause(filterExpr);
         final Function filter = compileBooleanFilter(filterExpr, metadata, executionContext);
-        if (filter.isConstant() || filter.isRuntimeConstant()) {
+        // the step's copies are compiled one per worker slot, see isRowPure()
+        if (filter.isConstant() || filter.isRuntimeConstant() || !isRowPure(filter)) {
             Misc.free(filter);
             restoreWhereClause(filterExpr);
             return null;
@@ -5939,7 +5940,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         sqlNodeStack, sqlNodeStack2, filterExpr, factory.getMetadata(), functionParser, executionContext));
             }
 
-            final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
+            // the workers would each call a copy of the filter, or share it: see isCallOrderFree()
+            final boolean enableParallelFilter = executionContext.isParallelFilterEnabled() && isCallOrderFree(filter);
             final boolean enablePreTouch = SqlHints.hasEnablePreTouchHint(model, model.getName());
             if (enableParallelFilter && factory.supportsPageFrameCursor()) {
                 IntHashSet filterUsedColumnIndexes = new IntHashSet();
@@ -6500,7 +6502,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             // Check if parallel execution is supported
             keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
-            if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
+            if (!SqlUtil.isParallelismSupported(keyFunctions)
+                    || !GroupByUtils.isParallelismSupported(groupByFunctions)
+                    // the workers compute copies of the keys and the aggregates, see isCallOrderFree()
+                    || !isCallOrderFree(innerProjectionFunctions)
+                    || !isCallOrderFree(groupByFunctions)) {
                 supportsParallelism = false;
             }
 
@@ -8846,6 +8852,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (parallelWindowJoinEnabled
                                         && masterSupportsPageFrames
                                         && GroupByUtils.isParallelismSupported(groupByFunctions)
+                                        // the workers compute copies of the aggregates, see isCallOrderFree()
+                                        && isCallOrderFree(groupByFunctions)
                                         && slaveToFree.supportsTimeFrameCursor()) {
                                     // try to steal master filter
                                     CompiledFilter compiledFilter = null;
@@ -9375,7 +9383,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // branch that builds EmptyTableRecordCursorFactory over the freed
                             // master's JoinRecordMetadata - no incrementRefCount is needed here.
                             master = new RuntimeConstGateRecordCursorFactory(master, filter, deepClone(expressionNodePool, filterExpr));
-                        } else if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
+                        } else if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor() && isCallOrderFree(filter)) {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
                             collectColumnIndexes(sqlNodeStack, postJoinFilterMetadata, filterExpr, filterUsedColumnIndexes);
 
@@ -9469,7 +9477,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     } else {
                         // make it a post-join filter (same as for post join where clause above)
-                        if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
+                        if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor() && isCallOrderFree(filter)) {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
                             collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
 
@@ -10231,7 +10239,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             );
 
             keyFunctions = extractVirtualFunctionsFromProjection(innerProjectionFunctions, projectionFunctionFlags);
-            if (!SqlUtil.isParallelismSupported(keyFunctions) || !GroupByUtils.isParallelismSupported(groupByFunctions)) {
+            if (!SqlUtil.isParallelismSupported(keyFunctions)
+                    || !GroupByUtils.isParallelismSupported(groupByFunctions)
+                    // the workers compute copies of the keys and the aggregates, see isCallOrderFree()
+                    || !isCallOrderFree(innerProjectionFunctions)
+                    || !isCallOrderFree(groupByFunctions)) {
                 supportsParallelism = false;
             }
 
@@ -12764,6 +12776,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     enableParallelGroupBy
                             && SqlUtil.isParallelismSupported(keyFunctions)
                             && GroupByUtils.isParallelismSupported(groupByFunctions)
+                            // the workers compute copies of the keys and the aggregates, see isCallOrderFree()
+                            && isCallOrderFree(innerProjectionFunctions)
+                            && isCallOrderFree(groupByFunctions)
             ) {
                 boolean supportsParallelism = factory.supportsPageFrameCursor();
                 CompiledFilter compiledFilter = null;
@@ -12795,6 +12810,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 if (!supportsParallelism
                         && factory instanceof IndexGatherRecordCursorFactory gather
                         && configuration.isSqlParallelIndexGroupByEnabled()
+                        // the GROUP BY compiles the rest of the filter per worker, see isCallOrderFree()
+                        && isCallOrderFree(gather.getDelegate().getResidualFilter())
                         && gather.acceptsKeyMajorRows(orderSensitive, keyTypes.getColumnCount() > 0 ? listColumnFilterA : null)) {
                     // An order-sensitive aggregate must see a group's rows of a frame on one slot,
                     // in order: array_agg, twap and sparkline merge batches cut at frame changes,
@@ -14549,8 +14566,51 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     // Whether the function's value at a row depends on the row alone: no per-call state, no random
     // draws, stable within the execution (deterministic, or now() and bind variables).
-    private static boolean isRowPure(Function function) {
-        return !function.shouldMemoize() && !function.isRandom() && function.isStableWithinExecution();
+    // The rule of the parallel filters and GROUP BYs, which hand each worker a copy of a function
+    // or share one among them: a function that counts its calls (Function.hasPerCallState(),
+    // timestamp_sequence()) restarts on every copy and races on a shared one, so it is called on
+    // one thread, in row order. They have always run random functions, clocks (systimestamp())
+    // and memoized ones (json_extract()) on the workers, whose value at a row does not depend on
+    // the calls before it, and still do.
+    static boolean isCallOrderFree(@Nullable Function function) {
+        return function == null || !function.hasPerCallState();
+    }
+
+    static boolean isCallOrderFree(@Nullable ObjList<? extends Function> functions) {
+        if (functions != null) {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                if (!isCallOrderFree(functions.getQuick(i))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // The stricter rule of the Async Window's steps and copies, and of the projections the filter
+    // workers compute: the value at a row must be the row's alone. A function that keeps state
+    // from call to call (timestamp_sequence(), which also asks to be memoized), draws from a
+    // generator, or is not proven to give the same result for the same row within the execution,
+    // restarts or diverges on every copy. The properties carry up from every argument.
+    static boolean isRowPure(@Nullable Function function) {
+        return function == null
+                || (!function.hasPerCallState() && !function.shouldMemoize() && !function.isRandom() && function.isStableWithinExecution());
+    }
+
+    // A window function does not carry the properties up from its argument: asks it of both.
+    private static boolean isWindowRowPure(Function function) {
+        return isRowPure(function) && (!(function instanceof BaseWindowFunction window) || isRowPure(window.getWindowArgument()));
+    }
+
+    static boolean isRowPure(@Nullable ObjList<? extends Function> functions) {
+        if (functions != null) {
+            for (int i = 0, n = functions.size(); i < n; i++) {
+                if (!isRowPure(functions.getQuick(i))) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     // Whether a column of the projection other than the index-th reads the index-th's alias.
@@ -14632,11 +14692,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // proven to give the same result for the same row within the execution, restarts or
         // diverges on every copy. Checked on the owner's compiled functions, which carry these
         // properties up from every argument.
-        for (int i = 0, n = ownerFunctions.size(); i < n; i++) {
-            final Function ownerFunction = ownerFunctions.getQuick(i);
-            if (ownerFunction != null && !isRowPure(ownerFunction)) {
-                return null;
-            }
+        if (!isRowPure(ownerFunctions)) {
+            return null;
         }
         final PriorityMetadata priorityMetadata = new PriorityMetadata(owner.getPriorityMetadata().getVirtualColumnReservedSlots(), inputMetadata);
         final ObjList<Function> functions = new ObjList<>(columnCount);
@@ -14750,7 +14807,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (!isPartitionedByKey && !(singleKey && partitionBy.size() == 0)) {
                 return null;
             }
-            if (hasRandomFunction(qc.getAst()) || hasRandomFunction(partitionBy)) {
+            if (hasRandomFunction(qc.getAst()) || hasRandomFunction(partitionBy) || !isWindowRowPure(functions.getQuick(i))) {
                 return null;
             }
         }
@@ -14947,6 +15004,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (projection.getQuick(i) == null) {
                 return null;
             }
+        }
+        // the step's copies are compiled one per worker slot, see isRowPure()
+        if (!isRowPure(groupByFunctions) || !isRowPure(projection)) {
+            return null;
         }
         final int keyCount = keyColumnFilter.getColumnCount();
         if (keyCount == 0 || keyCount != keyTypes.getColumnCount()) {
@@ -15149,7 +15210,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 || scan.usesIndex()
                 || scan.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD
                 || (scan != base && base.getStealFilterExpr() == null)
-                || (scan != base && (hasSubQuery(base.getStealFilterExpr()) || hasRandomFunction(base.getStealFilterExpr())))) {
+                || (scan != base && (hasSubQuery(base.getStealFilterExpr()) || hasRandomFunction(base.getStealFilterExpr())))
+                // the shards share the stolen filter, see isRowPure()
+                || (scan != base && !isRowPure(base.getFilter()))) {
             return null;
         }
         final ObjList<QueryColumn> columns = model.getColumns();
@@ -15163,7 +15226,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final WindowExpression window = (WindowExpression) qc;
             if (window.getPartitionBy().size() > 0
                     || ColumnType.isSymbol(functions.getQuick(i).getType())
-                    || hasRandomFunction(qc.getAst())) {
+                    || hasRandomFunction(qc.getAst())
+                    || !isWindowRowPure(functions.getQuick(i))) {
                 return null;
             }
         }
@@ -15393,7 +15457,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             // A random function draws from the query's one Rnd, which is not thread safe, and its
             // values would depend on which thread computed which key first.
-            if (hasRandomFunction(qc.getAst()) || hasRandomFunction(partitionBy)) {
+            if (hasRandomFunction(qc.getAst()) || hasRandomFunction(partitionBy) || !isWindowRowPure(functions.getQuick(i))) {
                 return null;
             }
         }
@@ -20100,7 +20164,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         try {
-            if (executionContext.isParallelFilterEnabled() && adaptiveFactory.supportsPageFrameCursor()) {
+            if (executionContext.isParallelFilterEnabled() && adaptiveFactory.supportsPageFrameCursor() && isCallOrderFree(filter)) {
                 final IntHashSet filterUsedColumnIndexes = new IntHashSet();
                 collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
                 final ExpressionNode filterExprCopy = deepClone(expressionNodePool, filterExpr);
@@ -20204,7 +20268,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // a selection of few rows is filtered on the query's thread, which the async filter
             // decides each time it opens, see getLocalReduceMaxRows()
             if (executionContext.isParallelFilterEnabled()
-                    && coveringFactory.supportsPageFrameCursor()) {
+                    && coveringFactory.supportsPageFrameCursor()
+                    && isCallOrderFree(filter)) {
                 limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                 // A pushed-down LIMIT lets the async filter stop early (positive limit)
                 // or scan the tail backward (negative limit). Both are correct only

@@ -99,6 +99,17 @@ public interface MultiArgFunction extends Function {
         }
         return false;
     }
+    @Override
+    default boolean hasPerCallState() {
+        final ObjList<Function> args = args();
+        for (int i = 0, n = args.size(); i < n; i++) {
+            final Function function = args.getQuick(i);
+            if (function.hasPerCallState()) {
+                return true;
+            }
+        }
+        return false;
+    }
 
     // Within-execution stability composes independently of determinism: an arg may be
     // non-deterministic yet stable (bind variable, now()), or appear deterministic through
