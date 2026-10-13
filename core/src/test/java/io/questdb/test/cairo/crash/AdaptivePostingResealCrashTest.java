@@ -246,12 +246,10 @@ public class AdaptivePostingResealCrashTest extends AbstractAdaptiveCrashTest {
                     Assert.assertEquals(name, CommitMode.fromString(modes[start - 1]), engine.getConfiguration().getCommitMode());
                     // A start builds the purge job, which replays the open rows of its log, before any WAL apply.
                     try (PostingSealPurgeJob job = new PostingSealPurgeJob(engine)) {
-                        // The purge can also run before WAL apply. ADAPTIVE writer-open completion covers the
-                        // recovered two-row cut and resets the epoch cadence before replay, so the second kill
-                        // restores that cut too. Other modes remove the save point on the first start, leaving
-                        // all seven replayed rows live at the second start.
+                        // The purge can also run before the WAL apply, as on a server. The first start has restored
+                        // the save point's two rows; at the second the live state holds all seven.
                         runPurgeJob(job);
-                        assertSymbolRowsThroughIndex(table, control || start == 1 ? 2 : 7);
+                        assertSymbolRowsThroughIndex(table, start == 1 ? 2 : 7);
                         engine.notifyWalTxnRepublisher(token);
                         drainWalQueue();
                         runPurgeJob(job);
