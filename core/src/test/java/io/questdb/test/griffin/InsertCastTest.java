@@ -2088,8 +2088,22 @@ public class InsertCastTest extends AbstractCairoTest {
             execute("INSERT INTO d VALUES (100.5), (-100.5)");
             execute("INSERT INTO i SELECT v FROM f");
             execute("INSERT INTO l SELECT v FROM d");
-            assertQuery("v\n100\n-100\n", "SELECT v FROM i", null, true);
-            assertQuery("v\n100\n-100\n", "SELECT v FROM l", null, true);
+            assertQuery("SELECT v FROM i")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            100
+                            -100
+                            """);
+            assertQuery("SELECT v FROM l")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            v
+                            100
+                            -100
+                            """);
         });
     }
 
