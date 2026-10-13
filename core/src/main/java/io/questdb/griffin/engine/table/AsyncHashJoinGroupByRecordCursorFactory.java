@@ -1148,10 +1148,23 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final int keyProbeSymbolColumn = functions.getKeyProbeSymbolColumn();
         for (long p = 0, n = rows.size(); p < n; p++) {
             probeRecord.setRowIndex(rows.get(p));
-            final int buildKey = translator.translate(probeRecord.getInt(probeKeyColumn));
+            final int probeSymbolKey = probeRecord.getInt(probeKeyColumn);
+            if (byBuildKey) {
+                // the group of a probe key the batch already holds, without probing the build
+                final int resolved = slot.resolvedProbeKey(probeSymbolKey);
+                if (resolved == AsyncHashJoinGroupByAtom.Slot.PROBE_KEY_UNMATCHED) {
+                    continue;
+                }
+                if (resolved != AsyncHashJoinGroupByAtom.Slot.PROBE_KEY_UNKNOWN
+                        && batchExisting(slot, slotId, functions, groupCacheKey(probeRecord, keyProbeSymbolColumn, resolved), map, postJoinFilter, probeRecord)) {
+                    continue;
+                }
+            }
+            final int buildKey = translator.translate(probeSymbolKey);
             if (probe.findSingleUnchecked(buildKey)) {
                 record.setHasMatch(true);
                 if (byBuildKey && buildKey >= 0) {
+                    slot.resolveProbeKey(probeSymbolKey, buildKey + 1);
                     addByBuildKey(slot, slotId, functions, groupCacheKey(probeRecord, keyProbeSymbolColumn, buildKey + 1), map, sink, updater, record, postJoinFilter, probeRecord);
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
@@ -1159,10 +1172,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             } else if (outer) {
                 record.setHasMatch(false);
                 if (byBuildKey) {
+                    slot.resolveProbeKey(probeSymbolKey, 0);
                     addByBuildKey(slot, slotId, functions, groupCacheKey(probeRecord, keyProbeSymbolColumn, 0), map, sink, updater, record, postJoinFilter, probeRecord);
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
+            } else if (byBuildKey) {
+                slot.resolveProbeKey(probeSymbolKey, AsyncHashJoinGroupByAtom.Slot.PROBE_KEY_UNMATCHED);
             }
         }
         flushBuildKeyBatch(slot, slotId, functions, map, probeRecord);
@@ -1387,10 +1403,23 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final int keyProbeSymbolColumn = functions.getKeyProbeSymbolColumn();
         for (long r = 0; r < rowCount; r++) {
             probeRecord.setRowIndex(r);
-            final int buildKey = translator.translate(probeRecord.getInt(probeKeyColumn));
+            final int probeSymbolKey = probeRecord.getInt(probeKeyColumn);
+            if (byBuildKey) {
+                // the group of a probe key the batch already holds, without probing the build
+                final int resolved = slot.resolvedProbeKey(probeSymbolKey);
+                if (resolved == AsyncHashJoinGroupByAtom.Slot.PROBE_KEY_UNMATCHED) {
+                    continue;
+                }
+                if (resolved != AsyncHashJoinGroupByAtom.Slot.PROBE_KEY_UNKNOWN
+                        && batchExisting(slot, slotId, functions, groupCacheKey(probeRecord, keyProbeSymbolColumn, resolved), map, postJoinFilter, probeRecord)) {
+                    continue;
+                }
+            }
+            final int buildKey = translator.translate(probeSymbolKey);
             if (probe.findSingleUnchecked(buildKey)) {
                 record.setHasMatch(true);
                 if (byBuildKey && buildKey >= 0) {
+                    slot.resolveProbeKey(probeSymbolKey, buildKey + 1);
                     addByBuildKey(slot, slotId, functions, groupCacheKey(probeRecord, keyProbeSymbolColumn, buildKey + 1), map, sink, updater, record, postJoinFilter, probeRecord);
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
@@ -1398,10 +1427,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             } else if (outer) {
                 record.setHasMatch(false);
                 if (byBuildKey) {
+                    slot.resolveProbeKey(probeSymbolKey, 0);
                     addByBuildKey(slot, slotId, functions, groupCacheKey(probeRecord, keyProbeSymbolColumn, 0), map, sink, updater, record, postJoinFilter, probeRecord);
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
+            } else if (byBuildKey) {
+                slot.resolveProbeKey(probeSymbolKey, AsyncHashJoinGroupByAtom.Slot.PROBE_KEY_UNMATCHED);
             }
         }
         flushBuildKeyBatch(slot, slotId, functions, map, probeRecord);
@@ -1631,6 +1663,36 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         // an offset into the map's heap, which a growing heap keeps
         offset = ((FlyweightPackedMapValue) value).getValueAddress() - map.getBatchBaseAddress();
         offsets.put(cacheKey, offset);
+    }
+
+    // A row of a group whose value offset the slot's batch cache holds joins the batch; false when the row must
+    // take the full path (the group is new to the batch, or the batch does not apply).
+    private static boolean batchExisting(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            int slotId,
+            HashJoinGroupByFunctions functions,
+            long cacheKey,
+            Map map,
+            Function filter,
+            PageFrameMemoryRecord probeRecord
+    ) {
+        if (slot.batchList == null || filter != null || slot.batchMap != map || slot.batchMapSize != map.size()) {
+            return false;
+        }
+        final long offset = slot.batchOffsetCache.get(cacheKey);
+        if (offset == 0) {
+            return false;
+        }
+        final long rowIndex = probeRecord.getRowIndex();
+        if (slot.batchCount == 0) {
+            slot.batchBaseRowId = probeRecord.getRowId() - rowIndex;
+        }
+        Unsafe.putLong(slot.batchList.getAddress() + ((long) slot.batchCount << 3), Map.encodeBatchEntry(rowIndex, offset, false));
+        if (++slot.batchCount == slot.batchSize) {
+            // the flush positions the record elsewhere, and the caller reads no more of this row
+            flushBuildKeyBatch(slot, slotId, functions, map, probeRecord);
+        }
+        return true;
     }
 
     private static void flushBuildKeyBatch(

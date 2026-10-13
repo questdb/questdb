@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.std.str.StringSink;
@@ -77,6 +78,40 @@ public class HashJoinGroupByBuildKeyGroupsTest extends AbstractCairoTest {
             }
             // the keys read the build alone and the aggregates the probe: the rows updated in batches
             Assert.assertTrue(AsyncHashJoinGroupByRecordCursorFactory.getBatchedRowsForTesting() > batchedBefore);
+        });
+    }
+
+    @Test
+    public void testDimensionChangesBetweenExecutions() throws Exception {
+        // the same factory runs again after the dimension changes: what a probe key resolves to is the
+        // execution's build, never the last one's
+        assertMemoryLeak(() -> {
+            execute("create table q (sym symbol, ex symbol, v double, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into q select rnd_symbol('A','B'), rnd_symbol('N','P','T','Z'), (x % 97)::double, "
+                    + "timestamp_sequence('2024-01-01', 3_000_000L) from long_sequence(20_000)");
+            execute("create table e (ex symbol, name symbol)");
+            execute("insert into e values ('N','nyse'),('P','arca'),('T','arca')");
+            final String[] sqls = {
+                    "select coalesce(e.name, '') k, sum(q.v), count(), max(q.v) from q left join e on q.ex = e.ex order by 1",
+                    "select e.name k, sum(q.v), count() from q join e on q.ex = e.ex order by 1",
+            };
+            for (int workers : new int[]{1, 4}) {
+                try (SqlExecutionContextImpl context = HashJoinGroupByQualificationTest.context(engine, workers)) {
+                    context.changePageFrameSizes(1_000, 1_000);
+                    for (String sql : sqls) {
+                        context.setParallelHashJoinGroupByEnabled(true);
+                        try (RecordCursorFactory factory = engine.select(sql, context)) {
+                            HashJoinGroupByQualificationTest.assertAgainstBaseline(sql, factory, context);
+                            execute("truncate table e");
+                            execute("insert into e values ('Z','iex'),('P','nyse'),('X','cboe')");
+                            context.setParallelHashJoinGroupByEnabled(true);
+                            HashJoinGroupByQualificationTest.assertAgainstBaseline(sql, factory, context);
+                            execute("truncate table e");
+                            execute("insert into e values ('N','nyse'),('P','arca'),('T','arca')");
+                        }
+                    }
+                }
+            }
         });
     }
 

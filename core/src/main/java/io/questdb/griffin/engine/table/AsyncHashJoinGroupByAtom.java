@@ -71,6 +71,8 @@ import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.Arrays;
+
 /**
  * Owns execution backing; functions, both filter contexts, the build ON filter and the build
  * scan are borrowed from the factory. Each acquired slot owns every mutable
@@ -1057,6 +1059,13 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         // value offset into the map's heap, which survives the heap growing, and the batch of rows that update
         // existing groups. Null batchList when the aggregates do not batch.
         final GroupValueCache batchOffsetCache = new GroupValueCache();
+        // Per probe SYMBOL key of the join, what the frozen build resolves it to for the build-key groups: the
+        // build key + 1, 0 for an outer no-match, PROBE_KEY_UNMATCHED for an inner one; PROBE_KEY_UNKNOWN until
+        // a row resolves it. Valid for the execution, whose build does not change.
+        static final int PROBE_KEY_UNKNOWN = Integer.MIN_VALUE;
+        static final int PROBE_KEY_UNMATCHED = -1;
+        private static final int MAX_RESOLVED_PROBE_KEYS = 1 << 16;
+        private int[] resolvedProbeKeys;
         long batchBaseRowId;
         int batchCount;
         @Nullable
@@ -1112,6 +1121,26 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             CairoException.rethrowCleanupFailure(failure);
         }
 
+        void resolveProbeKey(int probeKey, int resolution) {
+            if (probeKey < 0 || probeKey >= MAX_RESOLVED_PROBE_KEYS) {
+                return;
+            }
+            if (resolvedProbeKeys == null || probeKey >= resolvedProbeKeys.length) {
+                final int[] grown = new int[Math.min(MAX_RESOLVED_PROBE_KEYS, Math.max(64, Integer.highestOneBit(probeKey) << 1))];
+                Arrays.fill(grown, PROBE_KEY_UNKNOWN);
+                if (resolvedProbeKeys != null) {
+                    System.arraycopy(resolvedProbeKeys, 0, grown, 0, resolvedProbeKeys.length);
+                }
+                resolvedProbeKeys = grown;
+            }
+            resolvedProbeKeys[probeKey] = resolution;
+        }
+
+        int resolvedProbeKey(int probeKey) {
+            final int[] keys = resolvedProbeKeys;
+            return keys != null && probeKey >= 0 && probeKey < keys.length ? keys[probeKey] : PROBE_KEY_UNKNOWN;
+        }
+
         /**
          * The translation path of one SYMBOL key column, wherever this slot keeps it.
          */
@@ -1129,6 +1158,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             batchMap = null;
             batchMapSize = -1;
             batchCount = 0;
+            if (resolvedProbeKeys != null) {
+                Arrays.fill(resolvedProbeKeys, PROBE_KEY_UNKNOWN);
+            }
             Misc.clear(batchKernels);
             joinedRecord.clear();
             probeRecord.of(null);
