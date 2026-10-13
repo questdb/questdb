@@ -2151,6 +2151,20 @@ public class ArrayTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEmptyArrayLiteralRejectedByVarcharIn() throws Exception {
+        // the ARRAY[] literal takes only the DOUBLE[] type; it does not match the
+        // VARCHAR[] parameter of in(ØØ[]) or in(SØ[])
+        assertMemoryLeak(() -> {
+            assertQuery("SELECT 'a'::VARCHAR IN ARRAY[]")
+                    .noLeakCheck()
+                    .fails(28, "cannot compare VARCHAR with type ARRAY");
+            assertQuery("SELECT 'a'::STRING IN ARRAY[]")
+                    .noLeakCheck()
+                    .fails(27, "cannot compare STRING with type ARRAY");
+        });
+    }
+
+    @Test
     public void testEmptyArrayLiteralTakesDoubleArrayType() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tango AS (SELECT ARRAY[] * 2.0 a, array_reverse(ARRAY[]) b FROM long_sequence(1))");
