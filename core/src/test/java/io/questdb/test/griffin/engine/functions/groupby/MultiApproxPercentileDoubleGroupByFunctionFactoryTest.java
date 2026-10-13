@@ -248,6 +248,19 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     }
 
     @Test
+    public void testPercentilesNotOneDimensionalEmptyTable() throws Exception {
+        // over an empty table the function never reads the percentile list, so only the
+        // factory can reject it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (d DOUBLE, l LONG)");
+            for (String args : new String[]{"d, %s", "d, %s, 4", "l, %s", "l, %s, 4"}) {
+                final String sql = "SELECT approx_percentile(" + args.formatted("ARRAY[[0.1, 0.5], [0.9, 0.99]]") + ") FROM t";
+                assertExceptionNoLeakCheck(sql, sql.indexOf('['), "array is not one-dimensional");
+            }
+        });
+    }
+
+    @Test
     public void testSlicedPercentiles() throws Exception {
         // a slice or sub-array shares the backing buffer of its parent array, starting at an
         // offset and possibly striding over it

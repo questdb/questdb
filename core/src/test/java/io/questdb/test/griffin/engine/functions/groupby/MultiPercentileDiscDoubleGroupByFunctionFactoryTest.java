@@ -226,6 +226,19 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     }
 
     @Test
+    public void testPercentilesNotOneDimensionalEmptyTable() throws Exception {
+        // over an empty table the function never reads the percentile list, so only the
+        // factory can reject it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (x DOUBLE)");
+            for (String function : new String[]{"percentile_disc", "quantile_disc"}) {
+                final String sql = "SELECT " + function + "(x, ARRAY[[0.1, 0.5], [0.9, 0.99]]) FROM test";
+                assertExceptionNoLeakCheck(sql, sql.indexOf('['), "array is not one-dimensional");
+            }
+        });
+    }
+
+    @Test
     public void testPercentilesNotOneDimensionalWeakDimsBindVariable() throws Exception {
         // PGWire declares array bind variables without their dimension count, so the factory
         // accepts them and the function checks the bound array when it computes the result
