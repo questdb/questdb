@@ -1791,6 +1791,38 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPercentileDiscLongListGrowth() throws Exception {
+        // 40 rows per partition grow each partition list from 16 to 32 and 64 values. Every value
+        // must survive the growth: losing the 17th and 34th inserted values moves the 0.45 rank.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x % 2 k, x l FROM long_sequence(80))");
+            final String expected = """
+                    k\tp0\tp1\tq50\tp45\tc
+                    0\t2\t80\t40\t36\t40
+                    1\t1\t79\t39\t35\t40
+                    """;
+            assertQuery("""
+                    SELECT k, percentile_disc(l, 0) p0, percentile_disc(l, 1) p1, quantile_disc(l, 0.5) q50,
+                        percentile_disc(l, 0.45) p45, count() c
+                    FROM t ORDER BY k
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT k, p0, p1, q50, p45, count() c FROM (
+                        SELECT k, percentile_disc(l, 0) OVER (PARTITION BY k) p0, percentile_disc(l, 1) OVER (PARTITION BY k) p1,
+                            quantile_disc(l, 0.5) OVER (PARTITION BY k) q50, percentile_disc(l, 0.45) OVER (PARTITION BY k) p45
+                        FROM t
+                    ) ORDER BY k
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testPercentileDiscLongNulls() throws Exception {
         // NULL values never reach selection, an all-NULL partition returns NULL, and a NULL
         // partition key is a partition of its own
