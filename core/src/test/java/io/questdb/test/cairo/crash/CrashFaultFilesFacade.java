@@ -14,6 +14,7 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -1082,7 +1083,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                     // bytes from unwritten space (bytes stored by native code past the last non-zero one): the file
                     // keeps that size, unless it was truncated below it since, and what lies past the durable bytes
                     // reads as zero.
-                    final long length = Math.max(durable.length, Math.min(durableSize.getOrDefault(key, 0L), ch.size()));
+                    final long length = restoredLength(durable.length, durableSize.getOrDefault(key, 0L), ch.size());
                     if (durable.length > 0) {
                         ch.write(ByteBuffer.wrap(durable), 0);
                     }
@@ -1449,6 +1450,26 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
      */
     public String pathOf(long fd) {
         return fdToPath.get(fd);
+    }
+
+    /**
+     * The bytes {@link #crash} would leave in a file if the power failed now: its durable bytes, then zeros up to
+     * the size the rollback keeps. This, not {@link #durableContentOf}, is what a power loss keeps: a per-file
+     * {@code fsync} makes the content durable up to its last non-zero byte and the file size durable as a whole, so
+     * a column fallocated past its rows comes back as its rows and a zero tail. Null for an untracked file.
+     */
+    public byte[] powerLossImageOf(CharSequence absPath) {
+        final String key = Paths.get(absPath.toString()).toAbsolutePath().toString();
+        final byte[] durable = durableContentOf(key);
+        if (durable == null) {
+            return null;
+        }
+        final long durableLength = (powerLossMarked ? powerLossSize : durableSize).getOrDefault(key, 0L);
+        try {
+            return Arrays.copyOf(durable, (int) restoredLength(durable.length, durableLength, Files.size(Paths.get(key))));
+        } catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
     }
 
     /**
@@ -1915,6 +1936,12 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
+    }
+
+    // The length crash() gives a file: what it holds durably, then zeros up to its durable size, never past its
+    // current size.
+    private static long restoredLength(long durableContentLength, long durableSize, long currentSize) {
+        return Math.max(durableContentLength, Math.min(durableSize, currentSize));
     }
 
     private byte[] durableImage(String path) {

@@ -294,41 +294,16 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
 
     @Test
     public void testReplicaMakesTableDurableBeforeItRemovesSavePoint() throws Exception {
-        // A primary's save point lags rows it applied lazily, then the node becomes a replica. Before the writer
-        // removes the save point, every file of the table must be durable: a replica keeps no purge floor, so once
-        // the save point is gone nothing else brings back the WAL those rows came from.
-        org.junit.Assume.assumeFalse("the crash model rewrites files under a live engine, which Windows forbids", Os.isWindows());
-        final SavePointRemovalFacade removalFf = new SavePointRemovalFacade();
-        removalFf.setDbRoot(root);
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000L);
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
-        assertMemoryLeak(removalFf, () -> {
-            try {
-                setAdaptive(true);
-                execute("create table replica_flush (ts timestamp, v long) timestamp(ts) partition by day wal");
-                final TableToken tt = engine.verifyTableName("replica_flush");
-                insertAndRelease("replica_flush", 1, 1, false);
-                Assert.assertEquals("setup: a save point at the first batch", 1, readAnchorSeqTxn(tt));
-                removalFf.markDurableBaseline(configuration.getDbRoot());
-                suppressCadenceEpoch(tt);
-                insertAndRelease("replica_flush", 2, 3, false);
-                Assert.assertEquals("setup: the save point lags the applied rows", 1, readAnchorSeqTxn(tt));
-                Assert.assertFalse("setup: the lazily applied rows are not durable", removalFf.notDurableFiles(tt).isEmpty());
+        assertReplicaMakesTableDurableBeforeItRemovesSavePoint(new SavePointRemovalFacade());
+    }
 
-                removalFf.watch(tt);
-                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
-                try (TableWriter writer = getWriter(tt)) {
-                    writer.reconcileDurableEpochAnchor();
-                }
-                Assert.assertTrue("the replica removes the save point", removalFf.removalSeen);
-                Assert.assertEquals("files not durable when the replica removed the save point",
-                        "[]", removalFf.notDurableAtRemoval.toString());
-                Assert.assertEquals("the save point is gone", -1, readAnchorSeqTxn(tt));
-            } finally {
-                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
-            }
-        });
+    @Test
+    public void testReplicaMakesTableDurableBeforeItRemovesSavePointWithoutFsWideSyncfs() throws Exception {
+        // The macOS and Windows path on every platform: syncfs flushes one file, so the writer sweeps the files of
+        // every partition, then issues one device flush.
+        final SavePointRemovalFacade removalFf = new SavePointRemovalFacade();
+        removalFf.setSyncfsFileSystemWide(false);
+        assertReplicaMakesTableDurableBeforeItRemovesSavePoint(removalFf);
     }
 
     @Test
@@ -467,6 +442,43 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
         engine.getTableSequencerAPI().getTxnTracker(tt).setLastEpochTs(configuration.getMicrosecondClock().getTicks() / 1000L);
     }
 
+    private void assertReplicaMakesTableDurableBeforeItRemovesSavePoint(SavePointRemovalFacade removalFf) throws Exception {
+        // A primary's save point lags rows it applied lazily, then the node becomes a replica. Before the writer
+        // removes the save point, every file of the table must be durable: a replica keeps no purge floor, so once
+        // the save point is gone nothing else brings back the WAL those rows came from.
+        org.junit.Assume.assumeFalse("the crash model rewrites files under a live engine, which Windows forbids", Os.isWindows());
+        removalFf.setDbRoot(root);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000L);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "true");
+        assertMemoryLeak(removalFf, () -> {
+            try {
+                setAdaptive(true);
+                execute("create table replica_flush (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken tt = engine.verifyTableName("replica_flush");
+                insertAndRelease("replica_flush", 1, 1, false);
+                Assert.assertEquals("setup: a save point at the first batch", 1, readAnchorSeqTxn(tt));
+                removalFf.markDurableBaseline(configuration.getDbRoot());
+                suppressCadenceEpoch(tt);
+                insertAndRelease("replica_flush", 2, 3, false);
+                Assert.assertEquals("setup: the save point lags the applied rows", 1, readAnchorSeqTxn(tt));
+                Assert.assertFalse("setup: the lazily applied rows are not durable", removalFf.notDurableFiles(tt).isEmpty());
+
+                removalFf.watch(tt);
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+                try (TableWriter writer = getWriter(tt)) {
+                    writer.reconcileDurableEpochAnchor();
+                }
+                Assert.assertTrue("the replica removes the save point", removalFf.removalSeen);
+                Assert.assertEquals("files not durable when the replica removed the save point",
+                        "[]", removalFf.notDurableAtRemoval.toString());
+                Assert.assertEquals("the save point is gone", -1, readAnchorSeqTxn(tt));
+            } finally {
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            }
+        });
+    }
+
     private void crashRestartAndAssertNoLoss(TableToken tt, boolean graceful, long expectedRows) throws Exception {
         if (!graceful) {
             // crash: in-memory state dropped with no close-time epoch
@@ -543,7 +555,7 @@ public class ReplicaSkipAnchorTest extends AbstractCairoTest {
                         return;
                     }
                     try {
-                        if (!Arrays.equals(durableContentOf(p.toAbsolutePath().toString()), Files.readAllBytes(p))) {
+                        if (!Arrays.equals(powerLossImageOf(p.toAbsolutePath().toString()), Files.readAllBytes(p))) {
                             notDurable.add(name);
                         }
                     } catch (IOException e) {
