@@ -252,7 +252,10 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 final long valueBaseAddress = indexReader.getValueBaseAddress();
                 final long valuesMemorySize = indexReader.getValueMemorySize();
                 final int valueBlockCapacity = indexReader.getValueBlockCapacity();
-                final long unIndexedNullCount = indexReader.getColumnTop();
+                // The native fallback answers NULL's latest row as top - 1 without checking max_value, and the
+                // directory-wide column top may lie beyond this frame on a composite piece or an interval-limited
+                // frame, so clamp it to the frame's exclusive index row hi.
+                final long unIndexedNullCount = Math.min(indexReader.getColumnTop(), frame.getIndexRowHi());
 
                 doneLatch.reset();
 

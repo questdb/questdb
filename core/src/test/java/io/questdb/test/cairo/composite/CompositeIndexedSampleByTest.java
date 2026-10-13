@@ -52,6 +52,89 @@ public class CompositeIndexedSampleByTest extends AbstractCairoTest {
     }
 
     /**
+     * The interval form of {@link #testLatestByNullOverALateIndexedSymbol()}: an interval that ends inside
+     * the pieces below the column top limits each frame's index row hi, so the clamp must use the frame's
+     * bound rather than the directory-wide top.
+     */
+    @Test
+    public void testLatestByNullInIntervalOverALateIndexedSymbol() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+        assertMemoryLeak(() -> {
+            createLateSymbolDay("indexed", " INDEX", false);
+            createLateSymbolDay("plain", "", false);
+
+            final String query = "SELECT late_sym, ts, price FROM %s WHERE ts < '2020-02-03T09:00' LATEST ON ts PARTITION BY late_sym ORDER BY late_sym";
+            final String expected = """
+                    late_sym\tts\tprice
+                    \t2020-02-03T08:59:45.000000Z\t2160.0
+                    """;
+            assertQuery(String.format(query, "plain")).expectSize().returns(expected);
+            assertQuery(String.format(query, "indexed"))
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns(expected);
+        });
+    }
+
+    /**
+     * A symbol column added after the day turned composite has a column top: every row below it is an
+     * implicit NULL the index does not list. {@code LatestByAllIndexedRecordCursor} passes that top to the
+     * native latest-by as the unindexed NULL count, and the native code answers NULL's latest row as
+     * {@code top - 1}. A piece that ends below the top must clamp that to its own index row hi; otherwise
+     * the frame-relative row lands outside the piece and NULL's latest row comes back stale.
+     */
+    @Test
+    public void testLatestByNullOverALateIndexedSymbol() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+        assertMemoryLeak(() -> {
+            createLateSymbolDay("indexed", " INDEX", false);
+            createLateSymbolDay("plain", "", false);
+
+            final String query = "SELECT late_sym, ts, price FROM %s LATEST ON ts PARTITION BY late_sym ORDER BY late_sym";
+            final String expected = """
+                    late_sym\tts\tprice
+                    \t2020-02-03T23:59:45.000000Z\t5760.0
+                    A\t2020-02-03T23:59:59.000000Z\t9999.0
+                    """;
+            assertQuery(String.format(query, "plain")).expectSize().returns(expected);
+            assertQuery(String.format(query, "indexed"))
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns(expected);
+        });
+    }
+
+    /**
+     * The geohash WITHIN form of {@link #testLatestByNullOverALateIndexedSymbol()}, which runs the native
+     * latest-by with a prefix filter. Every row carries the same geohash, so the expected rows are the ones
+     * that test checks against the unindexed oracle.
+     */
+    @Test
+    public void testLatestByNullWithinOverALateIndexedSymbol() throws Exception {
+        configOverrideUseWithinLatestByOptimisation();
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+        assertMemoryLeak(() -> {
+            createLateSymbolDay("indexed", " INDEX", true);
+
+            assertQuery("SELECT late_sym, ts, price FROM indexed WHERE g WITHIN(#u3) LATEST ON ts PARTITION BY late_sym ORDER BY late_sym")
+                    .expectSize()
+                    .withPlanContaining("LatestByAllIndexed")
+                    .returns("""
+                            late_sym\tts\tprice
+                            \t2020-02-03T23:59:45.000000Z\t5760.0
+                            A\t2020-02-03T23:59:59.000000Z\t9999.0
+                            """);
+        });
+        // EXPLAIN leaves WITHIN prefixes in the pooled generator. Later tests disable the
+        // setting, so discard these compilers before they can reuse that scratch state.
+        engine.getSqlCompilerPool().releaseAll();
+    }
+
+    /**
      * {@code SampleByFirstLastRecordCursorFactory} bounds its index cursor - and rebases the timestamp page
      * address it reads through - with the frame's index row bounds. Bounded with partition rows instead, on
      * a relocated piece it asks the index for one row range and reads the answer out of another.
@@ -152,6 +235,25 @@ public class CompositeIndexedSampleByTest extends AbstractCairoTest {
         drainWalQueue();
         execute("INSERT INTO " + table + " SELECT x::INT + 810_000, 'k1'," +
                 " timestamp_sequence('2024-01-01T01:00:00', 60_000_000L) FROM long_sequence(10)");
+        drainWalQueue();
+    }
+
+    /**
+     * A day of 15-second rows, made composite by two backdated strides, then given a {@code late_sym} column
+     * whose column top lies above the relocated pieces, plus one row for key 'A' past the top.
+     */
+    private static void createLateSymbolDay(String table, String index, boolean hasGeoHash) throws Exception {
+        final String geoHashColumn = hasGeoHash ? ", g GEOHASH(2c)" : "";
+        final String geoHashValue = hasGeoHash ? ", #u3" : "";
+        execute("CREATE TABLE " + table + " (ts TIMESTAMP, sym SYMBOL, price DOUBLE" + geoHashColumn + ") TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO " + table + " SELECT timestamp_sequence('2020-02-03', 15 * 1_000_000L), 'F', x * 1.0" + geoHashValue + " FROM long_sequence(5_760)");
+        drainWalQueue();
+        execute("INSERT INTO " + table + " SELECT timestamp_sequence('2020-02-03T02:00:07', 5 * 1_000_000L), 'G', x * 1.0" + geoHashValue + " FROM long_sequence(120)");
+        execute("INSERT INTO " + table + " SELECT timestamp_sequence('2020-02-03T08:00:11', 5 * 1_000_000L), 'H', x * 1.0" + geoHashValue + " FROM long_sequence(120)");
+        drainWalQueue();
+        execute("ALTER TABLE " + table + " ADD COLUMN late_sym SYMBOL" + index);
+        drainWalQueue();
+        execute("INSERT INTO " + table + " VALUES ('2020-02-03T23:59:59', 'A', 9999.0" + geoHashValue + ", 'A')");
         drainWalQueue();
     }
 
