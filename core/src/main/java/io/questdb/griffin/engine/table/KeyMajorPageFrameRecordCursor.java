@@ -114,6 +114,8 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     // in one tight loop (see PageFrameRowToucher), which must fit L1 with room to spare: measured
     // best at 32-64 on a 50M-row table, and worse from 128 up.
     private static final int PREFETCH_ROWS = 32;
+    // the rank up to which readKeyRows() checks a rank seek by reading the index, see there
+    private static final long RANK_CHECK_MAX_ROWS = 4096;
     private final Function filter;
     // posting readers frozen for a planned walk, see enablePlannedWalk()
     private final ObjList<AbstractPostingIndexReader> frozenReaders = new ObjList<>();
@@ -829,7 +831,14 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                     ? reader.selectKthMatch(indexKey, lo, hi, entryMax >= 0 ? Math.min(hi, entryMax) : hi, rankLo)
                     : Numbers.LONG_NULL;
             if (row != Numbers.LONG_NULL) {
-                assert row == rankRowByReading(reader, indexKey, lo, hi, rankLo) : "rank seek found another row [keyIndex=" + keyIndex + ", frameIndex=" + frameIndex + ", rankLo=" + rankLo + ']';
+                // Reading the index up to the rank costs rankLo reads per task, quadratic in the
+                // key's rows over the walk, and servers run with -ea (TAQ idx 72: 22% of the
+                // workers' window CPU). So the rank is checked in full only up to
+                // RANK_CHECK_MAX_ROWS, which every test reaches, and past it only that the row is
+                // one of the key's.
+                assert rankLo > RANK_CHECK_MAX_ROWS
+                        ? isKeyRow(reader, indexKey, row, hi)
+                        : row == rankRowByReading(reader, indexKey, lo, hi, rankLo) : "rank seek found another row [keyIndex=" + keyIndex + ", frameIndex=" + frameIndex + ", rankLo=" + rankLo + ']';
                 rowLo = row;
                 skip = 0;
             }
@@ -860,6 +869,16 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                     Unsafe.putLong(a, Unsafe.getLong(a) + shift);
                 }
             }
+        } finally {
+            Misc.free(cursor);
+        }
+    }
+
+    // Whether the index holds the key at the row.
+    private static boolean isKeyRow(AbstractPostingIndexReader reader, int indexKey, long row, long hi) {
+        final RowCursor cursor = reader.getDetachedCursor(indexKey, row, hi, null);
+        try {
+            return cursor.hasNext() && cursor.next() == 0;
         } finally {
             Misc.free(cursor);
         }
