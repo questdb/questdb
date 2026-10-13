@@ -47,7 +47,9 @@ import org.junit.Test;
  * Differential test of OrderedMap's batch key cache: a batch probe of more rows than the cache's trial
  * (which takes the cache) writes the same entries, and leaves the same map, as single-row probes (which
  * never take it), for fixed-size keys of 4, 12, 24 and 40 bytes, few or many distinct keys, a
- * cardinality change mid-batch, and slot collisions.
+ * cardinality change mid-batch, slot collisions, and runs of one key (the key-repeat loop, which the
+ * trial picks when nearly all its rows repeat the previous row's key), also when the keys change on
+ * almost every row after a repeating trial.
  */
 public class OrderedMapBatchKeyCacheTest {
     private static final int ROWS = 20_000;
@@ -78,6 +80,22 @@ public class OrderedMapBatchKeyCacheTest {
     }
 
     @Test
+    public void testRunsOfOneKey() throws Exception {
+        for (int longs = 0; longs <= 4; longs++) {
+            assertBatchMatchesSingleRows(longs, 40, 2, false, 9);
+            assertBatchMatchesSingleRows(longs, 40, 2, true, 10);
+        }
+    }
+
+    @Test
+    public void testRepeatTrialThenChangingKeys() throws Exception {
+        for (int longs = 0; longs <= 2; longs++) {
+            assertBatchMatchesSingleRows(longs, 30, 3, false, 11);
+            assertBatchMatchesSingleRows(longs, 30, 3, true, 12);
+        }
+    }
+
+    @Test
     public void testOneKey() throws Exception {
         assertBatchMatchesSingleRows(0, 1, 0, true, 7);
         assertBatchMatchesSingleRows(1, 1, 0, false, 8);
@@ -88,10 +106,25 @@ public class OrderedMapBatchKeyCacheTest {
             final Rnd rnd = new Rnd(seed, seed * 31);
             final int[] ints = new int[ROWS];
             final long[][] ls = new long[longs][ROWS];
+            int runKey = 0;
+            int runLeft = 0;
             for (int i = 0; i < ROWS; i++) {
                 final int k;
                 if (shape == 1 && i >= ROWS / 3 && i < 2 * ROWS / 3) {
                     k = 1_000_000 + i; // unique
+                } else if (shape == 2) {
+                    // runs of one key, 1 to 600 rows long: the trial sees repeats and takes the
+                    // key-repeat loop, which then meets every run boundary
+                    if (runLeft == 0) {
+                        runKey = rnd.nextInt(distinct);
+                        runLeft = 1 + rnd.nextInt(600);
+                    }
+                    runLeft--;
+                    k = runKey;
+                } else if (shape == 3) {
+                    // each batch's first 400 rows one key (the trial repeats), the rest alternating
+                    // keys: the repeat loop runs over keys that change on almost every row
+                    k = i % 2048 < 400 ? (i / 2048) % distinct : rnd.nextInt(distinct);
                 } else {
                     k = rnd.nextInt(distinct);
                 }

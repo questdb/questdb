@@ -94,14 +94,14 @@ public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, Per
     private final ObjList<DirectLongLongSortedList> perWorkerLongTopKLists;
     private final ObjList<RecordSink> perWorkerMapSinks;
     private final GroupByShardingContext shardingCtx;
+    // the column index of the only GROUP BY key when it is a plain column, else -1
+    private final int singleKeyColumnIndex;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
     // tracker-aware Unsafe overloads to charge allocations to the active workload.
     private MemoryTracker memoryTracker;
     // the GROUP BY keys are the index key column of an index gather, and nothing else
     private boolean isGroupedByGatherKey;
-    // the column index of the only GROUP BY key when it is a plain column, else -1
-    private final int singleKeyColumnIndex;
     // Initialized lazily.
     private DirectLongLongSortedList ownerLongTopKList;
 

@@ -546,6 +546,15 @@ public interface GroupByFunction extends Function, Mutable {
      *
      * @return {@code true} if the function can consume batches via {@code computeBatch}, {@code false} otherwise
      */
+    default boolean supportsBatchComputation() {
+        return false;
+    }
+
+    @Override
+    default boolean supportsParallelism() {
+        return false;
+    }
+
     /**
      * Whether {@link #computeBatchKernel} reads its arguments by {@link GroupByBatchKernels.Args#type(int)},
      * so that a column argument may be handed over as the column's own values, see
@@ -553,15 +562,6 @@ public interface GroupByFunction extends Function, Mutable {
      * exactly as the column's getter for its argument type would.
      */
     default boolean supportsRawKernelArgs() {
-        return false;
-    }
-
-    default boolean supportsBatchComputation() {
-        return false;
-    }
-
-    @Override
-    default boolean supportsParallelism() {
         return false;
     }
 }

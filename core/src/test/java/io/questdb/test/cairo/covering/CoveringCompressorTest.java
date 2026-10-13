@@ -28,9 +28,11 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.idx.BitpackUtils;
 import io.questdb.cairo.idx.CoveringCompressor;
 import io.questdb.cairo.idx.PostingIndexNative;
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Unsafe;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -81,13 +83,26 @@ public class CoveringCompressorTest extends AbstractCairoTest {
     @Test
     public void testNative32UnpackMatchesJava() throws Exception {
         // the 32-bit unpacks of the covered INT and ALP FLOAT range decode against the int64
-        // unpack they replace, every bit width, every start, up to the packed buffer's last value
+        // unpack they replace, every bit width, every start, up to the packed buffer's last value.
+        // The packed values, exactly packedDataSize(total, bw) bytes, end where a mapping's backed
+        // page ends: the next page lies past the end of the file, so a read beyond the block faults.
         Assume.assumeTrue("library without the 32-bit unpacks", PostingIndexNative.isNative32Available());
         final Random rnd = new Random(42L);
         assertMemoryLeak(() -> {
             final int total = 300;
             final long values = Unsafe.malloc((long) total * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            final long packed = Unsafe.malloc(BitpackUtils.packedDataSize(total, 32), MemoryTag.NATIVE_DEFAULT);
+            final long pageSize = Files.PAGE_SIZE;
+            final long staging = Unsafe.malloc(BitpackUtils.packedDataSize(total, 32), MemoryTag.NATIVE_DEFAULT);
+            final long fd;
+            final long map;
+            try (Path path = new Path()) {
+                path.of(root).concat("unpack32.d");
+                fd = Files.openRW(path.$());
+                Assert.assertTrue(fd > -1);
+                Assert.assertTrue(Files.truncate(fd, pageSize));
+                map = Files.mmap(fd, 2 * pageSize, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+                Assert.assertTrue(map > 0);
+            }
             final long ws = Unsafe.malloc((long) total * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
             final long out = Unsafe.malloc((long) total * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
             try {
@@ -95,7 +110,10 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                     for (int i = 0; i < total; i++) {
                         Unsafe.putLong(values + (long) i * Long.BYTES, (rnd.nextLong() & 0xFFFFFFFFL) & (bw == 32 ? -1L : (1L << bw) - 1));
                     }
-                    PostingIndexNative.packValuesNative(values, total, 0, bw, packed);
+                    PostingIndexNative.packValuesNative(values, total, 0, bw, staging);
+                    final int packedSize = BitpackUtils.packedDataSize(total, bw);
+                    final long packed = map + pageSize - packedSize;
+                    Unsafe.copyMemory(staging, packed, packedSize);
                     final int base = rnd.nextInt();
                     for (int lo = 0; lo < total; lo += 1 + rnd.nextInt(9)) {
                         final int n = 1 + rnd.nextInt(total - lo);
@@ -116,7 +134,9 @@ public class CoveringCompressorTest extends AbstractCairoTest {
                 }
             } finally {
                 Unsafe.free(values, (long) total * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                Unsafe.free(packed, BitpackUtils.packedDataSize(total, 32), MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(staging, BitpackUtils.packedDataSize(total, 32), MemoryTag.NATIVE_DEFAULT);
+                Files.munmap(map, 2 * pageSize, MemoryTag.MMAP_DEFAULT);
+                Files.close(fd);
                 Unsafe.free(ws, (long) total * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(out, (long) total * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
