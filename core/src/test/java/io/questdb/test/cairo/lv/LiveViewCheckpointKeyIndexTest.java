@@ -64,7 +64,7 @@ public class LiveViewCheckpointKeyIndexTest {
     private static final Method INDEX_RELEASE;
     private static final Method INDEX_RESERVE;
     private static final Method INDEX_SIZE;
-    private static final Field INDEX_SLOT_COUNT;
+    private static final Field INDEX_SLOTS;
     private static final int KEY_COUNT = 50_000;
     private static final int KEY_LENGTH = 6;
     private static final int KEY_SHAPE_COUNT = 5;
@@ -84,12 +84,14 @@ public class LiveViewCheckpointKeyIndexTest {
     private static final double MAX_POOLED_HIT_PROBES = 2.25;
     private static final double MAX_POOLED_MISS_PROBES = 6.5;
     private static final int MIN_MEASURED_KEYS = 1_000;
+    private static final Method SLOTS_SLOT_COUNT;
 
     static {
         // The arena and the index are package-private to io.questdb.cairo.lv.
         try {
             final Class<?> arena = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointRecordArena");
             final Class<?> index = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointKeyIndex");
+            final Class<?> slots = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointSlotTable");
             ARENA_FOR_KEYS = accessible(arena.getDeclaredMethod("forKeys"));
             ARENA_APPEND = accessible(arena.getDeclaredMethod("append", long.class, int.class));
             ARENA_CLOSE = accessible(arena.getDeclaredMethod("close"));
@@ -103,7 +105,8 @@ public class LiveViewCheckpointKeyIndexTest {
             INDEX_RELEASE = accessible(index.getDeclaredMethod("release"));
             INDEX_RESERVE = accessible(index.getDeclaredMethod("reserve", long.class));
             INDEX_SIZE = accessible(index.getDeclaredMethod("size"));
-            INDEX_SLOT_COUNT = accessible(index.getDeclaredField("slotCount"));
+            INDEX_SLOTS = accessible(index.getDeclaredField("slots"));
+            SLOTS_SLOT_COUNT = accessible(slots.getDeclaredMethod("slotCount"));
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -327,24 +330,24 @@ public class LiveViewCheckpointKeyIndexTest {
                 // Below the cap the reserve sizes exactly: one entry fewer fits 2^24 slots, and
                 // the fewest that need 2^25 get them, as does the most 2^25 slots hold.
                 INDEX_RESERVE.invoke(index, halfCapDoublingEntryCount - 1);
-                Assert.assertEquals(cappedSlotCount / 2, INDEX_SLOT_COUNT.getInt(index));
+                Assert.assertEquals(cappedSlotCount / 2, slotCount(index));
                 INDEX_RELEASE.invoke(index);
                 INDEX_RESERVE.invoke(index, halfCapDoublingEntryCount);
-                Assert.assertEquals(cappedSlotCount, INDEX_SLOT_COUNT.getInt(index));
+                Assert.assertEquals(cappedSlotCount, slotCount(index));
                 INDEX_RELEASE.invoke(index);
                 INDEX_RESERVE.invoke(index, capDoublingEntryCount - 1);
-                Assert.assertEquals(cappedSlotCount, INDEX_SLOT_COUNT.getInt(index));
+                Assert.assertEquals(cappedSlotCount, slotCount(index));
                 INDEX_RELEASE.invoke(index);
                 // Uncapped, one more entry would take 2^26 slots.
                 INDEX_RESERVE.invoke(index, capDoublingEntryCount);
-                Assert.assertEquals("a reserve past the cap must presize the capped table", cappedSlotCount, INDEX_SLOT_COUNT.getInt(index));
+                Assert.assertEquals("a reserve past the cap must presize the capped table", cappedSlotCount, slotCount(index));
                 INDEX_RELEASE.invoke(index);
                 INDEX_RESERVE.invoke(index, 100_000_000L);
-                Assert.assertEquals(cappedSlotCount, INDEX_SLOT_COUNT.getInt(index));
+                Assert.assertEquals(cappedSlotCount, slotCount(index));
                 INDEX_RELEASE.invoke(index);
                 // A count no int slot count can reach stops at the cap as well.
                 INDEX_RESERVE.invoke(index, Long.MAX_VALUE);
-                Assert.assertEquals(cappedSlotCount, INDEX_SLOT_COUNT.getInt(index));
+                Assert.assertEquals(cappedSlotCount, slotCount(index));
                 Assert.assertEquals(
                         "a reserve over an empty table must allocate nothing",
                         baseline,
@@ -601,6 +604,10 @@ public class LiveViewCheckpointKeyIndexTest {
                 yield bytes;
             }
         };
+    }
+
+    private static int slotCount(Object index) throws Exception {
+        return (int) SLOTS_SLOT_COUNT.invoke(INDEX_SLOTS.get(index));
     }
 
     /**

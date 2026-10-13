@@ -27,10 +27,8 @@ package io.questdb.cairo.lv;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Mutable;
-import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -98,21 +96,14 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
      * their owners still reuse the storage.
      */
     public static final long MAX_RETAINED_KEY_BYTES = LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEY_BYTES;
-    private static final double LOAD_FACTOR = 0.4;
-    private static final int MIN_INITIAL_CAPACITY = 16;
+    // The heap table this replaced started at a capacity of 16 keys, doubled it when full,
+    // and spread it over ceilPow2(capacity / 0.4) slots, four slots a key of capacity. A
+    // table that grows at a quarter of its slots, from 64, keeps that growth schedule.
+    private static final double LOAD_FACTOR = 0.25;
+    private static final int MIN_SLOT_COUNT = 64;
     private static final int SLOT_BYTES = 16;
-    private static final int SLOT_HASH_OFFSET = Long.BYTES;
     private final LiveViewCheckpointRecordArena keys = LiveViewCheckpointRecordArena.forKeys();
-    private int capacity;
-    private int free;
-    private int mask;
-    private int slotCount;
-    private long slotsAddress;
-    private long slotsBytes;
-
-    public LiveViewCheckpointOutputKeyDomain() {
-        resetGeometry();
-    }
+    private final LiveViewCheckpointSlotTable slots = new LiveViewCheckpointSlotTable(SLOT_BYTES, MIN_SLOT_COUNT, LOAD_FACTOR);
 
     /**
      * Drops the key {@link #beginKey()} started without joining it to the domain.
@@ -127,13 +118,14 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
      * lie in this domain's own storage.
      */
     public void add(long keyAddress, int keyLength) {
-        ensureSlots();
+        slots.ensureAllocated();
         final int hash = LiveViewCheckpointKeys.hash(keyAddress, keyLength);
         final int index = findSlot(hash, keyAddress, keyLength);
         if (index < 0) {
             return;
         }
-        occupy(index, keys.append(keyAddress, keyLength), hash);
+        final long handle = keys.append(keyAddress, keyLength);
+        slots.occupy(slots.slotAddress(index), handle, hash);
     }
 
     /**
@@ -142,7 +134,7 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
      * is valid only until then.
      */
     public MemoryA beginKey() {
-        ensureSlots();
+        slots.ensureAllocated();
         return keys.beginRecord();
     }
 
@@ -153,10 +145,7 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
     @Override
     public void clear() {
         keys.clear();
-        if (slotsAddress != 0) {
-            Vect.memset(slotsAddress, slotsBytes, 0);
-        }
-        free = capacity;
+        slots.clear();
     }
 
     /**
@@ -164,9 +153,8 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
      */
     @Override
     public void close() {
-        freeSlots();
+        slots.close();
         keys.release();
-        resetGeometry();
     }
 
     /**
@@ -175,7 +163,7 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
      */
     public void commitKey() {
         // beginKey() allocated the table, and nothing in between may clear the domain.
-        assert slotsAddress != 0 : "live view checkpoint output key committed without its table";
+        assert slots.isAllocated() : "live view checkpoint output key committed without its table";
         final long handle = keys.commitRecord();
         final long keyAddress = keys.address(handle);
         final int keyLength = keys.length(handle);
@@ -185,11 +173,11 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
             keys.discardLastRecord(handle);
             return;
         }
-        occupy(index, handle, hash);
+        slots.occupy(slots.slotAddress(index), handle, hash);
     }
 
     public boolean contains(long keyAddress, int keyLength) {
-        return slotsAddress != 0 && findSlot(LiveViewCheckpointKeys.hash(keyAddress, keyLength), keyAddress, keyLength) < 0;
+        return slots.isAllocated() && findSlot(LiveViewCheckpointKeys.hash(keyAddress, keyLength), keyAddress, keyLength) < 0;
     }
 
     /**
@@ -216,36 +204,8 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
             // records other holds, so each handle names the same key here. The key bytes
             // are never re-read: every slot carries its key's hash.
             keys.copyFrom(other.keys);
-            // add() doubles the capacity the moment the keys fill it, so the capacity it
-            // holds keyCount keys at is the first doubling above keyCount.
-            int copyCapacity = MIN_INITIAL_CAPACITY;
-            while (copyCapacity <= keyCount) {
-                copyCapacity *= 2;
-            }
-            capacity = copyCapacity;
-            free = copyCapacity;
-            slotCount = slotCountFor(copyCapacity);
-            mask = slotCount - 1;
-            ensureSlots();
-            for (int i = 0, n = other.slotCount; i < n; i++) {
-                final long otherSlot = other.slotAddress(i);
-                final long handlePlusOne = Unsafe.getLong(otherSlot);
-                if (handlePlusOne != 0) {
-                    // other holds each key once, so its place is the first empty slot the
-                    // probe from its hash reaches.
-                    final int hash = Unsafe.getInt(otherSlot + SLOT_HASH_OFFSET);
-                    int index = hash & mask;
-                    while (Unsafe.getLong(slotAddress(index)) != 0) {
-                        index = (index + 1) & mask;
-                    }
-                    final long slot = slotAddress(index);
-                    Unsafe.putLong(slot, handlePlusOne);
-                    Unsafe.putInt(slot + SLOT_HASH_OFFSET, hash);
-                    free--;
-                }
-            }
-            // The capacity sits above the key count, so the table never regrows.
-            assert free > 0 && size() == keyCount;
+            slots.copyFrom(other.slots);
+            assert size() == keyCount;
         } catch (Throwable th) {
             // The table would otherwise name handles the arena does not hold.
             restoreInitialCapacity();
@@ -273,7 +233,7 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
      * domain that holds no table
      */
     public int getSlotCount() {
-        return slotsAddress == 0 ? 0 : slotCount;
+        return slots.isAllocated() ? slots.slotCount() : 0;
     }
 
     public boolean isEmpty() {
@@ -292,7 +252,7 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
     }
 
     public boolean isSlotUsed(int slot) {
-        return Unsafe.getLong(slotAddress(slot)) != 0;
+        return Unsafe.getLong(slots.slotAddress(slot)) != 0;
     }
 
     /**
@@ -302,27 +262,12 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
      * keys it held.
      */
     public void restoreInitialCapacity() {
-        freeSlots();
+        slots.close();
         keys.release();
-        resetGeometry();
     }
 
     public int size() {
-        return capacity - free;
-    }
-
-    private static int slotCountFor(int capacity) {
-        return Numbers.ceilPow2((int) (capacity / LOAD_FACTOR));
-    }
-
-    private void ensureSlots() {
-        if (slotsAddress == 0) {
-            final long bytes = (long) slotCount * SLOT_BYTES;
-            final long address = Unsafe.malloc(bytes, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
-            Vect.memset(address, bytes, 0);
-            slotsAddress = address;
-            slotsBytes = bytes;
-        }
+        return slots.size();
     }
 
     /**
@@ -330,14 +275,15 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
      * {@code -slot - 1} when it does. The table must be allocated.
      */
     private int findSlot(int hash, long keyAddress, int keyLength) {
+        final int mask = slots.mask();
         int index = hash & mask;
         while (true) {
-            final long slot = slotAddress(index);
+            final long slot = slots.slotAddress(index);
             final long handlePlusOne = Unsafe.getLong(slot);
             if (handlePlusOne == 0) {
                 return index;
             }
-            if (Unsafe.getInt(slot + SLOT_HASH_OFFSET) == hash) {
+            if (Unsafe.getInt(slot + LiveViewCheckpointSlotTable.HASH_OFFSET) == hash) {
                 final long handle = handlePlusOne - 1;
                 if (LiveViewCheckpointKeys.equals(keys.address(handle), keys.length(handle), keyAddress, keyLength)) {
                     return -index - 1;
@@ -347,75 +293,9 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
         }
     }
 
-    private void freeSlots() {
-        if (slotsAddress != 0) {
-            Unsafe.free(slotsAddress, slotsBytes, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
-            slotsAddress = 0;
-            slotsBytes = 0;
-        }
-    }
-
     private long handleAt(int slot) {
-        final long handlePlusOne = Unsafe.getLong(slotAddress(slot));
+        final long handlePlusOne = Unsafe.getLong(slots.slotAddress(slot));
         assert handlePlusOne != 0 : "live view checkpoint output key slot is empty";
         return handlePlusOne - 1;
-    }
-
-    private void occupy(int index, long handle, int hash) {
-        final long slot = slotAddress(index);
-        Unsafe.putLong(slot, handle + 1);
-        Unsafe.putInt(slot + SLOT_HASH_OFFSET, hash);
-        if (--free < 1) {
-            rehash();
-        }
-    }
-
-    /**
-     * Doubles the capacity and re-places every key by its stored hash, visiting the old
-     * slots in order - the schedule and the order the heap table used, so the slot order
-     * a domain iterates in is unchanged. Key bytes are not re-read.
-     */
-    private void rehash() {
-        final long oldAddress = slotsAddress;
-        final long oldBytes = slotsBytes;
-        final int oldSlotCount = slotCount;
-        final int newCapacity = capacity * 2;
-        final int newSlotCount = slotCountFor(newCapacity);
-        final long newBytes = (long) newSlotCount * SLOT_BYTES;
-        final long newAddress = Unsafe.malloc(newBytes, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
-        Vect.memset(newAddress, newBytes, 0);
-        slotsAddress = newAddress;
-        slotsBytes = newBytes;
-        slotCount = newSlotCount;
-        mask = newSlotCount - 1;
-        capacity = newCapacity;
-        free = newCapacity;
-        for (int i = 0; i < oldSlotCount; i++) {
-            final long oldSlot = oldAddress + (long) i * SLOT_BYTES;
-            final long handlePlusOne = Unsafe.getLong(oldSlot);
-            if (handlePlusOne != 0) {
-                final int hash = Unsafe.getInt(oldSlot + SLOT_HASH_OFFSET);
-                int index = hash & mask;
-                while (Unsafe.getLong(slotAddress(index)) != 0) {
-                    index = (index + 1) & mask;
-                }
-                final long slot = slotAddress(index);
-                Unsafe.putLong(slot, handlePlusOne);
-                Unsafe.putInt(slot + SLOT_HASH_OFFSET, hash);
-                free--;
-            }
-        }
-        Unsafe.free(oldAddress, oldBytes, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
-    }
-
-    private void resetGeometry() {
-        capacity = MIN_INITIAL_CAPACITY;
-        free = capacity;
-        slotCount = slotCountFor(capacity);
-        mask = slotCount - 1;
-    }
-
-    private long slotAddress(int index) {
-        return slotsAddress + (long) index * SLOT_BYTES;
     }
 }

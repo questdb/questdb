@@ -30,7 +30,6 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
-import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
@@ -70,22 +69,14 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
     // Holds 21 entries without growing: the 22nd, capacityOf(32), doubles it.
     private static final int MIN_SLOT_COUNT = 32;
     private static final int SLOT_BYTES = 24;
-    private static final int SLOT_HASH_OFFSET = Long.BYTES;
-    private static final int SLOT_NAMESPACE_OFFSET = SLOT_HASH_OFFSET + Integer.BYTES;
+    private static final int SLOT_NAMESPACE_OFFSET = LiveViewCheckpointSlotTable.HEADER_BYTES;
     private static final int SLOT_VERSION_OFFSET = SLOT_NAMESPACE_OFFSET + Integer.BYTES;
     private static final int SLOT_VALUE_OFFSET = SLOT_VERSION_OFFSET + Integer.BYTES;
     private final LiveViewCheckpointRecordArena keys;
-    // The entry count that doubles the table: LOAD_FACTOR of its slots, rounded down.
-    private int capacity;
-    private int free;
-    private int mask;
-    private int slotCount;
-    private long slotsAddress;
-    private long slotsBytes;
+    private final LiveViewCheckpointSlotTable slots = new LiveViewCheckpointSlotTable(SLOT_BYTES, MIN_SLOT_COUNT, LOAD_FACTOR);
 
     LiveViewCheckpointKeyIndex(@NotNull LiveViewCheckpointRecordArena keys) {
         this.keys = keys;
-        resetGeometry();
     }
 
     /**
@@ -93,10 +84,7 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
      */
     @Override
     public void clear() {
-        if (slotsAddress != 0) {
-            Vect.memset(slotsAddress, slotsBytes, 0);
-        }
-        free = capacity;
+        slots.clear();
     }
 
     /**
@@ -112,13 +100,14 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
      * under these qualifiers, or -1 when the index holds none
      */
     int get(int namespace, int version, long keyAddress, int keyLength) {
-        if (slotsAddress == 0) {
+        if (!slots.isAllocated()) {
             return -1;
         }
         final int hash = hash(namespace, version, keyAddress, keyLength);
+        final int mask = slots.mask();
         int index = hash & mask;
         while (true) {
-            final long slot = slotAddress(index);
+            final long slot = slots.slotAddress(index);
             final long handlePlusOne = Unsafe.getLong(slot);
             if (handlePlusOne == 0) {
                 return -1;
@@ -137,11 +126,12 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
     @TestOnly
     double getHitProbeAverageForTest() {
         long probes = 0;
-        if (slotsAddress != 0) {
-            for (int i = 0; i < slotCount; i++) {
-                final long slot = slotAddress(i);
+        if (slots.isAllocated()) {
+            final int mask = slots.mask();
+            for (int i = 0, n = slots.slotCount(); i < n; i++) {
+                final long slot = slots.slotAddress(i);
                 if (Unsafe.getLong(slot) != 0) {
-                    probes += ((i - Unsafe.getInt(slot + SLOT_HASH_OFFSET)) & mask) + 1;
+                    probes += ((i - Unsafe.getInt(slot + LiveViewCheckpointSlotTable.HASH_OFFSET)) & mask) + 1;
                 }
             }
         }
@@ -156,9 +146,11 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
     @TestOnly
     double getMissProbeAverageForTest() {
         long probes = 0;
+        final int slotCount = slots.slotCount();
+        final int mask = slots.mask();
         for (int i = 0; i < slotCount; i++) {
             int run = 0;
-            while (slotsAddress != 0 && run < slotCount && Unsafe.getLong(slotAddress((i + run) & mask)) != 0) {
+            while (slots.isAllocated() && run < slotCount && Unsafe.getLong(slots.slotAddress((i + run) & mask)) != 0) {
                 run++;
             }
             probes += run + 1;
@@ -174,24 +166,21 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
         if (value < 0) {
             throw new IllegalArgumentException("negative live view checkpoint key index value");
         }
-        ensureSlots();
+        slots.ensureAllocated();
         // put() appends nothing to the arena, so the address holds for the whole probe.
         final long keyAddress = keys.address(keyHandle);
         final int keyLength = keys.length(keyHandle);
         final int hash = hash(namespace, version, keyAddress, keyLength);
+        final int mask = slots.mask();
         int index = hash & mask;
         while (true) {
-            final long slot = slotAddress(index);
+            final long slot = slots.slotAddress(index);
             final long handlePlusOne = Unsafe.getLong(slot);
             if (handlePlusOne == 0) {
-                Unsafe.putLong(slot, keyHandle + 1);
-                Unsafe.putInt(slot + SLOT_HASH_OFFSET, hash);
                 Unsafe.putInt(slot + SLOT_NAMESPACE_OFFSET, namespace);
                 Unsafe.putInt(slot + SLOT_VERSION_OFFSET, version);
                 Unsafe.putInt(slot + SLOT_VALUE_OFFSET, value);
-                if (--free < 1) {
-                    rehash(slotCount * 2);
-                }
+                slots.occupy(slot, keyHandle, hash);
                 return;
             }
             if (isMatch(slot, handlePlusOne, hash, namespace, version, keyAddress, keyLength)) {
@@ -206,8 +195,7 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
      * Frees the table. The index stays usable: the next put allocates afresh.
      */
     void release() {
-        freeSlots();
-        resetGeometry();
+        slots.close();
     }
 
     /**
@@ -215,27 +203,11 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
      * allocation. A table already that large is left as it is.
      */
     void reserve(long keyCount) {
-        int target = MIN_SLOT_COUNT;
-        while (capacityOf(target) <= keyCount && target < MAX_RESERVED_SLOT_COUNT) {
-            target *= 2;
-        }
-        if (target <= slotCount) {
-            return;
-        }
-        if (size() == 0) {
-            freeSlots();
-            setGeometry(target);
-        } else {
-            rehash(target);
-        }
+        slots.reserve(keyCount, MAX_RESERVED_SLOT_COUNT);
     }
 
     int size() {
-        return capacity - free;
-    }
-
-    private static int capacityOf(int slotCount) {
-        return (int) (slotCount * LOAD_FACTOR);
+        return slots.size();
     }
 
     /**
@@ -256,24 +228,6 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
         );
     }
 
-    private void ensureSlots() {
-        if (slotsAddress == 0) {
-            final long bytes = (long) slotCount * SLOT_BYTES;
-            final long address = Unsafe.malloc(bytes, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
-            Vect.memset(address, bytes, 0);
-            slotsAddress = address;
-            slotsBytes = bytes;
-        }
-    }
-
-    private void freeSlots() {
-        if (slotsAddress != 0) {
-            Unsafe.free(slotsAddress, slotsBytes, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
-            slotsAddress = 0;
-            slotsBytes = 0;
-        }
-    }
-
     private boolean isMatch(
             long slot,
             long handlePlusOne,
@@ -283,60 +237,12 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
             long keyAddress,
             int keyLength
     ) {
-        if (Unsafe.getInt(slot + SLOT_HASH_OFFSET) != hash
+        if (Unsafe.getInt(slot + LiveViewCheckpointSlotTable.HASH_OFFSET) != hash
                 || Unsafe.getInt(slot + SLOT_NAMESPACE_OFFSET) != namespace
                 || Unsafe.getInt(slot + SLOT_VERSION_OFFSET) != version) {
             return false;
         }
         final long handle = handlePlusOne - 1;
         return LiveViewCheckpointKeys.equals(keys.address(handle), keys.length(handle), keyAddress, keyLength);
-    }
-
-    /**
-     * Moves every entry into a table of {@code newSlotCount} slots, allocated before
-     * anything changes, placing each slot by its stored hash in old-slot order.
-     */
-    private void rehash(int newSlotCount) {
-        final long newBytes = (long) newSlotCount * SLOT_BYTES;
-        final long newAddress = Unsafe.malloc(newBytes, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
-        Vect.memset(newAddress, newBytes, 0);
-        final long oldAddress = slotsAddress;
-        final long oldBytes = slotsBytes;
-        final int oldSlotCount = slotCount;
-        final int newMask = newSlotCount - 1;
-        int entries = 0;
-        for (int i = 0; i < oldSlotCount; i++) {
-            final long oldSlot = oldAddress + (long) i * SLOT_BYTES;
-            if (Unsafe.getLong(oldSlot) != 0) {
-                int index = Unsafe.getInt(oldSlot + SLOT_HASH_OFFSET) & newMask;
-                while (Unsafe.getLong(newAddress + (long) index * SLOT_BYTES) != 0) {
-                    index = (index + 1) & newMask;
-                }
-                Vect.memcpy(newAddress + (long) index * SLOT_BYTES, oldSlot, SLOT_BYTES);
-                entries++;
-            }
-        }
-        slotsAddress = newAddress;
-        slotsBytes = newBytes;
-        setGeometry(newSlotCount);
-        free = capacity - entries;
-        if (oldAddress != 0) {
-            Unsafe.free(oldAddress, oldBytes, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
-        }
-    }
-
-    private void resetGeometry() {
-        setGeometry(MIN_SLOT_COUNT);
-    }
-
-    private void setGeometry(int slotCount) {
-        this.slotCount = slotCount;
-        mask = slotCount - 1;
-        capacity = capacityOf(slotCount);
-        free = capacity;
-    }
-
-    private long slotAddress(int index) {
-        return slotsAddress + (long) index * SLOT_BYTES;
     }
 }
