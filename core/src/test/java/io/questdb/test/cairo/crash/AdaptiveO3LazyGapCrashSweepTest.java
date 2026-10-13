@@ -271,16 +271,23 @@ public class AdaptiveO3LazyGapCrashSweepTest extends AbstractAdaptiveCrashSweepT
                 LOG.info().$("[O3 lazy-gap scoreboard A/B] evict=").$(evictScoreboard)
                         .$(" crash at k=").$(crashOp - base).$(" of the lazy batch: ").$(crashedOp).$();
 
-                // The driver's recovery, except that the scoreboard eviction is the toggled variable.
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-                engine.releaseAllWalWriters();
-                crashFf.crash(engine.getConfiguration().getDbRoot());
-                if (engine.getTableSequencerAPI().isSuspended(tt)) {
-                    engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
-                }
+                // The driver's restart and recovery, except that the scoreboard eviction is the toggled variable.
                 if (evictScoreboard) {
-                    engine.getTxnScoreboardPool().remove(tt); // the fresh-restart model
+                    simulateRestart(new TableToken[]{tt});
+                } else {
+                    // simulateRestart without its scoreboard evictions (resetForReboot evicts one as well): the
+                    // sequencer still closes and the tracker still resets, as on a fresh process.
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    engine.releaseCrashOrphanedWalWriters();
+                    engine.releaseAllWalWriters();
+                    engine.releaseAllViewWalWriters();
+                    crashFf.crash(engine.getConfiguration().getDbRoot());
+                    engine.getTableSequencerAPI().purgeTxnTracker(tt.getDirName());
+                    engine.getTableSequencerAPI().releaseAll();
+                    if (engine.getTableSequencerAPI().isSuspended(tt)) {
+                        engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
+                    }
                 }
                 new RecoveryCoordinator(engine).recover();
                 engine.notifyWalTxnRepublisher(tt);

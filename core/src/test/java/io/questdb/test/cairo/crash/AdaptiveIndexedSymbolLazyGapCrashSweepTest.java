@@ -269,15 +269,9 @@ public class AdaptiveIndexedSymbolLazyGapCrashSweepTest extends AbstractAdaptive
                 LOG.info().$("[indexed-symbol lazy-gap negative control] recovery=").$(recoveryOn)
                         .$(" crash at k=").$(crashOp - base).$(" of the lazy batch: ").$(crashedOp).$();
 
-                // The sweep driver's recovery steps, except that recover() runs only when recoveryOn is set.
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-                engine.releaseAllWalWriters();
-                crashFf.crash(engine.getConfiguration().getDbRoot());
-                if (engine.getTableSequencerAPI().isSuspended(tt)) {
-                    engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
-                }
-                engine.getTxnScoreboardPool().remove(tt); // fresh-restart model (see the driver's javadoc)
+                // The sweep driver's restart and recovery steps, except that recover() runs only when recoveryOn is
+                // set.
+                simulateRestart(new TableToken[]{tt});
                 // The commit pointer as the crash left it, before anything gets a chance to repair it.
                 preRecoverySeqTxn[0] = readOnDiskTxnSeqTxn(tt, PartitionBy.DAY);
                 if (recoveryOn) {

@@ -331,15 +331,8 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
                 LOG.info().$("[O3 lazy-gap finding] recovery=").$(recoveryOn)
                         .$(" crash at k=").$(crashOp - base).$(" of the lazy batch: ").$(crashedOp).$();
 
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-                engine.releaseAllWalWriters();
-                crashFf.crash(engine.getConfiguration().getDbRoot());
-                // Model a fresh restart: clear the transient in-memory suspend a live-engine apply-crash
-                // left (a real power loss never ran that catch) -- recovery-neutral, mirrors the driver.
-                if (engine.getTableSequencerAPI().isSuspended(tt)) {
-                    engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
-                }
+                // The driver's fresh-restart model; recover() runs only when recoveryOn is set.
+                simulateRestart(new TableToken[]{tt});
                 if (recoveryOn) {
                     new RecoveryCoordinator(engine).recover();
                 }

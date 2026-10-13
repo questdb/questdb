@@ -418,17 +418,9 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
                 LOG.info().$("[multi-table lazy-gap negative control] recovery=").$(recoveryOn)
                         .$(" crash at k=").$(crashOp - base).$(" of the lazy batch: ").$(crashedOp).$();
 
-                // The driver's recovery steps, except that the recovery-enabled flag is the toggled variable.
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-                engine.releaseAllWalWriters();
-                crashFf.crash(engine.getConfiguration().getDbRoot());
-                for (TableToken tt : new TableToken[]{tt1, tt2}) {
-                    if (engine.getTableSequencerAPI().isSuspended(tt)) {
-                        engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
-                    }
-                    engine.getTxnScoreboardPool().remove(tt); // fresh-restart model (see the driver's javadoc)
-                }
+                // The driver's restart and recovery steps, except that the recovery-enabled flag is the toggled
+                // variable.
+                simulateRestart(new TableToken[]{tt1, tt2});
                 // The commit pointers as the crash left them, before anything can repair them.
                 preRecoverySeqTxn[0] = readOnDiskTxnSeqTxn(tt1, PartitionBy.DAY);
                 preRecoverySeqTxn[1] = readOnDiskTxnSeqTxn(tt2, PartitionBy.DAY);

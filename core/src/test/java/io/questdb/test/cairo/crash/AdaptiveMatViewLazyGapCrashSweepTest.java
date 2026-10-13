@@ -398,23 +398,9 @@ public class AdaptiveMatViewLazyGapCrashSweepTest extends AbstractAdaptiveCrashS
                 Assert.assertEquals("pre-crash base must have all rows", ROWS, rowCount("base"));
                 assertMvEqualsBaseAggregation(-1, "pre-crash");
 
-                // Crash: drop non-durable column data; keep the fsync/msync'd state and the durable WAL.
-                crashFf.powerLoss();
-                engine.releaseAllReaders();
-                engine.releaseAllWriters();
-                engine.releaseAllWalWriters();
-                crashFf.crash(engine.getConfiguration().getDbRoot());
-
-                // Model a fresh restart: clear the transient apply-crash suspend, evict the pooled scoreboards, and run
-                // recovery or skip it, per the arm.
-                if (engine.getTableSequencerAPI().isSuspended(baseTt)) {
-                    engine.getTableSequencerAPI().getTxnTracker(baseTt).setUnsuspended();
-                }
-                if (engine.getTableSequencerAPI().isSuspended(mvTt)) {
-                    engine.getTableSequencerAPI().getTxnTracker(mvTt).setUnsuspended();
-                }
-                engine.getTxnScoreboardPool().remove(baseTt);
-                engine.getTxnScoreboardPool().remove(mvTt);
+                // Crash: drop non-durable column data; keep the fsync/msync'd state and the durable WAL. Model a
+                // fresh restart with the driver's steps, then run recovery or skip it, per the arm.
+                simulateRestart(new TableToken[]{baseTt, mvTt});
                 // The base's commit pointer as the crash left it, before anything can repair it.
                 final long preRecoveryBaseSeqTxn = readOnDiskTxnSeqTxn(baseTt, PartitionBy.DAY);
                 if (recoveryEnabled) {

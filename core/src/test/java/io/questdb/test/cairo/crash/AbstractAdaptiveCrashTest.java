@@ -31,6 +31,10 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TxReader;
 import io.questdb.std.str.Path;
 
+import java.util.Arrays;
+import java.util.LinkedHashSet;
+import java.util.Set;
+
 /**
  * Shared adaptive crash-test machinery: the fresh-process restart sequence ({@link #recoverAfterCrash}), the
  * handle and fd reclamation that keeps a live-JVM crash simulation leak-clean, and two helpers every adaptive
@@ -158,9 +162,20 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
         engine.releaseAllViewWalWriters();
         crashFf.crash(engine.getConfiguration().getDbRoot());
 
+        // The commit phase can re-point a table's name to a token it minted (REBASE WAL swaps a new table dir in)
+        // and open that token's sequencer before the power loss. A fresh process has none of them, so the restart
+        // below covers the token each name resolves to now as well as the tokens the caller knew.
+        final Set<TableToken> restartTokens = new LinkedHashSet<>(Arrays.asList(tokens));
+        for (TableToken tt : tokens) {
+            final TableToken live = engine.getTableTokenIfExists(tt.getTableName());
+            if (live != null) {
+                restartTokens.add(live);
+            }
+        }
+
         // A fresh process starts with un-suspended trackers: clear the suspend the apply job's catch set when it
         // swallowed the CrashSimulationError, or recovery excludes the table from apply.
-        for (TableToken tt : tokens) {
+        for (TableToken tt : restartTokens) {
             if (engine.getTableSequencerAPI().isSuspended(tt)) {
                 engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
             }
@@ -171,7 +186,7 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
         // when recovery rewinds _txn below the stale max (a sustained-lazy-gap epoch rewind):
         // TxnScoreboardV2.acquireTxn then fails for txn < max and a reader spins to a spurious "Transaction read
         // timeout". Readers and writers are released above, so the pooled scoreboards are idle and removed cleanly.
-        for (TableToken tt : tokens) {
+        for (TableToken tt : restartTokens) {
             engine.getTxnScoreboardPool().remove(tt);
         }
 
@@ -181,7 +196,7 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
         // rolled back to N-1 leaves the open sequencer advertising N. forAllWalTables would re-seed the tracker to N
         // and recovery's apply would wait forever for a txn the WAL no longer has. Closing the sequencer makes
         // forAllWalTables read the durable txnlog, so the tracker restarts at N-1.
-        for (TableToken tt : tokens) {
+        for (TableToken tt : restartTokens) {
             engine.getTableSequencerAPI().resetForReboot(tt);
         }
 
@@ -189,7 +204,7 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
         // live apply job after it caught CrashSimulationError. A real power loss terminates the process at
         // the injected durability operation, so that catch-side effect never happens. Clear it after the
         // reload as well as before it, then let recovery decide from durable table/WAL state alone.
-        for (TableToken tt : tokens) {
+        for (TableToken tt : restartTokens) {
             if (engine.getTableSequencerAPI().isSuspended(tt)) {
                 engine.getTableSequencerAPI().getTxnTracker(tt).setUnsuspended();
             }
