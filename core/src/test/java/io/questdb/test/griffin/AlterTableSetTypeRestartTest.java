@@ -27,13 +27,24 @@ package io.questdb.test.griffin;
 import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.vm.Vm;
+import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.Path;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.TestServerMain;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -42,6 +53,7 @@ import org.junit.Test;
 import org.postgresql.util.PSQLException;
 
 import java.util.HashMap;
+import java.util.function.Consumer;
 
 import static io.questdb.test.griffin.AlterTableSetTypeTest.NON_WAL;
 import static io.questdb.test.griffin.AlterTableSetTypeTest.WAL;
@@ -198,6 +210,72 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 assertConvertFileDoesNotExist(engine, token);
 
                 dropTable(tableName);
+            }
+        });
+    }
+
+    @Test
+    public void testNonWalToWalKeepsMetaHeaderFields() throws Exception {
+        // SET TYPE WAL on a table that was never WAL, the usual way to move an old table to WAL. The conversion
+        // resets the metadata version in _meta, and the TTL and Parquet encoding config that ALTERs set while
+        // the table was non-WAL must survive it. Dedup and FORMAT PARQUET need a WAL table, so the test sets
+        // neither before the conversion.
+        final String walDdl = """
+                ddl
+                CREATE TABLE 'n' (\s
+                \tts TIMESTAMP,
+                \tv LONG PARQUET(delta_binary_packed, zstd(3))
+                ) timestamp(ts) PARTITION BY DAY TTL 2 DAYS;
+                """;
+        assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startWithWalApplyDisabled()) {
+                serverMain.execute("CREATE TABLE n (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                serverMain.execute("ALTER TABLE n SET TTL 2 DAYS");
+                serverMain.execute("ALTER TABLE n ALTER COLUMN v SET PARQUET(delta_binary_packed, zstd(3))");
+                serverMain.execute("INSERT INTO n VALUES ('2024-01-01T00:00:00.000000Z', 10)");
+                assertShowCreateTable(
+                        serverMain.getEngine(),
+                        "n",
+                        """
+                                ddl
+                                CREATE TABLE 'n' (\s
+                                \tts TIMESTAMP,
+                                \tv LONG PARQUET(delta_binary_packed, zstd(3))
+                                ) timestamp(ts) PARTITION BY DAY TTL 2 DAYS BYPASS WAL;
+                                """
+                );
+                serverMain.execute("ALTER TABLE n SET TYPE WAL");
+            }
+
+            try (TestServerMain serverMain = startWithWalApplyDisabled()) {
+                final CairoEngine engine = serverMain.getEngine();
+                final TableToken tableToken = engine.verifyTableName("n");
+                assertTrue(tableToken.isWal());
+                assertShowCreateTable(engine, "n", walDdl);
+                final int encodingConfig;
+                try (TableReader reader = engine.getReader(tableToken)) {
+                    encodingConfig = reader.getMetadata().getColumnMetadata(1).getParquetEncodingConfig();
+                }
+                assertNotEquals(0, encodingConfig);
+                try (TableReaderMetadata initialMetadata = openInitialMetadata(engine, tableToken)) {
+                    assertEquals(48, initialMetadata.getTtlHoursOrMonths());
+                    assertEquals(encodingConfig, initialMetadata.getColumnMetadata(1).getParquetEncodingConfig());
+                }
+                serverMain.execute("INSERT INTO n VALUES ('2024-01-02T00:00:00.000000Z', 20)");
+                drainWalQueue(engine);
+                assertRows(
+                        engine,
+                        "n",
+                        """
+                                ts\tv
+                                2024-01-01T00:00:00.000000Z\t10
+                                2024-01-02T00:00:00.000000Z\t20
+                                """
+                );
+            }
+
+            try (TestServerMain serverMain = startWithWalApplyDisabled()) {
+                assertShowCreateTable(serverMain.getEngine(), "n", walDdl);
             }
         });
     }
@@ -439,6 +517,152 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 drainWalQueue(engine);
             }
             validateShutdown(tableName);
+        });
+    }
+
+    @Test
+    public void testWalConversionCompletesInterruptedMetaStamp() throws Exception {
+        // The conversion to WAL resets the metadata version in _meta: it writes the checksum for the new version,
+        // then the version. A process that dies between the two writes leaves the old version next to the new
+        // checksum, which readers do not trust. The conversion runs again at the next startup and must complete
+        // the stamp before it registers the table with a sequencer, or txn_seq/_meta.0, which replicas rebuild
+        // _meta from, gets the defaults in place of the header fields.
+        assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startWithWalApplyDisabled()) {
+                serverMain.execute("CREATE TABLE t (ts TIMESTAMP, k INT, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts, k)");
+                serverMain.execute("ALTER TABLE t SET TTL 2 DAYS");
+                serverMain.execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, 10)");
+                drainWalQueue(serverMain.getEngine());
+                serverMain.execute("ALTER TABLE t SET TYPE BYPASS WAL");
+            }
+
+            final String dbRoot;
+            final String dirName;
+            try (TestServerMain serverMain = startWithWalApplyDisabled()) {
+                final CairoEngine engine = serverMain.getEngine();
+                dbRoot = engine.getConfiguration().getDbRoot();
+                dirName = engine.verifyTableName("t").getDirName();
+                serverMain.execute("ALTER TABLE t SET TYPE WAL");
+            }
+
+            // the state that a process death between the checksum and the version write leaves behind
+            editMeta(dbRoot, dirName, metaMem -> {
+                metaMem.putInt(
+                        TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION,
+                        Numbers.encodeLowHighShorts(
+                                TableUtils.checksumForMetaFormatMinorVersionField(0, metaMem.getInt(TableUtils.META_OFFSET_COUNT)),
+                                Numbers.decodeHighShort(metaMem.getInt(TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION))
+                        )
+                );
+                assertFalse(TableUtils.isMetaFormatUpToDate(metaMem));
+            });
+
+            try (TestServerMain serverMain = startWithWalApplyDisabled()) {
+                final CairoEngine engine = serverMain.getEngine();
+                final TableToken tableToken = engine.verifyTableName("t");
+                assertTrue(tableToken.isWal());
+                assertShowCreateTable(
+                        engine,
+                        "t",
+                        """
+                                ddl
+                                CREATE TABLE 't' (\s
+                                \tts TIMESTAMP,
+                                \tk INT,
+                                \tv LONG
+                                ) timestamp(ts) PARTITION BY DAY TTL 2 DAYS
+                                DEDUP SKIP KEYS(ts,k);
+                                """
+                );
+                try (TableReaderMetadata initialMetadata = openInitialMetadata(engine, tableToken)) {
+                    assertEquals(TableUtils.DEDUP_MODE_SKIP, initialMetadata.getDedupMode());
+                    assertEquals(48, initialMetadata.getTtlHoursOrMonths());
+                }
+                serverMain.execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, 30)");
+                drainWalQueue(engine);
+                assertRows(
+                        engine,
+                        "t",
+                        """
+                                ts\tk\tv
+                                2024-01-01T00:00:00.000000Z\t1\t10
+                                """
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testWalConversionKeepsOlderMetaFormatTrust() throws Exception {
+        // A release that predates the dedup mode field writes minor version 2 into _meta and leaves the bytes of
+        // the later dedup mode field as they were, here holding a stale SKIP. The conversion to WAL keeps the
+        // stored minor version, so readers keep ignoring those bytes and the table stays UPSERT. It also keeps
+        // the TTL, which minor version 2 covers.
+        assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startWithWalApplyDisabled()) {
+                serverMain.execute("CREATE TABLE t (ts TIMESTAMP, k INT, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("ALTER TABLE t DEDUP ENABLE UPSERT KEYS(ts, k)");
+                serverMain.execute("ALTER TABLE t SET TTL 2 DAYS");
+                serverMain.execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, 10)");
+                drainWalQueue(serverMain.getEngine());
+                serverMain.execute("ALTER TABLE t SET TYPE BYPASS WAL");
+            }
+
+            final String dbRoot;
+            final String dirName;
+            try (TestServerMain serverMain = startWithWalApplyDisabled()) {
+                final CairoEngine engine = serverMain.getEngine();
+                dbRoot = engine.getConfiguration().getDbRoot();
+                dirName = engine.verifyTableName("t").getDirName();
+                serverMain.execute("ALTER TABLE t SET TYPE WAL");
+            }
+
+            editMeta(dbRoot, dirName, metaMem -> {
+                final short olderMinorVersion = TableUtils.META_FORMAT_MINOR_VERSION_DEDUP_MODE - 1;
+                metaMem.putInt(
+                        TableUtils.META_OFFSET_META_FORMAT_MINOR_VERSION,
+                        Numbers.encodeLowHighShorts(
+                                TableUtils.checksumForMetaFormatMinorVersionField(
+                                        metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION),
+                                        metaMem.getInt(TableUtils.META_OFFSET_COUNT)
+                                ),
+                                olderMinorVersion
+                        )
+                );
+                metaMem.putInt(TableUtils.META_OFFSET_DEDUP_MODE, TableUtils.DEDUP_MODE_SKIP);
+                assertTrue(TableUtils.hasParquetEncodingConfig(metaMem));
+                assertFalse(TableUtils.isMetaFormatUpToDate(metaMem));
+            });
+
+            try (TestServerMain serverMain = startWithWalApplyDisabled()) {
+                final CairoEngine engine = serverMain.getEngine();
+                assertTrue(engine.verifyTableName("t").isWal());
+                assertShowCreateTable(
+                        engine,
+                        "t",
+                        """
+                                ddl
+                                CREATE TABLE 't' (\s
+                                \tts TIMESTAMP,
+                                \tk INT,
+                                \tv LONG
+                                ) timestamp(ts) PARTITION BY DAY TTL 2 DAYS
+                                DEDUP UPSERT KEYS(ts,k);
+                                """
+                );
+                // UPSERT replaces the stored row
+                serverMain.execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, 30)");
+                drainWalQueue(engine);
+                assertRows(
+                        engine,
+                        "t",
+                        """
+                                ts\tk\tv
+                                2024-01-01T00:00:00.000000Z\t1\t30
+                                """
+                );
+            }
         });
     }
 
@@ -693,6 +917,40 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                     .noMemoryUsageCheck()
                     .noRandomAccess()
                     .returns(expectedDdl);
+        }
+    }
+
+    // Opens the _meta file of a table while no server runs and lets the editor change it in place.
+    private static void editMeta(CharSequence dbRoot, CharSequence dirName, Consumer<MemoryCMARW> editor) {
+        try (
+                Path path = new Path();
+                MemoryCMARW metaMem = Vm.getCMARWInstance()
+        ) {
+            metaMem.smallFile(
+                    TestFilesFacadeImpl.INSTANCE,
+                    path.of(dbRoot).concat(dirName).concat(TableUtils.META_FILE_NAME).$(),
+                    MemoryTag.MMAP_DEFAULT
+            );
+            editor.accept(metaMem);
+        }
+    }
+
+    // Opens txn_seq/_meta.0, the sequencer's initial metadata that a replica rebuilds the table's _meta from.
+    private static TableReaderMetadata openInitialMetadata(CairoEngine engine, TableToken tableToken) {
+        final CairoConfiguration configuration = engine.getConfiguration();
+        final TableReaderMetadata metadata = new TableReaderMetadata(configuration);
+        try (Path path = new Path()) {
+            metadata.loadMetadata(
+                    path.of(configuration.getDbRoot())
+                            .concat(tableToken)
+                            .concat(WalUtils.SEQ_DIR)
+                            .concat(WalUtils.INITIAL_META_FILE_NAME)
+                            .$()
+            );
+            return metadata;
+        } catch (Throwable th) {
+            Misc.free(metadata);
+            throw th;
         }
     }
 

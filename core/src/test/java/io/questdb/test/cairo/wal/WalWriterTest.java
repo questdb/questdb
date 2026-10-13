@@ -37,6 +37,7 @@ import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.TableWriterMetadata;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
@@ -5681,6 +5682,165 @@ public class WalWriterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRebaseWalKeepsFormatParquet() throws Exception {
+        // REBASE keeps the FORMAT PARQUET that an ALTER set, together with DEDUP SKIP: the rebased table
+        // still writes new partitions as Parquet and discards a row that repeats the dedup key of a stored row.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t SET FORMAT PARQUET");
+            execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts)");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 10)");
+            drainWalQueue();
+
+            final String expectedDdl = """
+                    ddl
+                    CREATE TABLE 't' (\s
+                    \tts TIMESTAMP,
+                    \tv LONG
+                    ) timestamp(ts) PARTITION BY DAY FORMAT PARQUET
+                    DEDUP SKIP KEYS(ts);
+                    """;
+            assertQuery("SHOW CREATE TABLE t").noLeakCheck().noRandomAccess().returns(expectedDdl);
+
+            execute("ALTER TABLE t SUSPEND WAL");
+            execute("ALTER TABLE t REBASE WAL");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SHOW CREATE TABLE t").noLeakCheck().noRandomAccess().returns(expectedDdl);
+            try (TableReaderMetadata initialMetadata = openInitialMetadata(tableToken)) {
+                Assert.assertEquals(TableUtils.TABLE_FORMAT_PARQUET, initialMetadata.getTableFormat());
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, initialMetadata.getDedupMode());
+            }
+
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 30)");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-02T00:00:00.000000Z', 20)");
+            drainWalQueue();
+            assertQuery("t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t10
+                            2024-01-02T00:00:00.000000Z\t20
+                            """);
+            assertQuery("SELECT name, isParquet FROM table_partitions('t')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tisParquet
+                            2024-01-01\ttrue
+                            2024-01-02\ttrue
+                            """);
+        });
+    }
+
+    @Test
+    public void testRebaseWalKeepsKeyedDedupSkip() throws Exception {
+        // DEDUP SKIP with a key besides the designated timestamp, the usual setup. After REBASE, the table
+        // applies the two empty seed transactions, stays SKIP, and keeps the stored row of every key, while
+        // a row with a new key gets in. A replica that builds the table from txn_seq/_meta.0 gets SKIP too.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts, sym)");
+            execute("ALTER TABLE t SET TTL 2 DAYS");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 10),
+                    ('2024-01-01T00:00:00.000000Z', 'b', 20)
+                    """);
+            drainWalQueue();
+            final String ddl = showCreateTable("t");
+            TestUtils.assertContains(ddl, "TTL 2 DAYS");
+            TestUtils.assertContains(ddl, "DEDUP SKIP KEYS(ts,sym)");
+
+            execute("ALTER TABLE t SUSPEND WAL");
+            execute("ALTER TABLE t REBASE WAL");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SHOW CREATE TABLE t").noLeakCheck().noRandomAccess().returns(ddl);
+            try (TableReaderMetadata initialMetadata = openInitialMetadata(tableToken)) {
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, initialMetadata.getDedupMode());
+                Assert.assertEquals(48, initialMetadata.getTtlHoursOrMonths());
+            }
+            try (TableReaderMetadata replicaMetadata = openReplicaBootstrapMetadata(tableToken)) {
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, replicaMetadata.getDedupMode());
+                Assert.assertEquals(48, replicaMetadata.getTtlHoursOrMonths());
+                Assert.assertTrue(replicaMetadata.isDedupKey(replicaMetadata.getColumnIndex("sym")));
+            }
+
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 30),
+                    ('2024-01-01T00:00:00.000000Z', 'c', 40)
+                    """);
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT * FROM t ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tv
+                            2024-01-01T00:00:00.000000Z\ta\t10
+                            2024-01-01T00:00:00.000000Z\tb\t20
+                            2024-01-01T00:00:00.000000Z\tc\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testRebaseWalKeepsKeyedDedupUpsert() throws Exception {
+        // The UPSERT counterpart of testRebaseWalKeepsKeyedDedupSkip: after REBASE, the table applies the two
+        // empty seed transactions and stays UPSERT, so a re-sent row replaces the stored row of its key.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t DEDUP ENABLE UPSERT KEYS(ts, sym)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 10),
+                    ('2024-01-01T00:00:00.000000Z', 'b', 20)
+                    """);
+            drainWalQueue();
+            final String ddl = showCreateTable("t");
+            TestUtils.assertContains(ddl, "DEDUP UPSERT KEYS(ts,sym)");
+
+            execute("ALTER TABLE t SUSPEND WAL");
+            execute("ALTER TABLE t REBASE WAL");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SHOW CREATE TABLE t").noLeakCheck().noRandomAccess().returns(ddl);
+
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 'a', 30),
+                    ('2024-01-01T00:00:00.000000Z', 'c', 40)
+                    """);
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SELECT * FROM t ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tsym\tv
+                            2024-01-01T00:00:00.000000Z\ta\t30
+                            2024-01-01T00:00:00.000000Z\tb\t20
+                            2024-01-01T00:00:00.000000Z\tc\t40
+                            """);
+        });
+    }
+
+    @Test
     public void testRebaseWalKeepsMetaHeaderFields() throws Exception {
         // REBASE resets the metadata version of the cloned _meta. The header fields that the
         // Metadata Format Minor Version checksum guards (dedup mode, TTL, Parquet encoding config)
@@ -5718,23 +5878,65 @@ public class WalWriterTest extends AbstractCairoTest {
 
             // Replicas rebuild _meta from the sequencer's initial metadata, which REBASE writes from the
             // reset _meta, so it must carry the same header fields.
-            try (
-                    Path path = new Path();
-                    TableReaderMetadata initialMetadata = new TableReaderMetadata(configuration)
-            ) {
-                initialMetadata.loadMetadata(
-                        path.of(configuration.getDbRoot())
-                                .concat(engine.verifyTableName("t"))
-                                .concat(WalUtils.SEQ_DIR)
-                                .concat(WalUtils.INITIAL_META_FILE_NAME)
-                                .$()
-                );
+            try (TableReaderMetadata initialMetadata = openInitialMetadata(engine.verifyTableName("t"))) {
                 Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, initialMetadata.getDedupMode());
                 Assert.assertEquals(48, initialMetadata.getTtlHoursOrMonths());
                 Assert.assertEquals(encodingConfig, initialMetadata.getColumnMetadata(1).getParquetEncodingConfig());
             }
 
             // The rebased table still discards a row that repeats the dedup key of a stored row.
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 30)");
+            drainWalQueue();
+            assertQuery("t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t10
+                            """);
+        });
+    }
+
+    @Test
+    public void testRebaseWalKeepsMetaHeaderFieldsOnSecondRebase() throws Exception {
+        // A rebased table starts over at metadata version zero. An ALTER takes it above zero again, and the
+        // next REBASE must keep the header fields as well, including the one that ALTER changed.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts)");
+            execute("ALTER TABLE t SET TTL 2 DAYS");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 10)");
+            drainWalQueue();
+            execute("ALTER TABLE t SUSPEND WAL");
+            execute("ALTER TABLE t REBASE WAL");
+            drainWalQueue();
+
+            execute("ALTER TABLE t SET TTL 4 DAYS");
+            drainWalQueue();
+            execute("ALTER TABLE t SUSPEND WAL");
+            execute("ALTER TABLE t REBASE WAL");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertQuery("SHOW CREATE TABLE t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            ddl
+                            CREATE TABLE 't' (\s
+                            \tts TIMESTAMP,
+                            \tv LONG
+                            ) timestamp(ts) PARTITION BY DAY TTL 4 DAYS
+                            DEDUP SKIP KEYS(ts);
+                            """);
+            try (TableReaderMetadata initialMetadata = openInitialMetadata(tableToken)) {
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, initialMetadata.getDedupMode());
+                Assert.assertEquals(96, initialMetadata.getTtlHoursOrMonths());
+            }
+
             execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 30)");
             drainWalQueue();
             assertQuery("t")
@@ -6625,6 +6827,60 @@ public class WalWriterTest extends AbstractCairoTest {
                 .wal();
     }
 
+    private static Path initialMetadataPath(Path path, TableToken tableToken) {
+        return path.of(configuration.getDbRoot()).concat(tableToken).concat(WalUtils.SEQ_DIR).concat(WalUtils.INITIAL_META_FILE_NAME);
+    }
+
+    // Opens txn_seq/_meta.0, the sequencer's initial metadata that a replica rebuilds the table's _meta from.
+    private static TableReaderMetadata openInitialMetadata(TableToken tableToken) {
+        final TableReaderMetadata metadata = new TableReaderMetadata(configuration);
+        try (Path path = new Path()) {
+            metadata.loadMetadata(initialMetadataPath(path, tableToken).$());
+            return metadata;
+        } catch (Throwable th) {
+            Misc.free(metadata);
+            throw th;
+        }
+    }
+
+    // Builds a table from txn_seq/_meta.0 the way a replica does when it first registers the table: it reloads
+    // the initial metadata and creates the table files from it. Opens the metadata of the result.
+    private static TableReaderMetadata openReplicaBootstrapMetadata(TableToken tableToken) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        final String replicaDirName = "replica_bootstrap";
+        try (
+                Path path = new Path();
+                MemoryCMARW metaMem = Vm.getCMARWInstance();
+                TableWriterMetadata initialMetadata = new TableWriterMetadata(tableToken)
+        ) {
+            metaMem.smallFile(ff, initialMetadataPath(path, tableToken).$(), MemoryTag.MMAP_DEFAULT);
+            initialMetadata.reload(path, metaMem);
+            path.of(configuration.getDbRoot()).concat(replicaDirName);
+            final int tableDirLen = path.size();
+            Assert.assertEquals(0, ff.mkdirs(path.slash(), configuration.getMkDirMode()));
+            TableUtils.createTableOrViewOrMatViewFiles(
+                    ff,
+                    metaMem,
+                    null,
+                    null,
+                    path.trimTo(tableDirLen),
+                    tableDirLen,
+                    replicaDirName,
+                    initialMetadata,
+                    ColumnType.VERSION,
+                    tableToken.getTableId()
+            );
+        }
+        final TableReaderMetadata metadata = new TableReaderMetadata(configuration);
+        try (Path path = new Path()) {
+            metadata.loadMetadata(path.of(configuration.getDbRoot()).concat(replicaDirName).concat(TableUtils.META_FILE_NAME).$());
+            return metadata;
+        } catch (Throwable th) {
+            Misc.free(metadata);
+            throw th;
+        }
+    }
+
     private static int rowsCrossingAppendPages(long requestedPageSize) {
         // PropServerConfiguration wraps CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE
         // in Files.ceilPageSize(), and Files.PAGE_SIZE is the OS allocation
@@ -6639,6 +6895,11 @@ public class WalWriterTest extends AbstractCairoTest {
         // exactly on a page boundary.
         final long timestampEntryBytes = 2L * Long.BYTES;
         return (int) ((Files.ceilPageSize(requestedPageSize) / timestampEntryBytes) * 2 + 100);
+    }
+
+    private static String showCreateTable(String tableName) throws SqlException {
+        printSql("SHOW CREATE TABLE " + tableName);
+        return sink.toString();
     }
 
     private static void testReadMatViewState(int chunkSize) {
