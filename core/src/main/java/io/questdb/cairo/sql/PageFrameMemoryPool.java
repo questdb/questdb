@@ -703,6 +703,14 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         return frameMemory;
     }
 
+    /**
+     * Whether column {@code columnIndex} has the same value on every row of frame
+     * {@code frameIndex}: the symbol key of a single-key covered frame.
+     */
+    public boolean isConstantColumn(int frameIndex, int columnIndex) {
+        return addressCache.isColumnCoveredKey(frameIndex, columnIndex);
+    }
+
     public void of(PageFrameAddressCache addressCache) {
         of(addressCache, ParquetDecodeHint.MONOTONIC);
     }
@@ -1961,6 +1969,10 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
         private int decodeInRuns(CoveringRowCursor crc) {
             final int queryColCount = queryColCount();
             final int sentinelInclude = coveredIncludeIdx[runColumns[0]];
+            boolean hasRowColumns = false;
+            for (int q = 0; q < queryColCount; q++) {
+                hasRowColumns |= isRowColumn[q] && coveredIncludeIdx[q] >= 0;
+            }
             int count = 0;
             int runStartRow = 0;
             int runStartOrdinal = 0;
@@ -1988,8 +2000,20 @@ public class PageFrameMemoryPool implements RecordRandomAccess, QuietCloseable, 
                         CoveredColumnDecoder.writeCoveredRow(colAddr, this, count, crc, queryColCount, coveredIncludeIdx, columnTypeTags, columnTypes, isRunColumn);
                     }
                 }
-                CoveredColumnDecoder.writeCoveredRow(colAddr, this, count, crc, queryColCount, coveredIncludeIdx, columnTypeTags, columnTypes, isRowColumn);
+                if (hasRowColumns) {
+                    CoveredColumnDecoder.writeCoveredRow(colAddr, this, count, crc, queryColCount, coveredIncludeIdx, columnTypeTags, columnTypes, isRowColumn);
+                }
                 count++;
+                if (!hasRowColumns && runLength > 0 && count < rowCount) {
+                    // the run's next rows, as many as the cursor can tell without decoding, are
+                    // passed at once: they read the run's next values of the same block
+                    final int more = crc.peekCoveredRun(rowCount - count);
+                    if (more > 0 && crc.getCoveredRunOrdinal() == runStartOrdinal + runLength) {
+                        crc.skipCoveredRun(more);
+                        runLength += more;
+                        count += more;
+                    }
+                }
             }
             copyRun(runStartRow, runStartOrdinal, runLength);
             return count;

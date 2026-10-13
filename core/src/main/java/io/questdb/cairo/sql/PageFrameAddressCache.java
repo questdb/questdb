@@ -554,6 +554,16 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return covered != null && covered[col];
     }
 
+    /**
+     * Whether column {@code col} of {@code frameIndex} is the symbol key of a single-key covered
+     * frame: the column holds one value, the frame's key, on every row of the frame.
+     */
+    public boolean isColumnCoveredKey(int frameIndex, int col) {
+        return isFrameSingleKeyCovered(frameIndex)
+                && isColumnCovered(frameIndex, col)
+                && getCoveredIncludeIndex(frameIndex, col) == -1;
+    }
+
     public boolean isExternal() {
         return external;
     }

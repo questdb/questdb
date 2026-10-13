@@ -49,7 +49,7 @@ import org.junit.Test;
 /**
  * The choice, when a query compiles, between a covering-index scan and a scan of the table, from
  * the posting index's per-key counts: a key that selects more than
- * {@code cairo.sql.index.scan.choice.max.selectivity} of the scanned rows takes the scan the
+ * {@code cairo.sql.covering.scan.choice.max.selectivity} (15%) of the scanned rows takes the scan the
  * {@code no_index} hint gives, and a rare key keeps the covering scan. A covering scan's residual
  * filter and GROUP BY are parallel plans, which reduce the frames on the query's thread when, at
  * open, they hold fewer than {@code cairo.sql.parallel.covering.local.max.rows} rows. Hints that
@@ -86,6 +86,62 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
     }
 
     @Test
+    public void testGroupByInputHasItsOwnThreshold() throws Exception {
+        // F selects ~20%: a GROUP BY over it keeps the covering plan under the GROUP BY threshold
+        // (25%), rows the query returns take the scan (15%)
+        assertMemoryLeak(() -> {
+            createTable();
+            final String[] groupBys = {
+                    "select avg(v) from t where sym = 'F'",
+                    "select timestamp_floor('1h', ts) h, s2, avg(v) from t where sym = 'F' order by h, s2",
+                    "select sym, avg(v), count() from t where sym = 'F' order by sym",
+            };
+            for (String q : groupBys) {
+                assertPlanContains(q, "CoveringIndex");
+                assertSameResult(q, q.replace("select ", "select /*+ no_index */ "));
+            }
+            assertPlanLacks("select ts, v from t where sym = 'F'", "CoveringIndex");
+            // the rows of a sub-query the GROUP BY reads through a join are returned rows
+            assertPlanLacks("select count() from t join (select ts, v from t where sym = 'F') x on (ts)", "CoveringIndex");
+        });
+    }
+
+    @Test
+    public void testGroupByInputTakesScanAboveItsThreshold() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_COVERING_GROUPBY_SCAN_CHOICE_MAX_SELECTIVITY, "0.1");
+        assertMemoryLeak(() -> {
+            createTable();
+            final String[] groupBys = {
+                    "select avg(v) from t where sym = 'F'",
+                    "select timestamp_floor('1h', ts) h, s2, avg(v) from t where sym = 'F' order by h, s2",
+            };
+            for (String q : groupBys) {
+                assertPlanLacks(q, "CoveringIndex");
+                assertSameResult(q, q.replace("select ", "select /*+ no_index */ "));
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringThresholdIsItsOwn() throws Exception {
+        // F selects ~20%: above the covering choice's 15% it takes the scan, under a 30% one it
+        // keeps the covering plan, whatever the plain index's gather threshold says
+        setProperty(PropertyKey.CAIRO_SQL_COVERING_SCAN_CHOICE_MAX_SELECTIVITY, "0.3");
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY, "0.01");
+        assertMemoryLeak(() -> {
+            createTable();
+            final String[] queries = {
+                    "select ts, v from t where sym = 'F'",
+                    "select sym, avg(v), count() from t where sym in ('F', 'R') order by sym",
+            };
+            for (String q : queries) {
+                assertPlanContains(q, "CoveringIndex");
+                assertSameResult(q, q.replace("select ", "select /*+ no_index */ "));
+            }
+        });
+    }
+
+    @Test
     public void testChoiceDisabledKeepsCovering() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, "false");
         assertMemoryLeak(() -> {
@@ -103,8 +159,6 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
                     "select ts, v from t where sym = 'F'",
                     "select ts, (v + w) / 2 mid from t where sym = 'F'",
                     "select ts, v from t where sym = 'F' and w > 10",
-                    "select avg(v) from t where sym = 'F'",
-                    "select timestamp_floor('1h', ts) h, s2, avg(v) from t where sym = 'F' order by h, s2",
                     "select ts, v from t where sym in ('F', 'G')",
             };
             for (String q : queries) {
@@ -151,6 +205,8 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
 
     @Test
     public void testFrequentKeyScanKeepsSubQueryPredicates() throws Exception {
+        // the GROUP BY arms below take the scan too
+        setProperty(PropertyKey.CAIRO_SQL_COVERING_GROUPBY_SCAN_CHOICE_MAX_SELECTIVITY, "0.15");
         // A frequent key generates the table query a second time, as a scan. The sub-queries of
         // the residual filter are models whose where clauses the first generation consumed: the
         // scan must still read their keys and intervals.
@@ -176,6 +232,8 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
 
     @Test
     public void testFrequentKeyScanKeepsSubQueryLatestOn() throws Exception {
+        // the GROUP BY arms below take the scan too
+        setProperty(PropertyKey.CAIRO_SQL_COVERING_GROUPBY_SCAN_CHOICE_MAX_SELECTIVITY, "0.15");
         // A frequent key generates the table query a second time, as a scan. A LATEST ON
         // sub-query of the residual filter is a model whose LATEST BY the first generation
         // consumed: the scan must still read one row per partition of the sub-query, not all of
@@ -348,6 +406,8 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
 
     @Test
     public void testFrequentKeyScanKeepsSubQueryWindowJoins() throws Exception {
+        // the GROUP BY arms below take the scan too
+        setProperty(PropertyKey.CAIRO_SQL_COVERING_GROUPBY_SCAN_CHOICE_MAX_SELECTIVITY, "0.15");
         // An intermediate WINDOW JOIN rewrites its aggregate model's columns: each aggregate it
         // computes becomes a reference to its alias. The scan's generation of the sub-query must
         // find the aggregates again, not "Invalid column: s1".

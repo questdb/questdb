@@ -76,6 +76,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final java.util.concurrent.atomic.LongAdder CONSTANT_KEY_FRAMES = new java.util.concurrent.atomic.LongAdder();
+    private static volatile boolean constantKeyFrameCounting;
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::filterAndAggregate;
     // rows an index gather task reads per batch, see gatherAndAggregate()
@@ -173,6 +175,21 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             Misc.free(this, th);
             throw th;
         }
+    }
+
+    /**
+     * The frames aggregated as one group, see {@link #aggregateConstantKeyNonSharded}, since
+     * {@link #setConstantKeyFrameCountingForTesting(boolean)} turned counting on.
+     */
+    @TestOnly
+    public static long getConstantKeyFramesForTesting() {
+        return CONSTANT_KEY_FRAMES.sum();
+    }
+
+    @TestOnly
+    public static void setConstantKeyFrameCountingForTesting(boolean enabled) {
+        CONSTANT_KEY_FRAMES.reset();
+        constantKeyFrameCounting = enabled;
     }
 
     @Override
@@ -321,7 +338,12 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             record.setRowIndex(0);
             long baseRowId = record.getRowId();
 
-            if (fragment.isNotSharded()) {
+            final int singleKeyColumn = atom.getSingleKeyColumnIndex();
+            if (fragment.isNotSharded()
+                    && singleKeyColumn != -1
+                    && frameMemoryPool.isConstantColumn(frameIndex, singleKeyColumn)) {
+                aggregateConstantKeyNonSharded(record, frameRowCount, baseRowId, atom, slotId, fragment, mapSink);
+            } else if (fragment.isNotSharded()) {
                 aggregateNonShardedBatched(record, frameRowCount, baseRowId, atom, slotId, fragment, mapSink);
             } else {
                 aggregateSharded(record, frameRowCount, baseRowId, functionUpdater, fragment, mapSink);
@@ -333,6 +355,71 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                 frameMemoryPool.releaseParquetBuffers();
             } finally {
                 atom.release(slotId);
+            }
+        }
+    }
+
+    /**
+     * {@link #aggregateNonShardedBatched} for a frame whose rows are all one group, such as a
+     * single-key covered frame grouped by its symbol key: the map is probed once, at the frame's
+     * first row, and the other rows go through the aggregates' non-keyed batch kernels into that
+     * group's value, in row order, as the keyed kernels would update it.
+     */
+    private static void aggregateConstantKeyNonSharded(
+            PageFrameMemoryRecord record,
+            long frameRowCount,
+            long baseRowId,
+            AsyncGroupByAtom atom,
+            int slotId,
+            GroupByMapFragment fragment,
+            RecordSink mapSink
+    ) {
+        if (constantKeyFrameCounting) {
+            CONSTANT_KEY_FRAMES.increment();
+        }
+        final Map map = fragment.reopenMap();
+        final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
+        final DirectLongList batchList = atom.getBatchList(slotId);
+        final FlyweightPackedMapValue mapValue = atom.getBatchMapValue(slotId);
+        final GroupByBatchKernels kernels = atom.getBatchKernels(slotId);
+        final int functionCount = functions.size();
+
+        batchList.ensureCapacity(atom.getBatchSize());
+        final long batchAddr = batchList.getAddress();
+        map.reserveCapacity(1);
+        // the first row creates or finds the group, and goes through the keyed path as it would
+        final long baseValueAddress = map.probeBatch(record, mapSink, 0, 1, batchAddr);
+        updateBatch(record, functions, functionCount, kernels, mapValue, baseValueAddress, batchAddr, 1, baseRowId);
+        if (frameRowCount == 1) {
+            return;
+        }
+        // no other key is inserted for this frame, so the value stays where the probe found it
+        mapValue.of(baseValueAddress + Map.decodeBatchOffset(Unsafe.getLong(batchAddr)));
+        if (kernels == null) {
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            for (long r = 1; r < frameRowCount; r++) {
+                record.setRowIndex(r);
+                functionUpdater.updateExisting(mapValue, record, baseRowId + r);
+            }
+            return;
+        }
+        final int capacity = kernels.getCapacity();
+        for (long p = 1; p < frameRowCount; p += capacity) {
+            final int n = (int) Math.min(capacity, frameRowCount - p);
+            kernels.of(record, GroupByBatchKernels.MODE_RANGE, 0, p, n);
+            for (int i = 0; i < functionCount; i++) {
+                final GroupByFunction function = functions.getQuick(i);
+                final GroupByBatchKernels.Args args = !kernels.isKernel(i)
+                        ? null
+                        : function.supportsRawKernelArgs() ? kernels.prepareRaw(i) : kernels.prepare(i);
+                if (args != null) {
+                    function.computeBatchKernel(mapValue, n, args);
+                } else {
+                    for (long r = p, hi = p + n; r < hi; r++) {
+                        record.setRowIndex(r);
+                        function.computeNext(mapValue, record, baseRowId + r);
+                    }
+                }
             }
         }
     }

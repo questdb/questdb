@@ -82,15 +82,18 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
             // aggregate() per row with finite y and x, with the state held in locals
             final long ysAddr = args.address(0);
             final long xsAddr = args.address(1);
+            final int yType = args.type(0);
+            final int xType = args.type(1);
             double meanY = mapValue.getDouble(valueIndex);
             double sumY = mapValue.getDouble(valueIndex + 1);
             double meanX = mapValue.getDouble(valueIndex + 2);
             double sumX = mapValue.getDouble(valueIndex + 3);
             double sumXY = mapValue.getDouble(valueIndex + 4);
             long count = mapValue.getLong(valueIndex + 5);
+            final boolean isDouble = yType == ColumnType.DOUBLE && xType == ColumnType.DOUBLE;
             for (int i = 0; i < rowCount; i++) {
-                final double y = Unsafe.getDouble(ysAddr + ((long) i << 3));
-                final double x = Unsafe.getDouble(xsAddr + ((long) i << 3));
+                final double y = isDouble ? Unsafe.getDouble(ysAddr + ((long) i << 3)) : GroupByBatchKernels.rawDouble(ysAddr, yType, i);
+                final double x = isDouble ? Unsafe.getDouble(xsAddr + ((long) i << 3)) : GroupByBatchKernels.rawDouble(xsAddr, xType, i);
                 if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
                     count++;
                     final double oldMeanY = meanY;
@@ -187,6 +190,11 @@ public class CorrGroupByFunctionFactory implements FunctionFactory {
             if (Numbers.isFinite(y) && Numbers.isFinite(x)) {
                 aggregate(mapValue, y, x);
             }
+        }
+
+        @Override
+        public boolean supportsRawKernelArgs() {
+            return true;
         }
 
         @Override

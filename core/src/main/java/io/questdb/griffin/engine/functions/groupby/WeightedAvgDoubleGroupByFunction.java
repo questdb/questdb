@@ -53,14 +53,38 @@ public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements 
     public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
         final long samplesAddr = args.address(0);
         final long weightsAddr = args.address(1);
+        final int sampleType = args.type(0);
+        final int weightType = args.type(1);
         double sum = mapValue.getDouble(valueIndex);
         double weightSum = mapValue.getDouble(valueIndex + 1);
-        for (int i = 0; i < rowCount; i++) {
-            final double sample = Unsafe.getDouble(samplesAddr + ((long) i << 3));
-            final double weight = Unsafe.getDouble(weightsAddr + ((long) i << 3));
-            if (Numbers.isFinite(sample) && Numbers.isFinite(weight) && weight != 0.0) {
-                sum += sample * weight;
-                weightSum += weight;
+        if (sampleType == ColumnType.DOUBLE && weightType == ColumnType.DOUBLE) {
+            for (int i = 0; i < rowCount; i++) {
+                final double sample = Unsafe.getDouble(samplesAddr + ((long) i << 3));
+                final double weight = Unsafe.getDouble(weightsAddr + ((long) i << 3));
+                if (Numbers.isFinite(sample) && Numbers.isFinite(weight) && weight != 0.0) {
+                    sum += sample * weight;
+                    weightSum += weight;
+                }
+            }
+        } else if (sampleType == ColumnType.FLOAT && weightType == ColumnType.INT) {
+            for (int i = 0; i < rowCount; i++) {
+                final double sample = Unsafe.getFloat(samplesAddr + ((long) i << 2));
+                final int w = Unsafe.getInt(weightsAddr + ((long) i << 2));
+                // a NULL int weight is NaN, and so not finite
+                if (w != Numbers.INT_NULL && w != 0 && Numbers.isFinite(sample)) {
+                    final double weight = w;
+                    sum += sample * weight;
+                    weightSum += weight;
+                }
+            }
+        } else {
+            for (int i = 0; i < rowCount; i++) {
+                final double sample = GroupByBatchKernels.rawDouble(samplesAddr, sampleType, i);
+                final double weight = GroupByBatchKernels.rawDouble(weightsAddr, weightType, i);
+                if (Numbers.isFinite(sample) && Numbers.isFinite(weight) && weight != 0.0) {
+                    sum += sample * weight;
+                    weightSum += weight;
+                }
             }
         }
         mapValue.putDouble(valueIndex, sum);
@@ -151,6 +175,11 @@ public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements 
     @Override
     public Function getRight() {
         return weightArg;
+    }
+
+    @Override
+    public boolean supportsRawKernelArgs() {
+        return true;
     }
 
     @Override

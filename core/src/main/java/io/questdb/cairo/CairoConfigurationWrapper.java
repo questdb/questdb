@@ -1980,6 +1980,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public double getSqlCoveringScanChoiceMaxSelectivity() {
+        return getDelegate().getSqlCoveringScanChoiceMaxSelectivity();
+    }
+
+    @Override
+    public double getSqlCoveringGroupByScanChoiceMaxSelectivity() {
+        return getDelegate().getSqlCoveringGroupByScanChoiceMaxSelectivity();
+    }
+
+    @Override
     public int getSqlParallelIndexGroupByFrameRows() {
         return getDelegate().getSqlParallelIndexGroupByFrameRows();
     }

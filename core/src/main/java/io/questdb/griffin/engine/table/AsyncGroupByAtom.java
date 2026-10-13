@@ -100,6 +100,8 @@ public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, Per
     private MemoryTracker memoryTracker;
     // the GROUP BY keys are the index key column of an index gather, and nothing else
     private boolean isGroupedByGatherKey;
+    // the column index of the only GROUP BY key when it is a plain column, else -1
+    private final int singleKeyColumnIndex;
     // Initialized lazily.
     private DirectLongLongSortedList ownerLongTopKList;
 
@@ -128,6 +130,9 @@ public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, Per
 
         try {
             this.ownerKeyFunctions = ownerKeyFunctions;
+            this.singleKeyColumnIndex = ownerKeyFunctions.size() == 0 && listColumnFilter.getColumnCount() == 1
+                    ? listColumnFilter.getColumnIndexFactored(0)
+                    : -1;
             this.perWorkerKeyFunctions = perWorkerKeyFunctions;
             this.ownerGroupByFunctions = ownerGroupByFunctions;
             this.perWorkerGroupByFunctions = perWorkerGroupByFunctions;
@@ -496,6 +501,14 @@ public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, Per
      */
     public boolean isGroupedByGatherKey() {
         return isGroupedByGatherKey;
+    }
+
+    /**
+     * The column index of the only GROUP BY key when the grouping is one plain column, else -1: a
+     * frame whose rows all hold one value of it is one group.
+     */
+    public int getSingleKeyColumnIndex() {
+        return singleKeyColumnIndex;
     }
 
     public boolean isSharded() {

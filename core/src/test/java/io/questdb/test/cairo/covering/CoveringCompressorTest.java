@@ -27,11 +27,13 @@ package io.questdb.test.cairo.covering;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.idx.BitpackUtils;
 import io.questdb.cairo.idx.CoveringCompressor;
+import io.questdb.cairo.idx.PostingIndexNative;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.util.Arrays;
@@ -72,6 +74,51 @@ public class CoveringCompressorTest extends AbstractCairoTest {
             } finally {
                 Unsafe.free(srcAddr, (long) count * Double.BYTES, MemoryTag.NATIVE_DEFAULT);
                 Unsafe.free(destAddr, CoveringCompressor.maxCompressedSize(count, ColumnType.DOUBLE), MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testNative32UnpackMatchesJava() throws Exception {
+        // the 32-bit unpacks of the covered INT and ALP FLOAT range decode against the int64
+        // unpack they replace, every bit width, every start, up to the packed buffer's last value
+        Assume.assumeTrue("library without the 32-bit unpacks", PostingIndexNative.isNative32Available());
+        final Random rnd = new Random(42L);
+        assertMemoryLeak(() -> {
+            final int total = 300;
+            final long values = Unsafe.malloc((long) total * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            final long packed = Unsafe.malloc(BitpackUtils.packedDataSize(total, 32), MemoryTag.NATIVE_DEFAULT);
+            final long ws = Unsafe.malloc((long) total * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            final long out = Unsafe.malloc((long) total * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try {
+                for (int bw = 1; bw <= 32; bw++) {
+                    for (int i = 0; i < total; i++) {
+                        Unsafe.putLong(values + (long) i * Long.BYTES, (rnd.nextLong() & 0xFFFFFFFFL) & (bw == 32 ? -1L : (1L << bw) - 1));
+                    }
+                    PostingIndexNative.packValuesNative(values, total, 0, bw, packed);
+                    final int base = rnd.nextInt();
+                    for (int lo = 0; lo < total; lo += 1 + rnd.nextInt(9)) {
+                        final int n = 1 + rnd.nextInt(total - lo);
+                        BitpackUtils.unpackValuesFrom(packed, lo, n, bw, 0, ws);
+                        PostingIndexNative.unpackIntsFrom(packed, lo, n, total, bw, base, out);
+                        for (int i = 0; i < n; i++) {
+                            Assert.assertEquals("int bw=" + bw + " lo=" + lo + " i=" + i, base + (int) Unsafe.getLong(ws + (long) i * Long.BYTES), Unsafe.getInt(out + (long) i * Integer.BYTES));
+                        }
+                        final int e = rnd.nextInt(10);
+                        final int f = rnd.nextInt(e + 1);
+                        BitpackUtils.unpackValuesFrom(packed, lo, n, bw, base, ws);
+                        PostingIndexNative.unpackAlpFloatsFrom(packed, lo, n, total, bw, base, CoveringCompressor.f10f(f), CoveringCompressor.if10f(e), out);
+                        for (int i = 0; i < n; i++) {
+                            final float expected = CoveringCompressor.alpDecodeFloat((int) Unsafe.getLong(ws + (long) i * Long.BYTES), e, f);
+                            Assert.assertEquals("float bw=" + bw + " lo=" + lo + " i=" + i, Float.floatToRawIntBits(expected), Float.floatToRawIntBits(Unsafe.getFloat(out + (long) i * Integer.BYTES)));
+                        }
+                    }
+                }
+            } finally {
+                Unsafe.free(values, (long) total * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(packed, BitpackUtils.packedDataSize(total, 32), MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(ws, (long) total * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+                Unsafe.free(out, (long) total * Integer.BYTES, MemoryTag.NATIVE_DEFAULT);
             }
         });
     }

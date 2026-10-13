@@ -27,6 +27,7 @@ package io.questdb.cairo.idx;
 import io.questdb.cairo.ColumnType;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * ALP (Adaptive Lossless floating-Point) compression for covering index
@@ -100,6 +101,16 @@ public class CoveringCompressor {
      */
     public static double alpDecode(long encoded, int e, int f) {
         return (double) encoded * F10[f] * IF10[e];
+    }
+
+    @TestOnly
+    public static float f10f(int f) {
+        return F10F[f];
+    }
+
+    @TestOnly
+    public static float if10f(int e) {
+        return IF10F[e];
     }
 
     public static float alpDecodeFloat(int encoded, int e, int f) {
@@ -1021,7 +1032,9 @@ public class CoveringCompressor {
         pos += 4;
         final int forBase = Unsafe.getInt(pos);
         pos += 4;
-        if (bw > 0) {
+        if (bw > 0 && bw <= 32 && PostingIndexNative.isNative32Available()) {
+            PostingIndexNative.unpackAlpFloatsFrom(pos, lo, n, rawCount, bw, forBase, F10F[f], IF10F[e], outputAddr);
+        } else if (bw > 0) {
             BitpackUtils.unpackValuesFrom(pos, lo, n, bw, forBase, workspaceAddr);
             for (int i = 0; i < n; i++) {
                 Unsafe.putFloat(outputAddr + (long) i * Float.BYTES, alpDecodeFloat((int) Unsafe.getLong(workspaceAddr + (long) i * Long.BYTES), e, f));
@@ -1048,7 +1061,9 @@ public class CoveringCompressor {
         final int bw = Unsafe.getByte(pos++) & 0xFF;
         final int forBase = Unsafe.getInt(pos);
         pos += 4;
-        if (bw > 0) {
+        if (bw > 0 && bw <= 32 && PostingIndexNative.isNative32Available()) {
+            PostingIndexNative.unpackIntsFrom(pos, lo, n, Unsafe.getInt(srcAddr), bw, forBase, outputAddr);
+        } else if (bw > 0) {
             BitpackUtils.unpackValuesFrom(pos, lo, n, bw, 0, workspaceAddr);
             for (int i = 0; i < n; i++) {
                 Unsafe.putInt(outputAddr + (long) i * Integer.BYTES, forBase + (int) Unsafe.getLong(workspaceAddr + (long) i * Long.BYTES));
