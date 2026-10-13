@@ -162,6 +162,8 @@ public class FunctionResolver implements Mutable {
     private final IntList undefinedVariables = new IntList();
     private boolean cursorFunctionInstantiated;
     private int executionRequirementPosition = -1;
+    private String nonDeterministicCallName;
+    private int nonDeterministicCallPosition = -1;
     private FunctionFactoryDescriptor selectedOverload;
 
     public FunctionResolver(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache) {
@@ -409,6 +411,8 @@ public class FunctionResolver implements Mutable {
     public void clear() {
         executionRequirements.clear();
         executionRequirementPosition = -1;
+        nonDeterministicCallName = null;
+        nonDeterministicCallPosition = -1;
         cursorFunctionInstantiated = false;
         selectedOverload = null;
     }
@@ -751,26 +755,12 @@ public class FunctionResolver implements Mutable {
             final SqlException ex = SqlException.position(position).put("bad function factory (NULL), check log");
             Misc.freeObjList(args, ex);
             throw ex;
-        } else if (!executionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
-            // The same guard is armed for both a materialized view and a live view
-            // SELECT; name the kind actually being compiled so the reject reads right.
-            final SqlException exception = SqlException.nonDeterministicColumn(
-                    position,
-                    name,
-                    executionContext.isLiveViewCompile() ? "live view" : "materialized view"
-            );
-            // Construction succeeded, so the function has taken ownership of args (see the args.clear()
-            // below on the success path). Close the function itself - not just its argument list - so
-            // any native resource it allocated beyond its arguments (e.g. an IN-value set) is released
-            // instead of leaked. Closing the function also frees the args it owns, so do not free them
-            // separately. Preserve the rejection exception if close() were to throw.
-            if (args != null) {
-                args.clear(); // newInstance() transferred argument ownership to function
-            }
-            Misc.free(function, exception);
-            throw exception;
         }
         assert declaredType == ColumnType.UNDEFINED || declaredType == function.getType() : "function type differs from the result type its factory declares";
+        if (nonDeterministicCallPosition < 0 && !executionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
+            nonDeterministicCallName = Chars.toString(name);
+            nonDeterministicCallPosition = position;
+        }
         addExecutionRequirements(factory, position, name);
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
@@ -887,6 +877,20 @@ public class FunctionResolver implements Mutable {
      */
     public Class<? extends FunctionFactory> getImplicitConversion(int index) {
         return implicitConversions.getQuiet(index);
+    }
+
+    /**
+     * The name of the first non-deterministic function created for a context that refuses them, or null.
+     */
+    public String getNonDeterministicCallName() {
+        return nonDeterministicCallName;
+    }
+
+    /**
+     * The position of the first non-deterministic function created for a context that refuses them, or -1.
+     */
+    public int getNonDeterministicCallPosition() {
+        return nonDeterministicCallPosition;
     }
 
     /**

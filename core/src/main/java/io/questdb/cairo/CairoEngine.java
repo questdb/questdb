@@ -1444,8 +1444,8 @@ public class CairoEngine implements Closeable, WriterSource {
         try (SqlCompiler compiler = getSqlCompiler()) {
             // Arm the shared non-determinism guard for the LV body, mirroring the
             // mat-view compile (SqlCompilerImpl.compileCreateSelect). With it armed,
-            // FunctionParser rejects now()/sysdate()/systimestamp()/rnd_*/etc. anywhere
-            // in the SELECT - projection, WHERE filter, and window-function arguments -
+            // NonDeterministicCalls rejects now()/sysdate()/systimestamp()/rnd_*/etc. that
+            // the optimised SELECT keeps - projection, WHERE filter, and window-function arguments -
             // so the view can never produce non-reproducible results that diverge on a
             // re-refresh, O3 replay, or checkpoint restore. The ANCHOR EXPRESSION is
             // covered separately by validateAnchorPurity below.

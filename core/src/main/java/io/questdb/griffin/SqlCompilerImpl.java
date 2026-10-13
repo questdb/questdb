@@ -216,6 +216,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final int maxRecompileAttempts;
     private final MemoryMARW mem = Vm.getCMARWInstance();
     private final MessageBus messageBus;
+    private final NonDeterministicCalls nonDeterministicCalls = new NonDeterministicCalls();
     private final SqlOptimiser optimiser;
     private final SqlParser parser;
     private final TimestampValueRecord partitionFunctionRec = new TimestampValueRecord();
@@ -2384,6 +2385,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final SubqueryCompiler previous = functionParser.swapSubqueryCompiler(subqueryCompiler);
         try {
             root = binder.bind(model, this, executionContext);
+        } catch (SqlException e) {
+            nonDeterministicCalls.rejectCreated(functionResolver, executionContext);
+            throw e;
         } finally {
             functionParser.swapSubqueryCompiler(previous);
         }
@@ -3472,7 +3476,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     /**
      * Compiles the SELECT of a CREATE MATERIALIZED VIEW or CREATE VIEW: binds it, validates it as the view's
      * definition, and generates it. A materialized view validates the bound plan, whose select levels its rules
-     * read, before optimisation merges them, and binds and generates with non-deterministic functions refused; a
+     * read, before optimisation merges them, and refuses the non-deterministic functions its optimised plan keeps; a
      * view validates the output of the optimised plan. Errors of the SELECT report their position in the statement.
      */
     private void compileCreateSelect(@Transient @NotNull SqlExecutionContext executionContext, @NotNull Operation op) throws SqlException {
@@ -5928,6 +5932,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         optimiseSubqueries(executionContext);
         root = optimiser.optimise(root, executionContext);
         authorizeColumnAccess(executionContext, root);
+        nonDeterministicCalls.reject(root, executionContext);
     }
 
     private void optimiseSubqueries(SqlExecutionContext executionContext) throws SqlException {
@@ -6258,9 +6263,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 executionContext.popWindowContext();
             }
         }
-        if (!executionContext.allowNonDeterministicFunctions() && LogicalPlans.hasExternalDataSource(subqueryRoot)) {
-            throw SqlException.nonDeterministicColumn(position, "sub-query", executionContext.isLiveViewCompile() ? "live view" : "materialized view");
-        }
+        nonDeterministicCalls.rejectExternalSource(subqueryRoot, position, executionContext);
         final Subquery subquery = planNodePools.subqueries.next().of(subqueryRoot, scopes.depth() + 1,
                 LogicalPlans.isResultStable(subqueryRoot, executionContext.isParallelGroupByEnabled()));
         subqueries.add(subquery);
@@ -6417,6 +6420,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             optimiseSubquery(subqueries.getQuick(i), executionContext);
         }
         subqueries.setPos(first);
+        nonDeterministicCalls.reject(subquery.getRoot(), executionContext);
         optimiser.planAccessPaths(subquery.getRoot(), codeGenerator.getGenerationDepth(), false, executionContext);
         return generateSelectOneShot(model, subquery, executionContext, false);
     }

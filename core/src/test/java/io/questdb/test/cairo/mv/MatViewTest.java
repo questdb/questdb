@@ -3034,6 +3034,33 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewNonDeterministicFunctionPrunedFromSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonDeterministicFunctionBase();
+            execute("CREATE MATERIALIZED VIEW mv1 AS (SELECT ts, max(x) m FROM (SELECT ts, x, now() n FROM t) SAMPLE BY 1d) PARTITION BY DAY");
+            assertQuery("CREATE MATERIALIZED VIEW mv_kept AS (SELECT ts, max(x) m, max(n) n FROM (SELECT ts, x, now() n FROM t) SAMPLE BY 1d) PARTITION BY DAY")
+                    .noLeakCheck()
+                    .fails(87, "non-deterministic function cannot be used in materialized view: now");
+            drainQueues();
+            assertNonDeterministicFunctionPrunedRows("mv1");
+        });
+    }
+
+    @Test
+    public void testCreateMatViewNonDeterministicFunctionPrunedFromView() throws Exception {
+        assertMemoryLeak(() -> {
+            createNonDeterministicFunctionBase();
+            execute("CREATE VIEW v AS (SELECT ts, x, now() n FROM t)");
+            execute("CREATE MATERIALIZED VIEW mv2 AS (SELECT ts, max(x) m FROM v SAMPLE BY 1d) PARTITION BY DAY");
+            assertQuery("CREATE MATERIALIZED VIEW mv_kept AS (SELECT ts, max(x) m, max(n) n FROM v SAMPLE BY 1d) PARTITION BY DAY")
+                    .noLeakCheck()
+                    .fails(51, "non-deterministic function cannot be used in materialized view: now");
+            drainQueues();
+            assertNonDeterministicFunctionPrunedRows("mv2");
+        });
+    }
+
+    @Test
     public void testDedupKeysNoRowsRangeReplace() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -10284,6 +10311,18 @@ public class MatViewTest extends AbstractCairoTest {
                 .returns(expected);
     }
 
+    private void assertNonDeterministicFunctionPrunedRows(String viewName) throws Exception {
+        assertQuery(viewName)
+                .timestamp("ts")
+                .expectSize()
+                .noLeakCheck()
+                .returns(replaceExpectedTimestamp("""
+                        ts\tm
+                        2024-01-01T00:00:00.000000Z\t5
+                        2024-01-02T00:00:00.000000Z\t3
+                        """));
+    }
+
     private String copySql(int from, int count) {
         return "select * from tmp where n >= " + from + " and n < " + (from + count);
     }
@@ -10293,6 +10332,11 @@ public class MatViewTest extends AbstractCairoTest {
         return "create table " + tableName + " as (" + generateSelectSql(columns, startTs, step, 0, count) + ")" +
                 indexStr +
                 " timestamp(k) partition by DAY WAL";
+    }
+
+    private void createNonDeterministicFunctionBase() throws SqlException {
+        executeWithRewriteTimestamp("CREATE TABLE t (ts #TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO t VALUES ('2024-01-01T01:00:00Z', 1), ('2024-01-01T02:00:00Z', 5), ('2024-01-02T01:00:00Z', 3)");
     }
 
     private void drainQueues() {
