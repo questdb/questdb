@@ -318,6 +318,143 @@ public class AsyncWindowPlannedWalkTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testRoundsReturnComputedTasksEarly() throws Exception {
+        // A round is not a barrier: its computed tasks return, in order, while its later tasks
+        // still compute; and the workers count the planned walk's rows before the first round.
+        // Every shape, with keys split and whole, must still match the serial
+        // window, and some task must have returned before its round finished.
+        setSizes(100, 2_000, 0, 2_000);
+        assertMemoryLeak(() -> inPool(4, (engine, ctx) -> {
+            createQuote(engine, ctx, "DAY", 40_000, "posting");
+            long early = 0;
+            long countRounds = 0;
+            for (int run = 0; run < 4; run++) {
+                for (String shape : SHAPES) {
+                    final String query = "select " + shape + " from q where sym in ('S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'BIG', null) order by sym";
+                    final String expected = serial(engine, ctx, query);
+                    setFrameDispatch(true);
+                    ctx.setParallelWindowEnabled(true);
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        final AsyncWindowRecordCursor asyncCursor = findAsyncCursor(factory);
+                        asyncPlans++;
+                        try (RecordCursor cursor = factory.getCursor(ctx)) {
+                            TestUtils.assertEquals(query, expected, print(cursor, factory));
+                            early += asyncCursor.getEarlyEmittedTaskCount();
+                            countRounds += asyncCursor.getCountRoundCount();
+                        }
+                        assertSlotsReleased(factory);
+                    }
+                    // switched off, no task returns early
+                    setFrameDispatch(false);
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        final AsyncWindowRecordCursor asyncCursor = findAsyncCursor(factory);
+                        try (RecordCursor cursor = factory.getCursor(ctx)) {
+                            TestUtils.assertEquals(query, expected, print(cursor, factory));
+                            Assert.assertEquals(0, asyncCursor.getEarlyEmittedTaskCount());
+                            Assert.assertEquals(0, asyncCursor.getCountRoundCount());
+                        }
+                    }
+                }
+            }
+            Assert.assertTrue("no task returned before its round finished", early > 0);
+            // the walk's counts were counted by the workers, ahead of the rounds
+            Assert.assertTrue("no count round", countRounds > 0);
+        }));
+    }
+
+    @Test
+    public void testPrefixIsCappedWithTheSwitchOn() throws Exception {
+        // min.rows and prefix.rows above the cap: the query's thread streams at most
+        // PREFIX_ROWS_DISPATCH rows alone with the switch on, prefix.rows with it off
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_TASK_ROWS, 1_000);
+        // min.rows also gates the parallel plan by the table's rows
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_MIN_ROWS, 20_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_PREFIX_ROWS, 16_384);
+        assertMemoryLeak(() -> {
+            createQuote(engine, sqlExecutionContext, "DAY", 80_000, "posting");
+            final String query = "select " + SHAPES[1] + " from q where sym in ('S1', 'BIG', 'S2', 'S3', 'S4', 'S5') order by sym";
+            final String expected = serial(engine, sqlExecutionContext, query);
+            for (boolean on : new boolean[]{true, false}) {
+                setFrameDispatch(on);
+                sqlExecutionContext.setParallelWindowEnabled(true);
+                try (RecordCursorFactory factory = select(query)) {
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.assertEquals(query, expected, print(cursor, factory));
+                    }
+                    final AsyncWindowRecordCursor asyncCursor = findAsyncCursor(factory);
+                    asyncPlans++;
+                    final long prefix = asyncCursor.getPrefixRowCount();
+                    if (on) {
+                        // the prefix ends within the chunk that reaches the cap: a chunk is at most task.rows
+                        Assert.assertTrue("prefix " + prefix, prefix > 0 && prefix <= 2048 + 1_000);
+                    } else {
+                        Assert.assertTrue("prefix " + prefix, prefix > 2048 + 1_000 && prefix <= 16_384 + 1_000);
+                    }
+                    Assert.assertTrue(asyncCursor.getParallelTaskCount() > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPrefixCapOnWorkerPool() throws Exception {
+        // The 2,048-row prefix cap with warm-up, fold and carry, on 4 workers: running DOUBLE sums
+        // and averages, bounded frames wider than the cap, a lag past it, a running count beside a
+        // row number, a carry beside a lag, and idx 50's mid. Every shape returns the serial
+        // window's rows with the switch on (prefix capped) and off, twice per factory.
+        final String[] shapes = {
+                "sym, x, sum(d) over (partition by sym rows between unbounded preceding and current row) s",
+                "sym, x, avg(d) over (partition by sym rows between unbounded preceding and current row) a",
+                "sym, x, avg(d) over (partition by sym rows between 3000 preceding and current row) a3k",
+                "sym, x, sum(d) over (partition by sym rows between 2500 preceding and current row) s2k",
+                "sym, x, lag(d, 2500) over (partition by sym) l",
+                "sym, x, max(d) over (partition by sym rows between 4000 preceding and current row) mx",
+                "sym, x, first_value(d) over (partition by sym rows between 2500 preceding and current row) fv",
+                "sym, x, row_number() over (partition by sym) rn, count(d) over (partition by sym rows between unbounded preceding and current row) c",
+                "sym, x, sum(x) over (partition by sym rows between unbounded preceding and current row) sx, x - lag(x) over (partition by sym) dx",
+                "sym, ts, avg((bsize * bid + asize * ask) / (bsize + asize)) over (partition by sym rows between 4 preceding and current row) mid",
+        };
+        setSizes(1_000, 1_000_000, 20_000, 8_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_PREFIX_ROWS, 16_384);
+        assertMemoryLeak(() -> inPool(4, (engine, ctx) -> {
+            engine.execute("create table q (sym symbol index type posting, bid float, bsize int, ask float, asize int, x long, d double, ts timestamp)"
+                    + " timestamp(ts) partition by DAY", ctx);
+            engine.execute("insert into q select case when x % 2 = 0 then 'BIG' when x % 11 = 0 then null else 'S' || (x / 2 % 10) end,"
+                    + " case when x % 7 = 3 then null else rnd_float() end, rnd_int(1, 1000, 0), rnd_float(), rnd_int(1, 1000, 0), x,"
+                    + " case when x % 13 = 0 then null else rnd_double() * 1000 end, (x * 2_000_000_000L)::timestamp from long_sequence(120000)", ctx);
+            long cappedOpens = 0;
+            for (String shape : shapes) {
+                final String query = "select " + shape + " from q where sym in ('S1', 'S2', 'BIG', 'S3', null) order by sym";
+                final String expected = serial(engine, ctx, query);
+                // the prefix with the switch on, then off: a prefix that keeps keys whole ends with
+                // its key, past the cap, but is never longer with the switch on
+                final long[] prefixes = new long[2];
+                for (boolean on : new boolean[]{true, false}) {
+                    setFrameDispatch(on);
+                    ctx.setParallelWindowEnabled(true);
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        final AsyncWindowRecordCursor asyncCursor = findAsyncCursor(factory);
+                        asyncPlans++;
+                        for (int open = 0; open < 2; open++) {
+                            try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                TestUtils.assertEquals(query + " [dispatch=" + on + ", open " + open + ']', expected, print(cursor, factory));
+                            }
+                            final long prefix = asyncCursor.getPrefixRowCount();
+                            prefixes[on ? 0 : 1] = prefix;
+                            if (on && asyncCursor.getParallelTaskCount() > 0 && prefix <= 2048 + 1_000) {
+                                cappedOpens++;
+                            }
+                        }
+                        assertSlotsReleased(factory);
+                    }
+                }
+                Assert.assertTrue(query + " prefixes " + java.util.Arrays.toString(prefixes), prefixes[0] <= prefixes[1]);
+            }
+            Assert.assertTrue("no capped open with tasks", cappedOpens > 0);
+        }));
+    }
+
+    @Test
     public void testSwitchedOffCollectsOnTheQueryThread() throws Exception {
         assertMemoryLeak(() -> {
             createQuote(engine, sqlExecutionContext, "DAY", 3_000, "posting");

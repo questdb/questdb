@@ -267,10 +267,14 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             if (negativeLimitRows == null) {
                 negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
             }
+            // the negative LIMIT's cursor reads its rows back through its own records, never the
+            // frames' projected values
+            frameSequence.getAtom().setProjecting(false);
             negativeLimitCursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);
             return negativeLimitCursor;
         }
 
+        frameSequence.getAtom().setProjecting(true);
         cursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining);
         return cursor;
     }
@@ -343,6 +347,15 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return base.supportsUpdateRowId(tableToken);
+    }
+
+    /**
+     * Takes a projection over this filter whose columns the filtering threads compute, see
+     * {@link FrameProjection}; the atom frees it.
+     */
+    public void setFrameProjection(@NotNull FrameProjection projection) {
+        frameSequence.getAtom().setProjection(projection);
+        cursor.setProjection(projection);
     }
 
     @Override
@@ -452,6 +465,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                         record.init(frameMemory);
                     }
                     task.setFilteredRowCount(rows.size());
+                    atom.project(workerId, owner, task, record, circuitBreaker);
                 }
                 return;
             }
@@ -491,6 +505,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
                 }
 
                 task.setFilteredRowCount(rows.size());
+                atom.project(workerId, owner, task, record, circuitBreaker);
 
                 // Pre-touch native columns, if asked.
                 if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {

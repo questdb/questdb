@@ -26,15 +26,19 @@ package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.mp.TestWorkerPool;
@@ -66,6 +70,7 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
     @Override
     public void tearDown() throws Exception {
         UnorderedPageFrameSequence.setLocalReduceOpenCountingForTesting(false);
+        UnorderedPageFrameSequence.setLocalReduceMaxFramesForTesting(-1);
         super.tearDown();
     }
 
@@ -425,7 +430,9 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
                 "select count(), sum(v) from t where sym = 'R' and ts in '1970-01-02'",
         };
         // a threshold above every selection reduces locally; 1 dispatches every non-empty open
-        // (0 would turn the per-open decision off, and with it the counting)
+        // (0 would turn the per-open decision off, and with it the counting); the frame cap the
+        // switch adds is lifted, see testManyCoveredFramesAreDispatchedDespiteTheRowThreshold()
+        UnorderedPageFrameSequence.setLocalReduceMaxFramesForTesting(Integer.MAX_VALUE);
         for (long localMaxRows : new long[]{Long.MAX_VALUE, 1}) {
             final boolean local = localMaxRows > 1;
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_COVERING_LOCAL_MAX_ROWS, localMaxRows);
@@ -465,6 +472,118 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
     }
 
     @Test
+    public void testManyCoveredFramesAreDispatchedDespiteTheRowThreshold() throws Exception {
+        // A rare key over 2,000 partitions: 6,000 rows, under the local threshold, in 2,000 frames.
+        // With the frame dispatch switch on the frames are produced lean (no covering cursor, no
+        // boundary postings) and, past the frame cap, dispatched to the workers, which decode them;
+        // off, they are produced as before and reduced on the query's thread. The rows are the
+        // no_covering plan's either way.
+        final String[] queries = {
+                "select count(), sum(v), max(d) from m where sym = 'R'",
+                "select count(), sum(v) from m where sym = 'R' and d > 1",
+                "select ts, v, d from m where sym = 'R' and d > 1",
+                "select ts, v from m where sym = 'R' and v % 3 = 0 limit -7",
+                "select ts, v from m where sym = 'R' limit 1000, 1010",
+                "select count(), sum(v) from m where sym = 'k7'",
+                "select count(), sum(v) from m where sym = 'R' and ts in '2020-03'",
+        };
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                engine.execute("create table m (ts timestamp, sym symbol index type posting include (v, d), v long, d double) timestamp(ts) partition by day bypass wal", ctx);
+                engine.execute("insert into m select ('2020-01-01'::timestamp + x * 216_000_000L)::timestamp,"
+                        + " case when x % 133 = 0 then 'R' else 'k' || (x % 50) end, x, x / 3.0 from long_sequence(800_000)", ctx);
+                // frames of 500 rows, so a frequent key's partition spans chunks
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_COVERING_FRAME_ROWS, 500);
+                for (String q : queries) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "false");
+                    final StringSink expected = new StringSink();
+                    TestUtils.printSql(compiler, ctx, q.replaceFirst("select ", "select /*+ no_covering */ "), expected);
+                    for (boolean dispatchOn : new boolean[]{false, true}) {
+                        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, String.valueOf(dispatchOn));
+                        final StringSink plan = new StringSink();
+                        TestUtils.printSql(compiler, ctx, "explain " + q, plan);
+                        Assert.assertTrue(q + '\n' + plan, plan.toString().contains("CoveringIndex"));
+                        try (RecordCursorFactory factory = compiler.compile(q, ctx).getRecordCursorFactory()) {
+                            for (int i = 0; i < 2; i++) {
+                                CoveringIndexRecordCursorFactory.resetLeanCoveredFramesForTesting();
+                                final long[] before = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                                final StringSink actual = new StringSink();
+                                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                    println(factory.getMetadata(), cursor, actual);
+                                }
+                                final long[] after = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                                TestUtils.assertEquals(q + " [dispatch=" + dispatchOn + ']', expected, actual);
+                                final long[] lean = CoveringIndexRecordCursorFactory.getLeanCoveredFramesForTesting();
+                                if (!plan.toString().contains("Async")) {
+                                    // the covering record cursor, which has no page frames
+                                    continue;
+                                }
+                                if (q.contains("limit -")) {
+                                    // descending: produced by the traverse, as before
+                                    Assert.assertEquals(q, 0, lean[0]);
+                                } else {
+                                    Assert.assertEquals(q, dispatchOn, lean[0] > 0);
+                                    Assert.assertEquals(q, 0, lean[1]);
+                                }
+                                if (q.contains("sym = 'R'") && !q.contains("ts in")) {
+                                    // 2,000 frames: dispatched with the switch on, local with it off
+                                    Assert.assertEquals(q + " [dispatch=" + dispatchOn + ']', dispatchOn, after[1] > before[1]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testManyCoveredFramesFoldInFrameOrder() throws Exception {
+        // A rare key over 2,000 partitions, under the local threshold, past the frame cap: with the
+        // frame dispatch switch on the workers decode the frames, and the query's thread folds them in
+        // frame order, as it reduces them with the switch off. DOUBLE sums and averages, whose last
+        // bits depend on the order they see rows in, are therefore one value in every run, the
+        // switch-off value, raw bits and all. Random doubles, so that the order shows in the bits.
+        final String[] queries = {
+                "select count(), sum(d) from m where sym = 'R' and d > 1",
+                "select count(), sum(d), avg(d) from m where sym = 'R'",
+                "select v % 3 k, count(), sum(d), avg(d) from m where sym = 'R' order by k",
+        };
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                engine.execute("create table m (ts timestamp, sym symbol index type posting include (v, d), v long, d double) timestamp(ts) partition by day bypass wal", ctx);
+                engine.execute("insert into m select ('2020-01-01'::timestamp + x * 216_000_000L)::timestamp,"
+                        + " case when x % 133 = 0 then 'R' else 'k' || (x % 50) end, x, rnd_double() * 1000 from long_sequence(800_000)", ctx);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_COVERING_FRAME_ROWS, 500);
+                for (String q : queries) {
+                    String expected = null;
+                    for (boolean dispatchOn : new boolean[]{false, true}) {
+                        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, String.valueOf(dispatchOn));
+                        final StringSink plan = new StringSink();
+                        TestUtils.printSql(compiler, ctx, "explain " + q, plan);
+                        Assert.assertTrue(q + '\n' + plan, plan.toString().contains("CoveringIndex"));
+                        Assert.assertTrue(q + '\n' + plan, plan.toString().contains("Group By workers"));
+                        final long[] before = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                        for (int run = 0; run < 12; run++) {
+                            final String actual = rawBits(engine, ctx, q);
+                            if (expected == null) {
+                                expected = actual;
+                            }
+                            Assert.assertEquals(q + " [dispatch=" + dispatchOn + ", run=" + run + ']', expected, actual);
+                        }
+                        final long[] after = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                        // with the switch on every open decoded its frames ahead, with it off none did
+                        Assert.assertEquals(q + " [dispatch=" + dispatchOn + ']', dispatchOn ? 12 : 0, after[2] - before[2]);
+                        Assert.assertEquals(q + " [dispatch=" + dispatchOn + ']', dispatchOn ? 0 : 12, after[0] - before[0]);
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testParallelArmsWithFrameDispatchOnWorkerPool() throws Exception {
         // Covered Async Filter and Async GROUP BY plans with frame dispatch on (deferred frame
         // addresses, frame groups), reduced locally and dispatched to four workers, return the rows
@@ -488,6 +607,8 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
         // selection reduces locally, 1 dispatches every non-empty open (0 would turn the per-open
         // decision off, and with it the counting)
         final Object[][] arms = {{false, Long.MAX_VALUE}, {true, Long.MAX_VALUE}, {true, 1L}, {false, 1L}};
+        // the frame cap the switch adds is lifted, see testManyCoveredFramesAreDispatchedDespiteTheRowThreshold()
+        UnorderedPageFrameSequence.setLocalReduceMaxFramesForTesting(Integer.MAX_VALUE);
         for (Object[] arm : arms) {
             final boolean dispatchOn = (Boolean) arm[0];
             final long localMaxRows = (Long) arm[1];
@@ -681,5 +802,26 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
         final StringSink plan = new StringSink();
         printSql("explain select /*+ use_index */ ts, v from t where sym = 'R'", plan);
         TestUtils.assertContains(plan, "CoveringIndex");
+    }
+
+    // the rows, DOUBLE columns as their value and raw bits
+    private static String rawBits(CairoEngine engine, SqlExecutionContext ctx, String query) throws SqlException {
+        try (RecordCursorFactory factory = engine.select(query, ctx); RecordCursor cursor = factory.getCursor(ctx)) {
+            final StringSink sink = new StringSink();
+            final RecordMetadata metadata = factory.getMetadata();
+            final Record record = cursor.getRecord();
+            while (cursor.hasNext()) {
+                for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                    if (ColumnType.tagOf(metadata.getColumnType(i)) == ColumnType.DOUBLE) {
+                        final double value = record.getDouble(i);
+                        sink.put(value).put('#').put(Long.toHexString(Double.doubleToRawLongBits(value))).put(' ');
+                    } else {
+                        sink.put(record.getLong(i)).put(' ');
+                    }
+                }
+                sink.put('\n');
+            }
+            return sink.toString();
+        }
     }
 }

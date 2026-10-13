@@ -587,6 +587,11 @@ public class QueryProgress extends AbstractRecordCursorFactory implements Resour
         }
 
         @Override
+        public long getFrameCountHint() {
+            return baseCursor.getFrameCountHint();
+        }
+
+        @Override
         public ColumnMapping getColumnMapping() {
             return baseCursor.getColumnMapping();
         }

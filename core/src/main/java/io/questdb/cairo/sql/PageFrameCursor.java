@@ -117,6 +117,14 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
     }
 
     /**
+     * The number of frames this cursor is expected to yield, or -1 when it cannot tell cheaply: a
+     * hint for sizing what holds the frames, which may be too high or too low.
+     */
+    default long getFrameCountHint() {
+        return -1;
+    }
+
+    /**
      * Returns true when the cursor drops whole parquet row groups up front using pushed-down filter
      * conditions, so its iteration is not a 1:1 pass over the physical partition rows.
      * <p>

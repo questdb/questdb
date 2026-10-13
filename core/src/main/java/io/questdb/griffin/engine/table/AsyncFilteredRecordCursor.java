@@ -73,6 +73,8 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     // The OG rows remaining, used to reset the counter when re-running cursor from top().
     private long ogRowsRemaining;
     private PageFrameMemoryRecord recordB;
+    // the projection over this cursor whose columns the filtering threads computed, or null
+    private FrameProjection projection;
     private DirectLongList rows;
     // Artificial limit on remaining rows to be returned from this cursor.
     // It is typically copied from LIMIT clause on SQL statement.
@@ -228,6 +230,9 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         // We have rows in the current frame we still need to dispatch
         if (frameRowIndex < frameRowCount) {
             record.setRowIndex(rows.get(rowIndex()));
+            if (projection != null) {
+                projection.ofRow(rowIndex());
+            }
             frameRowIndex++;
             return checkLimit();
         }
@@ -242,6 +247,9 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             fetchNextFrame(dispatchLimit, false);
             if (frameRowCount > 0 && frameRowIndex < frameRowCount) {
                 record.setRowIndex(rows.get(rowIndex()));
+                if (projection != null) {
+                    projection.ofRow(rowIndex());
+                }
                 frameRowIndex++;
                 return checkLimit();
             }
@@ -291,6 +299,9 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             block = new SelectedRowsBlock();
         }
         block.of((int) Math.min(Math.min(frameRowCount - frameRowIndex, rowsRemaining), maxRows));
+        if (projection != null) {
+            projection.ofBlock(frameRowIndex);
+        }
         return block;
     }
 
@@ -301,6 +312,10 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
     @Override
     public void recordAt(Record record, long atRowId) {
+        if (projection != null && record == this.record) {
+            // not a filtered row's position: the projection computes it
+            projection.ofRow(-1);
+        }
         frameMemoryPool.recordAt(record, atRowId);
     }
 
@@ -423,6 +438,10 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             // We also need to clear the record as it's initialized with the task's
             // page frame memory that is now closed.
             record.clear();
+            if (projection != null) {
+                // the task's values may be the next frame's now
+                projection.ofFrame(0, 0);
+            }
         }
     }
 
@@ -460,6 +479,9 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
                     }
                     frameIndex = task.getFrameIndex();
                     frameRowIndex = 0;
+                    if (projection != null) {
+                        projection.ofFrame(rows != null && task.isProjected() ? task.getProjectedValues().getAddress() : 0, frameRowCount);
+                    }
                     if (frameRowCount > 0 && frameSequence.isActive()) {
                         record.init(task.getFrameMemory());
                         break;
@@ -496,6 +518,14 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
     private long rowIndex() {
         return hasDescendingOrder ? (frameRowCount - frameRowIndex - 1) : frameRowIndex;
+    }
+
+    /**
+     * The projection over this cursor whose columns the filtering threads compute, see
+     * {@link FrameProjection}; null for none.
+     */
+    void setProjection(@Nullable FrameProjection projection) {
+        this.projection = projection;
     }
 
     void of(PageFrameSequence<?> frameSequence, long rowsRemaining) {
@@ -545,6 +575,9 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         @Override
         public Record getRecordAt(int row) {
             record.setRowIndex(rows.get(frameRowIndex + row));
+            if (projection != null) {
+                projection.ofRow(frameRowIndex + row);
+            }
             return record;
         }
 

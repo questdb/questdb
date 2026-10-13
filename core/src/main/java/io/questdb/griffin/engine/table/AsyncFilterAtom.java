@@ -29,9 +29,11 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.async.PageFrameReduceTask;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
 import io.questdb.griffin.SqlException;
@@ -68,11 +70,16 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
+    // false for an execution whose cursor never reads the frames' projected values: a negative LIMIT's,
+    // which reads its rows back through its own records
+    private boolean isProjecting = true;
     private IntHashSet lateMatSkipColumnIndexes;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
     // tracker-aware Unsafe overloads to charge allocations to the active workload.
     private MemoryTracker memoryTracker;
+    // the virtual columns of a projection over the filter, computed per frame, or null
+    private FrameProjection projection;
 
     public AsyncFilterAtom(
             @NotNull CairoConfiguration configuration,
@@ -103,6 +110,9 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
 
     @Override
     public void clear() {
+        if (projection != null) {
+            projection.clear();
+        }
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
         memoryTracker = null;
@@ -111,7 +121,9 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
 
     @Override
     public void close() {
-        final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, perWorkerFilters);
+        Throwable cleanupFailure = Misc.freeObjListBestEffort(null, perWorkerFilters);
+        cleanupFailure = Misc.freeBestEffort(cleanupFailure, projection);
+        projection = null;
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
@@ -161,6 +173,46 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
                 executionContext.setCloneSymbolTables(current);
             }
         }
+        if (projection != null) {
+            projection.init(symbolTableSource, executionContext);
+        }
+    }
+
+    public @Nullable FrameProjection getProjection() {
+        return projection;
+    }
+
+    /**
+     * Computes the projection's columns of a filtered native frame into the task, see
+     * {@link FrameProjection}. Does nothing without a projection.
+     */
+    public void project(
+            int workerId,
+            boolean owner,
+            PageFrameReduceTask task,
+            PageFrameMemoryRecord record,
+            SqlExecutionCircuitBreaker circuitBreaker
+    ) {
+        final FrameProjection projection = this.projection;
+        if (projection != null && isProjecting && !task.isCountOnly() && task.getFilteredRows().size() > 0
+                && task.getFrameMemory().getFrameFormat() == PartitionFormat.NATIVE) {
+            task.setProjected(projection.project(workerId, owner, record, task.getFilteredRows(), task.getProjectedValues(), task.getMemoryTracker(), circuitBreaker));
+        }
+    }
+
+    /**
+     * Whether the filtering threads compute the projection's columns for this execution; set before
+     * its frames are dispatched.
+     */
+    public void setProjecting(boolean isProjecting) {
+        this.isProjecting = isProjecting;
+    }
+
+    /**
+     * Takes the projection whose columns the filtering threads compute; the atom frees it.
+     */
+    public void setProjection(FrameProjection projection) {
+        this.projection = projection;
     }
 
     /**

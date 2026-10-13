@@ -343,6 +343,9 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                 }
                 final PageFrameReduceTask groupTask = task.getGroupTask(k);
                 try {
+                    // a parked task gets its lists back here, on the reducing thread, see
+                    // PageFrameSequence.reserveGroupTasks()
+                    groupTask.unpark();
                     frameSequence.getReduceStartedCounter().incrementAndGet();
                     frameSequence.getReducer().reduce(workerId, record, groupTask, circuitBreaker, stealingFrameSequence);
                 } catch (Throwable th) {

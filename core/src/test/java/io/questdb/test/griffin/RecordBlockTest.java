@@ -391,7 +391,12 @@ public class RecordBlockTest extends AbstractCairoTest {
             // arithmetic over base columns is computed column-wise, into memory the block exposes;
             // a function with no column-wise loop (concat, a CASE) is read through the record
             assertComputedInMemory("select ts, (db + l) / 2 mid, l * 3 l3, (f - i)::double fi, s from at where l > 5000", true, true, true);
+            // ... unless the filter's threads computed it into the frame (a fixed-size type, the
+            // frame dispatch switch on, see FrameProjection); a string is never
+            assertComputedInMemory("select ts, (db + f) / 2 mid, s || 'x' sx, case when b then l end cl from at where i > 0", true, false, true);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "false");
             assertComputedInMemory("select ts, (db + f) / 2 mid, s || 'x' sx, case when b then l end cl from at where i > 0", true, false, false);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
             // a computed SYMBOL column would be read ahead of the other columns: no blocks
             assertSupportsBlocks(false, "select v::symbol vs, l from at where l > 100");
             Assert.assertEquals(0, assertBlocksMatchRows(engine, sqlExecutionContext, "select v::symbol vs, l from at where l > 100", rnd));

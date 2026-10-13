@@ -149,6 +149,10 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     private int rowBufLen;
     private int rowBufPos;
     private RowCursor rowCursor;
+    // planned walk: every (key, frame)'s row count, key-major, that other threads counted ahead
+    // of the walk, see preparePlanCounts(); valid once plannedCountsReady
+    private long[] plannedCounts;
+    private boolean plannedCountsReady;
 
     /**
      * @param frameOrder order of the page frames the partition frame cursor yields,
@@ -237,6 +241,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         rowCursor = Misc.free(rowCursor);
         unfreezeReaders();
         isPlanned = false;
+        plannedCountsReady = false;
         planOpen = false;
         frameIndexReaders.clear();
         super.close();
@@ -384,6 +389,49 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
 
     public boolean isPlannedWalk() {
         return isPlanned;
+    }
+
+    /**
+     * Planned walks only: makes room for every (key, frame)'s row count, so that other threads can
+     * count them ahead of the walk ({@link #countPlanKeys}) and the walk then reads the counts
+     * rather than counting on its own thread. Returns false, and the walk counts as it goes, when
+     * the keys times the frames exceed {@code maxCounts}.
+     */
+    public boolean preparePlanCounts(long maxCounts) {
+        assert isPlanned;
+        plannedCountsReady = false;
+        final long n = (long) keyCount * frameCount;
+        if (n == 0 || n > maxCounts) {
+            return false;
+        }
+        if (plannedCounts == null || plannedCounts.length < n) {
+            plannedCounts = new long[(int) n];
+        }
+        return true;
+    }
+
+    /**
+     * Counts the rows of keys {@code [keyLo, keyHi)} in every frame, for {@link #preparePlanCounts}.
+     * Any thread may call it, for a key range of its own, between preparePlanCounts() and
+     * {@link #usePlanCounts()}: it only reads the frozen readers.
+     */
+    public void countPlanKeys(int keyLo, int keyHi) {
+        final long[] counts = plannedCounts;
+        for (int k = keyLo; k < keyHi; k++) {
+            final int base = k * frameCount;
+            for (int f = 0; f < frameCount; f++) {
+                counts[base + f] = countKeyRowsUnplanned(k, f);
+            }
+        }
+    }
+
+    /**
+     * Every key's counts are in: the walk reads them from now on. The caller has waited for every
+     * {@link #countPlanKeys} call, which orders their writes before this thread's reads.
+     */
+    public void usePlanCounts() {
+        assert isPlanned && plannedCounts != null;
+        plannedCountsReady = true;
     }
 
     /**
@@ -681,6 +729,14 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     // The rows of a key in a frame, as its row cursor returns them. The index counts them where it
     // can; a legacy unranked encoding is counted by reading it.
     private long countKeyRows(int keyIndex, int frameIndex) {
+        if (plannedCountsReady) {
+            return skewed(keyIndex, frameIndex, plannedCounts[keyIndex * frameCount + frameIndex]);
+        }
+        return skewed(keyIndex, frameIndex, countKeyRowsUnplanned(keyIndex, frameIndex));
+    }
+
+    // The rows of a key in a frame, as countKeyRows() counts them, before any test skew.
+    private long countKeyRowsUnplanned(int keyIndex, int frameIndex) {
         final int indexKey = rowCursorFactory.getIndexKey(keyIndex);
         if (indexKey < 0) {
             // a symbol the table does not have: its row cursor is empty
@@ -694,7 +750,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                 ? reader.countMatchesClamped(indexKey, lo, hi, entryMax >= 0 ? Math.min(hi, entryMax) : hi)
                 : Numbers.LONG_NULL;
         if (count != Numbers.LONG_NULL) {
-            return skewed(keyIndex, frameIndex, count);
+            return count;
         }
         final RowCursor cursor = reader.getDetachedCursor(indexKey, lo, hi, null);
         try {
@@ -703,7 +759,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                 cursor.next();
                 n++;
             }
-            return skewed(keyIndex, frameIndex, n);
+            return n;
         } finally {
             Misc.free(cursor);
         }
@@ -944,6 +1000,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         // tasks before it rewinds or closes the walk
         unfreezeReaders();
         isPlanned = false;
+        plannedCountsReady = false;
         planOpen = false;
         rowBufPos = 0;
         rowBufLen = 0;

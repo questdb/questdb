@@ -315,6 +315,10 @@ import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
+import io.questdb.griffin.engine.table.FrameProjection;
+import io.questdb.griffin.engine.table.IndexKeyScanFrameFactory;
+import io.questdb.griffin.engine.table.SymbolKeyEqualsFunction;
+import io.questdb.griffin.engine.table.ProjectedColumnFunction;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
@@ -13404,13 +13408,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            return new VirtualRecordCursorFactory(
+            final VirtualRecordCursorFactory virtual = new VirtualRecordCursorFactory(
                     virtualMetadata,
                     priorityMetadata,
                     functions,
                     factory,
                     virtualColumnReservedSlots
             );
+            try {
+                projectOnFilterWorkers(model, virtual, executionContext);
+            } catch (Throwable th) {
+                Misc.free(virtual);
+                throw th;
+            }
+            return virtual;
         } catch (Throwable e) {
             // Constant-folding a cast (e.g. `(-1234567L)::DECIMAL(4,2)`) can throw
             // ImplicitCastException at compile time. That escapes a narrower catch
@@ -14409,6 +14420,133 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && timestampIndex > -1
                 && SqlUtil.getColumnIndexQuiet(baseMetadata, partitionNode.token) == keyIndex
                 && SqlUtil.getColumnIndexQuiet(baseMetadata, orderNode.token) == timestampIndex;
+    }
+
+    /**
+     * Lets the threads that filter an Async Filter's frames compute the virtual columns of the
+     * projection over it, see {@link FrameProjection}: columns of a fixed-size numeric type whose
+     * expression is not a plain column. Each worker slot gets a copy of the projection's
+     * functions, compiled as the window stages' copies are ({@link #compileProjectionCopy}); the
+     * projection's own functions are wrapped to read the frames' values
+     * ({@link ProjectedColumnFunction}). Nothing changes when the frame dispatch switch is off,
+     * when the base is not an Async Filter (or a selection of one), when a column memoizes, or when
+     * a copy cannot be compiled the same.
+     */
+    private void projectOnFilterWorkers(
+            IQueryModel model,
+            VirtualRecordCursorFactory virtual,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (!configuration.isSqlParallelFrameDispatchEnabled() || executionContext.getSharedQueryWorkerCount() < 1) {
+            return;
+        }
+        RecordCursorFactory base = virtual.getBaseFactory();
+        IntList crossIndex = null;
+        if (base instanceof SelectedRecordCursorFactory selected) {
+            crossIndex = selected.getColumnCrossIndex();
+            base = selected.getBaseFactory();
+        }
+        if (!(base instanceof AsyncJitFilteredRecordCursorFactory) && !(base instanceof AsyncFilteredRecordCursorFactory)) {
+            return;
+        }
+        final ObjList<Function> functions = virtual.getFunctions();
+        final PriorityMetadata priorityMetadata = virtual.getPriorityMetadata();
+        final int reserved = priorityMetadata.getVirtualColumnReservedSlots();
+        final ObjList<QueryColumn> columns = model.getColumns();
+        if (functions.size() != columns.size()) {
+            // a conditional timestamp column the copies would not have
+            return;
+        }
+        final IntList projected = new IntList();
+        final IntList projectedTypes = new IntList();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Function function = functions.getQuick(i);
+            if (function == null || function instanceof MemoizerFunction) {
+                return;
+            }
+            final int type = function.getType();
+            if (ColumnType.tagOf(type) == ColumnType.SYMBOL && ColumnFunction.unwrap(function) == null) {
+                // a computed symbol needs symbol tables the copies do not get
+                return;
+            }
+            if (ColumnFunction.unwrap(function) != null || function.isConstant() || function.isRuntimeConstant() || !FrameProjection.isSupportedType(type)) {
+                continue;
+            }
+            projected.add(i);
+            projectedTypes.add(type);
+        }
+        if (projected.size() == 0) {
+            return;
+        }
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (readsOwnSymbolColumn(columns.getQuick(i).getAst(), priorityMetadata, reserved)) {
+                return;
+            }
+        }
+        final int slotCount = executionContext.getSharedQueryWorkerCount() + 1;
+        final ObjList<ObjList<Function>> copies = new ObjList<>(slotCount);
+        try {
+            for (int i = 0; i < slotCount; i++) {
+                final ObjList<Function> copy = compileProjectionCopy(model, virtual, virtual.getBaseFactory().getMetadata(), executionContext);
+                if (copy == null) {
+                    for (int k = 0, m = copies.size(); k < m; k++) {
+                        Misc.freeObjList(copies.getQuick(k));
+                    }
+                    return;
+                }
+                copies.add(copy);
+            }
+        } catch (SqlException e) {
+            // the query compiled with the owner's functions: a copy that does not compile leaves the
+            // projection to them, as a copy that comes out differently does
+            for (int k = 0, m = copies.size(); k < m; k++) {
+                Misc.freeObjList(copies.getQuick(k));
+            }
+            LOG.info().$("projection stays on the query's thread, a copy did not compile [error=").$(e.getFlyweightMessage()).I$();
+            return;
+        } catch (Throwable th) {
+            for (int k = 0, m = copies.size(); k < m; k++) {
+                Misc.freeObjList(copies.getQuick(k));
+            }
+            throw th;
+        }
+        final RecordMetadata baseMetadata = virtual.getBaseFactory().getMetadata();
+        final IntList baseColumnTypes = new IntList(baseMetadata.getColumnCount());
+        for (int i = 0, n = baseMetadata.getColumnCount(); i < n; i++) {
+            baseColumnTypes.add(baseMetadata.getColumnType(i));
+        }
+        final FrameProjection projection = new FrameProjection(configuration, copies, projected, projectedTypes, baseColumnTypes, reserved, crossIndex);
+        if (base instanceof AsyncJitFilteredRecordCursorFactory jit) {
+            jit.setFrameProjection(projection);
+        } else {
+            ((AsyncFilteredRecordCursorFactory) base).setFrameProjection(projection);
+        }
+        for (int j = 0, n = projected.size(); j < n; j++) {
+            final int i = projected.getQuick(j);
+            functions.setQuick(i, new ProjectedColumnFunction(functions.getQuick(i), projection, j));
+        }
+        virtual.setFrameProjection(projection);
+    }
+
+    // Whether the expression reads one of the projection's own symbol columns, whose symbol table
+    // the projection's copies on the workers would not get.
+    private static boolean readsOwnSymbolColumn(ExpressionNode node, PriorityMetadata metadata, int reserved) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == LITERAL) {
+            final int index = metadata.getColumnIndexQuiet(node.token);
+            return index > -1 && index < reserved && ColumnType.tagOf(metadata.getColumnType(index)) == ColumnType.SYMBOL;
+        }
+        if (readsOwnSymbolColumn(node.lhs, metadata, reserved) || readsOwnSymbolColumn(node.rhs, metadata, reserved)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (readsOwnSymbolColumn(node.args.getQuick(i), metadata, reserved)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -16586,6 +16724,82 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && IndexType.isPosting(reader.getMetadata().getColumnIndexType(readerKeyColumnIndex));
     }
 
+    // The parallel plan of a single-symbol index scan, see DeferredSingleSymbolFilterPageFrameRecordCursorFactory:
+    // an Async Filter over the scan's partitions whose workers read each frame's rows of the symbol
+    // from its posting index. It shares the scan's partition frames and key function.
+    private void attachParallelIndexScan(
+            IQueryModel model,
+            DeferredSingleSymbolFilterPageFrameRecordCursorFactory serial,
+            RecordMetadata queryMeta,
+            PartitionFrameCursorFactory dfcFactory,
+            Function symbolFunc,
+            int keyColumnIndex,
+            IntList columnIndexes,
+            IntList columnSizeShifts,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        // A constant, non-negative LIMIT bounds the rows an open reads: the parallel plan then stops
+        // dispatching frames once it has them, and a LIMIT too small for the parallel plan keeps the
+        // serial scan without an estimate. A negative or non-constant LIMIT is left to the LIMIT above.
+        Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+        long rowsCap = Long.MAX_VALUE;
+        if (limitLoFunction != null) {
+            if (!mayBeNegativeLimit(limitLoFunction, executionContext) && limitLoFunction.getLong(null) != Numbers.LONG_NULL) {
+                rowsCap = limitLoFunction.getLong(null);
+            } else {
+                limitLoFunction = Misc.free(limitLoFunction);
+            }
+        }
+        final int limitLoPos = limitLoFunction != null && model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
+        final IndexKeyScanFrameFactory frames = new IndexKeyScanFrameFactory(queryMeta, dfcFactory, symbolFunc, keyColumnIndex, columnIndexes, columnSizeShifts);
+        try {
+            final IntHashSet usedColumns = new IntHashSet();
+            usedColumns.add(keyColumnIndex);
+            final AsyncFilteredRecordCursorFactory parallelScan = new AsyncFilteredRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    configuration,
+                    executionContext.getMessageBus(),
+                    frames,
+                    new SymbolKeyEqualsFunction(keyColumnIndex, symbolFunc),
+                    usedColumns,
+                    reduceTaskFactory,
+                    null,
+                    expressionNodePool.next().of(LITERAL, "index key", 0, 0),
+                    limitLoFunction,
+                    limitLoPos,
+                    executionContext.getSharedQueryWorkerCount(),
+                    false
+            );
+            // the parallel plan owns it now
+            limitLoFunction = null;
+            serial.setParallelScan(parallelScan, rowsCap);
+        } catch (Throwable th) {
+            // the serial scan still runs; the frames borrow, so they free nothing of it
+            Misc.free(limitLoFunction);
+            Misc.free(frames);
+            throw th;
+        }
+    }
+
+    private boolean isParallelIndexScanCandidate(
+            IQueryModel model,
+            TableReader reader,
+            int readerKeyColumnIndex,
+            int order,
+            int indexDirection,
+            SqlExecutionContext executionContext
+    ) {
+        return configuration.isSqlParallelFrameDispatchEnabled()
+                && executionContext.isParallelFilterEnabled()
+                && executionContext.getSharedQueryWorkerCount() > 0
+                && order == ORDER_ASC
+                && indexDirection == IndexReader.DIR_FORWARD
+                && !model.isUpdate()
+                && !executionContext.isLiveViewCompile()
+                && !reader.getTableToken().isLiveView()
+                && IndexType.isPosting(reader.getMetadata().getColumnIndexType(readerKeyColumnIndex));
+    }
+
     /**
      * Whether a table model could generate a covering-index scan that a scan of the table should
      * replace when the key turns out frequent, see {@link #scanInPlaceOfFrequentCovering}: a read
@@ -17226,7 +17440,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (filter == null) {
                                     // This special case factory can later be disassembled to framing and index
                                     // cursors in SAMPLE BY processing
-                                    RecordCursorFactory result = new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
+                                    final DeferredSingleSymbolFilterPageFrameRecordCursorFactory result = new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
                                             configuration,
                                             keyColumnIndex,
                                             symbolFunc,
@@ -17238,7 +17452,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             columnSizeShifts,
                                             supportsRandomAccess
                                     );
+                                    final Function resultSymbolFunc = symbolFunc;
                                     symbolFunc = null;
+                                    if (isParallelIndexScanCandidate(model, reader, columnIndexes.getQuick(keyColumnIndex), order, indexDirection, executionContext)) {
+                                        try {
+                                            attachParallelIndexScan(model, result, queryMeta, dfcFactory, resultSymbolFunc, keyColumnIndex, columnIndexes, columnSizeShifts, executionContext);
+                                        } catch (Throwable th) {
+                                            // the scan owns the partition frames: freed with it, not by the outer catch
+                                            dfcFactory = null;
+                                            Misc.free(result);
+                                            throw th;
+                                        }
+                                    }
                                     return result;
                                 }
                                 if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {

@@ -67,6 +67,11 @@ import org.jetbrains.annotations.TestOnly;
 public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory {
     // budget of (partition, key) count probes of one estimate, see estimateSelection()
     private static final int ESTIMATE_MAX_PROBES = 65_536;
+    // the budget with the frame dispatch switch on: the estimate is serial work on the query's
+    // thread at every open, before any worker starts, see estimateSelection()
+    static final int ESTIMATE_MAX_PROBES_DISPATCH = 4_096;
+    // tests: the (partition, key) counts the last estimate read
+    private long lastEstimateProbes;
     private final IntList estimateKeys = new IntList();
     private final int frameRows;
     private final ObjList<Function> keyFunctions = new ObjList<>();
@@ -125,7 +130,8 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
     /**
      * Estimates, from the posting index's per-key row counts, the rows the list selects and the
      * rows the scan would read. Up to {@value #ESTIMATE_MAX_PROBES} (partition, key) counts are
-     * read; past that, partitions are sampled by stride and the selection extrapolated. A
+     * read, {@value #ESTIMATE_MAX_PROBES_DISPATCH} with the frame dispatch switch on; past that,
+     * partitions are sampled by stride and the selection extrapolated. A
      * partition without a posting reader counts every row as selected, which leans towards the
      * scan, since the index plan scans such partitions too.
      *
@@ -150,9 +156,13 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
             final int keyCount = estimateKeys.size();
             final long frameCountBound = frameCursor.getFrameCountUpperBound();
             final long frameCount = frameCountBound > 0 ? frameCountBound : reader.getPartitionCount();
+            final long maxProbes = executionContext.getCairoEngine().getConfiguration().isSqlParallelFrameDispatchEnabled()
+                    ? ESTIMATE_MAX_PROBES_DISPATCH
+                    : ESTIMATE_MAX_PROBES;
             final long stride = keyCount == 0
                     ? Long.MAX_VALUE
-                    : Math.max(1, (frameCount * keyCount + ESTIMATE_MAX_PROBES - 1) / ESTIMATE_MAX_PROBES);
+                    : Math.max(1, (frameCount * keyCount + maxProbes - 1) / maxProbes);
+            lastEstimateProbes = 0;
             long frameIndex = 0;
             while (true) {
                 final boolean probe = keyCount > 0 && frameIndex % stride == 0;
@@ -180,6 +190,7 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
                     final long entryMax = posting.getEntryMaxValue();
                     final long clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
                     long selected = 0;
+                    lastEstimateProbes += keyCount;
                     for (int k = 0; k < keyCount; k++) {
                         long count = posting.estimateMatchesClamped(estimateKeys.getQuick(k), rowLo, callerHiInclusive, clampedMax);
                         if (count == AbstractPostingIndexReader.ESTIMATE_REJECT || count == Numbers.LONG_NULL) {
@@ -231,6 +242,11 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
     }
 
     @TestOnly
+    public long getLastEstimateProbes() {
+        return lastEstimateProbes;
+    }
+
+    @TestOnly
     public IndexGatherPageFrameCursor getPageFrameCursorForTesting() {
         return pageFrameCursor;
     }
@@ -245,7 +261,8 @@ public class IndexGatherRecordCursorFactory extends AbstractRecordCursorFactory 
                     frameRows,
                     taskRows,
                     splitKeysByRowRange,
-                    workerCount
+                    workerCount,
+                    executionContext.getCairoEngine().getConfiguration().isSqlParallelFrameDispatchEnabled()
             );
         }
         final PartitionFrameCursor partitionFrameCursor = delegate.partitionFrameCursorFactory.getCursor(

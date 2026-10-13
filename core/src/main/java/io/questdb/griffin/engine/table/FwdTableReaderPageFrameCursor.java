@@ -144,6 +144,17 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor, Page
         TableReaderFrameAddresses.fill(reader, columnIndexes, columnSizeShifts, partitionIndex, partitionLo, partitionHi, cache, frameIndex);
     }
 
+    // one frame per partition the scan reads, which a partition split at its column tops or row
+    // cap exceeds and an interval may undercut
+    @Override
+    public long getFrameCountHint() {
+        if (partitionFrameCursor == null) {
+            return -1;
+        }
+        final long bound = partitionFrameCursor.getFrameCountUpperBound();
+        return bound > -1 ? bound : reader.getPartitionCount();
+    }
+
     @Override
     public ColumnMapping getColumnMapping() {
         return columnMapping;
@@ -627,6 +638,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor, Page
         @Override
         public IndexReader getIndexReader(int columnIndex, int direction) {
             return reader.getIndexReader(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
+        }
+
+        @Override
+        public IndexReader getIndexReaderWithoutReload(int columnIndex, int direction) {
+            return reader.getOpenIndexReaderWithoutReload(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
         }
 
         @Override

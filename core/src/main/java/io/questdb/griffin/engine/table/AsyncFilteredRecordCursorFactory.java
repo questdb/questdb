@@ -231,10 +231,14 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             if (negativeLimitRows == null) {
                 negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
             }
+            // the negative LIMIT's cursor reads its rows back through its own records, never the
+            // frames' projected values
+            frameSequence.getAtom().setProjecting(false);
             negativeLimitCursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);
             return negativeLimitCursor;
         }
 
+        frameSequence.getAtom().setProjecting(true);
         cursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining);
         return cursor;
     }
@@ -312,6 +316,15 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
     @Override
     public boolean supportsUpdateRowId(TableToken tableToken) {
         return base.supportsUpdateRowId(tableToken);
+    }
+
+    /**
+     * Takes a projection over this filter whose columns the filtering threads compute, see
+     * {@link FrameProjection}; the atom frees it.
+     */
+    public void setFrameProjection(@NotNull FrameProjection projection) {
+        frameSequence.getAtom().setProjection(projection);
+        cursor.setProjection(projection);
     }
 
     @Override
@@ -406,6 +419,18 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             final DirectLongList rows = task.getFilteredRows();
             rows.clear();
 
+            // A single-symbol index scan's parallel plan: the frame's rows of the symbol come from
+            // its posting index, see IndexKeyPageFrameCursor; a frame without one takes the filter.
+            if (!isParquetFrame
+                    && task.getFrameSequence().getPageFrameCursor() instanceof IndexKeyPageFrameCursor indexRows
+                    && indexRows.readRows(task.getFrameIndex(), rows)) {
+                task.setFilteredRowCount(rows.size());
+                if (!task.isCountOnly()) {
+                    atom.project(workerId, owner, task, record, circuitBreaker);
+                }
+                return;
+            }
+
             final Function filter = atom.getFilter(filterId);
             if (task.isCountOnly()) {
                 long count = 0;
@@ -431,6 +456,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                     record.init(frameMemory);
                 }
                 task.setFilteredRowCount(rows.size());
+                atom.project(workerId, owner, task, record, circuitBreaker);
 
                 // Pre-touch native columns, if asked.
                 if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
