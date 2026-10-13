@@ -169,6 +169,25 @@ public class SampleByLinearTimezoneTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDailySpringForwardFromIgnoresOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2026-03-28T22:30:00', 'A', 0),
+                    ('2026-03-30T22:30:00', 'A', 71)
+                    """);
+            assertSample("1d FROM '2026-03-28' TO '2026-04-01' FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'", """
+                    ts\tsum
+                    2026-03-27T23:00:00.000000Z\t0.0
+                    2026-03-28T23:00:00.000000Z\t24.0
+                    2026-03-29T22:00:00.000000Z\t47.0
+                    2026-03-30T22:00:00.000000Z\t71.0
+                    """);
+        });
+    }
+
+    @Test
     public void testDailySpringForwardGap() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
@@ -193,46 +212,6 @@ public class SampleByLinearTimezoneTest extends AbstractCairoTest {
                     """;
             assertSample("1d FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'", expected);
             assertSample("1d FROM '2026-03-28' TO '2026-04-01' FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin'", expected);
-        });
-    }
-
-    @Test
-    public void testDailySpringForwardFromIgnoresOffset() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable();
-            execute("""
-                    INSERT INTO t VALUES
-                    ('2026-03-28T22:30:00', 'A', 0),
-                    ('2026-03-30T22:30:00', 'A', 71)
-                    """);
-            assertSample("1d FROM '2026-03-28' TO '2026-04-01' FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '06:00'", """
-                    ts\tsum
-                    2026-03-27T23:00:00.000000Z\t0.0
-                    2026-03-28T23:00:00.000000Z\t24.0
-                    2026-03-29T22:00:00.000000Z\t47.0
-                    2026-03-30T22:00:00.000000Z\t71.0
-                    """);
-        });
-    }
-
-    @Test
-    public void testDailySpringForwardOffsetInGap() throws Exception {
-        assertMemoryLeak(() -> {
-            createTable();
-            execute("""
-                    INSERT INTO t VALUES
-                    ('2026-03-28T03:00:00', 'A', 10),
-                    ('2026-03-29T01:15:00', 'A', 2),
-                    ('2026-03-29T01:45:00', 'A', 3),
-                    ('2026-03-29T03:00:00', 'A', 20),
-                    ('2026-03-30T03:00:00', 'A', 30)
-                    """);
-            assertSample("1d FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:30'", """
-                    ts\tsum
-                    2026-03-28T01:30:00.000000Z\t12.0
-                    2026-03-29T01:30:00.000000Z\t23.0
-                    2026-03-30T00:30:00.000000Z\t30.0
-                    """);
         });
     }
 
@@ -269,6 +248,27 @@ public class SampleByLinearTimezoneTest extends AbstractCairoTest {
             }
             assertQuery(query("1d FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:30'"))
                     .noLeakCheck().timestamp("ts").expectSize().returns(expected);
+        });
+    }
+
+    @Test
+    public void testDailySpringForwardOffsetInGap() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2026-03-28T03:00:00', 'A', 10),
+                    ('2026-03-29T01:15:00', 'A', 2),
+                    ('2026-03-29T01:45:00', 'A', 3),
+                    ('2026-03-29T03:00:00', 'A', 20),
+                    ('2026-03-30T03:00:00', 'A', 30)
+                    """);
+            assertSample("1d FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'Europe/Berlin' WITH OFFSET '02:30'", """
+                    ts\tsum
+                    2026-03-28T01:30:00.000000Z\t12.0
+                    2026-03-29T01:30:00.000000Z\t23.0
+                    2026-03-30T00:30:00.000000Z\t30.0
+                    """);
         });
     }
 
@@ -346,18 +346,18 @@ public class SampleByLinearTimezoneTest extends AbstractCairoTest {
                     """);
             assertQuery(query("1d FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'America/Phoenix'").replace("FROM t SAMPLE BY", "FROM (SELECT * FROM t) TIMESTAMP(ts) SAMPLE BY"))
                     .noLeakCheck().timestamp("ts").expectSize().returns(expected("""
-                    ts\tsum
-                    2262-04-09T07:00:00.000000Z\t0.0
-                    2262-04-10T07:00:00.000000Z\t24.0
-                    2262-04-11T07:00:00.000000Z\t48.0
-                    """));
+                            ts\tsum
+                            2262-04-09T07:00:00.000000Z\t0.0
+                            2262-04-10T07:00:00.000000Z\t24.0
+                            2262-04-11T07:00:00.000000Z\t48.0
+                            """));
             assertQuery(query("1d FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'America/Phoenix' WITH OFFSET '18:00'").replace("FROM t SAMPLE BY", "FROM (SELECT * FROM t) TIMESTAMP(ts) SAMPLE BY"))
                     .noLeakCheck().timestamp("ts").expectSize().returns(expected("""
-                    ts\tsum
-                    2262-04-09T01:00:00.000000Z\t0.0
-                    2262-04-10T01:00:00.000000Z\t24.0
-                    2262-04-11T01:00:00.000000Z\t48.0
-                    """));
+                            ts\tsum
+                            2262-04-09T01:00:00.000000Z\t0.0
+                            2262-04-10T01:00:00.000000Z\t24.0
+                            2262-04-11T01:00:00.000000Z\t48.0
+                            """));
         });
     }
 
@@ -372,11 +372,11 @@ public class SampleByLinearTimezoneTest extends AbstractCairoTest {
                     """);
             assertQuery(query("1d FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE 'America/New_York'").replace("FROM t SAMPLE BY", "FROM (SELECT * FROM t) TIMESTAMP(ts) SAMPLE BY"))
                     .noLeakCheck().timestamp("ts").expectSize().returns(expected("""
-                    ts\tsum
-                    2262-04-09T04:00:00.000000Z\t0.0
-                    2262-04-10T04:00:00.000000Z\t24.0
-                    2262-04-11T04:00:00.000000Z\t48.0
-                    """));
+                            ts\tsum
+                            2262-04-09T04:00:00.000000Z\t0.0
+                            2262-04-10T04:00:00.000000Z\t24.0
+                            2262-04-11T04:00:00.000000Z\t48.0
+                            """));
         });
     }
 
@@ -391,11 +391,11 @@ public class SampleByLinearTimezoneTest extends AbstractCairoTest {
                     """);
             assertQuery(query("1d FILL(LINEAR) ALIGN TO CALENDAR TIME ZONE '-02:00'").replace("FROM t SAMPLE BY", "FROM (SELECT * FROM t) TIMESTAMP(ts) SAMPLE BY"))
                     .noLeakCheck().timestamp("ts").expectSize().returns(expected("""
-                    ts\tsum
-                    2262-04-09T02:00:00.000000Z\t0.0
-                    2262-04-10T02:00:00.000000Z\t24.0
-                    2262-04-11T02:00:00.000000Z\t48.0
-                    """));
+                            ts\tsum
+                            2262-04-09T02:00:00.000000Z\t0.0
+                            2262-04-10T02:00:00.000000Z\t24.0
+                            2262-04-11T02:00:00.000000Z\t48.0
+                            """));
         });
     }
 

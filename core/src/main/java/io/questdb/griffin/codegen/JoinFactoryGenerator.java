@@ -207,6 +207,10 @@ final class JoinFactoryGenerator {
                 && metadata.isSymbolTableStatic(leftIndex) && metadata.isSymbolTableStatic(rightIndex) ? call : null;
     }
 
+    private static boolean hasJoinKeys(GenerationFrame frame) {
+        return frame.listColumnFilterA.size() > 0 && frame.listColumnFilterB.size() > 0;
+    }
+
     /**
      * Instantiates the step's aggregates into the given list, which the caller owns and frees on
      * failure, and declares their value types.
@@ -227,10 +231,6 @@ final class JoinFactoryGenerator {
             groupByFunctions.add(function);
             function.initValueTypes(valueTypes);
         }
-    }
-
-    private static boolean hasJoinKeys(GenerationFrame frame) {
-        return frame.listColumnFilterA.size() > 0 && frame.listColumnFilterB.size() > 0;
     }
 
     private static boolean isSingleSymbolJoin(SymbolShortCircuit symbolShortCircuit, ListColumnFilter joinColumns) {
@@ -1193,8 +1193,7 @@ final class JoinFactoryGenerator {
                         generateTemporal(frame, step, masterOutput, masterAlias, master, slave, slave.getMetadata(), null, null,
                                 executionContext);
                 case SPLICE -> generateSplice(frame, step, masterOutput, masterAlias, master, slave, executionContext);
-                default ->
-                        generate(frame, step, masterOutput, masterAlias, master, slave, executionContext);
+                default -> generate(frame, step, masterOutput, masterAlias, master, slave, executionContext);
             };
             masterOutput = step.getOutput();
             masterAlias = null;

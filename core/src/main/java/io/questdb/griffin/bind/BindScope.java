@@ -101,7 +101,7 @@ public final class BindScope implements Mutable {
     final IntList pivotIndexes;
     final ObjList<CharSequence> pivotKeyAliases;
     final IntList pivotKeyIndexes;
-     //The dateadd calls the binding root's and_offset rewrite wraps the timestamp column in.
+    //The dateadd calls the binding root's and_offset rewrite wraps the timestamp column in.
     final ObjList<ExpressionNode> projectedOffsets = new ObjList<>();
     final IntList projectionAliasIndexes = new IntList();
     final OutputSchema referenceScope = new OutputSchema();
