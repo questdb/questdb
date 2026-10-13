@@ -6362,6 +6362,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // Parquet late materialization off; shouldUseLateMaterialization() reads both.
                 filterContext = new AsyncFilterContext(configuration, compiledFilterOwned, bindVarMemoryOwned,
                         bindVarFunctionsOwned, filterOwned, null, workerFiltersOwned, workerCount, 0, 0, 0);
+                // a covering probe over several keys reads one key's rows per frame, which the workers
+                // decode, instead of frames the scan merges on the query's thread
+                offerUnorderedScan(probe, functions.getGroupByFunctions(-1), null);
                 RecordCursorFactory probeOwned = probe;
                 RecordCursorFactory buildOwned = build;
                 AsyncFilterContext buildFiltersOwned = buildFilterContext;

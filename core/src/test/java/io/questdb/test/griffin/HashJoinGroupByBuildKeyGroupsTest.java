@@ -56,11 +56,17 @@ public class HashJoinGroupByBuildKeyGroupsTest extends AbstractCairoTest {
                     context.changePageFrameSizes(1_000, 1_000);
                     for (String join : new String[]{" join ", " left join "}) {
                         for (String where : new String[]{" where q.sym = 'B'", " where q.sym in ('B', 'C')", " where q.sym = 'B' and q.v > 10"}) {
-                            final String sql = "select coalesce(e.name, '') k, sum(q.v), count(), max(q.v - q.w), min(q.w), "
-                                    + "stddev_pop(q.v), weighted_avg(q.v, q.w) from q" + join + "e on q.ex = e.ex" + where + " order by 1";
+                            // per-key frames (an IN list) merge the workers' partial results in another order:
+                            // only aggregates exact in any order there
+                            final String inexact = where.contains(" in (") ? "" : ", stddev_pop(q.v), weighted_avg(q.v, q.w)";
+                            final String sql = "select coalesce(e.name, '') k, sum(q.v), count(), max(q.v - q.w), min(q.w)"
+                                    + inexact + " from q" + join + "e on q.ex = e.ex" + where + " order by 1";
                             final StringSink plan = new StringSink();
                             TestUtils.printSql(engine, context, "explain " + sql, plan);
                             TestUtils.assertContains(sql, plan, "CoveringIndex");
+                            if (where.contains(" in (")) {
+                                TestUtils.assertContains(sql, plan, "per-key (unordered)");
+                            }
                             HashJoinGroupByQualificationTest.assertDifferential(sql, context, true);
                         }
                     }
