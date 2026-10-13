@@ -757,6 +757,83 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFilterWithLimitOrderedByTimestamp() throws Exception {
+        // The parquet scan only runs forward, so ORDER BY created DESC sorts the filter's output.
+        // The filter must then pass every matching row to the sort: a LIMIT pushed into it would
+        // keep the wrong end of the file. ORDER BY created ASC needs no sort, so the filter may
+        // apply the limit itself. The native table x holds the same rows and serves as the oracle.
+        assertMemoryLeak(() -> {
+            encodeFourRowsPerRowGroup();
+            final int jitMode = sqlExecutionContext.getJitMode();
+            try {
+                for (int mode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                    sqlExecutionContext.setJitMode(mode);
+                    final String jit = mode == SqlJitMode.JIT_MODE_ENABLED ? "JIT " : "";
+                    assertOrderedLimit(
+                            "DESC LIMIT -2",
+                            """
+                                    Encode sort light lo: -2
+                                      keys: [created desc]
+                                        Async %sFilter workers: 1
+                                          filter: walid=1
+                                            parquet page frame scan
+                                              columns: event,walid,created
+                                    """.formatted(jit),
+                            """
+                                    event\twalid\tcreated
+                                    4\t1\t1970-01-01T00:00:03.000000Z
+                                    1\t1\t1970-01-01T00:00:00.000000Z
+                                    """
+                    );
+                    assertOrderedLimit(
+                            "DESC LIMIT 2",
+                            """
+                                    Async %sTop K lo: 2 workers: 1
+                                      filter: walid=1
+                                      keys: [created desc]
+                                        parquet page frame scan
+                                          columns: event,walid,created
+                                    """.formatted(jit),
+                            """
+                                    event\twalid\tcreated
+                                    19\t1\t1970-01-01T00:00:18.000000Z
+                                    16\t1\t1970-01-01T00:00:15.000000Z
+                                    """
+                    );
+                    // ORDER BY created ASC matches the scan, so the filter keeps the limit.
+                    final String ascPlan = """
+                            Async %sFilter workers: 1
+                              limit: 2
+                              filter: walid=1
+                                parquet page frame scan
+                                  columns: event,walid,created
+                            """.formatted(jit);
+                    assertOrderedLimit(
+                            "ASC LIMIT -2",
+                            ascPlan,
+                            """
+                                    event\twalid\tcreated
+                                    16\t1\t1970-01-01T00:00:15.000000Z
+                                    19\t1\t1970-01-01T00:00:18.000000Z
+                                    """
+                    );
+                    assertOrderedLimit(
+                            "ASC LIMIT 2",
+                            ascPlan,
+                            """
+                                    event\twalid\tcreated
+                                    1\t1\t1970-01-01T00:00:00.000000Z
+                                    4\t1\t1970-01-01T00:00:03.000000Z
+                                    """
+                    );
+                }
+            } finally {
+                sqlExecutionContext.setJitMode(jitMode);
+            }
+        });
+    }
+
+    @Test
     public void testFilterWithNegativeLimitAcrossRowGroups() throws Exception {
         // A negative LIMIT makes the parallel filter scan the file backward, last row group first.
         // Four rows per row group make the matching rows span several row groups.
@@ -2227,6 +2304,28 @@ public class ReadParquetFunctionTest extends AbstractCairoTest {
                     true
             );
         }
+    }
+
+    private void assertOrderedLimit(String orderAndLimit, String parallelPlan, String expected) throws Exception {
+        final boolean isDescending = orderAndLimit.startsWith("DESC");
+        // A negative limit counts the matching rows to find the last N, so it knows its size.
+        final boolean isNegativeLimit = orderAndLimit.contains("LIMIT -");
+        final String orderedQuery = "WHERE walid = 1 ORDER BY created " + orderAndLimit;
+        // The native table is the oracle for the expected rows.
+        QueryAssertion nativeAssertion = assertQuery("SELECT * FROM x " + orderedQuery).noLeakCheck();
+        nativeAssertion = isDescending ? nativeAssertion.timestampDesc("created") : nativeAssertion.timestamp("created");
+        nativeAssertion.expectSize(isNegativeLimit).returns(expected);
+
+        QueryAssertion parquetAssertion = assertQuery("SELECT * FROM read_parquet('x.parquet') " + orderedQuery).noLeakCheck();
+        parquetAssertion = isDescending ? parquetAssertion.timestampDesc("created") : parquetAssertion.timestamp("created");
+        if (parallel) {
+            parquetAssertion = parquetAssertion.withPlan(parallelPlan);
+        } else if (!isDescending) {
+            // Without a sort, only the parallel scan offers random access.
+            parquetAssertion = parquetAssertion.noRandomAccess();
+        }
+        // The parallel sort and top K apply the limit themselves, so they always know their size.
+        parquetAssertion.expectSize(isNegativeLimit || (parallel && isDescending)).returns(expected);
     }
 
     private void assertPrunedPageFrames(String query, long[][] expected) throws Exception {
