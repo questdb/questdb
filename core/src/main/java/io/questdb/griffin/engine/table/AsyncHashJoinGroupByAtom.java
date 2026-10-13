@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -39,6 +40,7 @@ import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReducer;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.HashJoinGroupByFunctions;
@@ -128,12 +130,14 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private final boolean isCountOnly;
     private final boolean isKeyCapacityPresized;
     private final boolean isKeyStaged;
+    private final boolean isOuter;
     // True when the build may run on the workers: a filter context slot and a filter of its own
     // for every worker.
     private final boolean isParallelBuildCapable;
     // The INT layout's lone SYMBOL pair, whose probe keys the reducer translates per row.
     private final boolean isSymbolKey;
-    private final boolean outer;
+    // The RIGHT join bound in build table rows, Long.MAX_VALUE for the joins without one.
+    private final long maxBuildTableRows;
     // The build input's row count, before any filter, from which the build runs on the workers.
     private final long parallelBuildMinRows;
     private final PerWorkerLocks perWorkerLocks;
@@ -152,7 +156,6 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     // Each worker's copy of the build ON filter, or null when the owner's is thread safe or absent.
     @Nullable
     private final ObjList<Function> workerBuildOnFilters;
-    private boolean buildFiltersInitialized;
     // Read by the tasks of a parallel build's key row count: the consecutive partitions each counts.
     private int countTaskPartitionCount;
     // The frozen build of the open cursor, whichever of the two builds produced it.
@@ -162,6 +165,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private MapHashJoinBuild mapBuild;
     // Read by the frame tasks of a parallel build: whether a frame's rows go through the filters.
     private boolean isBuildFiltered;
+    private boolean isBuildFiltersInitialized;
     // True when the open cursor's build has more than one partition, whose probes are a class of their own.
     private boolean isBuildPartitioned;
     private boolean isBuildUnique;
@@ -173,9 +177,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     private boolean isCountedByMatch;
     // True when the open cursor's build counted its key rows on the workers, in a round of tasks.
     private boolean isCountedInRounds;
+    private boolean isFiltersInitialized;
+    private boolean isFunctionsInitialized;
     private boolean isPayloadCopied;
-    private boolean functionsInitialized;
-    private boolean filtersInitialized;
     // The sequence that owns this atom, through which a parallel build dispatches its rounds.
     private UnorderedPageFrameSequence<AsyncHashJoinGroupByAtom> frameSequence;
     // The open cursor's tracker, which init() takes for build(): the build runs after getCursor()
@@ -196,7 +200,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             HashJoinGroupByMetadata metadata,
             HashJoinGroupByFunctions functions,
             AsyncFilterContext filterContext,
-            boolean outer,
+            boolean isOuter,
             int workerCount
     ) {
         this.buildFactory = buildFactory;
@@ -205,12 +209,13 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         this.workerBuildOnFilters = workerBuildOnFilters;
         this.functions = functions;
         this.filterContext = filterContext;
-        this.outer = outer;
+        this.isOuter = isOuter;
         this.isKeyStaged = metadata.isKeyStaged();
         this.isSymbolKey = metadata.isSymbolKey();
         this.isKeyCapacityPresized = metadata.isKeyCapacityPresized();
+        this.maxBuildTableRows = metadata.getMaxBuildTableRows();
         // An outer join counts a probe row without a match too, which no key's row count covers.
-        this.isCountOnly = !outer && isPairCount(functions);
+        this.isCountOnly = !isOuter && isPairCount(functions);
         this.countValueIndex = isCountOnly ? functions.getGroupByFunctions(-1).getQuick(0).getValueIndex() : -1;
         this.buildFrames = new HashJoinBuildFrames(engine.getConfiguration(), metadata.getBuildColumns(), buildFactory.getMetadata());
         this.probeKeyColumn = isKeyStaged ? -1 : metadata.getProbeKeyColumn();
@@ -278,16 +283,16 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     @Override
     public void clear() {
         Throwable failure = null;
-        if (functionsInitialized) {
-            functionsInitialized = false;
+        if (isFunctionsInitialized) {
+            isFunctionsInitialized = false;
             try {
                 functions.cursorClosed();
             } catch (Throwable th) {
                 failure = th;
             }
         }
-        if (filtersInitialized) {
-            filtersInitialized = false;
+        if (isFiltersInitialized) {
+            isFiltersInitialized = false;
             Function ownerFilter = filterContext.getFilter(-1);
             failure = cursorClosed(failure, ownerFilter);
             for (int i = 0; i < slots.size() - 1; i++) {
@@ -297,8 +302,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 }
             }
         }
-        if (buildFiltersInitialized) {
-            buildFiltersInitialized = false;
+        if (isBuildFiltersInitialized) {
+            isBuildFiltersInitialized = false;
             Function ownerBuildFilter = buildFilterContext.getFilter(-1);
             failure = cursorClosed(failure, ownerBuildFilter);
             for (int i = 0, n = buildFilterContext.getPerWorkerMemoryPools().size(); i < n; i++) {
@@ -520,8 +525,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             probeSymbols = symbolTableSource;
             // The open scan serves the build input's symbol tables; build() walks its frames.
             buildFrames.open(buildFactory, executionContext);
+            checkTableRowCounts(symbolTableSource, executionContext);
             final SymbolTableSource buildSymbols = buildFrames.getSymbolTableSource();
-            buildFiltersInitialized = true;
+            isBuildFiltersInitialized = true;
             buildFilterContext.initFilters(buildSymbols, executionContext);
             if (buildOnFilter != null) {
                 buildOnFilter.init(buildSymbols, executionContext);
@@ -549,9 +555,9 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 }
                 slot.bindSymbols(symbolTableSource, buildSymbols);
             }
-            filtersInitialized = true;
+            isFiltersInitialized = true;
             filterContext.initFilters(symbolTableSource, executionContext);
-            functionsInitialized = true;
+            isFunctionsInitialized = true;
             // A slot resolves a function's symbol tables through the two open scans, so the
             // functions need no frozen build and parents can resolve output symbols at once.
             functions.init(slots, executionContext);
@@ -868,6 +874,49 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     /**
+     * Throws {@link TableReferenceOutOfDateException}, on which the query caches and the other
+     * holders of a compiled factory compile the query again, when the tables have changed size
+     * since the planner chose from their sizes, so much that the choice now costs far more memory
+     * than a new compile's plan would. The planner compared the tables' {@link TableReader#size()},
+     * and so does this check, through the readers of the two open scans:
+     * <ul>
+     * <li>The planner presizes the key table by the build's rows when the build table had no more
+     * rows than the probe table, as every INNER join that builds its smaller table does. Once the
+     * build table holds more than twice the probe table's rows, an INNER join builds more than
+     * twice the rows that a new compile would, and any join sizes its key table for rows whose
+     * keys repeat. The factor of two keeps tables of about equal size from recompiling every few
+     * inserts. The alternate orientation of {@link HashJoinGroupByBuildChoiceRecordCursorFactory}
+     * builds the table that the primary probes, which held at least as many rows at compile time.
+     * The planner presizes its key table only when the two tables held equal rows, and this rule
+     * then checks the alternate as it checks the primary.</li>
+     * <li>A RIGHT join keeps the ordinary plan when its build table holds more rows than the bound
+     * allows, and an execution holds the build table to the same bound.</li>
+     * </ul>
+     * A new compile reads the same sizes and passes this check, so a recompile repeats only when
+     * the tables change again in between. An input that is not a table scan offers no reader, and
+     * keeps the compile-time choice. So does an execution whose context
+     * {@link SqlExecutionContext#isTableRowCountChangeTolerated() tolerates} row count changes,
+     * such as a queued export, which runs a factory that nothing compiles again.
+     */
+    private void checkTableRowCounts(SymbolTableSource probeScan, SqlExecutionContext executionContext) {
+        if (executionContext.isTableRowCountChangeTolerated()
+                || !(probeScan instanceof TablePageFrameCursor probeCursor)
+                || !(buildFrames.getSymbolTableSource() instanceof TablePageFrameCursor buildCursor)) {
+            return;
+        }
+        final TableReader probeReader = probeCursor.getTableReader();
+        final TableReader buildReader = buildCursor.getTableReader();
+        if (probeReader == null || buildReader == null) {
+            return;
+        }
+        final long buildRows = buildReader.size();
+        // Row counts stay far below 2^62, so twice the probe rows cannot overflow.
+        if (buildRows > maxBuildTableRows || (isKeyCapacityPresized && buildRows > 2 * probeReader.size())) {
+            throw TableReferenceOutOfDateException.of(buildReader.getTableToken());
+        }
+    }
+
+    /**
      * Counts the key rows of a build of more than one partition on the workers, in one more round of
      * tasks, each over as many consecutive partitions, in place of the owner's single pass. A key's
      * rows lie in one partition and link only to each other, so each task counts its partitions'
@@ -1147,7 +1196,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     boolean isOuter() {
-        return outer;
+        return isOuter;
     }
 
     /**
@@ -1246,7 +1295,7 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
     }
 
     boolean shouldProbe() {
-        return outer || frozen.getRowCount() > 0;
+        return isOuter || frozen.getRowCount() > 0;
     }
 
     /**

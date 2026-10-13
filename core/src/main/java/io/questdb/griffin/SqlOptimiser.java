@@ -130,6 +130,9 @@ public class SqlOptimiser implements Mutable {
     public static final int REWRITE_STATUS_USE_WINDOW_JOIN_MODE = 128;
     public static final int REWRITE_STATUS_USE_WINDOW_MODEL = 2;
     static final String LATERAL_COUNT_MARKER_PREFIX = "__qdb_count_marker__";
+    // what findTimestampColumn() returns when no column of a model names the designated timestamp that
+    // code generation adds to the model's rows
+    private static final String HIDDEN_TIMESTAMP_COLUMN = "<hidden timestamp>";
     private static final int JOIN_OP_AND = 2;
     private static final int JOIN_OP_EQUAL = 1;
     private static final int JOIN_OP_OR = 3;
@@ -171,6 +174,8 @@ public class SqlOptimiser implements Mutable {
     private static final int SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES = 2;
 
     private static final int SAMPLE_BY_REWRITE_WRAP_REMOVE_TIMESTAMP = 1;
+    // what findTimestampColumn() returns when it cannot follow the designated timestamp of a model's rows
+    private static final String UNTRACEABLE_TIMESTAMP_COLUMN = "<untraceable timestamp>";
     private static final IntHashSet flexColumnModelTypes = new IntHashSet();
     // list of join types that don't support all optimisations (e.g., pushing table-specific predicates to both left and right table)
     private static final IntHashSet joinBarriers;
@@ -271,6 +276,8 @@ public class SqlOptimiser implements Mutable {
     private final IntHashSet tempIntHashSet = new IntHashSet();
     private final IntList tempIntList = new IntList();
     private final ObjHashSet<IQueryModel> tempJoinTreeColumnModels = new ObjHashSet<>();
+    private final LowerCaseCharSequenceHashSet tempNestedTimestampAliases = new LowerCaseCharSequenceHashSet();
+    private final LowerCaseCharSequenceHashSet tempTimestampAliases = new LowerCaseCharSequenceHashSet();
     private final StringSink tmpStringSink = new StringSink();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjList<CharSequence> trivialExpressionCandidates = new ObjList<>();
@@ -573,6 +580,102 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    /**
+     * Counts the columns that the expression reads from the nested model, when every one of them leads
+     * to a join model other than the first one of the join chain that the nested models reach through
+     * their projections. optimiseJoins() calls it for the column of an explicit TIMESTAMP(col) clause.
+     * The method follows a column through the projections down to the chain, and a projected expression
+     * through every column that it reads. It returns -1 when a column leads to the chain's first model,
+     * as an expression of that model's timestamp such as dateadd() does, and when it cannot follow a
+     * column: a set operation, a column that it cannot find, or that the first model has too, a window
+     * function, or a node other than a column, a constant, a function or an operator.
+     */
+    private static int countColumnsOfLaterJoinModel(IQueryModel nested, ExpressionNode node) {
+        switch (node.type) {
+            case CONSTANT -> {
+                return 0;
+            }
+            case FUNCTION, OPERATION -> {
+                if (node.windowExpression != null) {
+                    return -1;
+                }
+                int count = 0;
+                if (node.paramCount < 3) {
+                    if (node.lhs != null) {
+                        final int lhsCount = countColumnsOfLaterJoinModel(nested, node.lhs);
+                        if (lhsCount < 0) {
+                            return -1;
+                        }
+                        count += lhsCount;
+                    }
+                    if (node.rhs != null) {
+                        final int rhsCount = countColumnsOfLaterJoinModel(nested, node.rhs);
+                        if (rhsCount < 0) {
+                            return -1;
+                        }
+                        count += rhsCount;
+                    }
+                } else {
+                    for (int i = 0, n = node.args.size(); i < n; i++) {
+                        final int argCount = countColumnsOfLaterJoinModel(nested, node.args.getQuick(i));
+                        if (argCount < 0) {
+                            return -1;
+                        }
+                        count += argCount;
+                    }
+                }
+                return count;
+            }
+            case LITERAL -> {
+                CharSequence column = node.token;
+                while (nested != null && nested.getUnionModel() == null) {
+                    final int dot = Chars.indexOfLastUnquoted(column, '.');
+                    final ObjList<IQueryModel> joinModels = nested.getJoinModels();
+                    if (joinModels.size() > 1) {
+                        // the first model of the chain is the chain's own model
+                        if (dot > -1) {
+                            return nested.getModelAliasIndex(column, 0, dot) > 0 ? 1 : -1;
+                        }
+                        if (nested.getAliasToColumnMap().contains(column)) {
+                            return -1;
+                        }
+                        for (int i = 1, n = joinModels.size(); i < n; i++) {
+                            if (joinModels.getQuick(i).getAliasToColumnMap().contains(column)) {
+                                return 1;
+                            }
+                        }
+                        return -1;
+                    }
+                    if (dot > -1) {
+                        return -1;
+                    }
+                    final ObjList<QueryColumn> columns = nested.getBottomUpColumns();
+                    if (columns.size() > 0) {
+                        QueryColumn projected = null;
+                        for (int i = 0, n = columns.size(); i < n; i++) {
+                            if (Chars.equalsIgnoreCase(columns.getQuick(i).getAlias(), column)) {
+                                projected = columns.getQuick(i);
+                                break;
+                            }
+                        }
+                        if (projected == null) {
+                            return -1;
+                        }
+                        if (projected.getAst().type != LITERAL) {
+                            return countColumnsOfLaterJoinModel(nested.getNestedModel(), projected.getAst());
+                        }
+                        column = projected.getAst().token;
+                    }
+                    nested = nested.getNestedModel();
+                }
+                return -1;
+            }
+            default -> {
+                return -1;
+            }
+        }
+    }
+
     private static void extractAndTerms(ExpressionNode node, ObjList<ExpressionNode> terms) {
         if (node.type == ExpressionNode.OPERATION && SqlKeywords.isAndKeyword(node.token)) {
             extractAndTerms(node.lhs, terms);
@@ -580,6 +683,130 @@ public class SqlOptimiser implements Mutable {
         } else {
             terms.add(node);
         }
+    }
+
+    /**
+     * Follows the designated timestamp of the table or table function that the model reads up through
+     * the projections of the nested models, together with every value that a projection computes from it.
+     * Fills timestampAliases with the aliases of the model's columns that carry the timestamp or such a
+     * value, under any alias and through any number of projections, and returns one of them. A column
+     * carries such a value when it names a column that carries one, or computes an expression that reads
+     * one, see isDerivedFromTimestamp(). The column it names or reads belongs to the nested model, or
+     * comes earlier in the model's own projection, which rewriteSelectClause0() lets a column reference
+     * when the nested model has no column of that name. Where a name of the nested model also names an
+     * earlier column that carries such a value, the method counts the name as carrying one, so it can
+     * report such a value where there is none, but never misses one. Such a value need not be a
+     * designated timestamp, since code generation designates a computed column of a virtual model only
+     * when detectTimestampOffset() or detectTimestampOffsetsRecursive() made it the model's timestamp,
+     * see generateSelectVirtual(), but an explicit TIMESTAMP() above the model, or the designated
+     * timestamp of a table that the rows feed, can rely on the order of its values all the same. Returns
+     * null when no column of the model's rows carries the timestamp or a value computed from it: the
+     * table has none, or a projection on the way up selects no column that carries one.
+     * nestedTimestampAliases is scratch space for the nested models; timestampAliases holds the model's
+     * aliases only when the method returns one of them.
+     * <p>
+     * isTimestampRequired tells that a time series join requires a timestamp of the join chain that the
+     * model starts. Code generation then adds the timestamp to the rows of a table scan and of a
+     * projection of plain columns that drops it, see generateSelectChoose(), and the method returns
+     * HIDDEN_TIMESTAMP_COLUMN for such a projection when none of its columns carries a value computed
+     * from the timestamp either. Other models designate only a timestamp that one of their columns names,
+     * so a hidden timestamp does not pass up through them. A DISTINCT model that rewriteDistinct() leaves
+     * in place is the exception: generateSelectDistinct() can return a DistinctTimeSeriesRecordCursorFactory,
+     * which keeps the timestamp of its base rows, while the method returns null for a DISTINCT model whose
+     * plain columns drop the timestamp.
+     * <p>
+     * Returns UNTRACEABLE_TIMESTAMP_COLUMN when the method cannot follow the timestamp: through a join,
+     * whose order a later pass picks, a set operation, a model that a clause such as TIMESTAMP(),
+     * SAMPLE BY or ORDER BY can give a timestamp (a sort on a TIMESTAMP column declares that column), a
+     * dateadd() offset that detectTimestampOffset() or detectTimestampOffsetsRecursive() made the
+     * timestamp, a column without an alias that carries the timestamp or a value computed from it, or a
+     * wildcard. It also returns it for a model other than a virtual or window function model that has a
+     * computed column and no column that carries such a value: code generation can designate a computed
+     * column of such a model, as generateFill() does with the timestamp_floor() bucket of a GROUP BY.
+     */
+    private static CharSequence findTimestampColumn(
+            IQueryModel model,
+            boolean isTimestampRequired,
+            LowerCaseCharSequenceHashSet timestampAliases,
+            LowerCaseCharSequenceHashSet nestedTimestampAliases
+    ) {
+        if (model.getUnionModel() != null || model.getJoinModels().size() > 1 || model.getOrderBy().size() > 0) {
+            return UNTRACEABLE_TIMESTAMP_COLUMN;
+        }
+        final IQueryModel nested = model.getNestedModel();
+        if (nested == null) {
+            // a table or table function, whose designated timestamp enumerateTableColumns() set
+            final ExpressionNode timestamp = model.getTimestamp();
+            if (timestamp == null) {
+                return null;
+            }
+            timestampAliases.clear();
+            timestampAliases.add(timestamp.token);
+            return timestamp.token;
+        }
+        if (model.getTimestamp() != null || model.getTimestampColumnIndex() > -1 || model.getTimestampOffsetAlias() != null) {
+            return UNTRACEABLE_TIMESTAMP_COLUMN;
+        }
+        // the nested model fills nestedTimestampAliases and uses timestampAliases as its scratch space;
+        // a nested model that returns HIDDEN_TIMESTAMP_COLUMN leaves its aliases empty
+        final CharSequence timestamp = findTimestampColumn(nested, isTimestampRequired, nestedTimestampAliases, timestampAliases);
+        if (timestamp == null || timestamp == UNTRACEABLE_TIMESTAMP_COLUMN) {
+            return timestamp;
+        }
+        timestampAliases.clear();
+        final ObjList<QueryColumn> columns = model.getBottomUpColumns();
+        if (columns.size() == 0) {
+            // the model passes the nested model's columns through
+            for (int i = 0, n = nestedTimestampAliases.getKeyCount(); i < n; i++) {
+                final CharSequence alias = nestedTimestampAliases.getKey(i);
+                if (alias != null) {
+                    timestampAliases.add(alias);
+                }
+            }
+            return timestamp;
+        }
+        CharSequence timestampAlias = null;
+        boolean hasComputedColumn = false;
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final QueryColumn column = columns.getQuick(i);
+            final ExpressionNode ast = column.getAst();
+            final boolean isDerived;
+            // a column names or reads a column of the nested model or an earlier column of its own
+            // projection, which timestampAliases already lists when it carries the timestamp or a value
+            // computed from it
+            if (ast.type == LITERAL) {
+                final CharSequence token = ast.token;
+                final int hi = token.length();
+                final int lo = Chars.indexOfLastUnquoted(token, '.') + 1;
+                if (lo == hi - 1 && token.charAt(lo) == '*') {
+                    return UNTRACEABLE_TIMESTAMP_COLUMN;
+                }
+                isDerived = nestedTimestampAliases.contains(token, lo, hi) || timestampAliases.contains(token, lo, hi);
+            } else {
+                hasComputedColumn = true;
+                isDerived = isDerivedFromTimestamp(ast, nestedTimestampAliases) || isDerivedFromTimestamp(ast, timestampAliases);
+            }
+            if (isDerived) {
+                final CharSequence alias = column.getAlias();
+                if (alias == null) {
+                    return UNTRACEABLE_TIMESTAMP_COLUMN;
+                }
+                timestampAliases.add(alias);
+                if (timestampAlias == null) {
+                    timestampAlias = alias;
+                }
+            }
+        }
+        if (timestampAlias != null) {
+            return timestampAlias;
+        }
+        final int selectModelType = model.getSelectModelType();
+        if (hasComputedColumn
+                && selectModelType != IQueryModel.SELECT_MODEL_VIRTUAL
+                && selectModelType != IQueryModel.SELECT_MODEL_WINDOW) {
+            return UNTRACEABLE_TIMESTAMP_COLUMN;
+        }
+        return isTimestampRequired && selectModelType == IQueryModel.SELECT_MODEL_CHOOSE ? HIDDEN_TIMESTAMP_COLUMN : null;
     }
 
     private static boolean hasLinearFill(ObjList<ExpressionNode> fill) {
@@ -669,6 +896,59 @@ public class SqlOptimiser implements Mutable {
             case ExpressionNode.OPERATION -> isCompileTimeConstant(node.lhs) && isCompileTimeConstant(node.rhs);
             default -> false;
         };
+    }
+
+    /**
+     * Tells whether the expression reads a column of timestampAliases, which carries a designated
+     * timestamp or a value computed from it, see findTimestampColumn(). The method reads the arguments of
+     * functions and operators, and the PARTITION BY, ORDER BY and frame bounds of a window function, whose
+     * values depend on the timestamp when it partitions or sorts by it. It counts a sub-query as one that
+     * reads such a column, since it does not follow the sub-query's columns.
+     */
+    private static boolean isDerivedFromTimestamp(ExpressionNode node, LowerCaseCharSequenceHashSet timestampAliases) {
+        if (node == null) {
+            return false;
+        }
+        switch (node.type) {
+            case LITERAL -> {
+                final CharSequence token = node.token;
+                return timestampAliases.contains(token, Chars.indexOfLastUnquoted(token, '.') + 1, token.length());
+            }
+            case CONSTANT, BIND_VARIABLE -> {
+                return false;
+            }
+            case ExpressionNode.QUERY -> {
+                return true;
+            }
+            default -> {
+                if (isDerivedFromTimestamp(node.lhs, timestampAliases) || isDerivedFromTimestamp(node.rhs, timestampAliases)) {
+                    return true;
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    if (isDerivedFromTimestamp(node.args.getQuick(i), timestampAliases)) {
+                        return true;
+                    }
+                }
+                final WindowExpression window = node.windowExpression;
+                if (window == null) {
+                    return false;
+                }
+                final ObjList<ExpressionNode> partitionBy = window.getPartitionBy();
+                for (int i = 0, n = partitionBy.size(); i < n; i++) {
+                    if (isDerivedFromTimestamp(partitionBy.getQuick(i), timestampAliases)) {
+                        return true;
+                    }
+                }
+                final ObjList<ExpressionNode> orderBy = window.getOrderBy();
+                for (int i = 0, n = orderBy.size(); i < n; i++) {
+                    if (isDerivedFromTimestamp(orderBy.getQuick(i), timestampAliases)) {
+                        return true;
+                    }
+                }
+                return isDerivedFromTimestamp(window.getRowsLoExpr(), timestampAliases)
+                        || isDerivedFromTimestamp(window.getRowsHiExpr(), timestampAliases);
+            }
+        }
     }
 
     /**
@@ -8025,15 +8305,22 @@ public class SqlOptimiser implements Mutable {
      *                        isTimestampOfFirstTable(). The clause declares the order of col, and a chain
      *                        that runs its first model first would not stream rows in that order. No level
      *                        of the subtree then observes the order, so its join chains keep the order that
-     *                        the cost model picks. The caller of optimise() can also turn the tracking off
-     *                        for the whole query.
+     *                        the cost model picks, except that a first model that may carry a time order
+     *                        takes over no equality unless isOrderOfLaterJoinModel holds, see reorderTables().
+     *                        The caller of optimise() can also turn the tracking off for the whole query.
+     * @param isOrderOfLaterJoinModel true below an explicit TIMESTAMP(col) clause whose col leads to a join
+     *                                model other than the first one of the join chain that the model starts
+     *                                or reaches through its projections, see countColumnsOfLaterJoinModel().
+     *                                A chain that ran its first model first would not stream the rows in the
+     *                                order of col, so that chain lets its first model take over equalities.
      */
     private void optimiseJoins(
             IQueryModel model,
             SqlExecutionContext sqlExecutionContext,
             boolean isOrderObserved,
             boolean isOrderRead,
-            boolean isOrderTracked
+            boolean isOrderTracked,
+            boolean isOrderOfLaterJoinModel
     ) throws SqlException {
         if (!model.isOptimisable()) {
             return;
@@ -8041,6 +8328,10 @@ public class SqlOptimiser implements Mutable {
         ObjList<IQueryModel> joinModels = model.getJoinModels();
 
         int n = joinModels.size();
+        boolean hasTimeSeriesJoin = false;
+        for (int i = 1; i < n; i++) {
+            hasTimeSeriesJoin |= joinsRequiringTimestamp[joinModels.getQuick(i).getJoinType()];
+        }
         // the order of the rows that reach the model from its join chain or its nested model: an operator
         // that reads the rows in order observes it, GROUP BY outputs its groups in an order of its own,
         // ORDER BY sorts the rows, and LIMIT keeps the first or the last ones
@@ -8089,17 +8380,23 @@ public class SqlOptimiser implements Mutable {
             createImpliedDependencies(model);
             homogenizeCrossJoins(model);
             constrainRightAndFullJoinOrder(model);
-            reorderTables(model, isSourceOrderObserved);
+            reorderTables(model, isSourceOrderObserved, isOrderOfLaterJoinModel, hasTimeSeriesJoin);
+            // ORDER BY, GROUP BY without first() or last(), and the set of an IN predicate discard the
+            // order of the chain's rows, and the flag then lets an INNER Hash Join Light build its hash
+            // table on its master and stream the slave. The join swaps only where code generation
+            // never asks it for its scan direction: under a sort whose first key is not the master's
+            // timestamp, a lone count() over a sub-query, or an IN set. Code generation of any other
+            // GROUP BY asks for the scan direction through isBaseTimestampAscending(), as does an
+            // ORDER BY that it answers from the master's timestamp order, and the call keeps the
+            // master streamed. A time series join reads the order, and where the order is not tracked
+            // the chain keeps streaming the master whose designated timestamp it declares.
+            model.setJoinOrderFree(isOrderTracked && !isSourceOrderObserved && !hasTimeSeriesJoin);
             assignFilters(model);
             alignJoinClauses(model);
             addTransitiveFilters(model, sqlExecutionContext);
             mergeConstIntoPostJoinWhereClause(model);
         }
 
-        boolean hasTimeSeriesJoin = false;
-        for (int i = 1; i < n; i++) {
-            hasTimeSeriesJoin |= joinsRequiringTimestamp[joinModels.getQuick(i).getJoinType()];
-        }
         for (int i = 0; i < n; i++) {
             final IQueryModel joinModel = model.getJoinModels().getQuick(i);
             final boolean isJoinModelOrderTracked = isOrderTracked
@@ -8108,10 +8405,23 @@ public class SqlOptimiser implements Mutable {
             // its sides in timestamp order
             final boolean isJoinModelOrderObserved = isJoinModelOrderTracked && (isSourceOrderObserved
                     || (i == 0 ? hasTimeSeriesJoin : joinsRequiringTimestamp[joinModel.getJoinType()]));
+            // An explicit TIMESTAMP(col) of the join model names the order of the join chain that its
+            // projections reach. Without one, a model without a join chain passes the order that the
+            // clause above it names on to its nested model, and a join chain has used it already.
+            final boolean isJoinModelOrderOfLaterJoinModel = joinModel.hasExplicitTimestamp()
+                    ? countColumnsOfLaterJoinModel(joinModel.getNestedModel(), joinModel.getTimestamp()) > 0
+                    : n == 1 && isOrderOfLaterJoinModel;
             IQueryModel m = joinModel.getNestedModel();
             if (m != null) {
                 clearConstNameMaps();
-                optimiseJoins(m, sqlExecutionContext, isJoinModelOrderObserved, isSourceOrderRead, isJoinModelOrderTracked);
+                optimiseJoins(
+                        m,
+                        sqlExecutionContext,
+                        isJoinModelOrderObserved,
+                        isSourceOrderRead,
+                        isJoinModelOrderTracked,
+                        isJoinModelOrderOfLaterJoinModel
+                );
             }
 
             m = joinModel.getUnionModel();
@@ -8119,9 +8429,16 @@ public class SqlOptimiser implements Mutable {
                 clearConstNameMaps();
                 // the next branch of a set operation, a sibling of the model
                 if (i == 0) {
-                    optimiseJoins(m, sqlExecutionContext, isOrderObserved, isOrderRead, isOrderTracked);
+                    optimiseJoins(m, sqlExecutionContext, isOrderObserved, isOrderRead, isOrderTracked, isOrderOfLaterJoinModel);
                 } else {
-                    optimiseJoins(m, sqlExecutionContext, isJoinModelOrderObserved, isSourceOrderRead, isJoinModelOrderTracked);
+                    optimiseJoins(
+                            m,
+                            sqlExecutionContext,
+                            isJoinModelOrderObserved,
+                            isSourceOrderRead,
+                            isJoinModelOrderTracked,
+                            isJoinModelOrderOfLaterJoinModel
+                    );
                 }
             }
         }
@@ -8751,10 +9068,13 @@ public class SqlOptimiser implements Mutable {
 
         // process join models and their join conditions
         final ObjList<IQueryModel> joinModels = model.getJoinModels();
-        // reorderTables() can make the first join model a slave when it is a table without a timestamp:
-        // swapJoinOrder0() moves clauses into its join context, which the loop below skips. This block
-        // emits only the qualified literals, since each resolves to its own model, while a lookup by
-        // vanilla name searches every join model and could bind a same-named column of another table.
+        // reorderTables() can make the first join model a slave when it is a table or table function without
+        // a timestamp, a sub-query, CTE or view whose rows carry none, or any first model below an explicit
+        // TIMESTAMP(col) whose col leads to a later model of the chain, see isFirstModelDriver in
+        // reorderTables(). swapJoinOrder0() then moves clauses into its join context, which the loop below
+        // skips. This block emits only the qualified literals, since each resolves to its own model, while a
+        // lookup by vanilla name searches every join model and could bind a same-named column of another
+        // table.
         final JoinContext firstModelContext = model.getJoinContext();
         if (joinModels.size() > 1 && firstModelContext != null) {
             for (int k = 0, z = firstModelContext.aIndexes.size(); k < z; k++) {
@@ -9358,7 +9678,7 @@ public class SqlOptimiser implements Mutable {
      * table "c" leaving "b" without clauses.
      */
     @SuppressWarnings({"StatementWithEmptyBody"})
-    private void reorderTables(IQueryModel model, boolean isOrderObserved) {
+    private void reorderTables(IQueryModel model, boolean isOrderObserved, boolean isOrderOfLaterJoinModel, boolean hasTimeSeriesJoin) {
         ObjList<IQueryModel> joinModels = model.getJoinModels();
         int n = joinModels.size();
 
@@ -9374,8 +9694,21 @@ public class SqlOptimiser implements Mutable {
         int cost = Integer.MAX_VALUE;
         int root = -1;
         final IQueryModel first = joinModels.getQuick(0);
-        // true when the first model has to stay first in the join chain, see the take-over loop below
-        final boolean isFirstModelDriver = first.getTimestamp() != null || first.getNestedModel() != null || first.getTableNameExpr() == null;
+        // True when the first model has to stay first in the join chain, see the take-over loop below. It
+        // has to when the model may carry a time order: it has a timestamp, or it is a sub-query, CTE or
+        // view any of whose columns may carry its table's timestamp or a value computed from it, or
+        // neither a table nor a table function. With a time series join in the chain, a sub-query, CTE or
+        // view whose projection of plain columns drops all of them may carry the timestamp too: code
+        // generation adds it to the rows of the chain's first model, see findTimestampColumn(). Below an
+        // explicit TIMESTAMP(col) whose col leads to a later model of the chain, the chain keeps the order
+        // that the cost model picks instead, see optimiseJoins(): running the first model first would not
+        // stream the rows in the order of col.
+        final IQueryModel firstNested = first.getNestedModel();
+        final boolean isFirstModelDriver = !isOrderOfLaterJoinModel
+                && (first.getTimestamp() != null
+                || (firstNested != null
+                ? findTimestampColumn(firstNested, hasTimeSeriesJoin, tempTimestampAliases, tempNestedTimestampAliases) != null
+                : first.getTableNameExpr() == null));
         // A first model that no equality links runs after the models that equalities link, so the chain
         // would stream their rows and declare their timestamp. Keep it first when the order of the chain's
         // rows can change the result, see optimiseJoins(). Otherwise it stays last: its cross join then
@@ -9396,10 +9729,13 @@ public class SqlOptimiser implements Mutable {
                     }
                     // the first model drives the join chain, so the chain's rows and timestamps follow its
                     // order; taking over equalities would make it a slave that runs after another model.
-                    // Keep it first when it may carry a time order: it has a timestamp, or it is not a
-                    // table or table function but a sub-query, CTE or view, whose order this level cannot
-                    // see. A table without a timestamp may take over, which can replace a cross join by
-                    // hash joins.
+                    // Keep it first when it may carry a time order that no explicit TIMESTAMP() above the
+                    // chain contradicts, see isFirstModelDriver. A table without a timestamp, or a
+                    // sub-query, CTE or view none of whose columns carries its table's timestamp or a
+                    // value computed from it, may take over, which can replace a cross join by hash joins.
+                    // The rows of a sub-query, CTE or view whose projection of plain columns drops them all
+                    // carry the timestamp when a time series join of the chain requires it, so such a
+                    // model keeps it then.
                     if (to == 0 && isFirstModelDriver) {
                         continue;
                     }
@@ -9432,8 +9768,16 @@ public class SqlOptimiser implements Mutable {
         // first: without an equality of its own, it runs last unless isFirstModelFirst holds. The last
         // pass leaves the join contexts that code generation reads, so the hand-over also requires that
         // they yield the cost of the chosen order: they then hold no cycle, and each model that leaves a
-        // cross join lowers the cost.
-        if (isFirstModelDriver && cost != Integer.MAX_VALUE && model.getOrderedJoinModels().getQuick(0) == 0) {
+        // cross join lowers the cost. A first model that may take over equalities, because its columns
+        // carry neither a timestamp nor a value computed from one, or an explicit TIMESTAMP() above the
+        // chain names a later model's column, gets the same hand-over when the chosen order runs it first
+        // and the last pass left it without context parents. A table without a timestamp keeps the order
+        // that the cost model picks.
+        final JoinContext firstContext = first.getJoinContext();
+        final boolean isFirstModelAnchor = isFirstModelDriver
+                || ((first.getTimestamp() != null || firstNested != null || first.getTableNameExpr() == null)
+                && (firstContext == null || firstContext.parents.size() == 0));
+        if (isFirstModelAnchor && cost != Integer.MAX_VALUE && model.getOrderedJoinModels().getQuick(0) == 0) {
             int runSize = 1;
             while (runSize < n && joinBarriers.excludes(joinModels.getQuick(runSize).getJoinType())) {
                 runSize++;
@@ -16124,7 +16468,7 @@ public class SqlOptimiser implements Mutable {
             detectTimestampOffsetsRecursive(rewrittenModel);
             rewriteSingleFirstLastGroupBy(rewrittenModel);
             rewriteTrivialGroupByExpressions(rewrittenModel);
-            optimiseJoins(rewrittenModel, sqlExecutionContext, isOrderObserved, false, isOrderTracked);
+            optimiseJoins(rewrittenModel, sqlExecutionContext, isOrderObserved, false, isOrderTracked, false);
             collapseStackedChooseModels(rewrittenModel);
             rewriteCountDistinct(rewrittenModel);
             rewriteMultipleTermLimitedOrderByPart1(rewrittenModel);

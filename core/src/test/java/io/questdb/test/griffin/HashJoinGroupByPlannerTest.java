@@ -43,12 +43,15 @@ import io.questdb.griffin.TextPlanSink;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom;
 import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
+import io.questdb.griffin.engine.table.HashJoinGroupByBuildChoiceRecordCursorFactory;
 import io.questdb.jit.JitUtil;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
@@ -186,6 +189,160 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                                 pairs\tenergy\tcapacity
                                 11\t350.0\t76.0
                                 """);
+            }
+        });
+    }
+
+    @Test
+    public void testCachedInnerJoinRecompilesOnceItsBuildTableOutgrowsTheProbe() throws Exception {
+        assertMemoryLeak(() -> {
+            // d has 1_000 rows, one per key; f starts with 10, so INNER builds f.
+            execute("CREATE TABLE d (k INT, s SYMBOL, g INT)");
+            execute("INSERT INTO d SELECT x::INT, 'S' || x, (x % 10)::INT FROM long_sequence(1_000)");
+            for (String key : new String[]{"k", "s"}) {
+                for (String where : new String[]{"", " WHERE f.ts >= '2020-01-01'"}) {
+                    for (int workers : new int[]{1, 4}) {
+                        execute("DROP TABLE IF EXISTS f");
+                        // The capacity holds every key of d, so that no insert rebuilds the symbol map,
+                        // which would change the table's metadata version.
+                        execute("CREATE TABLE f (k INT, s SYMBOL CAPACITY 2048, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+                        insertFactRows(10, "2020-01-01");
+                        final String sql = "SELECT d.g, count(*) n, sum(f.v) v FROM f JOIN d ON f." + key + " = d." + key
+                                + where + " ORDER BY d.g";
+                        // An interval compiles both orientations, unless the key is a SYMBOL pair.
+                        final boolean isBuildChoice = key.equals("k") && !where.isEmpty();
+                        try (SqlExecutionContextImpl context = context(workers)) {
+                            context.setParallelGroupByEnabled(true);
+                            context.setParallelHashJoinGroupByEnabled(true);
+                            try (RecordCursorFactory factory = engine.select(sql, context)) {
+                                final String plan = plan(factory, context);
+                                Assert.assertEquals(sql + '\n' + plan, isBuildChoice, plan.contains("Hash Join Group By Build Choice"));
+                                Assert.assertTrue(sql + '\n' + plan, plan.contains("inputSwapped: true"));
+                                Assert.assertEquals(sql, 10, builtRows(factory, context));
+                                // At twice the rows of d, a reused factory that builds f keeps building it,
+                                // and the build choice builds d, which has fewer rows in its intervals.
+                                insertFactRows(1_990, "2020-01-02");
+                                Assert.assertEquals(sql, isBuildChoice ? 1_000 : 2_000, builtRows(factory, context));
+                                insertFactRows(1, "2020-01-03");
+                                if (isBuildChoice) {
+                                    // The orientation that builds d does not presize, and asks for nothing.
+                                    Assert.assertEquals(sql, 1_000, builtRows(factory, context));
+                                } else {
+                                    // f has more than twice the rows of d: the factory asks the caches
+                                    // to compile the query again rather than build f.
+                                    try {
+                                        builtRows(factory, context);
+                                        Assert.fail(sql + ": a factory that would build the larger table must ask for a recompile");
+                                    } catch (TableReferenceOutOfDateException e) {
+                                        TestUtils.assertContains(e.getFlyweightMessage(), "[table=f]");
+                                        Assert.assertNull(context.getMemoryTracker());
+                                        Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                    }
+                                }
+                            }
+                            // A new compile builds d.
+                            assertDifferential(sql, context, true);
+                            try (RecordCursorFactory factory = engine.select(sql, context)) {
+                                final String plan = plan(factory, context);
+                                Assert.assertTrue(sql + '\n' + plan, isBuildChoice || plan.contains("inputSwapped: false"));
+                                Assert.assertEquals(sql, 1_000, builtRows(factory, context));
+                                Assert.assertEquals(sql, 1_000, builtRows(factory, context));
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCachedInnerJoinRecompileKeepsTheBuildUnderTheMemoryLimit() throws Exception {
+        assertMemoryLeak(() -> {
+            // f starts with 1_000 rows and d has 5_000, so INNER builds f. Once f has 201_000 rows, a
+            // build of f takes about 7 MiB and a build of d about 0.2 MiB.
+            execute("CREATE TABLE f (k INT, v DOUBLE)");
+            execute("CREATE TABLE d (k INT, g INT)");
+            execute("INSERT INTO d SELECT x::INT, (x % 10)::INT FROM long_sequence(5_000)");
+            execute("INSERT INTO f SELECT (x % 5_000 + 1)::INT, x FROM long_sequence(1_000)");
+            final String sql = "SELECT d.g, sum(f.v) v FROM f JOIN d ON f.k = d.k ORDER BY d.g";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                RecordCursorFactory factory = engine.select(sql, context);
+                try {
+                    Assert.assertTrue(plan(factory, context).contains("inputSwapped: true"));
+                    Assert.assertEquals(1_000, builtRows(factory, context));
+                    execute("INSERT INTO f SELECT (x % 5_000 + 1)::INT, x FROM long_sequence(200_000)");
+                    final String expected;
+                    context.setParallelHashJoinGroupByEnabled(false);
+                    try (RecordCursorFactory baseline = engine.select(sql, context)) {
+                        expected = result(baseline, context);
+                    } finally {
+                        context.setParallelHashJoinGroupByEnabled(true);
+                    }
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 2 * Numbers.SIZE_1MB);
+                    // The HTTP and PG query caches run a cached factory this way: when the factory
+                    // throws TableReferenceOutOfDateException, the cache closes it and compiles the
+                    // query again.
+                    int recompileCount = 0;
+                    String actual;
+                    while (true) {
+                        try {
+                            actual = result(factory, context);
+                            break;
+                        } catch (TableReferenceOutOfDateException e) {
+                            Assert.assertEquals(0, recompileCount++);
+                            factory = Misc.free(factory);
+                            factory = engine.select(sql, context);
+                        }
+                    }
+                    Assert.assertEquals(1, recompileCount);
+                    Assert.assertEquals(expected, actual);
+                    Assert.assertTrue(plan(factory, context).contains("inputSwapped: false"));
+                    Assert.assertEquals(5_000, builtRows(factory, context));
+                } finally {
+                    setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 0);
+                    Misc.free(factory);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCachedOuterJoinStopsPresizingOnceItsBuildTableOutgrowsTheProbe() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pa (k INT, v DOUBLE)");
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pa SELECT (x % 10)::INT, x FROM long_sequence(1_000)");
+            for (String sql : new String[]{
+                    "SELECT count(*) n, sum(pb.v) v FROM pa LEFT JOIN pb ON pa.k = pb.k",
+                    "SELECT count(*) n, sum(pb.v) v FROM pb RIGHT JOIN pa ON pa.k = pb.k"
+            }) {
+                execute("TRUNCATE TABLE pb");
+                execute("INSERT INTO pb SELECT (x % 10)::INT, x FROM long_sequence(500)");
+                try (SqlExecutionContextImpl context = enabledContext()) {
+                    // Both joins build pb. It has fewer rows than pa, so the build sizes its key table by
+                    // its rows: 1_024 slots for 500 rows over ten keys.
+                    assertBuildSize(sql, 500, 10, 1_024 * 8 + 500 * 16, context);
+                    try (RecordCursorFactory factory = engine.select(sql, context)) {
+                        Assert.assertEquals(sql, 500, builtRows(factory, context));
+                        // Twice the rows of pa keep the presized key table of a reused factory.
+                        execute("INSERT INTO pb SELECT (x % 10)::INT, x FROM long_sequence(1_500)");
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            Assert.assertTrue(cursor.hasNext());
+                            Assert.assertEquals(sql, 4_096 * 8 + 2_000 * 16, fused(factory).getAtom().getFrozenBuild().getSizeInBytes());
+                        }
+                        execute("INSERT INTO pb VALUES (1, 1)");
+                        try {
+                            builtRows(factory, context);
+                            Assert.fail(sql + ": a factory that presizes for the larger table must ask for a recompile");
+                        } catch (TableReferenceOutOfDateException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "[table=pb]");
+                            Assert.assertNull(context.getMemoryTracker());
+                            Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                        }
+                    }
+                    // A new compile lets the key table grow to the ten keys.
+                    assertBuildSize(sql, 2_001, 10, 64 * 8 + 2_001 * 16, context);
+                }
             }
         });
     }
@@ -671,6 +828,53 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCountOverRepeatedBuildKeysIsZeroOverAnEmptyProbeInterval() throws Exception {
+        assertMemoryLeak(() -> {
+            createCountTables();
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // A SYMBOL key compiles no build choice, so cb, the smaller table, builds its 25 rows of
+                // each key, while the probe scans the interval of ca, which selects none of its partitions.
+                final String sql = "SELECT count() FROM ca JOIN cb ON ca.s = cb.s WHERE ca.ts IN '2021'";
+                assertQuery(sql)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlan("""
+                                Async Hash Join Group By workers: 4
+                                  logicalJoinType: inner
+                                  physicalJoinType: inner
+                                  inputSwapped: false
+                                  condition: ca.s=cb.s
+                                  symbolKeyJoin: true
+                                  buildStrategy: shared
+                                  aggregation: scalar
+                                  countStrategy: per key
+                                  values: [count(*)]
+                                    Probe
+                                        PageFrame
+                                            Row forward scan
+                                            Interval forward scan on: ca
+                                              intervals: [("2021-01-01T00:00:00.000000Z","2021-12-31T23:59:59.999999Z")]
+                                    Build
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: cb
+                                """)
+                        .returns("""
+                                count
+                                0
+                                """);
+                for (HashJoinBuildMode buildMode : HashJoinBuildMode.values()) {
+                    buildMode.applyProperties(node1.getConfigurationOverrides());
+                    // The build counts the rows of each key, and no probe frame adds any of them.
+                    assertCountPerKey(sql, "count", 0, true, buildMode, context);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCountOverRepeatedBuildKeysReusesAcrossBuildShapes() throws Exception {
         assertMemoryLeak(() -> {
             createCountTables();
@@ -698,9 +902,22 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                             // A second row of key 5 and of the NULL key.
                             execute("INSERT INTO cb VALUES (5, 5, 'S5', 'V5', 7, '2020-01-02'), (NULL, NULL, NULL, NULL, 8, '2020-01-02')");
                             assertCountExecution(factory, 800, true, context);
-                            // The probe goes empty under a build that still repeats its keys.
+                            // The probe goes empty under a build that still repeats its keys. The build
+                            // table then holds more than twice the rows of the probe table, so the factory
+                            // asks for a recompile rather than build the larger table.
                             execute("TRUNCATE TABLE ca");
-                            assertCountExecution(factory, 0, true, context);
+                            try {
+                                assertCountExecution(factory, 0, true, context);
+                                Assert.fail(on + ": a factory that would build the larger table must ask for a recompile");
+                            } catch (TableReferenceOutOfDateException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), "[table=cb]");
+                                Assert.assertNull(context.getMemoryTracker());
+                                Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                            }
+                        }
+                        // A new compile builds the empty probe table, whose lone count adds nothing.
+                        try (RecordCursorFactory factory = engine.select("SELECT count() FROM ca JOIN cb ON " + on, context)) {
+                            assertCountExecution(factory, 0, false, context);
                         }
                         insertCountProbeRows();
                     }
@@ -1181,18 +1398,19 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 40);
                 assertDifferential(keysOnly + joins[0] + on, context, true);
                 setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_RIGHT_JOIN_MAX_BUILD_SIZE, 80);
-                // A factory compiled under the bound keeps the fused plan after the table outgrows it.
+                // A factory compiled under the bound asks the caches to compile the query again once
+                // the table outgrows it, rather than build the larger table.
                 try (RecordCursorFactory factory = engine.select(narrow + joins[0] + on, context)) {
                     Assert.assertTrue(plan(factory, context).contains("Async Hash Join Group By"));
+                    Assert.assertEquals(5, builtRows(factory, context));
                     execute("INSERT INTO r VALUES (1, '2021-02-01', 60, 600)");
-                    Assert.assertEquals("""
-                            n\tenergy\tcapacity
-                            11:LONG\t360.0:DOUBLE\t47.0:DOUBLE
-                            """, result(factory, context));
-                    try (RecordCursor cursor = factory.getCursor(context)) {
-                        // The first read builds.
-                        Assert.assertTrue(cursor.hasNext());
-                        Assert.assertEquals(6, fused(factory).getAtom().getFrozenBuild().getRowCount());
+                    try {
+                        builtRows(factory, context);
+                        Assert.fail("a factory whose RIGHT join build outgrew the bound must ask for a recompile");
+                    } catch (TableReferenceOutOfDateException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "[table=r]");
+                        Assert.assertNull(context.getMemoryTracker());
+                        Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                     }
                 }
                 // A new compile reads the new size: 6 rows take 96 bytes.
@@ -2334,6 +2552,30 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         }
         Assert.assertNotNull(factory);
         return (AsyncHashJoinGroupByRecordCursorFactory) factory;
+    }
+
+    // Runs the factory once and returns the rows that its execution built, from either orientation.
+    private static long builtRows(RecordCursorFactory factory, SqlExecutionContext context) throws Exception {
+        try (RecordCursor cursor = factory.getCursor(context)) {
+            // The first read builds, whether or not it returns a row.
+            cursor.hasNext();
+            RecordCursorFactory current = factory;
+            while (!(current instanceof AsyncHashJoinGroupByRecordCursorFactory)) {
+                if (current instanceof HashJoinGroupByBuildChoiceRecordCursorFactory choice) {
+                    current = choice.isAlternateChosen() ? choice.getAlternate() : choice.getPrimary();
+                } else {
+                    current = current.getBaseFactory();
+                    Assert.assertNotNull(current);
+                }
+            }
+            return ((AsyncHashJoinGroupByRecordCursorFactory) current).getAtom().getFrozenBuild().getRowCount();
+        }
+    }
+
+    // Appends rows to f, one per key of d in turn, a minute apart from the given day.
+    private static void insertFactRows(int rowCount, String day) throws Exception {
+        execute("INSERT INTO f SELECT (x % 1_000 + 1)::INT, 'S' || (x % 1_000 + 1), x, timestamp_sequence('" + day
+                + "', 60_000_000L) FROM long_sequence(" + rowCount + ")");
     }
 
     // Reads the result once, and leaves in the counter the clock reads of that execution's reducers.

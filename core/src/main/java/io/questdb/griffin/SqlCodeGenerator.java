@@ -2918,7 +2918,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             RecordCursorFactory slave,
             int joinType,
             Function filter,
-            JoinContext context
+            JoinContext context,
+            boolean isJoinOrderFree
     ) {
         /*
          * JoinContext provides the following information:
@@ -2959,7 +2960,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         masterMetadata.getColumnCount(),
                         context,
                         masterSymbolKeyCols,
-                        slaveSymbolKeyCols
+                        slaveSymbolKeyCols,
+                        isJoinOrderFree
                 );
             }
 
@@ -5447,6 +5449,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (!HashJoinGroupByCandidate.supportsFramedInput(buildInput)) {
                 return null;
             }
+            // The build keeps its rows' own SYMBOL keys, so its dictionary must hold each text once.
+            if (candidate.getKeys().hasTranslatedSymbol() && !HashJoinGroupByCandidate.supportsTranslatedSymbolBuild(buildInput)) {
+                return null;
+            }
             final int workerCount = executionContext.getSharedQueryWorkerCount();
             try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, asm, candidate,
                     probeInput.getMetadata(), probeColumns, buildInput.getMetadata(), buildColumns)) {
@@ -7733,7 +7739,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         slaveToFree,
                                         joinType,
                                         joinFilter,
-                                        slaveModel.getJoinContext()
+                                        slaveModel.getJoinContext(),
+                                        model.isJoinOrderFree()
                                 );
                                 masterAlias = null;
                                 break;

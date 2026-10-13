@@ -86,6 +86,7 @@ public final class HashJoinGroupByMetadata implements Closeable {
     private final HashJoinGroupByKeys keys;
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     private final JoinRecordMetadata joinedMetadata;
+    private final long maxBuildTableRows;
     private final GenericRecordMetadata payloadMetadata = new GenericRecordMetadata();
     private final int probeColumnCount;
     private final RecordMetadata probeInputMetadata;
@@ -120,6 +121,7 @@ public final class HashJoinGroupByMetadata implements Closeable {
         probeColumnCount = probeMetadata.getColumnCount();
         keys = candidate.getKeys();
         isKeyCapacityPresized = candidate.isKeyCapacityPresized();
+        maxBuildTableRows = candidate.getMaxBuildTableRows();
         // Symbol keys translate through, and payload symbols resolve with, the inputs' static tables.
         boolean hasStaticSymbolTables = true;
         StringSink conditionSink = Misc.getThreadLocalSink();
@@ -297,6 +299,13 @@ public final class HashJoinGroupByMetadata implements Closeable {
      */
     public ColumnTypes getKeyTypes() {
         return keyTypes;
+    }
+
+    /**
+     * See {@link HashJoinGroupByCandidate#getMaxBuildTableRows()}.
+     */
+    public long getMaxBuildTableRows() {
+        return maxBuildTableRows;
     }
 
     public RecordMetadata getPayloadMetadata() {

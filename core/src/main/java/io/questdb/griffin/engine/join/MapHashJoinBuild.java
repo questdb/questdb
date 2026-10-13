@@ -146,9 +146,9 @@ public final class MapHashJoinBuild implements Closeable {
     private final Unordered8Map unordered8Map;
     private SqlExecutionCircuitBreaker circuitBreaker;
     private AbstractFrozen frozen;
+    private boolean isOpen;
     @Nullable
     private MemoryTracker memoryTracker;
-    private boolean open;
 
     /**
      * A build with payload columns stores row ids for probes to read them through; see the class docs.
@@ -370,7 +370,7 @@ public final class MapHashJoinBuild implements Closeable {
      * failure the caller closes the build once every partition task has stopped.
      */
     public void buildPartition(int partition, SqlExecutionCircuitBreaker circuitBreaker) {
-        assert open && frozen == null && partitions.isPartitioning() && partition >= 0 && partition < partitions.getPartitionCount();
+        assert isOpen && frozen == null && partitions.isPartitioning() && partition >= 0 && partition < partitions.getPartitionCount();
         circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
         final Map partitionMap = maps.getQuick(partition);
         partitionMap.setMemoryTracker(memoryTracker);
@@ -455,7 +455,7 @@ public final class MapHashJoinBuild implements Closeable {
             frozen.payloads = null;
             frozen = null;
         }
-        open = false;
+        isOpen = false;
         partitions.close();
         bucketOffsets.close();
         Misc.freeObjListAndKeepObjects(maps);
@@ -635,7 +635,7 @@ public final class MapHashJoinBuild implements Closeable {
      * Reopens a closed skeleton for a fresh execution.
      */
     public void open(@Nullable MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (open) {
+        if (isOpen) {
             throw new IllegalStateException("hash join build is already open");
         }
         this.memoryTracker = memoryTracker;
@@ -649,7 +649,7 @@ public final class MapHashJoinBuild implements Closeable {
             // free are charged symmetrically.
             map.setMemoryTracker(memoryTracker);
             map.reopen();
-            open = true;
+            isOpen = true;
         } catch (Throwable th) {
             close();
             throw th;
@@ -830,7 +830,7 @@ public final class MapHashJoinBuild implements Closeable {
             @Nullable DirectLongList rows,
             long rowCount
     ) {
-        assert open && frozen == null && frameIndex >= 0 && frameIndex < partitions.getFrameCount();
+        assert isOpen && frozen == null && frameIndex >= 0 && frameIndex < partitions.getFrameCount();
         // The stager's staged key and its scratch live in memory that this execution charges.
         stager.setMemoryTracker(memoryTracker);
         final MapProbeView view = stager.view;
@@ -936,7 +936,7 @@ public final class MapHashJoinBuild implements Closeable {
     }
 
     private void requireBuilding() {
-        if (!open || frozen != null) {
+        if (!isOpen || frozen != null) {
             throw new IllegalStateException("hash join build is not mutable");
         }
     }

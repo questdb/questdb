@@ -144,6 +144,9 @@ public class QueryModel implements IQueryModel {
     private ObjList<ExpressionNode> fillValues;
     private boolean forceBackwardScan;
     private boolean isCteModel;
+    // SqlOptimiser.optimiseJoins() sets this when the order of the rows of the model's join chain cannot
+    // change the query result
+    private boolean isJoinOrderFree;
     private ExpressionNode lateralCountCoalesceGuard;
     private boolean isLateralCountCoalesceRequired;
     // LateralJoinRewriter marks the join model that it adds to a LATERAL body for the distinct outer
@@ -507,6 +510,7 @@ public class QueryModel implements IQueryModel {
         overridableDecls.clear();
         orderDescendingByDesignatedTimestampOnly = false;
         forceBackwardScan = false;
+        isJoinOrderFree = false;
         hintsMap.clear();
         asOfJoinTolerance = null;
         horizonJoinContext.clear();
@@ -1356,6 +1360,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public boolean isJoinOrderFree() {
+        return isJoinOrderFree;
+    }
+
+    @Override
     public ExpressionNode getLateralCountCoalesceGuard() {
         return lateralCountCoalesceGuard;
     }
@@ -1807,6 +1816,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setJoinKeywordPosition(int position) {
         this.joinKeywordPosition = position;
+    }
+
+    @Override
+    public void setJoinOrderFree(boolean isJoinOrderFree) {
+        this.isJoinOrderFree = isJoinOrderFree;
     }
 
     @Override

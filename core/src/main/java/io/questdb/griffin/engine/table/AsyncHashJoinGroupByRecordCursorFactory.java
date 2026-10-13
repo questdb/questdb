@@ -77,10 +77,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
     private final String condition;
     // True when any key column is a SYMBOL pair, which the probe translates into the build's keys.
     private final boolean hasSymbolKey;
-    private final boolean inputSwapped;
+    private final boolean isInputSwapped;
+    private final boolean isOuter;
     private final RecordMetadata joinedMetadata;
     private final int logicalJoinType;
-    private final boolean outer;
     private final int workerCount;
     private RecordCursorFactory buildFactory;
     private AsyncFilterContext buildFilterContext;
@@ -103,11 +103,11 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             HashJoinGroupByMetadata metadata,
             HashJoinGroupByFunctions functions,
             AsyncFilterContext filterContext,
-            boolean outer,
+            boolean isOuter,
             int workerCount
     ) {
         this(engine, probeFactory, buildFactory, buildFilterContext, buildOnFilter, null, metadata, functions, filterContext,
-                outer, workerCount, outer ? IQueryModel.JOIN_LEFT_OUTER : IQueryModel.JOIN_INNER, false);
+                isOuter, workerCount, isOuter ? IQueryModel.JOIN_LEFT_OUTER : IQueryModel.JOIN_INNER, false);
     }
 
     public AsyncHashJoinGroupByRecordCursorFactory(
@@ -120,10 +120,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             HashJoinGroupByMetadata metadata,
             HashJoinGroupByFunctions functions,
             AsyncFilterContext filterContext,
-            boolean outer,
+            boolean isOuter,
             int workerCount,
             int logicalJoinType,
-            boolean inputSwapped
+            boolean isInputSwapped
     ) {
         super(functions.getOutputMetadata());
         this.probeFactory = probeFactory;
@@ -133,10 +133,10 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         this.workerBuildOnFilters = workerBuildOnFilters;
         this.functions = functions;
         this.filterContext = filterContext;
-        this.outer = outer;
+        this.isOuter = isOuter;
         this.workerCount = workerCount;
         this.logicalJoinType = logicalJoinType;
-        this.inputSwapped = inputSwapped;
+        this.isInputSwapped = isInputSwapped;
         this.hasSymbolKey = metadata.getSymbolKeyProbeColumns().size() > 0;
         try {
             this.joinedMetadata = GenericRecordMetadata.copyOf(metadata.getJoinedMetadata());
@@ -146,7 +146,7 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
                 throw new IllegalArgumentException("unsupported fused hash join execution inputs");
             }
             AsyncHashJoinGroupByAtom atom = new AsyncHashJoinGroupByAtom(engine, buildFactory, buildFilterContext,
-                    buildOnFilter, workerBuildOnFilters, metadata, functions, filterContext, outer, workerCount);
+                    buildOnFilter, workerBuildOnFilters, metadata, functions, filterContext, isOuter, workerCount);
             // A probe filter belongs to the query, not to a frame, so the reducer is fixed here:
             // queries without one keep the dense loops that never test a filter per row.
             final UnorderedPageFrameReducer reducer = filterContext.getFilter(-1) != null
@@ -218,8 +218,8 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         sink.meta("workers").val(workerCount);
         sink.attr("logicalJoinType").val(logicalJoinType == IQueryModel.JOIN_RIGHT_OUTER ? "right outer"
                 : logicalJoinType == IQueryModel.JOIN_LEFT_OUTER ? "left outer" : "inner");
-        sink.attr("physicalJoinType").val(outer ? "left outer" : "inner");
-        sink.attr("inputSwapped").val(inputSwapped);
+        sink.attr("physicalJoinType").val(isOuter ? "left outer" : "inner");
+        sink.attr("inputSwapped").val(isInputSwapped);
         sink.attr("condition").val(condition);
         if (hasSymbolKey) {
             sink.attr("symbolKeyJoin").val(true);

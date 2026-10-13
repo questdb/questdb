@@ -868,6 +868,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public boolean isJoinOrderFree() {
+        return delegate.isJoinOrderFree();
+    }
+
+    @Override
     public ExpressionNode getLateralCountCoalesceGuard() {
         return delegate.getLateralCountCoalesceGuard();
     }
@@ -1154,6 +1159,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setJoinKeywordPosition(int position) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setJoinOrderFree(boolean isJoinOrderFree) {
         throw new UnsupportedOperationException();
     }
 

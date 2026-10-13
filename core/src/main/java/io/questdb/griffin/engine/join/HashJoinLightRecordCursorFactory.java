@@ -50,6 +50,8 @@ import io.questdb.std.Transient;
 import org.jetbrains.annotations.Nullable;
 
 public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFactory {
+    // true when the order of the join's rows cannot change the query result, see IQueryModel.isJoinOrderFree()
+    private final boolean isOrderFree;
     private final RecordSink masterSink;
     private final int @Nullable [] masterSymbolKeyColumnIndices;
     private final RecordSink slaveKeySink;
@@ -70,9 +72,11 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
             int columnSplit,
             JoinContext joinContext,
             int @Nullable [] masterSymbolKeyColumnIndices,
-            int @Nullable [] slaveSymbolKeyColumnIndices
+            int @Nullable [] slaveSymbolKeyColumnIndices,
+            boolean isOrderFree
     ) {
         super(metadata, joinContext, masterFactory, slaveFactory);
+        this.isOrderFree = isOrderFree;
         this.masterSymbolKeyColumnIndices = masterSymbolKeyColumnIndices;
         this.slaveSymbolKeyColumnIndices = slaveSymbolKeyColumnIndices;
         this.symbolTranslatingRecord = masterSymbolKeyColumnIndices != null ?
@@ -108,7 +112,7 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                 long slaveSize = slaveCursor.size();
 
                 if (masterSize > 0 && slaveSize > 0 && masterSize < slaveSize) {
-                    if (getMetadata().getTimestampIndex() == -1) {
+                    if (isOrderFree || getMetadata().getTimestampIndex() == -1) {
                         RecordCursor temp = masterCursor;
                         masterCursor = slaveCursor;
                         slaveCursor = temp;
@@ -117,7 +121,9 @@ public class HashJoinLightRecordCursorFactory extends AbstractJoinRecordCursorFa
                         // A swap would stream the slave, but the join claims the master's designated
                         // timestamp, and consumers such as LIMIT rely on that order without asking for
                         // the scan direction. Keep streaming the master, and keep the hash table small:
-                        // it takes only the slave rows whose key some master row has.
+                        // it takes only the slave rows whose key some master row has. A consumer that
+                        // discards the order, such as a sort on another column or a count, lets the
+                        // join swap, see isOrderFree.
                         isSlaveFilteredByMasterKeys = true;
                     }
                 }

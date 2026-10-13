@@ -48,6 +48,7 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.async.UnorderedPageFrameReduceJob;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.cairo.vm.Vm;
@@ -287,11 +288,71 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 inner.assertResults(AGGREGATES + INNER);
                 outer.assertResults(AGGREGATES + OUTER);
                 execute("truncate table r");
-                inner.assertResults(AGGREGATES + INNER);
-                outer.assertResults(AGGREGATES + OUTER);
+                // The fixtures compiled while both tables held five rows. With r empty, the row of p
+                // is more than twice the rows of r: the INNER join would build the larger table, and
+                // both joins would size the key table by its rows, so an execution throws
+                // TableReferenceOutOfDateException, on which the holder of the factory compiles the
+                // query again.
+                inner.assertRecompile();
+                outer.assertRecompile();
+                // A LEFT join compiled now still builds p, without presizing, and probes the empty r.
+                try (Fixture emptyProbe = new Fixture(AGGREGATES + OUTER)) {
+                    emptyProbe.assertResults(AGGREGATES + OUTER);
+                }
                 execute("truncate table p");
                 inner.assertResults(AGGREGATES + INNER);
                 outer.assertResults(AGGREGATES + OUTER);
+            }
+        });
+    }
+
+    @Test
+    public void testInnerJoinProbesEmptyIntervalUnderNonEmptyBuild() throws Exception {
+        // INT and LONG keys over an interval compile both orientations, and each execution builds the
+        // input with fewer rows in its intervals, which is the empty one here. A SYMBOL key keeps the
+        // orientation that the table sizes picked.
+        Assume.assumeTrue(isSymbolKey);
+        assertMemoryLeak(() -> {
+            createTables();
+            // r and p hold five rows each, so p builds. No partition of r falls in 2030, so the probe
+            // reads no frame under a build of p's five rows.
+            final String sql = AGGREGATES + INNER + " WHERE r.reading_ts IN '2030'";
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Async Hash Join Group By workers: 1
+                              logicalJoinType: inner
+                              physicalJoinType: inner
+                              inputSwapped: false
+                              condition: r.plant_id=p.plant_id
+                              symbolKeyJoin: true
+                              buildStrategy: shared
+                              buildPayload: copied when the probe is large enough
+                              keys: [country,yr,mo]
+                              keyFunctions: [year(r.reading_ts),month(r.reading_ts)]
+                              values: [sum(r.energy_kwh),avg(r.irradiance_wm2),sum(p.installed_kwp)]
+                                Probe
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: r
+                                          intervals: [("2030-01-01T00:00:00.000000Z","2030-12-31T23:59:59.999999Z")]
+                                Build
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: p
+                            """)
+                    .returns("country\tyr\tmo\tenergy\tirradiance\tcapacity\n");
+            try (RecordCursorFactory factory = select(sql)) {
+                RecordCursorFactory fused = factory;
+                while (!(fused instanceof AsyncHashJoinGroupByRecordCursorFactory)) {
+                    fused = fused.getBaseFactory();
+                    Assert.assertNotNull(sql, fused);
+                }
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    // The first read builds, and finds no group.
+                    Assert.assertFalse(cursor.hasNext());
+                    Assert.assertEquals(5, ((AsyncHashJoinGroupByRecordCursorFactory) fused).getAtom().getFrozenBuild().getRowCount());
+                }
             }
         });
     }
@@ -3093,6 +3154,17 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                     Assert.assertEquals(sharded, factory.getAtom().isSharded());
                     cursor.toTop();
                 }
+            }
+        }
+
+        // Checks that an execution throws TableReferenceOutOfDateException, on which the holder of the
+        // factory compiles the query again, and leaves no slot taken.
+        void assertRecompile() throws Exception {
+            try (RecordCursor ignore = getCursor()) {
+                Assert.fail("expected a request to compile the query again");
+            } catch (TableReferenceOutOfDateException expected) {
+                Assert.assertEquals(0, factory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                Assert.assertNull(sqlExecutionContext.getMemoryTracker());
             }
         }
 

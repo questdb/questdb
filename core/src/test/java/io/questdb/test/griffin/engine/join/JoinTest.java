@@ -2562,6 +2562,729 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstTableSubQueryDroppingTimestampDrivesTimeSeriesJoinOfChain() throws Exception {
+        // The first FROM item is a sub-query, CTE or view that does not project trades' designated
+        // timestamp. A time series join of the same chain requires a timestamp of the chain's first
+        // model, and code generation then adds trades' timestamp to the item's rows, so the item drives
+        // the chain and the ASOF, LT and WINDOW JOINs match on trades' timestamps. A first item that
+        // took over i.id = t.instrument would let countries run first, and these joins would match on
+        // c.cts instead.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            execute("INSERT INTO y VALUES ('B', '2024-01-01T03:00'), ('C', '2024-01-01T04:00')");
+            execute("CREATE VIEW tv AS (SELECT instrument, px FROM trades)");
+            final String where = " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument";
+            for (String[] first : new String[][]{
+                    {"", "(SELECT instrument, px FROM trades) t"},
+                    {"WITH tw AS (SELECT instrument, px FROM trades) ", "tw t"},
+                    {"", "tv t"},
+                    {"", "(SELECT instrument, px FROM (SELECT instrument, px, ts FROM trades)) t"}
+            }) {
+                final String from = " FROM " + first[1] + ", countries c, venues v, instruments i";
+                assertQuery(first[0] + "SELECT t.px, c.name, y.yts" + from + " ASOF JOIN y ON y.name = c.name" + where)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("condition: i.id=t.instrument")
+                        .withPlanNotContaining("Cross Join")
+                        .returns("""
+                                px\tname\tyts
+                                1\tC\t
+                                2\tA\t2024-01-01T00:00:00.000000Z
+                                3\tB\t2024-01-01T03:00:00.000000Z
+                                4\tC\t2024-01-01T04:00:00.000000Z
+                                5\tC\t2024-01-01T04:00:00.000000Z
+                                6\tA\t2024-01-01T00:00:00.000000Z
+                                7\tB\t2024-01-01T03:00:00.000000Z
+                                8\tC\t2024-01-01T04:00:00.000000Z
+                                """);
+                assertQuery(first[0] + "SELECT t.px, c.name, y.yts" + from + " LT JOIN y ON y.name = c.name" + where)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("condition: i.id=t.instrument")
+                        .withPlanNotContaining("Cross Join")
+                        .returns("""
+                                px\tname\tyts
+                                1\tC\t
+                                2\tA\t2024-01-01T00:00:00.000000Z
+                                3\tB\t
+                                4\tC\t
+                                5\tC\t2024-01-01T04:00:00.000000Z
+                                6\tA\t2024-01-01T00:00:00.000000Z
+                                7\tB\t2024-01-01T03:00:00.000000Z
+                                8\tC\t2024-01-01T04:00:00.000000Z
+                                """);
+                // the window around each trade holds the trades an hour before and after it
+                assertQuery(first[0] + "SELECT t.px, c.name, sum(d.px) s" + from
+                        + " WINDOW JOIN trades d RANGE BETWEEN 1 hour PRECEDING AND 1 hour FOLLOWING" + where)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                px\tname\ts
+                                1\tC\t3
+                                2\tA\t6
+                                3\tB\t9
+                                4\tC\t12
+                                5\tC\t15
+                                6\tA\t18
+                                7\tB\t21
+                                8\tC\t15
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testFirstTableSubQueryWithTimestampDrivesChain() throws Exception {
+        // Each first FROM item is a sub-query whose rows carry a designated timestamp through SAMPLE BY,
+        // a sort on a TIMESTAMP column, a dateadd() offset of the timestamp, a join, an explicit
+        // TIMESTAMP() over a computed column, or trades' ts next to a computed column. The sub-query
+        // never takes over i.id = t.instrument, so it drives the chain, which reaches countries through
+        // hash joins and declares the sub-query's timestamp. An optimiser that took the sub-query for
+        // one without a timestamp would run it last, and the chain would declare c.cts.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            final String rows = """
+                    ts\tpx\tname
+                    2024-01-01T01:00:00.000000Z\t1\tC
+                    2024-01-01T02:00:00.000000Z\t2\tA
+                    2024-01-01T03:00:00.000000Z\t3\tB
+                    2024-01-01T04:00:00.000000Z\t4\tC
+                    2024-01-01T05:00:00.000000Z\t5\tC
+                    2024-01-01T06:00:00.000000Z\t6\tA
+                    2024-01-01T07:00:00.000000Z\t7\tB
+                    2024-01-01T08:00:00.000000Z\t8\tC
+                    """;
+            for (String first : new String[]{
+                    "(SELECT ts, instrument, sum(px) px FROM trades SAMPLE BY 1h) t",
+                    "(SELECT (1 + (x - 1) % 4)::INT instrument, x::INT px, '2024-01-01'::TIMESTAMP + x * 3_600_000_000L ts FROM long_sequence(8) ORDER BY ts) t",
+                    "(SELECT instrument, px, dateadd('h', 0, ts) ts FROM trades) t",
+                    "(SELECT t1.instrument, t1.px, t1.ts FROM trades t1 JOIN instruments i1 ON i1.id = t1.instrument) t",
+                    "(SELECT * FROM ((SELECT (1 + (x - 1) % 4)::INT instrument, x::INT px, '2024-01-01'::TIMESTAMP + x * 3_600_000_000L ts FROM long_sequence(8)) TIMESTAMP(ts))) t",
+                    "(SELECT instrument, abs(px) px, ts FROM trades) t"
+            }) {
+                assertQuery("SELECT t.ts, t.px, c.name FROM " + first + ", countries c, venues v, instruments i"
+                        + " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .withPlanNotContaining("Cross Join")
+                        .returns(rows);
+            }
+        });
+    }
+
+    @Test
+    public void testFirstTableSubQueryWithTimestampExpressionKeepsItsOrder() throws Exception {
+        // The first FROM item is a sub-query or CTE that drops trades' designated timestamp but projects
+        // ts1, a value that it computes from it. ts1 is no designated timestamp, but it follows trades'
+        // order, which TIMESTAMP(ts1) above the chain declares and a table without partitions whose
+        // designated timestamp ts1 feeds requires. The item takes over no equality, so it drives the
+        // chain, which reaches countries through hash joins and streams the rows in ts1 order. A first
+        // item that took over i.id = t.instrument let the chain run from countries: ts1 went back and
+        // forth, the ASOF and LT JOINs matched rows of y2 later than ts1, and the tables without
+        // partitions rejected the rows as out of order.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            execute("CREATE TABLE y2 (name SYMBOL, yts TIMESTAMP) TIMESTAMP(yts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO y2 VALUES
+                    ('C', '2024-01-01T01:30'),
+                    ('A', '2024-01-01T02:30'),
+                    ('B', '2024-01-01T03:30'),
+                    ('C', '2024-01-01T04:30'),
+                    ('A', '2024-01-01T06:30'),
+                    ('B', '2024-01-01T07:30'),
+                    ('C', '2024-01-01T08:30')
+                    """);
+            final String where = " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument";
+            // ts1 equals ts on this data, so the matches are those of trades' rows sorted by ts
+            final String matches = """
+                    px\tname\tts1\tyts
+                    1\tC\t2024-01-01T01:00:00.000000Z\t
+                    2\tA\t2024-01-01T02:00:00.000000Z\t
+                    3\tB\t2024-01-01T03:00:00.000000Z\t
+                    4\tC\t2024-01-01T04:00:00.000000Z\t2024-01-01T01:30:00.000000Z
+                    5\tC\t2024-01-01T05:00:00.000000Z\t2024-01-01T04:30:00.000000Z
+                    6\tA\t2024-01-01T06:00:00.000000Z\t2024-01-01T02:30:00.000000Z
+                    7\tB\t2024-01-01T07:00:00.000000Z\t2024-01-01T03:30:00.000000Z
+                    8\tC\t2024-01-01T08:00:00.000000Z\t2024-01-01T04:30:00.000000Z
+                    """;
+            int tableIndex = 0;
+            for (String[] first : new String[][]{
+                    {"", "(SELECT timestamp_floor('h', ts) ts1, instrument, px FROM trades) t"},
+                    {"", "(SELECT ts::TIMESTAMP ts1, instrument, px FROM trades) t"},
+                    {"", "(SELECT ts1, px, instrument FROM (SELECT instrument, px, timestamp_floor('h', ts) ts1 FROM trades)) t"},
+                    {"WITH tw AS (SELECT timestamp_floor('h', ts) ts1, instrument, px FROM trades) ", "tw t"}
+            }) {
+                final String select = "SELECT t.ts1, c.name, t.px FROM " + first[1] + ", countries c, venues v, instruments i" + where;
+                final String x = "((" + select + ") TIMESTAMP(ts1)) x";
+                assertQuery(first[0] + "SELECT count() inversions FROM (SELECT ts1, lag(ts1) OVER () prev FROM " + x + ") WHERE prev > ts1")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                inversions
+                                0
+                                """);
+                assertQuery(first[0] + "SELECT x.px, x.name, x.ts1, y.yts FROM " + x + " ASOF JOIN y2 y ON (name) ORDER BY px")
+                        .noLeakCheck()
+                        .returns(matches);
+                assertQuery(first[0] + "SELECT x.px, x.name, x.ts1, y.yts FROM " + x + " LT JOIN y2 y ON (name) ORDER BY px")
+                        .noLeakCheck()
+                        .returns(matches);
+                final String created = "ct" + tableIndex;
+                final String inserted = "it" + tableIndex++;
+                execute("CREATE TABLE " + created + " AS (" + first[0] + select + ") TIMESTAMP(ts1)");
+                execute("CREATE TABLE " + inserted + " (ts1 TIMESTAMP, name SYMBOL, px INT) TIMESTAMP(ts1)");
+                execute(first[0] + "INSERT INTO " + inserted + " " + select);
+                for (String table : new String[]{created, inserted}) {
+                    assertQuery("SELECT designatedTimestamp FROM tables() WHERE table_name = '" + table + "'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("""
+                                    designatedTimestamp
+                                    ts1
+                                    """);
+                    assertQuery("SELECT * FROM " + table)
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts1")
+                            .returns("""
+                                    ts1\tname\tpx
+                                    2024-01-01T01:00:00.000000Z\tC\t1
+                                    2024-01-01T02:00:00.000000Z\tA\t2
+                                    2024-01-01T03:00:00.000000Z\tB\t3
+                                    2024-01-01T04:00:00.000000Z\tC\t4
+                                    2024-01-01T05:00:00.000000Z\tC\t5
+                                    2024-01-01T06:00:00.000000Z\tA\t6
+                                    2024-01-01T07:00:00.000000Z\tB\t7
+                                    2024-01-01T08:00:00.000000Z\tC\t8
+                                    """);
+                }
+            }
+            // a value of any type that an expression computes from the timestamp, through a function's
+            // arguments or a window function's PARTITION BY or ORDER BY, keeps the item driving the
+            // chain, which streams trades' rows
+            for (String first : new String[]{
+                    "(SELECT ts::LONG l, instrument, px FROM trades) t",
+                    "(SELECT CASE WHEN ts > '2024-01-01T04:00' THEN 1 ELSE 0 END l, instrument, px FROM trades) t",
+                    "(SELECT instrument, px, lag(px) OVER (PARTITION BY ts) l FROM trades) t",
+                    "(SELECT instrument, px, row_number() OVER (ORDER BY ts) l FROM trades) t"
+            }) {
+                assertQuery("SELECT t.px, c.name FROM " + first + ", countries c, venues v, instruments i" + where)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanNotContaining("Cross Join")
+                        .returns("""
+                                px\tname
+                                1\tC
+                                2\tA
+                                3\tB
+                                4\tC
+                                5\tC
+                                6\tA
+                                7\tB
+                                8\tC
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testFirstTableSubQueryWithTimestampExpressionOfSameProjectionKeepsItsOrder() throws Exception {
+        // The first FROM item is a sub-query or CTE over a projection that computes ts1 from trades'
+        // designated timestamp and ts2 from ts1, an earlier column of the same projection, and keeps only
+        // ts2. ts2 follows trades' order, which TIMESTAMP(ts2) above the chain declares and a table
+        // without partitions whose designated timestamp ts2 feeds requires. The item takes over no
+        // equality, so it drives the chain, which reaches countries through hash joins and streams the
+        // rows in ts2 order. An optimiser that resolved ts2's reference only against the nested
+        // projection let the item take over i.id = t.instrument and the chain run from countries: ts2
+        // went back and forth, the ASOF and LT JOINs matched rows of y2 later than ts2, and the tables
+        // without partitions rejected the rows as out of order.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            execute("CREATE TABLE y2 (name SYMBOL, yts TIMESTAMP) TIMESTAMP(yts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO y2 VALUES
+                    ('C', '2024-01-01T01:30'),
+                    ('A', '2024-01-01T02:30'),
+                    ('B', '2024-01-01T03:30'),
+                    ('C', '2024-01-01T04:30'),
+                    ('A', '2024-01-01T06:30'),
+                    ('B', '2024-01-01T07:30'),
+                    ('C', '2024-01-01T08:30')
+                    """);
+            final String where = " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument";
+            // ts2 is ts plus one microsecond on this data, so the matches are those of trades' rows
+            // sorted by ts
+            final String matches = """
+                    px\tname\tts2\tyts
+                    1\tC\t2024-01-01T01:00:00.000001Z\t
+                    2\tA\t2024-01-01T02:00:00.000001Z\t
+                    3\tB\t2024-01-01T03:00:00.000001Z\t
+                    4\tC\t2024-01-01T04:00:00.000001Z\t2024-01-01T01:30:00.000000Z
+                    5\tC\t2024-01-01T05:00:00.000001Z\t2024-01-01T04:30:00.000000Z
+                    6\tA\t2024-01-01T06:00:00.000001Z\t2024-01-01T02:30:00.000000Z
+                    7\tB\t2024-01-01T07:00:00.000001Z\t2024-01-01T03:30:00.000000Z
+                    8\tC\t2024-01-01T08:00:00.000001Z\t2024-01-01T04:30:00.000000Z
+                    """;
+            int tableIndex = 0;
+            for (String[] first : new String[][]{
+                    // ts2 computes an expression of ts1
+                    {"", "(SELECT ts2, instrument, px FROM (SELECT timestamp_floor('h', ts) ts1, ts1 + 1 ts2, instrument, px FROM trades)) t"},
+                    // ts2 names ts1
+                    {"", "(SELECT ts2, instrument, px FROM (SELECT ts + 1 ts1, ts1 ts2, instrument, px FROM trades)) t"},
+                    {"WITH tw AS (SELECT ts2, instrument, px FROM (SELECT timestamp_floor('h', ts) ts1, ts1 + 1 ts2, instrument, px FROM trades)) ", "tw t"}
+            }) {
+                final String select = "SELECT t.ts2, c.name, t.px FROM " + first[1] + ", countries c, venues v, instruments i" + where;
+                final String x = "((" + select + ") TIMESTAMP(ts2)) x";
+                assertQuery(first[0] + "SELECT count() inversions FROM (SELECT ts2, lag(ts2) OVER () prev FROM " + x + ") WHERE prev > ts2")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                inversions
+                                0
+                                """);
+                assertQuery(first[0] + "SELECT x.px, x.name, x.ts2, y.yts FROM " + x + " ASOF JOIN y2 y ON (name) ORDER BY px")
+                        .noLeakCheck()
+                        .returns(matches);
+                assertQuery(first[0] + "SELECT x.px, x.name, x.ts2, y.yts FROM " + x + " LT JOIN y2 y ON (name) ORDER BY px")
+                        .noLeakCheck()
+                        .returns(matches);
+                final String created = "ct" + tableIndex;
+                final String inserted = "it" + tableIndex++;
+                execute("CREATE TABLE " + created + " AS (" + first[0] + select + ") TIMESTAMP(ts2)");
+                execute("CREATE TABLE " + inserted + " (ts2 TIMESTAMP, name SYMBOL, px INT) TIMESTAMP(ts2)");
+                execute(first[0] + "INSERT INTO " + inserted + " " + select);
+                for (String table : new String[]{created, inserted}) {
+                    assertQuery("SELECT designatedTimestamp FROM tables() WHERE table_name = '" + table + "'")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .returns("""
+                                    designatedTimestamp
+                                    ts2
+                                    """);
+                    assertQuery("SELECT * FROM " + table)
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts2")
+                            .returns("""
+                                    ts2\tname\tpx
+                                    2024-01-01T01:00:00.000001Z\tC\t1
+                                    2024-01-01T02:00:00.000001Z\tA\t2
+                                    2024-01-01T03:00:00.000001Z\tB\t3
+                                    2024-01-01T04:00:00.000001Z\tC\t4
+                                    2024-01-01T05:00:00.000001Z\tC\t5
+                                    2024-01-01T06:00:00.000001Z\tA\t6
+                                    2024-01-01T07:00:00.000001Z\tB\t7
+                                    2024-01-01T08:00:00.000001Z\tC\t8
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFirstTableSubQueryWithTimestampUnderTwoAliasesDrivesChain() throws Exception {
+        // The first FROM item is a sub-query, CTE or view over a projection that lists trades' designated
+        // timestamp twice, as ts and ts2, and keeps one of the two. The item carries trades' timestamp
+        // through the one it keeps, so it takes over no equality and drives the chain, which reaches
+        // countries through hash joins and declares t.ts: LIMIT and first()/last() follow trades' order,
+        // and CREATE TABLE AS takes tts as the designated timestamp. An optimiser that followed the
+        // timestamp through only the first column that lists it lost it where the item keeps the other
+        // one, so the chain ran from countries and declared c.cts.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            execute("CREATE VIEW tv AS (SELECT ts, instrument, px FROM (SELECT ts AS ts2, ts, instrument, px FROM trades))");
+            int tableIndex = 0;
+            for (String[] first : new String[][]{
+                    {"", "(SELECT ts, instrument, px FROM (SELECT ts AS ts2, ts, instrument, px FROM trades)) t"},
+                    {"", "(SELECT ts2 ts, instrument, px FROM (SELECT ts, ts AS ts2, instrument, px FROM trades)) t"},
+                    {"WITH tw AS (SELECT ts, instrument, px FROM (SELECT ts AS ts2, ts, instrument, px FROM trades)) ", "tw t"},
+                    {"", "tv t"}
+            }) {
+                final String chain = "SELECT t.ts tts, c.name, c.cts FROM " + first[1] + ", countries c, venues v, instruments i"
+                        + " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument";
+                assertQuery(first[0] + chain)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("tts")
+                        .withPlanNotContaining("Cross Join")
+                        .returns("""
+                                tts\tname\tcts
+                                2024-01-01T01:00:00.000000Z\tC\t2024-01-03T00:00:00.000000Z
+                                2024-01-01T02:00:00.000000Z\tA\t2024-01-01T00:00:00.000000Z
+                                2024-01-01T03:00:00.000000Z\tB\t2024-01-02T00:00:00.000000Z
+                                2024-01-01T04:00:00.000000Z\tC\t2024-01-03T00:00:00.000000Z
+                                2024-01-01T05:00:00.000000Z\tC\t2024-01-03T00:00:00.000000Z
+                                2024-01-01T06:00:00.000000Z\tA\t2024-01-01T00:00:00.000000Z
+                                2024-01-01T07:00:00.000000Z\tB\t2024-01-02T00:00:00.000000Z
+                                2024-01-01T08:00:00.000000Z\tC\t2024-01-03T00:00:00.000000Z
+                                """);
+                assertQuery(first[0] + chain + " LIMIT 3")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("tts")
+                        .returns("""
+                                tts\tname\tcts
+                                2024-01-01T01:00:00.000000Z\tC\t2024-01-03T00:00:00.000000Z
+                                2024-01-01T02:00:00.000000Z\tA\t2024-01-01T00:00:00.000000Z
+                                2024-01-01T03:00:00.000000Z\tB\t2024-01-02T00:00:00.000000Z
+                                """);
+                assertQuery(first[0] + "SELECT first(name) f, last(name) l FROM (" + chain + ")")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                f\tl
+                                C\tC
+                                """);
+                final String created = "ct" + tableIndex++;
+                execute("CREATE TABLE " + created + " AS (" + first[0] + chain + ")");
+                assertQuery("SELECT designatedTimestamp FROM tables() WHERE table_name = '" + created + "'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                designatedTimestamp
+                                tts
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testFirstTableSubQueryWithoutTimestampAsOfJoin() throws Exception {
+        // The first FROM item is a sub-query, CTE or view that projects no designated timestamp, so
+        // running it first keeps no time order. It takes over i.id = t.instrument like a table without
+        // a timestamp, and the chain runs from countries, which no equality links to an earlier item:
+        // the join declares c.cts, and the ASOF JOIN matches on it. A chain that ran the first item
+        // first declared no designated timestamp, and the ASOF JOIN failed.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            execute("CREATE VIEW tv AS (SELECT instrument, px FROM trades)");
+            final String where = " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument";
+            for (String[] first : new String[][]{
+                    {"", "(SELECT instrument, px FROM trades) t"},
+                    {"WITH tw AS (SELECT instrument, px FROM trades) ", "tw t"},
+                    {"", "tv t"}
+            }) {
+                final String chain = "SELECT t.px, c.name, c.cts FROM " + first[1] + ", countries c, venues v, instruments i" + where;
+                assertQuery(first[0] + chain + " ORDER BY cts, px")
+                        .noLeakCheck()
+                        .timestamp("cts")
+                        .withPlanNotContaining("Cross Join")
+                        .returns("""
+                                px\tname\tcts
+                                2\tA\t2024-01-01T00:00:00.000000Z
+                                6\tA\t2024-01-01T00:00:00.000000Z
+                                3\tB\t2024-01-02T00:00:00.000000Z
+                                7\tB\t2024-01-02T00:00:00.000000Z
+                                1\tC\t2024-01-03T00:00:00.000000Z
+                                4\tC\t2024-01-03T00:00:00.000000Z
+                                5\tC\t2024-01-03T00:00:00.000000Z
+                                8\tC\t2024-01-03T00:00:00.000000Z
+                                """);
+                assertQuery(first[0] + "SELECT x.px, x.name, x.cts, y.yts FROM (" + chain + ") x ASOF JOIN y ON (name) ORDER BY px")
+                        .noLeakCheck()
+                        .returns("""
+                                px\tname\tcts\tyts
+                                1\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                2\tA\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                                3\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                                4\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                5\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                6\tA\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                                7\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                                8\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                """);
+                assertQuery(first[0] + "SELECT x.px, x.cts, y.name yname, y.yts FROM (" + chain + ") x ASOF JOIN y ORDER BY px")
+                        .noLeakCheck()
+                        .returns("""
+                                px\tcts\tyname\tyts
+                                1\t2024-01-03T00:00:00.000000Z\tB\t2024-01-03T00:00:00.000000Z
+                                2\t2024-01-01T00:00:00.000000Z\tA\t2024-01-01T00:00:00.000000Z
+                                3\t2024-01-02T00:00:00.000000Z\tA\t2024-01-02T00:00:00.000000Z
+                                4\t2024-01-03T00:00:00.000000Z\tB\t2024-01-03T00:00:00.000000Z
+                                5\t2024-01-03T00:00:00.000000Z\tB\t2024-01-03T00:00:00.000000Z
+                                6\t2024-01-01T00:00:00.000000Z\tA\t2024-01-01T00:00:00.000000Z
+                                7\t2024-01-02T00:00:00.000000Z\tA\t2024-01-02T00:00:00.000000Z
+                                8\t2024-01-03T00:00:00.000000Z\tB\t2024-01-03T00:00:00.000000Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testFirstTableSubQueryWithoutTimestampComputedColumns() throws Exception {
+        // The first FROM item is a sub-query whose computed columns read no column that carries trades'
+        // designated timestamp, so its rows carry neither the timestamp nor a value computed from it.
+        // Like a sub-query that projects plain columns without the timestamp, the item takes over
+        // i.id = t.instrument, and the chain runs from countries and declares c.cts, which the ASOF JOINs
+        // over and inside the chain match on. A chain that ran the item first declared no designated
+        // timestamp, and both ASOF JOINs failed.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            final String where = " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument";
+            final String rows = """
+                    px\tname\tcts\tyts
+                    1\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                    2\tA\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                    3\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                    4\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                    5\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                    6\tA\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                    7\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                    8\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                    """;
+            // the second element tells whether the cursors know their size, which they do over the window
+            // function's sub-query
+            for (String[] first : new String[][]{
+                    {"(SELECT instrument, abs(px) px FROM trades) t", "false"},
+                    {"(SELECT instrument, abs(px) px FROM (SELECT instrument, px FROM trades)) t", "false"},
+                    {"(SELECT instrument, px, lag(px) OVER () prev FROM trades) t", "true"}
+            }) {
+                final String from = " FROM " + first[0] + ", countries c, venues v, instruments i";
+                final boolean isSizeKnown = Boolean.parseBoolean(first[1]);
+                assertQuery("SELECT t.px, c.name, c.cts" + from + where + " ORDER BY cts, px")
+                        .noLeakCheck()
+                        .expectSize(isSizeKnown)
+                        .timestamp("cts")
+                        .withPlanNotContaining("Cross Join")
+                        .returns("""
+                                px\tname\tcts
+                                2\tA\t2024-01-01T00:00:00.000000Z
+                                6\tA\t2024-01-01T00:00:00.000000Z
+                                3\tB\t2024-01-02T00:00:00.000000Z
+                                7\tB\t2024-01-02T00:00:00.000000Z
+                                1\tC\t2024-01-03T00:00:00.000000Z
+                                4\tC\t2024-01-03T00:00:00.000000Z
+                                5\tC\t2024-01-03T00:00:00.000000Z
+                                8\tC\t2024-01-03T00:00:00.000000Z
+                                """);
+                assertQuery("SELECT x.px, x.name, x.cts, y.yts FROM (SELECT t.px, c.name, c.cts" + from + where + ") x ASOF JOIN y ON (name) ORDER BY px")
+                        .noLeakCheck()
+                        .expectSize(isSizeKnown)
+                        .returns(rows);
+                assertQuery("SELECT t.px, c.name, c.cts, y.yts" + from + " ASOF JOIN y ON y.name = c.name" + where + " ORDER BY px")
+                        .noLeakCheck()
+                        .expectSize(isSizeKnown)
+                        .returns(rows);
+            }
+        });
+    }
+
+    @Test
+    public void testFirstTableSubQueryWithoutTimestampCreateTable() throws Exception {
+        // CREATE TABLE AS SELECT keeps the order that the cost model picks for the chain. The first FROM
+        // item, a sub-query without a designated timestamp, takes over i.id = t.instrument, and the chain
+        // runs from countries and declares c.cts. The new table takes cts as its designated timestamp,
+        // which PARTITION BY requires. A chain that ran the sub-query first declared no designated
+        // timestamp: PARTITION BY failed, and the table without it had no designated timestamp.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            final String chain = "SELECT t.px, c.name, c.cts FROM (SELECT instrument, px FROM trades) t, countries c, venues v, instruments i"
+                    + " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument";
+            execute("CREATE TABLE cs AS (" + chain + ") PARTITION BY DAY");
+            execute("CREATE TABLE cs_none AS (" + chain + ")");
+            assertQuery("SELECT table_name, designatedTimestamp FROM tables() WHERE table_name LIKE 'cs%' ORDER BY table_name")
+                    .noLeakCheck()
+                    .returns("""
+                            table_name\tdesignatedTimestamp
+                            cs\tcts
+                            cs_none\tcts
+                            """);
+            for (String table : new String[]{"cs", "cs_none"}) {
+                assertQuery("SELECT * FROM " + table + " ORDER BY cts, px")
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("cts")
+                        .returns("""
+                                px\tname\tcts
+                                2\tA\t2024-01-01T00:00:00.000000Z
+                                6\tA\t2024-01-01T00:00:00.000000Z
+                                3\tB\t2024-01-02T00:00:00.000000Z
+                                7\tB\t2024-01-02T00:00:00.000000Z
+                                1\tC\t2024-01-03T00:00:00.000000Z
+                                4\tC\t2024-01-03T00:00:00.000000Z
+                                5\tC\t2024-01-03T00:00:00.000000Z
+                                8\tC\t2024-01-03T00:00:00.000000Z
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testFirstTableSubQueryWithoutTimestampExplicitTimestampOfChain() throws Exception {
+        // TIMESTAMP(cts) declares the order of countries' timestamp. The first FROM item, a sub-query
+        // without a designated timestamp, takes over i.id = t.instrument, so the chain runs from
+        // countries and streams its rows in cts order, and the ASOF and LT JOINs match on cts. A chain
+        // that ran the sub-query first streamed trades' rows, whose cts goes back and forth, so the
+        // time series joins matched rows of y later than cts.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            final String x = "((SELECT c.cts, c.name, t.px FROM (SELECT instrument, px FROM trades) t, countries c, venues v, instruments i"
+                    + " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument) TIMESTAMP(cts)) x";
+            assertQuery("SELECT count() inversions FROM (SELECT cts, lag(cts) OVER () prev FROM " + x + ") WHERE prev > cts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            inversions
+                            0
+                            """);
+            assertQuery("SELECT x.px, x.name, x.cts, y.yts FROM " + x + " ASOF JOIN y ON (name) ORDER BY px")
+                    .noLeakCheck()
+                    .returns("""
+                            px\tname\tcts\tyts
+                            1\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                            2\tA\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                            3\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                            4\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                            5\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                            6\tA\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                            7\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                            8\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                            """);
+            assertQuery("SELECT x.px, x.name, x.cts, y.yts FROM " + x + " LT JOIN y ON (name) ORDER BY px")
+                    .noLeakCheck()
+                    .returns("""
+                            px\tname\tcts\tyts
+                            1\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                            2\tA\t2024-01-01T00:00:00.000000Z\t2023-12-31T00:00:00.000000Z
+                            3\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                            4\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                            5\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                            6\tA\t2024-01-01T00:00:00.000000Z\t2023-12-31T00:00:00.000000Z
+                            7\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                            8\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                            """);
+            assertQuery("SELECT x.px, x.cts, y.name yname, y.yts FROM " + x + " ASOF JOIN y ORDER BY px")
+                    .noLeakCheck()
+                    .returns("""
+                            px\tcts\tyname\tyts
+                            1\t2024-01-03T00:00:00.000000Z\tB\t2024-01-03T00:00:00.000000Z
+                            2\t2024-01-01T00:00:00.000000Z\tA\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-02T00:00:00.000000Z\tA\t2024-01-02T00:00:00.000000Z
+                            4\t2024-01-03T00:00:00.000000Z\tB\t2024-01-03T00:00:00.000000Z
+                            5\t2024-01-03T00:00:00.000000Z\tB\t2024-01-03T00:00:00.000000Z
+                            6\t2024-01-01T00:00:00.000000Z\tA\t2024-01-01T00:00:00.000000Z
+                            7\t2024-01-02T00:00:00.000000Z\tA\t2024-01-02T00:00:00.000000Z
+                            8\t2024-01-03T00:00:00.000000Z\tB\t2024-01-03T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableSubQueryWithoutTimestampReachesSnowflakeThroughHashJoins() throws Exception {
+        // The first FROM item, a sub-query without a designated timestamp, may take over equalities, but
+        // no take-over removes the cross join here: instruments holds one equality, with t, venues holds
+        // one, with c, and listings, which holds two, links neither t nor c. The chosen order runs t
+        // first and cross joins c. The chain reaches c through hash joins from t instead, as it does from
+        // a first item that drives the chain: listings hands l.venue = v.id over to venues, and venues
+        // hands v.country = c.id over to countries. Below TIMESTAMP(cts), trades may take over equalities
+        // too and gets the same hand-over. A cross join multiplied the rows that reach every later join
+        // by the number of countries.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            execute("CREATE TABLE listings (venue INT, instrument INT)");
+            execute("INSERT INTO listings VALUES (10, 1), (20, 2), (30, 3), (40, 4), (20, 1)");
+            final String where = " WHERE i.id = t.instrument AND v.country = c.id AND l.venue = v.id AND l.instrument = i.id";
+            for (String from : new String[]{
+                    " FROM (SELECT instrument, px FROM trades) t, countries c, instruments i, venues v, listings l",
+                    " FROM (SELECT instrument, px FROM trades) t, countries c, venues v, instruments i, listings l",
+                    " FROM (SELECT instrument, px FROM trades) t, instruments i, countries c, venues v, listings l"
+            }) {
+                assertQuery("SELECT t.px, c.name, v.id vid, l.instrument li" + from + where + " ORDER BY px, vid")
+                        .noLeakCheck()
+                        .withPlanContaining("condition: c.id=v.country")
+                        .withPlanNotContaining("Cross Join")
+                        .returns("""
+                                px\tname\tvid\tli
+                                1\tC\t10\t1
+                                1\tA\t20\t1
+                                2\tA\t20\t2
+                                3\tB\t30\t3
+                                4\tC\t40\t4
+                                5\tC\t10\t1
+                                5\tA\t20\t1
+                                6\tA\t20\t2
+                                7\tB\t30\t3
+                                8\tC\t40\t4
+                                """);
+            }
+            assertQuery("SELECT px, name, vid, li FROM ((SELECT t.px, c.name, c.cts, v.id vid, l.instrument li"
+                    + " FROM trades t, countries c, instruments i, venues v, listings l" + where + ") TIMESTAMP(cts))"
+                    + " ORDER BY px, vid")
+                    .noLeakCheck()
+                    .withPlanContaining("condition: c.id=v.country")
+                    .withPlanNotContaining("Cross Join")
+                    .returns("""
+                            px\tname\tvid\tli
+                            1\tC\t10\t1
+                            1\tA\t20\t1
+                            2\tA\t20\t2
+                            3\tB\t30\t3
+                            4\tC\t40\t4
+                            5\tC\t10\t1
+                            5\tA\t20\t1
+                            6\tA\t20\t2
+                            7\tB\t30\t3
+                            8\tC\t40\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableSubQueryWithoutTimestampTimeSeriesJoinOfChain() throws Exception {
+        // The first FROM item is a sub-query over a table or a table function without a designated
+        // timestamp. Code generation has no timestamp to add to its rows for a time series join of the
+        // chain, so the item takes over i.id = t.instrument like a table without a timestamp: the chain
+        // runs from countries, and the ASOF and LT JOINs match on c.cts. A chain that ran the item first
+        // had no timestamp for these joins and failed.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            execute("CREATE TABLE trades_plain (instrument INT, px INT, ts TIMESTAMP)");
+            execute("INSERT INTO trades_plain SELECT instrument, px, ts FROM trades");
+            final String where = " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument";
+            for (String first : new String[]{
+                    "(SELECT instrument, px FROM trades_plain) t",
+                    "(SELECT (1 + (x - 1) % 4)::INT instrument, x::INT px FROM long_sequence(8)) t"
+            }) {
+                final String from = " FROM " + first + ", countries c, venues v, instruments i";
+                assertQuery("SELECT t.px, c.name, c.cts, y.yts" + from + " ASOF JOIN y ON y.name = c.name" + where + " ORDER BY px")
+                        .noLeakCheck()
+                        .withPlanNotContaining("Cross Join")
+                        .returns("""
+                                px\tname\tcts\tyts
+                                1\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                2\tA\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                                3\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                                4\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                5\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                6\tA\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                                7\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                                8\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                """);
+                assertQuery("SELECT t.px, c.name, c.cts, y.yts" + from + " LT JOIN y ON y.name = c.name" + where + " ORDER BY px")
+                        .noLeakCheck()
+                        .withPlanNotContaining("Cross Join")
+                        .returns("""
+                                px\tname\tcts\tyts
+                                1\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                2\tA\t2024-01-01T00:00:00.000000Z\t2023-12-31T00:00:00.000000Z
+                                3\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                                4\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                5\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                6\tA\t2024-01-01T00:00:00.000000Z\t2023-12-31T00:00:00.000000Z
+                                7\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                                8\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testFirstTableTakesOverEqualityOnlyWithoutTimestamp() throws Exception {
         // The reorder finds no order without a cross join that starts at u0, only one that starts at
         // u1 and lets u0 take over u3.a = u0.a, so u0 joins last. u0 is a plain table without a
@@ -2676,6 +3399,341 @@ public class JoinTest extends AbstractCairoTest {
                             first\tlast\tcount
                             1\t3\t3
                             """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithTimestampExplicitTimestampOfChainKeepsItsOrder() throws Exception {
+        // TIMESTAMP(cts) names countries' timestamp rather than the first table's, so the chain below it
+        // keeps the order that the cost model picks: trades takes over i.id = t.instrument, and the
+        // chain runs from countries and streams its rows in cts order. A chain that ran trades first
+        // streamed its rows in ts order, whose cts goes back and forth, and the ASOF JOIN matched rows
+        // of y later than cts. A sub-query that projects ts plans the same as the table.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            final String where = " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument";
+            for (String first : new String[]{"trades t", "(SELECT instrument, px, ts FROM trades) t"}) {
+                final String x = "((SELECT c.cts, c.name, t.px FROM " + first + ", countries c, venues v, instruments i" + where + ") TIMESTAMP(cts)) x";
+                assertQuery("SELECT count() inversions FROM (SELECT cts, lag(cts) OVER () prev FROM " + x + ") WHERE prev > cts")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                inversions
+                                0
+                                """);
+                assertQuery("SELECT x.px, x.name, x.cts, y.yts FROM " + x + " ASOF JOIN y ON (name) ORDER BY px")
+                        .noLeakCheck()
+                        .returns("""
+                                px\tname\tcts\tyts
+                                1\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                2\tA\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                                3\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                                4\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                5\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                6\tA\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                                7\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                                8\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                                """);
+            }
+            // CREATE TABLE AS SELECT runs the chain from countries too, so a table without partitions,
+            // which accepts rows only in the order of its designated timestamp, takes the rows in cts order
+            execute("CREATE TABLE ct AS (SELECT * FROM ((SELECT c.cts, c.name, t.px FROM trades t, countries c, venues v, instruments i"
+                    + where + ") TIMESTAMP(cts)) x) TIMESTAMP(cts)");
+            assertQuery("SELECT designatedTimestamp FROM tables() WHERE table_name = 'ct'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            designatedTimestamp
+                            cts
+                            """);
+            assertQuery("SELECT count() FROM ct")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            8
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithTimestampExplicitTimestampOfChainKeepsOrderOfLaterSubQuery() throws Exception {
+        // TIMESTAMP(cts) names the timestamp of c, a later item of the outer chain, so trades takes over
+        // i.id = t.instrument and the outer chain runs from c. c is a sub-query whose own chain lists
+        // countries2 first, like the outer chain lists trades: no equality links regions to countries2.
+        // No explicit TIMESTAMP() names a column of that chain, so countries2 keeps driving it and c
+        // streams its rows in cts order. A sub-query chain that let countries2 take over z.id = c0.zone
+        // ran from regions, whose order sends cts back and forth, and the ASOF JOIN matched rows of y
+        // later than cts.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            execute("CREATE TABLE countries2 (id INT, name SYMBOL, zone INT, cts TIMESTAMP) TIMESTAMP(cts) PARTITION BY DAY");
+            execute("CREATE TABLE regions (id INT)");
+            execute("CREATE TABLE wards (id INT, region INT)");
+            execute("CREATE TABLE zones (id INT, ward INT)");
+            execute("""
+                    INSERT INTO countries2 VALUES
+                    (1, 'A', 3, '2024-01-01'),
+                    (2, 'B', 1, '2024-01-02'),
+                    (3, 'C', 2, '2024-01-03'),
+                    (4, 'Z', 4, '2024-01-04')
+                    """);
+            execute("INSERT INTO regions VALUES (1), (2), (3), (4)");
+            execute("INSERT INTO wards VALUES (1, 1), (2, 2), (3, 3), (4, 4)");
+            execute("INSERT INTO zones VALUES (1, 1), (2, 2), (3, 3), (4, 4)");
+            final String c = "(SELECT c0.id, c0.name, c0.cts FROM countries2 c0, regions r, wards w, zones z"
+                    + " WHERE w.region = r.id AND z.ward = w.id AND z.id = c0.zone) c";
+            final String x = "((SELECT c.cts, c.name, t.px FROM trades t, " + c + ", venues v, instruments i"
+                    + " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument) TIMESTAMP(cts)) x";
+            assertQuery("SELECT count() inversions FROM (SELECT cts, lag(cts) OVER () prev FROM " + x + ") WHERE prev > cts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            inversions
+                            0
+                            """);
+            assertQuery("SELECT x.px, x.name, x.cts, y.yts FROM " + x + " ASOF JOIN y ON (name) ORDER BY px")
+                    .noLeakCheck()
+                    .returns("""
+                            px\tname\tcts\tyts
+                            1\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                            2\tA\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                            3\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                            4\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                            5\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                            6\tA\t2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z
+                            7\tB\t2024-01-02T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z
+                            8\tC\t2024-01-03T00:00:00.000000Z\t2024-01-02T12:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testFirstTableWithTimestampExplicitTimestampOfExpressionKeepsItsOrder() throws Exception {
+        // TIMESTAMP(t2) names an expression, which isTimestampOfFirstTable() cannot follow, so the order
+        // is not tracked below it. An expression of trades' timestamp keeps trades, the first FROM item,
+        // driving the chain, which streams its rows in t2 order. An expression of countries' timestamp
+        // lets trades take over i.id = t.instrument, and the chain runs from countries and streams its
+        // rows in t2 order too. Either way, the ASOF JOIN matches each row on t2. A chain that ran from
+        // the other table streamed the rows in an order that sends t2 back and forth, and the ASOF JOIN
+        // matched rows of y2 later than t2.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            execute("CREATE TABLE y2 (name SYMBOL, yts TIMESTAMP) TIMESTAMP(yts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO y2 VALUES
+                    ('C', '2024-01-01T01:30'),
+                    ('A', '2024-01-01T02:30'),
+                    ('B', '2024-01-01T03:30'),
+                    ('C', '2024-01-01T04:30'),
+                    ('A', '2024-01-01T06:30'),
+                    ('B', '2024-01-01T07:30'),
+                    ('C', '2024-01-01T08:30')
+                    """);
+            final String rowsOfTs = """
+                    px\tname\tt2\tyts
+                    1\tC\t2024-01-01T01:00:00.000000Z\t
+                    2\tA\t2024-01-01T02:00:00.000000Z\t
+                    3\tB\t2024-01-01T03:00:00.000000Z\t
+                    4\tC\t2024-01-01T04:00:00.000000Z\t2024-01-01T01:30:00.000000Z
+                    5\tC\t2024-01-01T05:00:00.000000Z\t2024-01-01T04:30:00.000000Z
+                    6\tA\t2024-01-01T06:00:00.000000Z\t2024-01-01T02:30:00.000000Z
+                    7\tB\t2024-01-01T07:00:00.000000Z\t2024-01-01T03:30:00.000000Z
+                    8\tC\t2024-01-01T08:00:00.000000Z\t2024-01-01T04:30:00.000000Z
+                    """;
+            for (String[] t2 : new String[][]{
+                    {"dateadd('h', 1, t.ts)", """
+                            px\tname\tt2\tyts
+                            1\tC\t2024-01-01T02:00:00.000000Z\t2024-01-01T01:30:00.000000Z
+                            2\tA\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:30:00.000000Z
+                            3\tB\t2024-01-01T04:00:00.000000Z\t2024-01-01T03:30:00.000000Z
+                            4\tC\t2024-01-01T05:00:00.000000Z\t2024-01-01T04:30:00.000000Z
+                            5\tC\t2024-01-01T06:00:00.000000Z\t2024-01-01T04:30:00.000000Z
+                            6\tA\t2024-01-01T07:00:00.000000Z\t2024-01-01T06:30:00.000000Z
+                            7\tB\t2024-01-01T08:00:00.000000Z\t2024-01-01T07:30:00.000000Z
+                            8\tC\t2024-01-01T09:00:00.000000Z\t2024-01-01T08:30:00.000000Z
+                            """},
+                    {"t.ts::TIMESTAMP", rowsOfTs},
+                    {"timestamp_floor('1h', t.ts)", rowsOfTs},
+                    {"dateadd('h', 1, c.cts)", """
+                            px\tname\tt2\tyts
+                            1\tC\t2024-01-03T01:00:00.000000Z\t2024-01-01T08:30:00.000000Z
+                            2\tA\t2024-01-01T01:00:00.000000Z\t
+                            3\tB\t2024-01-02T01:00:00.000000Z\t2024-01-01T07:30:00.000000Z
+                            4\tC\t2024-01-03T01:00:00.000000Z\t2024-01-01T08:30:00.000000Z
+                            5\tC\t2024-01-03T01:00:00.000000Z\t2024-01-01T08:30:00.000000Z
+                            6\tA\t2024-01-01T01:00:00.000000Z\t
+                            7\tB\t2024-01-02T01:00:00.000000Z\t2024-01-01T07:30:00.000000Z
+                            8\tC\t2024-01-03T01:00:00.000000Z\t2024-01-01T08:30:00.000000Z
+                            """}
+            }) {
+                final String x = "((SELECT " + t2[0] + " t2, c.name, t.px FROM trades t, countries c, venues v, instruments i"
+                        + " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument) TIMESTAMP(t2)) x";
+                assertQuery("SELECT count() inversions FROM (SELECT t2, lag(t2) OVER () prev FROM " + x + ") WHERE prev > t2")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                inversions
+                                0
+                                """);
+                assertQuery("SELECT x.px, x.name, x.t2, y.yts FROM " + x + " ASOF JOIN y2 y ON (name) ORDER BY px")
+                        .noLeakCheck()
+                        .returns(t2[1]);
+            }
+        });
+    }
+
+    @Test
+    public void testFirstTableWithTimestampInsertAndCreateTableKeepItsOrder() throws Exception {
+        // INSERT AS SELECT and CREATE TABLE AS SELECT keep trades, the first FROM item, driving the
+        // chain, as the SELECT on its own does: trades takes over no equality, and the chain reaches
+        // countries through hash joins and streams trades' rows in ts order. A table without partitions,
+        // which accepts rows only in the order of its designated timestamp ts, takes them, and CREATE
+        // TABLE AS without TIMESTAMP() takes ts from the chain. A chain that ran from countries streamed
+        // the rows in cts order: the tables without partitions rejected them as out of order, and the
+        // new tables took cts, or no designated timestamp when the SELECT dropped cts.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            final String from = " FROM trades t, countries c, venues v, instruments i"
+                    + " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument";
+            final String select = "SELECT t.ts, t.px, c.name" + from;
+            execute("CREATE TABLE ct_cts AS (SELECT t.ts, t.px, c.name, c.cts" + from + ")");
+            execute("CREATE TABLE ct_day AS (" + select + ") PARTITION BY DAY");
+            execute("CREATE TABLE ct_none AS (" + select + ") TIMESTAMP(ts) PARTITION BY NONE");
+            execute("CREATE TABLE ct_plain AS (" + select + ")");
+            execute("CREATE TABLE ct_ts AS (" + select + ") TIMESTAMP(ts)");
+            execute("CREATE TABLE it (ts TIMESTAMP, px INT, name SYMBOL) TIMESTAMP(ts)");
+            execute("INSERT INTO it " + select);
+            assertQuery("SELECT table_name, designatedTimestamp FROM tables() WHERE table_name LIKE 'ct_%' OR table_name = 'it' ORDER BY table_name")
+                    .noLeakCheck()
+                    .returns("""
+                            table_name\tdesignatedTimestamp
+                            ct_cts\tts
+                            ct_day\tts
+                            ct_none\tts
+                            ct_plain\tts
+                            ct_ts\tts
+                            it\tts
+                            """);
+            for (String table : new String[]{"ct_cts", "ct_day", "ct_none", "ct_plain", "ct_ts", "it"}) {
+                assertQuery("SELECT ts, px, name FROM " + table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tpx\tname
+                                2024-01-01T01:00:00.000000Z\t1\tC
+                                2024-01-01T02:00:00.000000Z\t2\tA
+                                2024-01-01T03:00:00.000000Z\t3\tB
+                                2024-01-01T04:00:00.000000Z\t4\tC
+                                2024-01-01T05:00:00.000000Z\t5\tC
+                                2024-01-01T06:00:00.000000Z\t6\tA
+                                2024-01-01T07:00:00.000000Z\t7\tB
+                                2024-01-01T08:00:00.000000Z\t8\tC
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testFirstTableWithTimestampInsertAndCreateTableKeepTimeSeriesJoinOfSelect() throws Exception {
+        // INSERT AS SELECT and CREATE TABLE AS SELECT store the rows that their SELECT returns on its
+        // own. trades, the first FROM item, drives the chain in all three, so the ASOF and LT JOINs match
+        // on trades' timestamps. So does a sub-query over trades that drops ts, whose rows get trades'
+        // timestamp for the ASOF JOIN. A chain that ran from countries in the INSERT and the CREATE TABLE
+        // AS matched on c.cts instead and stored other rows of y.
+        assertMemoryLeak(() -> {
+            createFirstTableStarSchemaTables();
+            execute("INSERT INTO y VALUES ('B', '2024-01-01T03:00'), ('C', '2024-01-01T04:00')");
+            final String from = " FROM trades t, countries c, venues v, instruments i ";
+            final String where = " WHERE v.country = c.id AND i.venue = v.id AND i.id = t.instrument";
+            int tableIndex = 0;
+            for (String[] join : new String[][]{
+                    {"ASOF JOIN y ON y.name = c.name", """
+                            px\tts\tname\tyname\tyts
+                            1\t2024-01-01T01:00:00.000000Z\tC\t\t
+                            2\t2024-01-01T02:00:00.000000Z\tA\tA\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-01T03:00:00.000000Z\tB\tB\t2024-01-01T03:00:00.000000Z
+                            4\t2024-01-01T04:00:00.000000Z\tC\tC\t2024-01-01T04:00:00.000000Z
+                            5\t2024-01-01T05:00:00.000000Z\tC\tC\t2024-01-01T04:00:00.000000Z
+                            6\t2024-01-01T06:00:00.000000Z\tA\tA\t2024-01-01T00:00:00.000000Z
+                            7\t2024-01-01T07:00:00.000000Z\tB\tB\t2024-01-01T03:00:00.000000Z
+                            8\t2024-01-01T08:00:00.000000Z\tC\tC\t2024-01-01T04:00:00.000000Z
+                            """},
+                    {"LT JOIN y ON y.name = c.name", """
+                            px\tts\tname\tyname\tyts
+                            1\t2024-01-01T01:00:00.000000Z\tC\t\t
+                            2\t2024-01-01T02:00:00.000000Z\tA\tA\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-01T03:00:00.000000Z\tB\t\t
+                            4\t2024-01-01T04:00:00.000000Z\tC\t\t
+                            5\t2024-01-01T05:00:00.000000Z\tC\tC\t2024-01-01T04:00:00.000000Z
+                            6\t2024-01-01T06:00:00.000000Z\tA\tA\t2024-01-01T00:00:00.000000Z
+                            7\t2024-01-01T07:00:00.000000Z\tB\tB\t2024-01-01T03:00:00.000000Z
+                            8\t2024-01-01T08:00:00.000000Z\tC\tC\t2024-01-01T04:00:00.000000Z
+                            """},
+                    {"ASOF JOIN y", """
+                            px\tts\tname\tyname\tyts
+                            1\t2024-01-01T01:00:00.000000Z\tC\tA\t2024-01-01T00:00:00.000000Z
+                            2\t2024-01-01T02:00:00.000000Z\tA\tA\t2024-01-01T00:00:00.000000Z
+                            3\t2024-01-01T03:00:00.000000Z\tB\tB\t2024-01-01T03:00:00.000000Z
+                            4\t2024-01-01T04:00:00.000000Z\tC\tC\t2024-01-01T04:00:00.000000Z
+                            5\t2024-01-01T05:00:00.000000Z\tC\tC\t2024-01-01T04:00:00.000000Z
+                            6\t2024-01-01T06:00:00.000000Z\tA\tC\t2024-01-01T04:00:00.000000Z
+                            7\t2024-01-01T07:00:00.000000Z\tB\tC\t2024-01-01T04:00:00.000000Z
+                            8\t2024-01-01T08:00:00.000000Z\tC\tC\t2024-01-01T04:00:00.000000Z
+                            """}
+            }) {
+                final String select = "SELECT t.px, t.ts, c.name, y.name yname, y.yts" + from + join[0] + where;
+                assertQuery(select)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns(join[1]);
+                final String created = "ct" + tableIndex;
+                final String inserted = "it" + tableIndex++;
+                execute("CREATE TABLE " + created + " AS (" + select + ")");
+                execute("CREATE TABLE " + inserted + " (px INT, ts TIMESTAMP, name SYMBOL, yname SYMBOL, yts TIMESTAMP)");
+                execute("INSERT INTO " + inserted + " " + select);
+                assertQuery("SELECT * FROM " + inserted)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(join[1]);
+                assertQuery("SELECT * FROM " + created)
+                        .noLeakCheck()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns(join[1]);
+            }
+            final String select = "SELECT t.px, c.name, y.yts FROM (SELECT instrument, px FROM trades) t, countries c, venues v, instruments i"
+                    + " ASOF JOIN y ON y.name = c.name" + where;
+            final String rows = """
+                    px\tname\tyts
+                    1\tC\t
+                    2\tA\t2024-01-01T00:00:00.000000Z
+                    3\tB\t2024-01-01T03:00:00.000000Z
+                    4\tC\t2024-01-01T04:00:00.000000Z
+                    5\tC\t2024-01-01T04:00:00.000000Z
+                    6\tA\t2024-01-01T00:00:00.000000Z
+                    7\tB\t2024-01-01T03:00:00.000000Z
+                    8\tC\t2024-01-01T04:00:00.000000Z
+                    """;
+            assertQuery(select)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(rows);
+            execute("CREATE TABLE ct_sub AS (" + select + ")");
+            execute("CREATE TABLE it_sub (px INT, name SYMBOL, yts TIMESTAMP)");
+            execute("INSERT INTO it_sub " + select);
+            for (String table : new String[]{"ct_sub", "it_sub"}) {
+                assertQuery("SELECT * FROM " + table)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(rows);
+            }
         });
     }
 
@@ -4496,6 +5554,48 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashJoinOfSmallerMasterKeepsTimestampOrderForTimestampSort() throws Exception {
+        // a has fewer rows than b. ORDER BY discards the order of the join's rows, so the join may build
+        // its hash table on a and stream b, but a sort on a.ts asks the join for its scan direction and
+        // then reads the join's order instead of sorting. That call keeps the join streaming a; a swap
+        // would return the rows in b's order, unsorted. The projections cast a.ts, so that the
+        // assertion does not ask for the scan direction itself.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE a (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE b (k INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO a VALUES
+                    (1, '1970-01-01T01:00:00Z'),
+                    (2, '1970-01-01T02:00:00Z'),
+                    (3, '1970-01-01T03:00:00Z')
+                    """);
+            execute("""
+                    INSERT INTO b VALUES
+                    (3, 30, '1970-01-01T00:00:00Z'),
+                    (2, 20, '1970-01-01T01:00:00Z'),
+                    (1, 10, '1970-01-01T02:00:00Z'),
+                    (4, 40, '1970-01-01T03:00:00Z')
+                    """);
+
+            final String expected = """
+                    t\tk\tv
+                    1970-01-01T01:00:00.000000Z\t1\t10
+                    1970-01-01T02:00:00.000000Z\t2\t20
+                    1970-01-01T03:00:00.000000Z\t3\t30
+                    """;
+            final String select = "SELECT a.ts::STRING t, a.k, b.v FROM a JOIN b ON a.k = b.k";
+            assertQuery(select + " ORDER BY a.ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Join Light")
+                    .returns(expected);
+            assertQuery(select + " ORDER BY a.ts, b.v")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testHashJoinOfSmallerMasterKeepsTimestampOrderOnSymbolKey() throws Exception {
         // The symbol key join translates b's symbol keys into a's. The master key q has no slave row,
         // and the slave keys z and w have no master row.
@@ -4539,6 +5639,69 @@ public class JoinTest extends AbstractCairoTest {
                     .returns("""
                             ts\ts\tv
                             1970-01-01T01:00:00.000000Z\tx\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testHashJoinOfSmallerMasterSwapsInputsWhenOrderIsDiscarded() throws Exception {
+        // m has fewer rows than s. A sort on a slave column and a count discard the order of the join's
+        // rows, so the join builds its hash table on m and streams s. The slave chain then holds m's three
+        // rows and fits a 48-byte cap, which s's eight matching rows breach.
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_PAGE_SIZE, 48);
+        setProperty(PropertyKey.CAIRO_SQL_HASH_JOIN_LIGHT_VALUE_MAX_PAGES, 1);
+        // the fused hash join GROUP BY would take the count, so switch it off to keep Hash Join Light
+        sqlExecutionContext.setParallelHashJoinGroupByEnabled(false);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE s (k INT, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO m VALUES
+                    (1, '1970-01-01T01:00:00Z'),
+                    (2, '1970-01-01T02:00:00Z'),
+                    (3, '1970-01-01T03:00:00Z')
+                    """);
+            execute("""
+                    INSERT INTO s VALUES
+                    (3, 10, '1970-01-01T00:00:00Z'),
+                    (1, 20, '1970-01-01T00:10:00Z'),
+                    (2, 30, '1970-01-01T00:20:00Z'),
+                    (3, 40, '1970-01-01T00:30:00Z'),
+                    (1, 50, '1970-01-01T00:40:00Z'),
+                    (2, 60, '1970-01-01T00:50:00Z'),
+                    (3, 70, '1970-01-01T01:00:00Z'),
+                    (1, 80, '1970-01-01T01:10:00Z')
+                    """);
+
+            final String join = "SELECT m.ts, m.k, s.v FROM m JOIN s ON s.k = m.k";
+            assertQuery(join + " ORDER BY s.v")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tk\tv
+                            1970-01-01T03:00:00.000000Z\t3\t10
+                            1970-01-01T01:00:00.000000Z\t1\t20
+                            1970-01-01T02:00:00.000000Z\t2\t30
+                            1970-01-01T03:00:00.000000Z\t3\t40
+                            1970-01-01T01:00:00.000000Z\t1\t50
+                            1970-01-01T02:00:00.000000Z\t2\t60
+                            1970-01-01T03:00:00.000000Z\t3\t70
+                            1970-01-01T01:00:00.000000Z\t1\t80
+                            """);
+            assertQuery(join + " ORDER BY s.v DESC LIMIT 3")
+                    .noLeakCheck()
+                    .returns("""
+                            ts\tk\tv
+                            1970-01-01T01:00:00.000000Z\t1\t80
+                            1970-01-01T03:00:00.000000Z\t3\t70
+                            1970-01-01T02:00:00.000000Z\t2\t60
+                            """);
+            assertQuery("SELECT count(*) FROM (SELECT m.ts, s.v FROM m JOIN s ON s.k = m.k)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            8
                             """);
         });
     }
@@ -15536,6 +16699,51 @@ public class JoinTest extends AbstractCairoTest {
         execute("INSERT INTO s1 VALUES (1, 200, '2024-01-01T00:00'), (2, 201, '2024-01-01T01:00')");
         execute("INSERT INTO s2 VALUES (1, 1, 300, '2024-01-01T00:00'), (2, 2, 301, '2024-01-01T01:00')");
         execute("INSERT INTO s4 VALUES (1, 1, 400, '2024-01-01T09:00')");
+    }
+
+    // Tables of testFirstTableSubQuery*() and
+    // testFirstTableWithTimestampExplicitTimestampOfChainKeepsItsOrder(). A star schema listed fact-first:
+    // no equality links countries to trades, so trades, or a sub-query over it, has to take over
+    // i.id = t.instrument for the chain to run from countries without a cross join. trades lists
+    // instruments 1 to 4 in turn, which belong to countries C, A, B and C, so trades' order sends cts
+    // back and forth, while countries' own order keeps it ascending. y is the other side of time series
+    // joins: it holds a row at A's cts, which tells ASOF from LT JOIN.
+    private void createFirstTableStarSchemaTables() throws SqlException {
+        execute("CREATE TABLE trades (instrument INT, px INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE countries (id INT, name SYMBOL, cts TIMESTAMP) TIMESTAMP(cts) PARTITION BY DAY");
+        execute("CREATE TABLE venues (id INT, country INT)");
+        execute("CREATE TABLE instruments (id INT, venue INT)");
+        execute("CREATE TABLE y (name SYMBOL, yts TIMESTAMP) TIMESTAMP(yts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO trades VALUES
+                (1, 1, '2024-01-01T01:00'),
+                (2, 2, '2024-01-01T02:00'),
+                (3, 3, '2024-01-01T03:00'),
+                (4, 4, '2024-01-01T04:00'),
+                (1, 5, '2024-01-01T05:00'),
+                (2, 6, '2024-01-01T06:00'),
+                (3, 7, '2024-01-01T07:00'),
+                (4, 8, '2024-01-01T08:00')
+                """);
+        execute("""
+                INSERT INTO countries VALUES
+                (1, 'A', '2024-01-01'),
+                (2, 'B', '2024-01-02'),
+                (3, 'C', '2024-01-03'),
+                (4, 'Z', '2024-01-04')
+                """);
+        execute("INSERT INTO venues VALUES (10, 3), (20, 1), (30, 2), (40, 3)");
+        execute("INSERT INTO instruments VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
+        execute("""
+                INSERT INTO y VALUES
+                ('A', '2023-12-31'),
+                ('A', '2024-01-01'),
+                ('B', '2024-01-01T12:00'),
+                ('A', '2024-01-02'),
+                ('C', '2024-01-02T12:00'),
+                ('B', '2024-01-03'),
+                ('C', '2024-01-04')
+                """);
     }
 
     // Tables of testFirstTableWithoutEquality*(). No equality links the first FROM item ta to tb2 and

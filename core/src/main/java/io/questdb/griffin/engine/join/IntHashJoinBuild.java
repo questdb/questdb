@@ -119,9 +119,9 @@ public final class IntHashJoinBuild implements Closeable {
     private final ObjList<IntHashJoinKeyTable> tables = new ObjList<>();
     private SqlExecutionCircuitBreaker circuitBreaker;
     private AbstractFrozen frozen;
+    private boolean isOpen;
     @Nullable
     private MemoryTracker memoryTracker;
-    private boolean open;
 
     /**
      * A build with payload columns stores row ids for probes to read them through; see the class docs.
@@ -276,7 +276,7 @@ public final class IntHashJoinBuild implements Closeable {
      * failure the caller closes the build once every partition task has stopped.
      */
     public void buildPartition(int partition, SqlExecutionCircuitBreaker circuitBreaker) {
-        assert open && frozen == null && partitions.isPartitioning() && partition >= 0 && partition < partitions.getPartitionCount();
+        assert isOpen && frozen == null && partitions.isPartitioning() && partition >= 0 && partition < partitions.getPartitionCount();
         final IntHashJoinKeyTable table = tables.getQuick(partition);
         table.open(memoryTracker, circuitBreaker, initialSlots);
         final long keyCountHint = partitions.getPartitionKeyHint(partition);
@@ -349,7 +349,7 @@ public final class IntHashJoinBuild implements Closeable {
             frozen.payloads = null;
             frozen = null;
         }
-        open = false;
+        isOpen = false;
         partitions.close();
         directory.close();
         for (int i = 0, n = tables.size(); i < n; i++) {
@@ -529,7 +529,7 @@ public final class IntHashJoinBuild implements Closeable {
      * Reopens a closed skeleton for a fresh execution.
      */
     public void open(@Nullable MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker) {
-        if (open) {
+        if (isOpen) {
             throw new IllegalStateException("hash join build is already open");
         }
         this.circuitBreaker = circuitBreaker;
@@ -539,7 +539,7 @@ public final class IntHashJoinBuild implements Closeable {
         directory.of(memoryTracker, circuitBreaker);
         try {
             keys.open(memoryTracker, circuitBreaker, initialSlots);
-            open = true;
+            isOpen = true;
         } catch (Throwable th) {
             close();
             throw th;
@@ -652,7 +652,7 @@ public final class IntHashJoinBuild implements Closeable {
     }
 
     private void partitionFrame(int frameIndex, PageFrameMemoryRecord record, int keyColumn, @Nullable DirectLongList rows, long rowCount) {
-        assert open && frozen == null && frameIndex >= 0 && frameIndex < partitions.getFrameCount();
+        assert isOpen && frozen == null && frameIndex >= 0 && frameIndex < partitions.getFrameCount();
         final long counts = partitions.getBucketStarts(frameIndex);
         final int bucketCount = partitions.getBucketCount();
         final int shift = partitions.getBucketShift();
@@ -714,7 +714,7 @@ public final class IntHashJoinBuild implements Closeable {
     }
 
     private void requireBuilding() {
-        if (!open || frozen != null) {
+        if (!isOpen || frozen != null) {
             throw new IllegalStateException("hash join build is not mutable");
         }
     }
