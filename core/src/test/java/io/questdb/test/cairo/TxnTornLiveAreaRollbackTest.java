@@ -39,6 +39,7 @@ import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
@@ -63,7 +64,9 @@ import java.nio.ByteOrder;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.function.LongUnaryOperator;
 
 import static io.questdb.cairo.TableUtils.*;
@@ -336,6 +339,33 @@ public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A SYNC writer open that finds a partition version to remove writes {@code _txn} back over itself and
+     * fsyncs it first. The bytes come from a copy of the mapping, never from the mapping itself: on macOS a
+     * write whose source is a mapping of the file it writes never returns.
+     */
+    @Test
+    public void testWriterOpenRewritesTxnFromACopyOfItsMapping() throws Exception {
+        final TxnFsyncCountingFacade ff = new TxnFsyncCountingFacade();
+        assertMemoryLeak(ff, () -> {
+            configureCommitMode();
+            createTable(false, DAY, 2);
+            engine.releaseAllWriters();
+            try (Path path = new Path()) {
+                // a version of the first partition that _txn does not name, as a crash before the purge leaves it
+                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("x")).concat("2024-01-01.77").slash();
+                Assert.assertEquals(0, ff.mkdirs(path, configuration.getMkDirMode()));
+            }
+            ff.txnWriteCount = 0;
+            try (TableWriter writer = getWriter("x")) {
+                Assert.assertNotNull(writer);
+            }
+            Assert.assertEquals("the open rewrites _txn only under SYNC", "sync".equals(commitMode) ? 1 : 0, ff.txnWriteCount);
+            Assert.assertEquals("_txn writes whose source is its own mapping", 0, ff.txnSelfWriteCount);
+            assertQuery("select count() c, sum(v) s from x").noRandomAccess().expectSize().returns("c\ts\n2\t3\n");
+        });
+    }
+
     private static int installTornImage(String txnPath, ObjList<byte[]> snapshots) throws IOException {
         return installTornImage(txnPath, snapshots, true);
     }
@@ -574,7 +604,11 @@ public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
 
     private static final class TxnFsyncCountingFacade extends TestFilesFacadeImpl {
         private final HashSet<Long> txnFds = new HashSet<>();
+        // the live mappings of _txn: address -> {end address, fd}
+        private final HashMap<Long, long[]> txnMappings = new HashMap<>();
         private int txnFsyncCount;
+        private int txnSelfWriteCount;
+        private int txnWriteCount;
 
         @Override
         public boolean close(long fd) {
@@ -595,6 +629,31 @@ public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
         }
 
         @Override
+        public long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            rememberMapping(fd, addr, len);
+            return addr;
+        }
+
+        @Override
+        public long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            final long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            synchronized (txnFds) {
+                txnMappings.remove(addr);
+            }
+            rememberMapping(fd, newAddr, newSize);
+            return newAddr;
+        }
+
+        @Override
+        public void munmap(long address, long size, int memoryTag) {
+            synchronized (txnFds) {
+                txnMappings.remove(address);
+            }
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
         public long openRW(LPSZ name, int opts) {
             final long fd = super.openRW(name, opts);
             if (fd > -1 && Utf8s.endsWithAscii(name, Files.SEPARATOR + TXN_FILE_NAME)) {
@@ -603,6 +662,30 @@ public class TxnTornLiveAreaRollbackTest extends AbstractCairoTest {
                 }
             }
             return fd;
+        }
+
+        @Override
+        public long write(long fd, long address, long len, long offset) {
+            synchronized (txnFds) {
+                if (txnFds.contains(fd)) {
+                    txnWriteCount++;
+                    for (Map.Entry<Long, long[]> mapping : txnMappings.entrySet()) {
+                        if (mapping.getValue()[1] == fd && address < mapping.getValue()[0] && address + len > mapping.getKey()) {
+                            txnSelfWriteCount++;
+                            break;
+                        }
+                    }
+                }
+            }
+            return super.write(fd, address, len, offset);
+        }
+
+        private void rememberMapping(long fd, long addr, long len) {
+            synchronized (txnFds) {
+                if (addr != FilesFacade.MAP_FAILED && txnFds.contains(fd)) {
+                    txnMappings.put(addr, new long[]{addr + len, fd});
+                }
+            }
         }
     }
 }

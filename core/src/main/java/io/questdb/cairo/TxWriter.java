@@ -548,13 +548,20 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     /**
      * Makes the {@code _txn} this writer reads durable, also when a failed writeback left its pages clean in the
      * page cache with content the device never got: a sync skips clean pages, so the bytes are written over
-     * themselves first.
+     * themselves first. They are written from a copy: on macOS a write whose source is a mapping of the file it
+     * writes never returns.
      */
     public void rewriteAndFsync() {
         final long fd = txMemBase.getFd();
         final long size = txMemBase.size();
-        if (ff.write(fd, txMemBase.addressOf(0), size, 0) != size) {
-            throw CairoException.critical(ff.errno()).put("could not rewrite _txn [fd=").put(fd).put(", size=").put(size).put(']');
+        final long copy = Unsafe.malloc(size, MemoryTag.NATIVE_TABLE_WRITER);
+        try {
+            Vect.memcpy(copy, txMemBase.addressOf(0), size);
+            if (ff.write(fd, copy, size, 0) != size) {
+                throw CairoException.critical(ff.errno()).put("could not rewrite _txn [fd=").put(fd).put(", size=").put(size).put(']');
+            }
+        } finally {
+            Unsafe.free(copy, size, MemoryTag.NATIVE_TABLE_WRITER);
         }
         ff.fsync(fd);
     }
