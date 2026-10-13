@@ -190,6 +190,12 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
         if (index == -1) {
             throw SqlException.invalidColumn(position, name);
         }
+        if (metadata instanceof ColumnFunctionSource source) {
+            final Function function = source.newColumnFunction(index);
+            if (function != null) {
+                return function;
+            }
+        }
 
         int columnType = metadata.getColumnType(index);
         return switch (ColumnType.tagOf(columnType)) {

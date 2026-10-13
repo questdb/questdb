@@ -252,6 +252,7 @@ import io.questdb.griffin.engine.join.AsOfJoinLightNoKeyRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinMemoizedRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsOfJoinNoKeyFastRecordCursorFactory;
+import io.questdb.griffin.engine.join.AsOfLookup;
 import io.questdb.griffin.engine.join.AsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncAsOfJoinRecordCursorFactory;
 import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
@@ -12417,6 +12418,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // the models as they were before the GROUP BY's base consumed them, for a second
         // generation of the base (hour()) and the compiles that follow it, see saveModels()
         int groupBySnapshot = -1;
+        AsOfLookup asOfLookup = null;
         try {
             ObjList<QueryColumn> columns;
             ExpressionNode columnExpr;
@@ -12627,6 +12629,28 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             RecordMetadata baseMetadata = factory.getMetadata();
+            boolean canVectorize = true;
+            if (hourIndex == -1) {
+                asOfLookup = newAsOfLookup(factory, executionContext);
+                if (asOfLookup != null) {
+                    // the GROUP BY reads the master's frames, the slave's columns are lookups
+                    final SelectedRecordCursorFactory selected = factory instanceof SelectedRecordCursorFactory sel ? sel : null;
+                    final AsOfJoinNoKeyFastRecordCursorFactory join = (AsOfJoinNoKeyFastRecordCursorFactory) (selected != null ? selected.getBaseFactory() : factory);
+                    final RecordCursorFactory master = join.getMasterFactory();
+                    baseMetadata = asOfLookup.newMetadata(
+                            factory.getMetadata(),
+                            selected != null ? selected.getColumnCrossIndex() : identityCrossIndex(factory.getMetadata().getColumnCount()),
+                            master.getMetadata(),
+                            join.getColumnSplit()
+                    );
+                    join.releaseMasterAndSlave();
+                    Misc.free(factory);
+                    factory = master;
+                    pageFramingSupported = factory.supportsPageFrameCursor();
+                    // Rosti reads the base's columns by index
+                    canVectorize = false;
+                }
+            }
 
             // a covering scan whose frames hold few rows is reduced on the query's thread, which
             // the async GROUP BY decides each time it opens, see getLocalReduceMaxRows()
@@ -12634,7 +12658,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // The vectorized (Rosti) group-by runs SIMD over raw page addresses with no
             // type-cast guard and no row-wise fallback, so it cannot read a column decoded
             // in its pre-conversion source type. Let the guarded Async group-by handle those.
-            boolean canVectorize = !factory.hasParquetConvertedColumns(executionContext);
+            canVectorize &= !factory.hasParquetConvertedColumns(executionContext);
             // Inspect model for possibility of vector aggregate intrinsics.
             if (canVectorize && enableParallelGroupBy && pageFramingSupported && assembleKeysAndFunctionReferences(columns, baseMetadata, hourIndex)) {
                 // Create baseMetadata from everything we've gathered.
@@ -13213,6 +13237,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             throw e;
         } finally {
             releaseModels(groupBySnapshot);
+            // the lookup functions hold their own references to the slave
+            Misc.free(asOfLookup);
         }
     }
 
@@ -16849,6 +16875,62 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private RecordCursorFactory generateSubQuery(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         assert model.getNestedModel() != null;
         return generateQuery(model.getNestedModel(), executionContext, true);
+    }
+
+    private static final long ASOF_LOOKUP_MAX_SLAVE_ROWS = 65_536;
+
+    private static IntList identityCrossIndex(int columnCount) {
+        final IntList crossIndex = new IntList(columnCount);
+        for (int i = 0; i < columnCount; i++) {
+            crossIndex.add(i);
+        }
+        return crossIndex;
+    }
+
+    /**
+     * A GROUP BY's base that is an ASOF JOIN without keys or tolerance of a master that reads page
+     * frames to a small table, as the slave's lookup (see AsOfLookup), or null. The base keeps
+     * its master and slave until the caller takes them.
+     */
+    private static @Nullable AsOfLookup newAsOfLookup(RecordCursorFactory factory, SqlExecutionContext executionContext) {
+        final SelectedRecordCursorFactory selected = factory instanceof SelectedRecordCursorFactory sel ? sel : null;
+        final RecordCursorFactory base = selected != null ? selected.getBaseFactory() : factory;
+        if (!(base instanceof AsOfJoinNoKeyFastRecordCursorFactory join) || join.getToleranceInterval() != Numbers.LONG_NULL) {
+            return null;
+        }
+        final RecordCursorFactory master = join.getMasterFactory();
+        final RecordCursorFactory slave = join.getSlaveFactory();
+        final RecordMetadata masterMetadata = master.getMetadata();
+        final RecordMetadata slaveMetadata = slave.getMetadata();
+        if (masterMetadata.getTimestampIndex() < 0
+                || slaveMetadata.getTimestampIndex() < 0
+                || !(master.supportsPageFrameCursor() || master.supportsFilterStealing())) {
+            return null;
+        }
+        final TableToken slaveToken = slave.getTableToken();
+        if (slaveToken == null) {
+            return null;
+        }
+        try (TableReader reader = executionContext.getReader(slaveToken)) {
+            if (reader.size() > ASOF_LOOKUP_MAX_SLAVE_ROWS) {
+                return null;
+            }
+        }
+        final RecordMetadata joined = factory.getMetadata();
+        final IntList crossIndex = selected != null ? selected.getColumnCrossIndex() : identityCrossIndex(joined.getColumnCount());
+        final int split = join.getColumnSplit();
+        for (int i = 0, n = joined.getColumnCount(); i < n; i++) {
+            if (crossIndex.getQuick(i) >= split && !AsOfLookup.isSupportedType(joined.getColumnType(i))) {
+                return null;
+            }
+        }
+        return new AsOfLookup(
+                slave,
+                slaveToken.getTableName(),
+                masterMetadata.getTimestampIndex(),
+                masterMetadata.getTimestampType(),
+                slaveMetadata.getTimestampType()
+        );
     }
 
     // Whether the factory, or a base below it, is a covering-index scan.
