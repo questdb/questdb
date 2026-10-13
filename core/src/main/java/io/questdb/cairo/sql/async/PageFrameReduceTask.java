@@ -173,6 +173,32 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     /**
+     * Frees the task's native memory, keeping the objects, for a task its frame sequence keeps for
+     * a later execution; {@link #unpark()} gives the lists back.
+     */
+    public void park() {
+        filteredRowCount = 0;
+        isCountOnly = false;
+        isProjected = false;
+        filteredRows.close();
+        projectedValues.close();
+        dataAddresses.close();
+        auxAddresses.close();
+        frameMemoryPool.clear();
+    }
+
+    /**
+     * Gives a {@link #park() parked} task its lists back, at their initial capacities; does
+     * nothing for a task that is not parked.
+     */
+    public void unpark() {
+        filteredRows.reopen();
+        projectedValues.reopen();
+        dataAddresses.reopen();
+        auxAddresses.reopen();
+    }
+
+    /**
      * Returns list of pointers to aux vectors (var-size columns only).
      */
     public DirectLongList getAuxAddresses() {

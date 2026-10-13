@@ -76,18 +76,20 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // many small partitions has, then cost the queue and the ordered collect once per group.
     private static final long GROUP_ROWS = 65_536;
     static final int MAX_GROUP_FRAMES = 16;
-    // Group tasks a sequence keeps, cleared, from one execution to the next; the others are freed at
-    // reset. A cleared task holds its lists' initial capacities, 2,304 bytes at the defaults, and a
-    // closed cursor may keep little native memory (the factory tests allow 64 KiB), so few are kept.
-    // The filter dispatch limit does not bound the tasks in flight: it applies to limited iteration
-    // only, which with the default limit sends no groups at all, see groupLimit(). An unlimited filter
-    // may hold (reduce queue capacity + 1) x (MAX_GROUP_FRAMES - 1) of them, the one being a group's
-    // reserved before its slot is claimed: 255 on a 4-worker pool. It allocates the ones not kept on
-    // every execution, and that churn is accepted. Measured on 8,000 partitions of 2,500 rows at 4
-    // workers: 247 tasks per run at 1.4-2.0 us each, about 0.4 ms of a 6 ms scan that matches nothing,
-    // and within noise once the filter does work; the run stays no slower than without groups.
-    // Keeping them all would keep about 570 KiB per closed cursor.
+    // Group tasks a sequence keeps, cleared, from one execution to the next. A cleared task holds its
+    // lists' initial capacities, 2,304 bytes at the defaults, and a closed cursor may keep little
+    // native memory (the factory tests allow 64 KiB), so few are kept cleared. The filter dispatch
+    // limit does not bound the tasks in flight: it applies to limited iteration only, which with the
+    // default limit sends no groups at all, see groupLimit(). An unlimited filter may hold (reduce
+    // queue capacity + 1) x (MAX_GROUP_FRAMES - 1) of them, the one being a group's reserved before its
+    // slot is claimed: 255 on a 4-worker pool. Keeping them all cleared would keep about 570 KiB per
+    // closed cursor; built anew at every execution they cost the query's thread 1.4-2.0 us each
+    // (about 0.4 ms of a 6 ms scan of 8,000 partitions at 4 workers, 14 % of its samples at 16).
     private static final int RETAINED_GROUP_TASKS = 8;
+    // Group tasks a sequence keeps parked past those: a parked task holds no native memory, only its
+    // objects, and gets its lists back when it is reserved again, see reserveGroupTasks(). Past
+    // both, tasks are freed at reset.
+    private static final int PARKED_GROUP_TASKS = 1024;
     // tests: runs before a group task is allocated, see reserveGroupTasks()
     private static volatile Runnable groupTaskAllocationHook;
     // tests: runs after a reduced slot is released and before its frames are counted, see releaseReducedSlot()
@@ -754,9 +756,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         int kept = 0;
         for (int i = 0, n = groupTasks.size(); i < n; i++) {
             final PageFrameReduceTask task = groupTasks.getQuick(i);
-            if (!isClosing && kept < RETAINED_GROUP_TASKS) {
+            if (!isClosing && (kept < RETAINED_GROUP_TASKS || kept < RETAINED_GROUP_TASKS + PARKED_GROUP_TASKS)) {
                 try {
-                    task.clear();
+                    if (kept < RETAINED_GROUP_TASKS) {
+                        task.clear();
+                    } else {
+                        task.park();
+                    }
                     groupTasks.setQuick(kept++, task);
                     freeGroupTasks.add(task);
                     continue;
@@ -982,6 +988,11 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // Makes sure that n group tasks are free to lend, allocating what is missing. The dispatcher calls it
     // before it claims a queue slot, see dispatch0(); a task left over after a failure stays free.
     private void reserveGroupTasks(int n) {
+        // the tasks takeGroupTask() pops next, from the end: a parked one gets its lists back now,
+        // before the slot's claim, since nothing may allocate between the claim and the publish
+        for (int i = Math.max(0, freeGroupTasks.size() - n), m = freeGroupTasks.size(); i < m; i++) {
+            freeGroupTasks.getQuick(i).unpark();
+        }
         while (freeGroupTasks.size() < n) {
             final Runnable hook = groupTaskAllocationHook;
             if (hook != null) {

@@ -411,6 +411,43 @@ public class PageFrameGroupTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParkedGroupTasksKeptWithoutNativeMemory() throws Exception {
+        assertMemoryLeak(() -> {
+            // 1,500 hourly partitions of 4 rows: groups of 16 frames, many group tasks in flight,
+            // more than a sequence keeps cleared; the rest are kept parked
+            execute("create table k (x long, ts timestamp) timestamp(ts) partition by HOUR");
+            execute("insert into k select x, ((x - 1) * 3_600_000_000L / 4)::timestamp from long_sequence(6000)");
+            setSwitch(false);
+            final String query = "select * from k where x % 2 = 0";
+            final String expected = print(engine, sqlExecutionContext, query);
+            setSwitch(true);
+            final AtomicInteger allocations = new AtomicInteger();
+            PageFrameSequence.setGroupTaskAllocationHook(allocations::incrementAndGet);
+            try (RecordCursorFactory factory = select(query)) {
+                final int[] perRun = new int[3];
+                for (int run = 0; run < perRun.length; run++) {
+                    final int before = allocations.get();
+                    final long memBefore = Unsafe.getMemUsed();
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final StringSink sink = new StringSink();
+                        CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
+                        TestUtils.assertEquals(expected, sink);
+                    }
+                    perRun[run] = allocations.get() - before;
+                    // the parked tasks keep no native memory once the cursor is closed
+                    final long kept = Unsafe.getMemUsed() - memBefore;
+                    Assert.assertTrue("run " + run + " kept " + kept, run == 0 || kept < 64 * 1024);
+                }
+                Assert.assertTrue("first run allocated " + perRun[0], perRun[0] > 8);
+                Assert.assertEquals("second run", 0, perRun[1]);
+                Assert.assertEquals("third run", 0, perRun[2]);
+            } finally {
+                PageFrameSequence.setGroupTaskAllocationHook(null);
+            }
+        });
+    }
+
+    @Test
     public void testRewindAndCloseInsideGroup() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext);
