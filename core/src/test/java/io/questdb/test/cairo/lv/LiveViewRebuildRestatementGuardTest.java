@@ -39,7 +39,6 @@ import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
-import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -74,6 +73,8 @@ import java.io.File;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
+
+import static io.questdb.cairo.lv.LiveViewRefreshStats.RUNTIME_ANCHOR_REUSE_COUNT;
 
 /**
  * The restatement guard in front of the whole-view rebuild from the applied base: what it
@@ -578,7 +579,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 // the peer's turn wins the latch in between: its drain fails on the lost segment
                 // for the last time, and the re-derive that follows is refused and stops the view.
                 setCurrentMicros(nextRefreshRetryMicros());
-                job.setSimulatePeerTurnBeforeRefreshLatchForTest(
+                hooks(job).setSimulatePeerTurnBeforeRefreshLatch(
                         () -> failDrainOnTheLostSegment(peer, processedBefore + 3)
                 );
                 // A stopped view neither refreshes nor publishes. The turn that takes the latch
@@ -625,7 +626,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 guard = job.rebuildRestatementGuardForTest();
                 // The heal is a whole-view rebuild through the primary runtime, published as
                 // one replacement of the view's whole range.
-                Assert.assertEquals(1, job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_VIEW_REBUILD));
+                Assert.assertEquals(1, job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_VIEW_REBUILD));
                 LiveViewCheckpointRepairRouteTest.assertLastRepairRoute(
                         job,
                         LiveViewCheckpointRepairRoute.ROUTE_VIEW_REBUILD,
@@ -669,7 +670,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
 
             final LiveViewInstance instance = instance("lv");
             assertRebuildBlocked(instance, "prefix preservation repair marker present");
-            Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute()));
+            Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute()));
             Assert.assertEquals(1, instance.getCheckpointRebuildAttempts());
             Assert.assertEquals(0, instance.getCheckpointTimelineResets());
             Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_ROW_SHORTFALL, guard.getVerdict());
@@ -974,7 +975,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                     driveRefreshToQuiescence(job);
                 }
                 final LiveViewWindow window = instance("lv").getAnchorWindow();
-                final long reusesBefore = job.runtimeAnchorReuseCountForTest();
+                final long reusesBefore = job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT);
 
                 // A late row two boundaries below the head. The resume restores the root the
                 // four-row commit sealed, and its replay moves acct-1 and acct-2 alone.
@@ -982,7 +983,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-01T09:05:00.000000Z', 'acct-1', 5.0)");
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
-                Assert.assertEquals("the resume must restore its anchor", reusesBefore, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals("the resume must restore its anchor", reusesBefore, job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT));
                 Assert.assertEquals(
                         "the restoring resume must image the keys its replay touched, not the live domain",
                         2,
@@ -1000,7 +1001,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                             ('2026-01-01T09:15:00.000000Z', 'acct-4', 40.0)""");
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
-                Assert.assertEquals("the resume must reuse the runtime", reusesBefore + 1, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals("the resume must reuse the runtime", reusesBefore + 1, job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT));
                 Assert.assertEquals(
                         "the reusing resume must image the keys its replay touched, not the live domain",
                         2,
@@ -1173,7 +1174,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             drainWalQueue();
             final AtomicBoolean hasReplayStarted = new AtomicBoolean();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                job.setSimulateResumeReplayStartForTest(() -> {
+                hooks(job).setSimulateResumeReplayStart(() -> {
                     hasReplayStarted.set(true);
                     cancelled.cancelRefresh();
                 });
@@ -1531,7 +1532,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             capture.assertNotLogged("live view O3 head-miss replay completed");
             final LiveViewInstance instance = instance("lv");
             assertRebuildBlocked(instance, "timeline is absent");
-            Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute()));
+            Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute()));
             Assert.assertFalse(
                     "a refused rebuild resolved no derived state, so it must not report success",
                     instance.isCheckpointRestoreSucceeded()
@@ -4718,7 +4719,7 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         Assert.assertEquals(
                 "live view 'lv' took the wrong restart recovery route",
                 "timeline_restore",
-                LiveViewCheckpointRestoreRoute.name(restored.getCheckpointRestoreRoute())
+                LiveViewCheckpointRecoveryPhase.routeName(restored.getCheckpointRestoreRoute())
         );
         Assert.assertEquals("the restart must restore rather than rebuild", 0, restored.getCheckpointRebuildAttempts());
         Assert.assertFalse("the view must keep refreshing", restored.isCheckpointRecoveryBlocked());

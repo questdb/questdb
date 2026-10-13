@@ -174,6 +174,49 @@ public final class LiveViewCheckpointRecoveryPhase {
      */
     public static final int REBUILD_DEFERRED = 3;
     /**
+     * Restart route: the timeline restore could not be used and the applied-base rebuild that
+     * covers for it failed too, so the view carries a pending invalidation instead of a runtime.
+     * <p>
+     * The {@code ROUTE_*} values name the operation a view's single restart recovery attempt
+     * finished with, as {@link LiveViewInstance#getCheckpointRestoreRoute()} reports it. The
+     * refresh worker records each from the branch that finished that operation, so a route
+     * names only work that ran, and a failed restore cannot hide behind the rebuild that
+     * covered for it.
+     */
+    public static final int ROUTE_BLOCKED = 3;
+    /**
+     * Restart route: the timeline was absent, unusable or fenced off, and the view rebuilt its
+     * whole window from the applied base, retiring the timeline before the replacement
+     * committed.
+     */
+    public static final int ROUTE_FALLBACK_REBUILD = 2;
+    /**
+     * Restart route: no restart recovery has completed, or the view held identity state that
+     * needs no root.
+     */
+    public static final int ROUTE_NONE = 0;
+    /**
+     * Restart route: the rebuild that covers for an unusable timeline was refused before it
+     * committed, and the view is in {@link #REBUILD_BLOCKED}.
+     */
+    public static final int ROUTE_REBUILD_BLOCKED = 5;
+    /**
+     * Restart route: the window state came back from the published root that
+     * {@link LiveViewInstance#getCheckpointRestoreGeneration()} and
+     * {@link LiveViewInstance#getCheckpointRestoreCheckpointId()} name.
+     */
+    public static final int ROUTE_TIMELINE_RESTORE = 1;
+    /**
+     * Restart route: no attempt ran, because a refresh turn declined a view in
+     * {@link #BLOCKED}.
+     */
+    public static final int ROUTE_UPGRADE_BLOCKED = 4;
+    /**
+     * Restart route: the timeline's format was older than this build reads, and the view
+     * rebuilt from the applied base with the restatement guard standing down.
+     */
+    public static final int ROUTE_UPGRADE_REBUILD = 6;
+    /**
      * Not a phase value but the name {@code live_views()} reports for a view carried over
      * from an older checkpoint format whose upgrade rebuild has not run yet. The view is
      * {@code active}, keeps refreshing from its first turn on, and the rebuild clears it.
@@ -218,5 +261,21 @@ public final class LiveViewCheckpointRecoveryPhase {
      */
     public static String name(int phase, boolean isUpgradeRebuildPending) {
         return phase == NONE && isUpgradeRebuildPending ? UPGRADE_REBUILD_PENDING_NAME : name(phase);
+    }
+
+    /**
+     * @param route one of the {@code ROUTE_*} constants
+     * @return the route's stable name, or null for {@link #ROUTE_NONE}
+     */
+    public static String routeName(int route) {
+        return switch (route) {
+            case ROUTE_TIMELINE_RESTORE -> "timeline_restore";
+            case ROUTE_FALLBACK_REBUILD -> "fallback_rebuild";
+            case ROUTE_BLOCKED -> "blocked";
+            case ROUTE_UPGRADE_BLOCKED -> "upgrade_blocked";
+            case ROUTE_REBUILD_BLOCKED -> "rebuild_blocked";
+            case ROUTE_UPGRADE_REBUILD -> "upgrade_rebuild";
+            default -> null;
+        };
     }
 }

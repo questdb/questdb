@@ -600,7 +600,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     LiveViewRefreshJob fallbackJob = new LiveViewRefreshJob(fallbackWorkerId, workerCount, engine, 1);
                     LiveViewRefreshJob notificationJob = new LiveViewRefreshJob(1, workerCount, engine, 1)
             ) {
-                fallbackJob.setSimulateBaseCommitBetweenAheadGuardReadsForTest(() -> {
+                hooks(fallbackJob).setSimulateBaseCommitBetweenAheadGuardReads(() -> {
                     guardReadsSplit.countDown();
                     try {
                         if (!releaseFallback.await(30, TimeUnit.SECONDS)) {

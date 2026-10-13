@@ -28,7 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
-import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
+import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -116,7 +116,7 @@ public class LiveViewCheckpointRestoreRouteTest extends AbstractLiveViewTest {
             }
 
             final LiveViewInstance instance = instance();
-            assertRoute(LiveViewCheckpointRestoreRoute.BLOCKED, instance);
+            assertRoute(LiveViewCheckpointRecoveryPhase.ROUTE_BLOCKED, instance);
             Assert.assertFalse(
                     "a blocked attempt resolved no derived state, so it must not report success",
                     instance.isCheckpointRestoreSucceeded()
@@ -223,8 +223,8 @@ public class LiveViewCheckpointRestoreRouteTest extends AbstractLiveViewTest {
     private static void assertRoute(int expected, LiveViewInstance instance) {
         Assert.assertEquals(
                 "live view 'lv' took the wrong restart recovery route",
-                LiveViewCheckpointRestoreRoute.name(expected),
-                LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute())
+                LiveViewCheckpointRecoveryPhase.routeName(expected),
+                LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute())
         );
     }
 

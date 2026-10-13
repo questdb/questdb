@@ -42,6 +42,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.lv.LiveViewRefreshStats.*;
+
 /**
  * The reported customer shape, replayed against the production configuration, guard by
  * guard.
@@ -135,9 +137,9 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
 
                 // The read the route would have taken is still the cheaper one, which is
                 // what says the missing identity and not the price turned it down.
-                Assert.assertEquals(1, job.openSegmentKeyedCheaperCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
-                Assert.assertEquals(0, job.openSegmentSparseResumeCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_SPARSE_RESUME_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -162,9 +164,9 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
                 driveSegmentInOrder(job, 4);
                 correct(job, 4, FIRST_HOUR, 1);
 
-                Assert.assertEquals(0, job.openSegmentKeyedPricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedUnpricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_UNPRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -194,11 +196,11 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the resume must still be priced - the shape is eligible, the read is not cheaper",
                         1,
-                        job.openSegmentKeyedPricedCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT)
                 );
-                Assert.assertEquals(0, job.openSegmentKeyedCheaperCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
-                Assert.assertEquals(0, job.openSegmentSparseResumeCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_SPARSE_RESUME_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -220,10 +222,10 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
 
                 correct(job, 3, FIRST_HOUR + 1, 1);
 
-                Assert.assertTrue(job.keyedScanPricedCountForTest() > 0);
+                Assert.assertTrue(job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT) > 0);
                 Assert.assertTrue(
                         "at four rows per index open the closed segment takes the keyed read too",
-                        job.keyedScanCheaperCountForTest() > 0
+                        job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT) > 0
                 );
                 assertViewMatchesRecompute();
             }
@@ -341,22 +343,22 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the open segment's resume must be priced once, at the production default",
                         1,
-                        job.openSegmentKeyedPricedCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT)
                 );
-                Assert.assertEquals(1, job.openSegmentKeyedCheaperCountForTest());
-                Assert.assertEquals(1, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
                 Assert.assertEquals(
                         "positions must come from the exact insert delta rather than a stored-row scan",
                         1,
-                        job.openSegmentArithmeticRowPositionCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_ARITHMETIC_ROW_POSITION_COUNT)
                 );
-                Assert.assertEquals(1, job.openSegmentSparseResumeCountForTest());
-                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
-                Assert.assertEquals(0, job.outputUniquenessDuplicateRowsForTest());
-                Assert.assertTrue(job.sparsePublicationRowsKeptForTest() > 0);
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_SPARSE_RESUME_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OUTPUT_UNIQUENESS_DUPLICATE_ROWS));
+                Assert.assertTrue(job.getStatsForTest().get(SPARSE_PUBLICATION_ROWS_KEPT) > 0);
 
-                final long postingRows = job.openSegmentKeyedPostingRowsForTest();
-                final long wholeRangeRows = job.openSegmentKeyedWholeRangeRowsForTest();
+                final long postingRows = job.getStatsForTest().get(OPEN_SEGMENT_KEYED_POSTING_ROWS);
+                final long wholeRangeRows = job.getStatsForTest().get(OPEN_SEGMENT_KEYED_WHOLE_RANGE_ROWS);
                 Assert.assertTrue(
                         "the keyed read must be the smaller one: posting=" + postingRows
                                 + " whole=" + wholeRangeRows,
@@ -372,12 +374,12 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
 
                 Assert.assertTrue(
                         "the closed-segment repair must be priced at the configured price",
-                        job.keyedScanPricedCountForTest() > 0
+                        job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT) > 0
                 );
                 Assert.assertEquals(
                         "and decline: 256 rows per index open outprices the whole-range read here",
                         0,
-                        job.keyedScanCheaperCountForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT)
                 );
                 assertViewMatchesRecompute();
             }
@@ -417,10 +419,10 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
                 driveSegmentInOrder(job, 4);
                 correct(job, 4, FIRST_HOUR, 1);
 
-                Assert.assertEquals(1, job.openSegmentKeyedPricedCountForTest());
-                Assert.assertEquals(1, job.openSegmentKeyedCheaperCountForTest());
-                Assert.assertEquals(1, job.openSegmentKeyedResumeCountForTest());
-                Assert.assertEquals(1, job.openSegmentSparseResumeCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_SPARSE_RESUME_COUNT));
                 Assert.assertNotEquals(
                         "the dependency the zone anchor declares is covered now",
                         LiveViewCheckpointRepairPlan.DENIAL_INCOMPLETE_DEPENDENCY,
@@ -572,11 +574,11 @@ public class LiveViewCustomerShapeGuardTest extends AbstractLiveViewTest {
                             rebuiltBefore,
                             instance.getO3BoundaryReplayRows()
                     );
-                    Assert.assertEquals(0, job.segmentRepairCountForTest());
+                    Assert.assertEquals(0, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                     // And the resume itself takes its own cheapest route: the correction
                     // touched one account, so the replay follows that key through the base
                     // posting index rather than reading the interval whole.
-                    Assert.assertEquals(pass, job.openSegmentKeyedResumeCountForTest());
+                    Assert.assertEquals(pass, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
 
                     // The scan collapsed from the whole segment to the tail above the
                     // anchor. The cadence seals a root every CHECKPOINT_ROWS view rows, so

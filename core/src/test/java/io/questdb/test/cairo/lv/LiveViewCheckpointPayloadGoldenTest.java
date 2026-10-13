@@ -86,6 +86,9 @@ import java.util.List;
 import java.util.TreeMap;
 import java.util.stream.Stream;
 
+import static io.questdb.cairo.lv.LiveViewRefreshStats.OPEN_SEGMENT_KEYED_RESUME_COUNT;
+import static io.questdb.cairo.lv.LiveViewRefreshStats.TRANSPLANTED_KEY_COUNT;
+
 /**
  * Golden bytes and elision decisions for every shape of per-key checkpoint payload, pinned
  * on the build that still stages payloads on the Java heap. The payload conversion moves
@@ -944,8 +947,8 @@ public class LiveViewCheckpointPayloadGoldenTest extends AbstractLiveViewTest {
                     golden.commit(job, "d4 h" + hour, rows.toString());
                 }
                 golden.commit(job, "keyed resume", keyedRow(4, 2, 35, 1));
-                Assert.assertEquals("the resume must follow the correction's keys", 1, job.openSegmentKeyedResumeCountForTest());
-                Assert.assertTrue("the corrected keys must be transplanted", job.transplantedKeyCountForTest() > 0);
+                Assert.assertEquals("the resume must follow the correction's keys", 1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertTrue("the corrected keys must be transplanted", job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT) > 0);
                 golden.recordRoute();
                 golden.commit(job, "head seal", keyedRow(4, 10, 10, 1) + ", " + keyedRow(4, 10, 20, 2));
                 assertNoRefreshFaults("lv");
@@ -1654,27 +1657,27 @@ public class LiveViewCheckpointPayloadGoldenTest extends AbstractLiveViewTest {
             final LiveViewCheckpointTimelineStoreWriter writer = checkpointTimelineStoreWriter(job);
             final LiveViewInstance instance = viewInstance();
             elision.append(label).append(": puts=").append(writer.getLastBoundaryPartitionPuts())
-                    .append(" window roots=").append(instance.getCheckpointCaptureWindowRoots() - windowCaptures)
-                    .append(" incremental=").append(instance.getCheckpointCaptureWindowRootsIncremental() - windowIncrementalCaptures)
-                    .append(" visited=").append(instance.getCheckpointCaptureWindowKeysVisited() - windowKeysVisited)
-                    .append(" imaged=").append(instance.getCheckpointCaptureWindowKeysImaged() - windowKeysImaged)
-                    .append(" removed=").append(instance.getCheckpointCaptureWindowKeysRemoved() - windowKeysRemoved)
-                    .append(" probes=").append(instance.getCheckpointCaptureWindowElisionProbes() - windowElisionProbes)
-                    .append(" | function roots=").append(instance.getCheckpointCaptureFunctionRoots() - functionCaptures)
-                    .append(" incremental=").append(instance.getCheckpointCaptureFunctionRootsIncremental() - functionIncrementalCaptures)
-                    .append(" visited=").append(instance.getCheckpointCaptureFunctionKeysVisited() - functionKeysVisited)
-                    .append(" imaged=").append(instance.getCheckpointCaptureFunctionKeysImaged() - functionKeysImaged)
+                    .append(" window roots=").append(instance.getCheckpointCaptureLedgerForTest().getWindowCaptures() - windowCaptures)
+                    .append(" incremental=").append(instance.getCheckpointCaptureLedgerForTest().getWindowIncrementalCaptures() - windowIncrementalCaptures)
+                    .append(" visited=").append(instance.getCheckpointCaptureLedgerForTest().getWindowKeysVisited() - windowKeysVisited)
+                    .append(" imaged=").append(instance.getCheckpointCaptureLedgerForTest().getWindowKeysImaged() - windowKeysImaged)
+                    .append(" removed=").append(instance.getCheckpointCaptureLedgerForTest().getWindowKeysRemoved() - windowKeysRemoved)
+                    .append(" probes=").append(instance.getCheckpointCaptureLedgerForTest().getWindowElisionProbes() - windowElisionProbes)
+                    .append(" | function roots=").append(instance.getCheckpointCaptureLedgerForTest().getFunctionCaptures() - functionCaptures)
+                    .append(" incremental=").append(instance.getCheckpointCaptureLedgerForTest().getFunctionIncrementalCaptures() - functionIncrementalCaptures)
+                    .append(" visited=").append(instance.getCheckpointCaptureLedgerForTest().getFunctionKeysVisited() - functionKeysVisited)
+                    .append(" imaged=").append(instance.getCheckpointCaptureLedgerForTest().getFunctionKeysImaged() - functionKeysImaged)
                     .append('\n');
-            windowCaptures = instance.getCheckpointCaptureWindowRoots();
-            windowIncrementalCaptures = instance.getCheckpointCaptureWindowRootsIncremental();
-            windowKeysVisited = instance.getCheckpointCaptureWindowKeysVisited();
-            windowKeysImaged = instance.getCheckpointCaptureWindowKeysImaged();
-            windowKeysRemoved = instance.getCheckpointCaptureWindowKeysRemoved();
-            windowElisionProbes = instance.getCheckpointCaptureWindowElisionProbes();
-            functionCaptures = instance.getCheckpointCaptureFunctionRoots();
-            functionIncrementalCaptures = instance.getCheckpointCaptureFunctionRootsIncremental();
-            functionKeysVisited = instance.getCheckpointCaptureFunctionKeysVisited();
-            functionKeysImaged = instance.getCheckpointCaptureFunctionKeysImaged();
+            windowCaptures = instance.getCheckpointCaptureLedgerForTest().getWindowCaptures();
+            windowIncrementalCaptures = instance.getCheckpointCaptureLedgerForTest().getWindowIncrementalCaptures();
+            windowKeysVisited = instance.getCheckpointCaptureLedgerForTest().getWindowKeysVisited();
+            windowKeysImaged = instance.getCheckpointCaptureLedgerForTest().getWindowKeysImaged();
+            windowKeysRemoved = instance.getCheckpointCaptureLedgerForTest().getWindowKeysRemoved();
+            windowElisionProbes = instance.getCheckpointCaptureLedgerForTest().getWindowElisionProbes();
+            functionCaptures = instance.getCheckpointCaptureLedgerForTest().getFunctionCaptures();
+            functionIncrementalCaptures = instance.getCheckpointCaptureLedgerForTest().getFunctionIncrementalCaptures();
+            functionKeysVisited = instance.getCheckpointCaptureLedgerForTest().getFunctionKeysVisited();
+            functionKeysImaged = instance.getCheckpointCaptureLedgerForTest().getFunctionKeysImaged();
         }
 
         /**

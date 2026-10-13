@@ -40,7 +40,7 @@ import static io.questdb.cairo.lv.LiveViewCheckpointRepairRoute.*;
  * change an executor may make to it. Narrow unit tests over
  * {@link LiveViewCheckpointRepairRoute}; the routes the refresh job actually takes are
  * asserted beside the scenarios that drive them, through
- * {@code LiveViewRefreshJob.repairRouteCountForTest} and {@code repairRouteForTest}.
+ * {@code LiveViewRefreshStats.getRouteCount} and {@code LiveViewRefreshJob.repairRouteForTest}.
  */
 public class LiveViewCheckpointRepairRouteTest {
 

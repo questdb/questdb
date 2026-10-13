@@ -115,6 +115,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.locks.Lock;
 
+import static io.questdb.cairo.lv.LiveViewRefreshStats.*;
 import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
 
 /**
@@ -270,12 +271,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // hold a REPLACE_RANGE delete band that denies the ROWS discovery its key domain.
     private boolean applyAheadInsertOnly;
     private final ApplyWal2TableJob applyJob;
-    // Test-only observability for the WAL-loss re-derive's drift branch. Counts the
-    // re-derives this worker completed only after recompiling against changed base
-    // metadata, so the plain success path leaves it at 0. Kept on the worker rather
-    // than the view because it is not a production metric; a test reads it to prove
-    // which branch ran - the two branches differ in nothing else a test can observe.
-    private long baseMetadataDriftRecompileCount;
     private final BlockFileWriter blockFileWriter;
     // Sits directly under the window cursor on the two repair replays that
     // re-version logical roots, so each boundary freezes between two rows rather
@@ -321,6 +316,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // order, grown on demand and never cleared. They own nothing (ownsBase=false), so a
     // flush unbinds rather than frees them and the next one rebinds through of().
     private final ObjList<LiveViewSymbolTable> flushSymbolResolverPool = new ObjList<>();
+    // Fault, race and behaviour points a test installs. Production never replaces NONE.
+    private LiveViewRefreshHooks hooks = LiveViewRefreshHooks.NONE;
     // Scratch a lead drain fills for finishLeadRefresh when its rows are kept from readers: the
     // LV table's committed symbol count per output column, indexed by column and filled for
     // SYMBOL columns only, which caps the symbol horizon the lead's slot is stamped with.
@@ -352,9 +349,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // that reads it takes it as a parameter. One instance per worker, cleared at each repair
     // entry point; repairs never nest.
     private final LiveViewCheckpointRepairRoute repairRoute = new LiveViewCheckpointRepairRoute();
-    // Test and benchmark observability: completed repairs by the route they took, indexed by
-    // LiveViewCheckpointRepairRoute.ROUTE_*.
-    private final LongList repairRouteCounts = new LongList(LiveViewCheckpointRepairRoute.ROUTE_COUNT);
     // Whether the whole-view rebuild currently executing - or the last one, once it has
     // returned - would drop rows the view retains. One instance per worker, armed at the
     // start of each whole-view rebuild and left holding its evidence afterwards, which is
@@ -384,33 +378,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // pinned reader. Both are idle outside a repair, which never nests.
     private final LiveViewCheckpointRowsBounds rowsBounds;
     private final RowsBoundDiscovery rowsBoundDiscovery = new RowsBoundDiscovery();
-    // Test-only observability for the O3 resume's runtime-anchor reuse. Counts the
-    // replays this worker served from the live window state instead of restoring
-    // the same root off disk. Kept on the worker rather than the view because it
-    // is not a production metric; a test reads it to prove which branch ran.
-    private long runtimeAnchorReuseCount;
-    // Test-only observability for the per-segment repair. Counts the closed anchor
-    // segments this worker repaired over their own range instead of inside one union
-    // range. Kept on the worker rather than the view for the same reason
-    // runtimeAnchorReuseCount is: a test reads it to prove which branch ran.
-    private long segmentRepairCount;
-    // Test-only observability for the isolated repair runtime. Counts the replay turns this
-    // worker ran beside the primary runtime rather than through it, so a test can prove
-    // which runtime carried a repair without inferring it from the state that did not move.
-    private long isolatedReplayTurnCount;
-    // Test-only observability for the segment yield. Counts the segment replays this worker
-    // parked on the refresh turn's budget, so a test can prove a whole-segment replay was
-    // spread across turns rather than run to completion inside one.
-    private long segmentYieldCount;
-    // What the Stage 2 crossover is read off: how many closed segments were priced, how
-    // many of them a keyed scan would read less of, and the two row counts that decide it.
-    // Diagnostic only - no repair reads these aggregate counters; each candidate uses its
-    // own per-segment price when deciding whether to follow keys.
-    private long keyedScanCheaperCount;
-    private long keyedScanPostingRows;
-    private long keyedScanPricedCount;
-    private long keyedScanUnpricedCount;
-    private long keyedScanWholeRangeRows;
     // Prices the keyed alternative off the same reader's posting lists, beside scanCost's
     // whole-range estimate, so the two are comparable by construction.
     private final LiveViewCheckpointKeyedScanCost keyedScanCost = new LiveViewCheckpointKeyedScanCost();
@@ -427,29 +394,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Filled from the pinned generation and adjusted by the exact new-row timestamps the
     // change-set walk collected, so the replay never scans stored rows to recount them.
     private final LongList openSegmentArithmeticBoundaryPositions = new LongList();
-    // Benchmark-only override used to compare both executors on the same retained-state
-    // shape. Static eligibility, arithmetic safety and sparse-publication guards still
-    // apply; only the scan-row price verdict is overridden.
-    private boolean isOpenSegmentKeyedReplayForcedForTest;
-    // Diagnostics for the pricing of the OPEN anchor segment - the one the runtime is still
-    // standing in, whose corrections the resume repairs rather than a segment replay. The
-    // verdict itself lives on the repair's route.
-    private long openSegmentKeyedCheaperCount;
-    private long openSegmentKeyedPostingRows;
-    private long openSegmentKeyedPricedCount;
-    private long openSegmentKeyedUnpricedCount;
-    private long openSegmentKeyedWholeRangeRows;
-    private long openSegmentRestoreAwareCheaperCount;
-    // The same interval priced from a cold anchor-segment origin when no checkpoint root
-    // sits below the correction. Kept separate from the resume counters: a growing cold
-    // count means the ladder is still missing even when the indexed replay keeps the scan
-    // bounded to the correction's keys.
-    private long openSegmentColdKeyedCheaperCount;
-    private long openSegmentColdKeyedPostingRows;
-    private long openSegmentColdKeyedPricedCount;
-    private long openSegmentColdKeyedReplayCount;
-    private long openSegmentColdKeyedUnpricedCount;
-    private long openSegmentColdKeyedWholeRangeRows;
     private final OpenSegmentRepairPhases openSegmentRepairPhases = new OpenSegmentRepairPhases();
     // The transplant's scratch: one keyed repair's finished per-key state, read off the
     // isolated runtime through the same freeze contract a seal uses and written into the
@@ -470,48 +414,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final LongList transplantPayloads = new LongList();
     private final LongList transplantRemovedKeys = new LongList();
     private final LongList transplantValues = new LongList();
-    // Keys this worker has handed back to a primary runtime, summed over every keyed
-    // resume it published.
-    private long transplantedKeyCount;
-    // How many resumes this worker ran by key rather than by reading every row above the
-    // anchor, and how many of those published sparsely.
-    private long openSegmentArithmeticRowPositionCount;
-    private long openSegmentKeyedResumeCount;
-    private long openSegmentSparseResumeCount;
     // The keyed replay of one closed segment: the key domain its indexed scan follows, and
     // the merge that supplies every other key's row from the view's own stored output.
     // Worker-owned scratch while a repair runs. A repair that parks transfers this object to
     // its per-view session and replaces the scratch before another view can use the worker.
     private LiveViewCheckpointKeyedReplay keyedReplay = new LiveViewCheckpointKeyedReplay();
-    // How many closed segments this worker repaired by key rather than whole, and how many
-    // rows those repairs copied forward from the view's own output instead of recomputing.
-    private long keyedReplayMergedRows;
-    private long keyedReplaySegmentCount;
-    // Key-domain splices the capture guard declined: repairs whose interval held a root
-    // the partial publication could not build on, taken to the truncate instead.
-    private long keyDomainSpliceDeclineCount;
-    // The keyed publication, and what it left alone: segments published as an upsert onto
-    // the view's own dedup keys, the stored rows those publications did not have to
-    // rewrite, and the attempts abandoned because the output repeated a pair the upsert
-    // would have collapsed.
-    private long sparsePublicationCount;
-    private long sparsePublicationFallbackCount;
-    private long sparsePublicationRowsKept;
     // Whether a repair's qualifying output carries each (timestamp, projected key) pair
     // once, which is the identity a sparse keyed publication would stand on. Armed per
     // repair and carried across a park by the repair session.
     private final LiveViewCheckpointOutputUniqueness outputUniqueness = new LiveViewCheckpointOutputUniqueness();
-    // What the keyed publication is decided on, per repair: how many segment repairs had
-    // their output checked, how many of those carried no duplicate pair, and the rows
-    // behind both. A repair of a dedup-keyed view acts on the verdict - unique publishes
-    // sparsely, a repeat falls back to the whole-segment replacement - and every other
-    // repair reports it and publishes its whole replaced range either way.
-    private long outputUniquenessCheckedRepairs;
-    private long outputUniquenessCheckedRows;
-    private long outputUniquenessDuplicateRows;
-    private long outputUniquenessMaxGroupRows;
-    private long outputUniquenessUncheckedRepairs;
-    private long outputUniquenessUniqueRepairs;
     // Prices a repair's two candidate scan intervals off the pinned reader's partition
     // metadata, so the plan chooses between an anchor resume and a localized rebuild on
     // what each would read. One per worker, bound to the repair's reader per plan.
@@ -533,128 +444,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // WalSegmentPageFrameCursor.of copies both lists internally.
     private final IntList segmentClassifyColumnIndexes = new IntList();
     private final IntList segmentClassifyColumnSizeShifts = new IntList();
-    // Test-only: when armed, the WAL-loss re-derive runs this action after its entry
-    // broken-dependency check and before the replay, modelling the base apply that lands
-    // mid-method - the window ApplyWal2TableJob opens between changing the base writer and
-    // invalidating the dependent views. Lets a test drive the second, in-catch refusal
-    // deterministically instead of racing a thread against the drive.
-    // One-shot (self-clears on fire); always null in production.
-    @TestOnly
-    private Runnable simulateBaseApplyDuringRederiveForTest;
-    // Test-only: when armed, the fallback scan runs this action inside the ahead guard - after
-    // the view watermark read, before the two base head reads (cached sequencer head and tracker
-    // writerTxn). That interval is the contract, not a convenience: it is the window a concurrent
-    // refresh worker used to race, so a test can publish and refresh the next base commit there
-    // instead of relying on thread timing. Keep the call between the watermark read and the base
-    // reads. Moving it outside them, or reordering the reads across it, makes the guard sample a
-    // coherent set either way and silently strips
-    // testConcurrentRefreshCannotInvalidateFromStaleBaseHead of its power to tell the orders apart.
-    // One-shot (self-clears on fire); always null in production.
-    @TestOnly
-    private Runnable simulateBaseCommitBetweenAheadGuardReadsForTest;
-    // Test-only: an extra closeable whose close() throws. consumeBaseMetadataCloseFaultForTest
-    // closes it and returns the resulting throwable as the primary of the very freeBestEffort call
-    // that closes the pooled base metadata, so the fault lands in closeFailure exactly where a real
-    // TableMetadata.close() failure would. Consuming it inside the close statement is what pins the
-    // close's position: relocating that statement into a try-with-resources takes the fault with it,
-    // and the test's "the fault fired" assertion goes red.
-    // One-shot (self-clears on fire); always null in production.
-    @TestOnly
-    private QuietCloseable simulateBaseMetadataCloseFailureForTest;
-    // Test-only: when armed, a cold keyed head-miss raises, at the point it rebases its
-    // boundary row positions, the CairoException that
-    // LiveViewCheckpointTimelineStoreWriter.RepairCapture#collectEffectiveRowPositions
-    // raises over a missing or torn checkpoint metadata page. No FilesFacade fault reaches
-    // that call: beginCheckpointTimelineRepair, the step ahead of it, answers every I/O
-    // failure by dropping the capture - which deletes the call rather than faulting
-    // it - and the call itself reads no file when the pinned
-    // generation carries no row-position delta. One-shot (self-clears on fire); always
-    // false in production.
-    @TestOnly
-    private boolean isColdKeyedTimelineFaultSimulatedForTest;
-    // Test-only: when armed, the next keyed repair's hand-back of its isolated
-    // accumulators to the primary runtime throws before it moves a key, standing in for
-    // the allocation failure a refresh memory limit raises there. One-shot (self-clears
-    // on fire); always false in production.
-    @TestOnly
-    private boolean isKeyedTransplantFaultSimulatedForTest;
-    // Test-only: observers a keyed repair's hand-back runs as it starts and as it ends, so a
-    // test can sample allocation counters across the transplant alone rather than across the
-    // publication around it. Sticky until cleared; always null in production.
-    @TestOnly
-    private Runnable keyedTransplantEndObserverForTest;
-    @TestOnly
-    private Runnable keyedTransplantStartObserverForTest;
-    // Test-only: when armed, a forward live-view commit goes out at the default dedup
-    // mode instead of NO_DEDUP, which is what the ordinary path did before it was
-    // stamped. On a view whose table carries the (timestamp, key) dedup keys the apply
-    // then collapses two output rows sharing the pair, so the view emits a row its
-    // table does not keep - the drift the seal's row invariant exists to catch.
-    // Sticky until cleared; always false in production.
-    @TestOnly
-    private boolean isForwardCommitDedupCollapseSimulatedForTest;
-    // Test-only: when armed, a lead drain whose symbol-id rewind left the stranded ids in place
-    // still publishes its rows as a lead over them that readers can see, which is what every
-    // such lead drain did before drainBaseWal sent it straight to disk or kept its rows from
-    // readers. The flush that lands that lead then finds its ids out of step with the view's
-    // table. That check stays as the backstop for a production route no test drives
-    // deterministically: a value the view's pooled WAL writer kept through a rollback and
-    // commits ahead of the lead's. A drain while the view's own WAL holds a block the inline
-    // apply has not landed, whose rewind rewindStrandedSymbolIds would skip, keeps its rows from
-    // readers instead (drainBaseWal). So the tests of the backstop reach it this way. Sticky
-    // until cleared; always false in production.
-    @TestOnly
-    private boolean isStrandedIdLeadSimulatedForTest;
-    // Test-only: when armed, refreshInstance runs this action after every guard it evaluates
-    // before the refresh latch and before it takes the latch. That interval is the window a
-    // peer worker's turn can use to stop the view (a refused rebuild) after this turn has
-    // already read it as running, so a test can drive that peer turn there instead of relying
-    // on thread timing. One-shot (self-clears on fire); always null in production.
-    @TestOnly
-    private Runnable simulatePeerTurnBeforeRefreshLatchForTest;
-    // Test-only: when armed, an out-of-order repair skips the inline apply of its
-    // own REPLACE_RANGE block, modelling the apply silently no-opping (the LV writer
-    // was busy, or its memory-pressure control backed off). Lets a test drive the
-    // committed-but-unapplied branch of the post-commit reconciliation. Sticky until
-    // cleared; always false in production.
-    @TestOnly
-    private boolean simulateRepairApplyFailureForTest;
-    // Test-only: how many repair cleanup chains to let through before the next one throws at
-    // the tail of its cleanup - after every borrowed resource is back and immediately before
-    // the session release the chain ends with - so a test can prove the release happens
-    // whatever the statements ahead of it raise. The countdown is what names WHICH chain: a
-    // head-miss turn runs two (its replay cleanup, then its publication tail), and so does
-    // an anchor resume. Count them for the fixture at hand rather than trusting this line:
-    // the skip value names a chain only for as long as the turn's shape is unchanged.
-    // -1 disarms it, and disarming is what production always reads: the fault sets it back
-    // to -1 as it throws.
-    @TestOnly
-    private int simulateRepairCleanupFaultCountdownForTest = -1;
-    // Test-only: when armed, the cleanup an unwinding repair turn runs throws where the
-    // statements ahead of the session release do their work - the staged capture's close,
-    // the descriptor discard, the boundary schedule - so a test can prove the session is
-    // released on that path anyway. One-shot (self-clears on fire); always false in
-    // production.
-    @TestOnly
-    private boolean isRepairUnwindCleanupFaultSimulatedForTest;
-    // Test-only: when armed, a predecessor resume runs this action once its anchor is
-    // restored and its cursors are open, immediately before its replay pulls the first row,
-    // so a test can end the replay there the way a circuit-breaker trip or a fault inside it
-    // would. One-shot (self-clears on fire); always null in production.
-    @TestOnly
-    private Runnable simulateResumeReplayStartForTest;
-    // Test-only: when armed, the refresh finally throws right where a real
-    // LiveViewInMemoryBuffer.close() would (a native-memory / tracker-balance assert
-    // under -ea), so a test can prove the refresh latch is still released on that path.
-    // One-shot (self-clears on fire); always false in production.
-    @TestOnly
-    private boolean simulateStagingBufferCloseFaultForTest;
-    // Test-only: when armed, the next count an open-segment keyed route takes of the view's
-    // stored rows throws once it holds the view's reader, modelling that reader or a
-    // partition of either table failing to open there. One-shot (self-clears on fire);
-    // always false in production.
-    @TestOnly
-    private boolean isStoredSuffixCountFaultSimulatedForTest;
     // Reusable ARRAY read flyweight for the O3-rebuild disk stager
     // (copyReaderRowsToStaging): binds a view over the LV table reader's (data, aux)
     // column memory for one row, which is immediately re-appended into the staging
@@ -675,6 +464,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Empty for a SYMBOL-free schema. Recomputed each cycle in ensureStagingAndTier.
     private final IntList stagingSymbolColumnIndexes = new IntList();
     private final LiveViewStateStore stateStore;
+    private final LiveViewRefreshStats stats = new LiveViewRefreshStats();
     // Views whose localized out-of-order repair this worker parked on its turn
     // budget. Only the worker that suspended a repair can continue it - it holds
     // the pinned base snapshot, the live-view writer carrying the uncommitted
@@ -765,18 +555,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         this.memoryPool = new PageFrameMemoryPool(engine.getConfiguration(), 0L);
         this.walRecordCursor = new WalSegmentRecordCursor(addressCache, memoryPool);
         this.rowsBounds = new LiveViewCheckpointRowsBounds(engine.getConfiguration());
-        this.repairRouteCounts.setAll(LiveViewCheckpointRepairRoute.ROUTE_COUNT, 0);
-    }
-
-    /**
-     * Test-only: number of WAL-loss re-derives this worker completed through the base-metadata drift
-     * branch of {@link #rederiveFromAppliedBaseAfterWalLoss} - the ones that recompiled through
-     * {@link #recoverFromBaseMetadataDrift} and retried. A re-derive that succeeded on the plain path
-     * does not count.
-     */
-    @TestOnly
-    public long baseMetadataDriftRecompileCountForTest() {
-        return baseMetadataDriftRecompileCount;
     }
 
     @Override
@@ -931,181 +709,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test-only: completed repairs this worker ran on the given route, one of
-     * {@code LiveViewCheckpointRepairRoute.ROUTE_*}. A repair counts once, on the turn that
-     * publishes it, under the route it published on.
+     * Test-only: the hooks this worker runs, {@link LiveViewRefreshHooks#NONE} unless a test
+     * installed others.
      */
     @TestOnly
-    public long repairRouteCountForTest(int route) {
-        return repairRouteCounts.getQuick(route);
+    public LiveViewRefreshHooks getHooksForTest() {
+        return hooks;
     }
 
     /**
-     * Test-only: the route of the repair this worker decided last. Every decision
-     * overwrites it, so a test reads it once the repair it asserts on has finished.
+     * Test-only: this worker's lifetime counters and its tally of completed repairs by route.
      */
     @TestOnly
-    public LiveViewCheckpointRepairRoute repairRouteForTest() {
-        return repairRoute;
-    }
-
-    /**
-     * Test-only: number of O3 resume replays this worker served from the live
-     * window state instead of restoring the same logical root from disk. See
-     * {@link #canReuseRuntimeAnchor}.
-     */
-    @TestOnly
-    public long runtimeAnchorReuseCountForTest() {
-        return runtimeAnchorReuseCount;
-    }
-
-    /**
-     * Test-only: number of replay turns this worker ran on the isolated repair runtime
-     * rather than through the primary one. See {@link LiveViewRepairRuntime}.
-     */
-    @TestOnly
-    public long isolatedReplayTurnCountForTest() {
-        return isolatedReplayTurnCount;
-    }
-
-    /**
-     * Test-only: rows a keyed repair copied forward from the view's own stored output
-     * instead of recomputing them from the base, summed over every segment this worker
-     * repaired by key. See {@link LiveViewCheckpointKeyedReplay}.
-     */
-    @TestOnly
-    public long keyedReplayMergedRowsForTest() {
-        return keyedReplayMergedRows;
-    }
-
-    /**
-     * Test-only: number of closed anchor segments this worker repaired by following the
-     * keys their correction touched, rather than by reading the segment whole.
-     */
-    @TestOnly
-    public long keyedReplaySegmentCountForTest() {
-        return keyedReplaySegmentCount;
-    }
-
-    /**
-     * How many key-domain splices this worker declined because a boundary in the repaired
-     * interval held a root the partial publication could not build on.
-     */
-    @TestOnly
-    public long keyDomainSpliceDeclineCountForTest() {
-        return keyDomainSpliceDeclineCount;
-    }
-
-    /**
-     * Test-only: number of segment repairs this worker published as an upsert onto the
-     * view's own {@code (designated timestamp, projected key)} dedup keys, carrying only
-     * the rows it recomputed. See {@link LiveViewCheckpointKeyedReplay}.
-     */
-    @TestOnly
-    public long sparsePublicationCountForTest() {
-        return sparsePublicationCount;
-    }
-
-    /**
-     * Test-only: number of sparse publications this worker abandoned before commit,
-     * because the repair's output repeated a pair the upsert would have collapsed or
-     * because it recomputed no row at all. Each one published its whole range with
-     * {@code REPLACE_RANGE} instead.
-     */
-    @TestOnly
-    public long sparsePublicationFallbackCountForTest() {
-        return sparsePublicationFallbackCount;
-    }
-
-    /**
-     * Test-only: stored rows a sparse publication left exactly where they stood, summed
-     * over every segment this worker published sparsely. A replacement would have had to
-     * rewrite every one of them.
-     */
-    @TestOnly
-    public long sparsePublicationRowsKeptForTest() {
-        return sparsePublicationRowsKept;
-    }
-
-    /**
-     * Test-only: number of priced closed segments whose keyed scan reads less than the
-     * whole-segment one. See {@link #priceKeyedSegmentScans}.
-     */
-    @TestOnly
-    public long keyedScanCheaperCountForTest() {
-        return keyedScanCheaperCount;
-    }
-
-    /**
-     * Test-only: how many keyed open-segment resumes derived checkpoint row positions
-     * from their exact insert delta and did not scan the stored live-view interval.
-     */
-    @TestOnly
-    public long openSegmentArithmeticRowPositionCountForTest() {
-        return openSegmentArithmeticRowPositionCount;
-    }
-
-    /**
-     * Test-only: how many resumes this worker ran by following the correction's own keys
-     * rather than reading every row above the anchor.
-     */
-    @TestOnly
-    public long openSegmentKeyedResumeCountForTest() {
-        return openSegmentKeyedResumeCount;
-    }
-
-    @TestOnly
-    public long openSegmentColdKeyedCheaperCountForTest() {
-        return openSegmentColdKeyedCheaperCount;
-    }
-
-    @TestOnly
-    public long openSegmentColdKeyedPostingRowsForTest() {
-        return openSegmentColdKeyedPostingRows;
-    }
-
-    @TestOnly
-    public long openSegmentColdKeyedPricedCountForTest() {
-        return openSegmentColdKeyedPricedCount;
-    }
-
-    /**
-     * Test-only: localized EOF head misses this worker replayed by key from the active
-     * anchor segment's origin because no usable checkpoint sat below the correction.
-     */
-    @TestOnly
-    public long openSegmentColdKeyedReplayCountForTest() {
-        return openSegmentColdKeyedReplayCount;
-    }
-
-    @TestOnly
-    public long openSegmentColdKeyedUnpricedCountForTest() {
-        return openSegmentColdKeyedUnpricedCount;
-    }
-
-    @TestOnly
-    public long openSegmentColdKeyedWholeRangeRowsForTest() {
-        return openSegmentColdKeyedWholeRangeRows;
-    }
-
-    @TestOnly
-    public long openSegmentRestoreAwareCheaperCountForTest() {
-        return openSegmentRestoreAwareCheaperCount;
-    }
-
-    @TestOnly
-    public void setForceOpenSegmentKeyedReplayForTest(boolean force) {
-        isOpenSegmentKeyedReplayForcedForTest = force;
-    }
-
-    /**
-     * Test-only: how many of those published as an upsert on the view's own dedup keys,
-     * leaving every stored row they did not recompute exactly where it stood. The
-     * remainder abandoned the attempt and published their whole range.
-     */
-    @TestOnly
-    public long openSegmentSparseResumeCountForTest() {
-        return openSegmentSparseResumeCount;
+    public LiveViewRefreshStats getStatsForTest() {
+        return stats;
     }
 
     /**
@@ -1155,157 +772,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test-only: keys this worker handed back to a primary runtime, summed over every
-     * keyed resume it published.
+     * Test-only: whether this worker's keyed replay is still armed. The two callers whose
+     * repairs arm it, repairOneSegment and repairChangeSetResidual, clear it in a finally on
+     * every exit, so one found armed between repairs would steer the next localized repair
+     * onto keys it never collected.
      */
     @TestOnly
-    public long transplantedKeyCountForTest() {
-        return transplantedKeyCount;
-    }
-
-    @TestOnly
-    public long openSegmentKeyedCheaperCountForTest() {
-        return openSegmentKeyedCheaperCount;
+    public boolean isKeyedReplayArmedForTest() {
+        return keyedReplay.isArmed();
     }
 
     /**
-     * Test-only: base rows the open segment's keyed scans would pull off the posting
-     * index, summed over every resume this worker priced. Comparable with
-     * {@link #openSegmentKeyedWholeRangeRowsForTest()}, which is what those same resumes
-     * read whole. Each count stops at its budget - the whole-range rows, or under a zero
-     * estimate the elapsed override's break-even - so one that stopped there is a floor.
+     * Test-only: the route of the repair this worker decided last. Every decision
+     * overwrites it, so a test reads it once the repair it asserts on has finished.
      */
     @TestOnly
-    public long openSegmentKeyedPostingRowsForTest() {
-        return openSegmentKeyedPostingRows;
-    }
-
-    /**
-     * Test-only: how many open-segment resumes this worker priced both ways. A resume is
-     * priced only when the decomposition collected the open segment's key domain in full,
-     * the view's key column is indexed, every key resolves against the pinned reader, and a
-     * whole range estimated at zero rows has a root restore beside it that some keyed price
-     * could win the elapsed override against.
-     */
-    @TestOnly
-    public long openSegmentKeyedPricedCountForTest() {
-        return openSegmentKeyedPricedCount;
-    }
-
-    /**
-     * Test-only: how many open-segment resumes were not priced at all - no key domain, no
-     * index for the column, a key the pinned reader does not hold, or a whole range
-     * estimated at zero rows that no keyed price undercuts: with no root restore beside
-     * it, or beside one too small for even a scan of no rows to win the elapsed override.
-     * Each reads every row above its anchor, which is what every resume did before the
-     * keyed one existed.
-     */
-    @TestOnly
-    public long openSegmentKeyedUnpricedCountForTest() {
-        return openSegmentKeyedUnpricedCount;
-    }
-
-    /**
-     * Test-only: base rows the open segment's resumes read whole, summed over every one
-     * this worker priced.
-     */
-    @TestOnly
-    public long openSegmentKeyedWholeRangeRowsForTest() {
-        return openSegmentKeyedWholeRangeRows;
-    }
-
-    /**
-     * Test-only: the posting rows a keyed scan of every priced segment would pull, summed.
-     * Comparable with {@link #keyedScanWholeRangeRowsForTest()}, which is what those same
-     * segments read today. Each count stops once the keyed price, setup included, reaches
-     * the whole-range rows, so one that stopped there is a floor.
-     */
-    @TestOnly
-    public long keyedScanPostingRowsForTest() {
-        return keyedScanPostingRows;
-    }
-
-    /**
-     * Test-only: number of closed segments this worker priced a keyed scan for.
-     */
-    @TestOnly
-    public long keyedScanPricedCountForTest() {
-        return keyedScanPricedCount;
-    }
-
-    /**
-     * Test-only: number of closed segments whose keyed scan was not priced - a whole range
-     * no keyed price undercuts, estimated at zero rows or at no more than one index open and
-     * one seek per key, an incomplete key domain, a key the pinned reader does not hold, or
-     * a partition with no index for the column.
-     * Every one of them reads whole, which is what it did anyway.
-     */
-    @TestOnly
-    public long keyedScanUnpricedCountForTest() {
-        return keyedScanUnpricedCount;
-    }
-
-    /**
-     * Test-only: the base rows a whole-segment scan of every priced segment pulls, summed.
-     */
-    @TestOnly
-    public long keyedScanWholeRangeRowsForTest() {
-        return keyedScanWholeRangeRows;
-    }
-
-    /**
-     * Test-only: number of segment repairs whose qualifying output this worker checked for
-     * duplicate {@code (timestamp, projected key)} pairs. See
-     * {@link LiveViewCheckpointOutputUniqueness}.
-     */
-    @TestOnly
-    public long outputUniquenessCheckedRepairsForTest() {
-        return outputUniquenessCheckedRepairs;
-    }
-
-    /**
-     * Test-only: qualifying output rows those checks walked, summed.
-     */
-    @TestOnly
-    public long outputUniquenessCheckedRowsForTest() {
-        return outputUniquenessCheckedRows;
-    }
-
-    /**
-     * Test-only: rows whose {@code (timestamp, projected key)} pair a row of the same
-     * repair had already taken. A sparse keyed publication would lose exactly these, which
-     * is why it may not be taken over output that holds any.
-     */
-    @TestOnly
-    public long outputUniquenessDuplicateRowsForTest() {
-        return outputUniquenessDuplicateRows;
-    }
-
-    /**
-     * Test-only: rows in the widest equal-timestamp group any checked repair emitted,
-     * which is what the detector's per-group scratch is worth.
-     */
-    @TestOnly
-    public long outputUniquenessMaxGroupRowsForTest() {
-        return outputUniquenessMaxGroupRows;
-    }
-
-    /**
-     * Test-only: number of segment repairs whose output carries no key this detector can
-     * name, and which a sparse publication could therefore not be decided for either way.
-     */
-    @TestOnly
-    public long outputUniquenessUncheckedRepairsForTest() {
-        return outputUniquenessUncheckedRepairs;
-    }
-
-    /**
-     * Test-only: number of checked segment repairs whose output carried every pair once,
-     * which is the population a sparse keyed publication could serve.
-     */
-    @TestOnly
-    public long outputUniquenessUniqueRepairsForTest() {
-        return outputUniquenessUniqueRepairs;
+    public LiveViewCheckpointRepairRoute repairRouteForTest() {
+        return repairRoute;
     }
 
     /**
@@ -1315,26 +798,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public LiveViewCheckpointSegmentChangeSet segmentChangeSetForTest() {
         return segmentChangeSet;
-    }
-
-    /**
-     * Test-only: number of closed anchor segments this worker repaired over their own
-     * range rather than inside one union range running to the frontier. See
-     * {@link #repairChangeSetSegments}.
-     */
-    @TestOnly
-    public long segmentRepairCountForTest() {
-        return segmentRepairCount;
-    }
-
-    /**
-     * Test-only: number of segment replays this worker parked on the refresh turn's budget
-     * instead of running to completion inside the turn that started them. See
-     * {@link LiveViewCheckpointSegmentLoop}.
-     */
-    @TestOnly
-    public long segmentYieldCountForTest() {
-        return segmentYieldCount;
     }
 
     /**
@@ -1349,266 +812,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test-only: arms a one-shot action that {@link #rederiveFromAppliedBaseAfterWalLoss} runs after
-     * its entry broken-dependency check and before the replay, so a test can land a base schema
-     * change in exactly the window {@code ApplyWal2TableJob} opens between applying a structural
-     * change to the base writer and invalidating the dependent views. That is the only way to reach
-     * the re-derive's second, in-catch refusal deterministically: both checks read the same applied
-     * base metadata, so nothing but a concurrent apply separates them. Production never calls this.
-     * <p>
-     * Two constraints bind the action. First, it runs inside the same {@code try} that
-     * {@link #rederiveFromAppliedBaseAfterWalLoss}'s trailing {@code catch (Throwable)} closes, and
-     * that clause logs and returns false - the very refusal such a test asserts - so an action that
-     * lets a throwable escape turns a broken fixture into a passing test. The action must catch its
-     * own throwables and hand them back to the test thread. Second, {@code refreshInstance} holds
-     * the instance's refresh latch across this call, so the action must not reach a path that waits
-     * for that latch: {@code DROP LIVE VIEW} on this view ({@code LiveViewInstance.fenceRefresh})
-     * and a checkpoint freeze ({@code LiveViewInstance.startCheckpoint}) both spin-then-sleep on it
-     * with no timeout, and would hang this thread against a latch only this thread can release.
+     * Test-only: installs the hooks this worker runs at its named points. Pass
+     * {@link LiveViewRefreshHooks#NONE} to remove them.
      */
     @TestOnly
-    public void setSimulateBaseApplyDuringRederiveForTest(Runnable action) {
-        this.simulateBaseApplyDuringRederiveForTest = action;
-    }
-
-    /**
-     * Test-only: arms a one-shot action that the fallback scan runs inside the live-view-ahead
-     * guard - after the view watermark read, after which it blocks the scan, and before the two
-     * base head reads (cached sequencer head and tracker writerTxn). The interval is what the
-     * arming test asserts on: a commit published there is visible to the base reads but not to
-     * the already-captured watermark, which is exactly the asymmetry that distinguishes the
-     * correct read order from the racy one. Relocating this call outside the reads leaves
-     * {@code testConcurrentRefreshCannotInvalidateFromStaleBaseHead} green under a read-order
-     * swap that fully restores the race.
-     * <p>
-     * Unlike {@link #setSimulateBaseApplyDuringRederiveForTest}, the action runs with no refresh
-     * latch held and no enclosing {@code catch}, so it may block and a throwable it raises
-     * propagates out of {@code Job.run()} to the caller rather than being swallowed. Production
-     * never calls this.
-     */
-    @TestOnly
-    public void setSimulateBaseCommitBetweenAheadGuardReadsForTest(Runnable action) {
-        this.simulateBaseCommitBetweenAheadGuardReadsForTest = action;
-    }
-
-    /**
-     * Test-only: arms a one-shot closeable that
-     * {@link #isRederiveRefusedForBrokenDependency} closes as part of the same statement that closes
-     * the pooled base metadata (see {@link #consumeBaseMetadataCloseFaultForTest}), so the metadata
-     * tenant still returns to the pool and {@code assertMemoryLeak} keeps its force. A
-     * {@code close()} that throws is the only way a test can produce a close failure there:
-     * {@code TableMetadataPool} has no reachable path that makes its tenant's {@code close()} throw
-     * (see the comment on the close itself). The read-failure {@code catch} releases the armed
-     * closeable too, so arming it never leaks when the read throws first.
-     * <p>
-     * Because the close statement itself consumes the fault, that statement is what the test pins:
-     * moving the close back inside a try-with-resources deletes the statement, the fault is never
-     * consumed, and the test's "the injected close fault must have run" assertion goes red.
-     * Production never calls this.
-     */
-    @TestOnly
-    public void setSimulateBaseMetadataCloseFailureForTest(QuietCloseable closeFault) {
-        this.simulateBaseMetadataCloseFailureForTest = closeFault;
-    }
-
-    /**
-     * Test-only: makes a cold keyed head-miss raise, where it rebases its boundary row
-     * positions, the {@link CairoException} a missing or torn checkpoint metadata page
-     * raises out of
-     * {@link LiveViewCheckpointTimelineStoreWriter.RepairCapture#collectEffectiveRowPositions}.
-     * That throw leaves the repair through the executor's prologue, which is the one
-     * stretch of the head-miss executor the replay's own {@code try} does not cover, so it
-     * is what proves the stored-row cursor opened there is still released. One-shot, so the
-     * refresh that follows the fault repairs the view for real. A {@code FilesFacade} fault
-     * cannot stand in for it - see the field's comment. Production never calls this.
-     */
-    @TestOnly
-    public void setSimulateColdKeyedTimelineFaultForTest(boolean simulate) {
-        this.isColdKeyedTimelineFaultSimulatedForTest = simulate;
-    }
-
-    /**
-     * Test-only: arms one failure of the keyed repair's hand-back of its isolated
-     * accumulators to the primary runtime, the point a refresh memory limit can fault
-     * after the repair's publication is already durable. One-shot, so the rebuild the
-     * failure forces runs against a healthy transplant. Production never calls this.
-     */
-    @TestOnly
-    public void setSimulateKeyedTransplantFaultForTest(boolean simulate) {
-        this.isKeyedTransplantFaultSimulatedForTest = simulate;
-    }
-
-    /**
-     * Test-only: installs observers that every later keyed repair's hand-back of its isolated
-     * accumulators runs on the refresh thread. {@code onStart} runs once the hand-back has both
-     * windows to move state between, before it clears its lists and arenas; {@code onEnd} runs
-     * after its retention trims and its count of handed-back keys, as its last step. A
-     * hand-back that throws does not run {@code onEnd}. Passing nulls removes them.
-     * Production never calls this.
-     */
-    @TestOnly
-    public void setKeyedTransplantObserverForTest(@Nullable Runnable onStart, @Nullable Runnable onEnd) {
-        this.keyedTransplantStartObserverForTest = onStart;
-        this.keyedTransplantEndObserverForTest = onEnd;
-    }
-
-    /**
-     * Test-only: makes every forward live-view commit go out at the default dedup mode
-     * rather than {@code WAL_DEDUP_MODE_NO_DEDUP}, which is what the ordinary path did
-     * before the mode was stamped. On a dedup-keyed view the apply then collapses two
-     * output rows sharing a {@code (timestamp, key)} pair, which is the only way to
-     * produce - without an unrelated defect - a view that emitted a row its own table
-     * does not hold. Production never calls this.
-     */
-    @TestOnly
-    public void setSimulateForwardCommitDedupCollapseForTest(boolean simulate) {
-        this.isForwardCommitDedupCollapseSimulatedForTest = simulate;
-    }
-
-    /**
-     * Test-only: has a lead drain whose symbol-id rewind left the stranded ids in place
-     * publish its rows as a lead over them that readers can see, instead of sending them
-     * straight to disk or keeping them from readers, so the flush that lands them finds its
-     * ids out of step with the view's table. That is the state the flush's in-step check and
-     * the stale-tier rewind gate behind it guard against. Production reaches it through a
-     * route no test drives deterministically: a value the view's pooled WAL writer kept
-     * through a rollback. A drain while the view's own WAL holds a block the inline apply has
-     * not landed, whose rewind {@link #rewindStrandedSymbolIds(LiveViewInstance, TableReader)}
-     * would skip, keeps its rows from readers instead ({@link #drainBaseWal}). Production never
-     * calls this.
-     */
-    @TestOnly
-    public void setSimulateStrandedIdLeadForTest(boolean simulate) {
-        this.isStrandedIdLeadSimulatedForTest = simulate;
-    }
-
-    /**
-     * Test-only: arms a one-shot action that the next {@code refreshInstance} call runs after
-     * its pre-latch guards pass and before it takes the view's refresh latch. The action stands
-     * in for a peer worker's turn that wins the latch in that window. It runs with no refresh
-     * latch held and no enclosing {@code catch}, so it may drive another job's turn over the
-     * same view, and a throwable it raises propagates out of {@code Job.run()} to the caller.
-     * Production never calls this.
-     */
-    @TestOnly
-    public void setSimulatePeerTurnBeforeRefreshLatchForTest(Runnable action) {
-        this.simulatePeerTurnBeforeRefreshLatchForTest = action;
-    }
-
-    /**
-     * Test-only: makes every out-of-order repair skip the inline apply of its own
-     * REPLACE_RANGE block, so the block stays committed-but-unapplied and the repair
-     * takes its unreconciled branch. Production never calls this.
-     */
-    @TestOnly
-    public void setSimulateRepairApplyFailureForTest(boolean simulate) {
-        this.simulateRepairApplyFailureForTest = simulate;
-    }
-
-    /**
-     * Test-only: whether the fault {@link #setSimulateRepairCleanupFaultForTest(int)} arms is still
-     * waiting to fire. It disarms itself as it throws, so a test that armed it and finds this false has
-     * proof the cleanup chain it named really ran - and one that finds it true learns its fixture never
-     * reached that chain, rather than passing on a case that pinned nothing. Production never calls this.
-     */
-    @TestOnly
-    public boolean isRepairCleanupFaultArmedForTest() {
-        return simulateRepairCleanupFaultCountdownForTest >= 0;
-    }
-
-    @TestOnly
-    public boolean isKeyedTransplantFaultArmedForTest() {
-        return isKeyedTransplantFaultSimulatedForTest;
-    }
-
-    /**
-     * Test-only: whether this worker's keyed replay is still armed. The two callers whose
-     * repairs arm it, repairOneSegment and repairChangeSetResidual, clear it in a finally on
-     * every exit, so one found armed between repairs would steer the next localized repair
-     * onto keys it never collected.
-     */
-    @TestOnly
-    public boolean isKeyedReplayArmedForTest() {
-        return keyedReplay.isArmed();
-    }
-
-    /**
-     * Test-only: arms a one-shot fault so a repair cleanup chain throws at its tail, immediately
-     * before the session release the chain ends with, modelling a throw out of any statement ahead
-     * of that release. {@code skipChains} names which chain: 0 is the next one this worker runs, 1
-     * the one after it. Production never calls this.
-     */
-    @TestOnly
-    public void setSimulateRepairCleanupFaultForTest(int skipChains) {
-        this.simulateRepairCleanupFaultCountdownForTest = skipChains;
-    }
-
-    /**
-     * Test-only: whether the one-shot cleanup fault {@link #setSimulateRepairUnwindCleanupFaultForTest()}
-     * arms is still waiting to fire. The fault clears itself as it throws, so a test that armed it and
-     * finds this false has proof the unwind really reached the cleanup - and a test that finds it true
-     * learns its fixture stopped short of the block, rather than passing on a case that pinned nothing.
-     * Production never calls this.
-     */
-    @TestOnly
-    public boolean isRepairUnwindCleanupFaultArmedForTest() {
-        return isRepairUnwindCleanupFaultSimulatedForTest;
-    }
-
-    /**
-     * Test-only: arms a one-shot fault so the cleanup of the next unwinding out-of-order repair
-     * turn throws after it has freed the staged capture and retired the descriptor, modelling a
-     * throw out of any of those statements. Lets a test prove the repair session is released
-     * whatever the cleanup ahead of it does. Production never calls this.
-     */
-    @TestOnly
-    public void setSimulateRepairUnwindCleanupFaultForTest() {
-        this.isRepairUnwindCleanupFaultSimulatedForTest = true;
-    }
-
-    /**
-     * Test-only: arms a one-shot action the next predecessor resume runs once its anchor is
-     * restored, immediately before its replay pulls the first row. Lets a test cancel the view's
-     * refresh at that point, so the circuit breaker the replay consults ends it mid-replay, as an
-     * engine shutdown would. Production never calls this.
-     */
-    @TestOnly
-    public void setSimulateResumeReplayStartForTest(Runnable action) {
-        this.simulateResumeReplayStartForTest = action;
-    }
-
-    /**
-     * Test-only: arms a one-shot fault so the next refresh finally throws at the point where the
-     * staging buffer is freed, modelling a native-memory / tracker-balance assert from
-     * {@link LiveViewInMemoryBuffer#close()}. Lets a test prove the refresh latch is released even
-     * on that throw. Production never calls this.
-     */
-    @TestOnly
-    public void setSimulateStagingBufferCloseFaultForTest() {
-        this.simulateStagingBufferCloseFaultForTest = true;
-    }
-
-    /**
-     * Test-only: whether the fault {@link #setSimulateStoredSuffixCountFaultForTest()} arms is
-     * still waiting to fire. It disarms itself as it throws, so a test that finds this false has
-     * proof an open-segment keyed route really reached its count of the view's stored rows.
-     * Production never calls this.
-     */
-    @TestOnly
-    public boolean isStoredSuffixCountFaultArmedForTest() {
-        return isStoredSuffixCountFaultSimulatedForTest;
-    }
-
-    /**
-     * Test-only: arms a one-shot fault so the next count an open-segment keyed route takes of the
-     * view's stored rows throws once it holds the view's reader, modelling that reader or a
-     * partition of either table failing to open. No {@code FilesFacade} fault reaches that call
-     * deterministically: whether it opens a file at all depends on what the pooled view reader
-     * and the pinned base reader already hold open. Production never calls this.
-     */
-    @TestOnly
-    public void setSimulateStoredSuffixCountFaultForTest() {
-        this.isStoredSuffixCountFaultSimulatedForTest = true;
+    public void setHooksForTest(LiveViewRefreshHooks hooks) {
+        this.hooks = hooks;
     }
 
     /**
@@ -2056,7 +1265,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // the keys the replay describes and drop every other one, so decline the
                 // splice and leave the truncate in place: its head seal images the whole
                 // runtime and converts the root, and the next repair splices again.
-                keyDomainSpliceDeclineCount++;
+                stats.inc(KEY_DOMAIN_SPLICE_DECLINE_COUNT);
                 LOG.info().$("live view checkpoint repair declined the key domain splice over an incompatible root, truncating instead [view=")
                         .$(instance.getDefinition().getViewName())
                         .$(", boundaries=").$(repairBoundaries.size())
@@ -3885,7 +3094,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         && isSymbolRewindCandidate(instance)
                         && rewindStrandedSymbolIds(instance, committedSymbolReader)
                         && walWriter == null
-                        && !isStrandedIdLeadSimulatedForTest) {
+                        && !hooks.isStrandedIdLeadPublished()) {
                     if (tryRouteStrandedIdDrainToDisk(instance, committedSymbolReader)) {
                         isStrandedIdDiskRoute = true;
                     } else {
@@ -4341,7 +3550,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * downstream can detect.
      */
     private void commitLiveViewBlock(LiveViewInstance instance, WalWriter walWriter, long maxBaseSeqTxnInBlock) {
-        if (instance.isDedupKeyed() && !isForwardCommitDedupCollapseSimulatedForTest) {
+        if (instance.isDedupKeyed() && !hooks.isForwardCommitDedupCollapsed()) {
             commitLiveViewWithoutDedupFenced(instance, walWriter, maxBaseSeqTxnInBlock);
         } else {
             commitLiveViewFenced(instance, walWriter, maxBaseSeqTxnInBlock);
@@ -5804,7 +5013,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // over a sparse partition interpolates to zero, and a bitmap index
                     // reports no size, so pricing it anyway would walk every posting its
                     // keys hold across the partition to reach that same verdict.
-                    keyedScanUnpricedCount++;
+                    stats.inc(KEYED_SCAN_UNPRICED_COUNT);
                     continue;
                 }
                 if (!segmentChangeSet.isSegmentKeyDomainComplete(i)) {
@@ -5812,11 +5021,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // walk read no key column - it could not be resolved, or the base
                     // deduplicates. Either way the segment has no key domain to follow and
                     // reads whole - which is what it does anyway.
-                    keyedScanUnpricedCount++;
+                    stats.inc(KEYED_SCAN_UNPRICED_COUNT);
                     continue;
                 }
                 if (!loadSegmentKeys(i)) {
-                    keyedScanUnpricedCount++;
+                    stats.inc(KEYED_SCAN_UNPRICED_COUNT);
                     continue;
                 }
                 // The zero-row skip above, generalised. A walk that stops on its budget has
@@ -5834,7 +5043,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         indexSeekRows
                 );
                 if (wholeRangeRows <= keyedScanFloorRows) {
-                    keyedScanUnpricedCount++;
+                    stats.inc(KEYED_SCAN_UNPRICED_COUNT);
                     continue;
                 }
                 final long postingRows = keyedScanCost.estimateKeyedScanRows(
@@ -5852,7 +5061,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         indexSeekRows
                 );
                 if (postingRows == LiveViewCheckpointKeyedScanCost.UNPRICEABLE) {
-                    keyedScanUnpricedCount++;
+                    stats.inc(KEYED_SCAN_UNPRICED_COUNT);
                     continue;
                 }
                 final boolean isCheaper = LiveViewCheckpointKeyedScanCost.isKeyedScanCheaper(
@@ -5864,11 +5073,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         indexOpenRows,
                         indexSeekRows
                 );
-                keyedScanPricedCount++;
-                keyedScanPostingRows += postingRows;
-                keyedScanWholeRangeRows += wholeRangeRows;
+                stats.inc(KEYED_SCAN_PRICED_COUNT);
+                stats.add(KEYED_SCAN_POSTING_ROWS, postingRows);
+                stats.add(KEYED_SCAN_WHOLE_RANGE_ROWS, wholeRangeRows);
                 if (isCheaper) {
-                    keyedScanCheaperCount++;
+                    stats.inc(KEYED_SCAN_CHEAPER_COUNT);
                     keyedScanCheaperSegments.add(segmentStart);
                 }
                 LOG.info().$("live view segment keyed scan priced [view=").$(viewName)
@@ -5890,7 +5099,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } catch (Throwable t) {
             // A pricing failure is not a repair failure: the repair reads the whole segment
             // either way, and the only thing lost is the measurement.
-            keyedScanUnpricedCount++;
+            stats.inc(KEYED_SCAN_UNPRICED_COUNT);
             LOG.info().$("live view segment keyed scan could not be priced [view=").$(viewName)
                     .$(", error=").$(t).I$();
         }
@@ -6123,17 +5332,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final boolean isKeyedEstimateSaturated = keyedScanCost.isSaturated();
             final boolean isRestoreAwareCheaper = !isRowCheaper && !isKeyedEstimateSaturated && isElapsedCheaper;
             if (isColdHeadMiss) {
-                openSegmentColdKeyedPricedCount++;
-                openSegmentColdKeyedPostingRows += postingRows;
-                openSegmentColdKeyedWholeRangeRows += wholeRangeRows;
-                openSegmentColdKeyedCheaperCount += isRowCheaper ? 1 : 0;
+                stats.inc(OPEN_SEGMENT_COLD_KEYED_PRICED_COUNT);
+                stats.add(OPEN_SEGMENT_COLD_KEYED_POSTING_ROWS, postingRows);
+                stats.add(OPEN_SEGMENT_COLD_KEYED_WHOLE_RANGE_ROWS, wholeRangeRows);
+                stats.add(OPEN_SEGMENT_COLD_KEYED_CHEAPER_COUNT, isRowCheaper ? 1 : 0);
             } else {
-                openSegmentKeyedPricedCount++;
-                openSegmentKeyedPostingRows += postingRows;
-                openSegmentKeyedWholeRangeRows += wholeRangeRows;
-                openSegmentKeyedCheaperCount += isRowCheaper ? 1 : 0;
+                stats.inc(OPEN_SEGMENT_KEYED_PRICED_COUNT);
+                stats.add(OPEN_SEGMENT_KEYED_POSTING_ROWS, postingRows);
+                stats.add(OPEN_SEGMENT_KEYED_WHOLE_RANGE_ROWS, wholeRangeRows);
+                stats.add(OPEN_SEGMENT_KEYED_CHEAPER_COUNT, isRowCheaper ? 1 : 0);
                 if (isRestoreAwareCheaper) {
-                    openSegmentRestoreAwareCheaperCount++;
+                    stats.inc(OPEN_SEGMENT_RESTORE_AWARE_CHEAPER_COUNT);
                 }
             }
             route.ofOpenSegmentPricing(isRowCheaper || isRestoreAwareCheaper, isRestoreAwareCheaper);
@@ -6172,9 +5381,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
     private void recordOpenSegmentKeyedUnpriced(boolean isColdHeadMiss) {
         if (isColdHeadMiss) {
-            openSegmentColdKeyedUnpricedCount++;
+            stats.inc(OPEN_SEGMENT_COLD_KEYED_UNPRICED_COUNT);
         } else {
-            openSegmentKeyedUnpricedCount++;
+            stats.inc(OPEN_SEGMENT_KEYED_UNPRICED_COUNT);
         }
     }
 
@@ -6302,17 +5511,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
         if (!outputUniqueness.isArmed()) {
-            outputUniquenessUncheckedRepairs++;
+            stats.inc(OUTPUT_UNIQUENESS_UNCHECKED_REPAIRS);
             return;
         }
-        outputUniquenessCheckedRepairs++;
-        outputUniquenessCheckedRows += outputUniqueness.getCheckedRows();
-        outputUniquenessDuplicateRows += outputUniqueness.getDuplicateRows();
-        if (outputUniqueness.getMaxGroupRows() > outputUniquenessMaxGroupRows) {
-            outputUniquenessMaxGroupRows = outputUniqueness.getMaxGroupRows();
-        }
+        stats.inc(OUTPUT_UNIQUENESS_CHECKED_REPAIRS);
+        stats.add(OUTPUT_UNIQUENESS_CHECKED_ROWS, outputUniqueness.getCheckedRows());
+        stats.add(OUTPUT_UNIQUENESS_DUPLICATE_ROWS, outputUniqueness.getDuplicateRows());
+        stats.max(OUTPUT_UNIQUENESS_MAX_GROUP_ROWS, outputUniqueness.getMaxGroupRows());
         if (outputUniqueness.isUnique()) {
-            outputUniquenessUniqueRepairs++;
+            stats.inc(OUTPUT_UNIQUENESS_UNIQUE_REPAIRS);
         }
         LOG.info().$("live view repair output uniqueness [view=").$(viewName)
                 .$(", keyed=").$(isKeyedRoute)
@@ -6962,7 +6169,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // domain beside the loop, so every segment route observes the same budget.
                     engine.getConfiguration().isLiveViewCheckpointRepairSegmentYieldEnabled()
             )) {
-                segmentYieldCount++;
+                stats.inc(SEGMENT_YIELD_COUNT);
                 parkSegmentLoop(instance, loop);
                 return SEGMENT_STEP_SUSPENDED;
             }
@@ -7031,7 +6238,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     ) {
         if (!engine.getConfiguration().isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled()
                 || !route.isOpenSegmentKeyDomainReady()
-                || (!route.isOpenSegmentKeyedScanCheaper() && !isOpenSegmentKeyedReplayForcedForTest)) {
+                || (!route.isOpenSegmentKeyedScanCheaper() && !hooks.isOpenSegmentKeyedReplayForced())) {
             return false;
         }
         if (!hasUpsertIdentity(instance, LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(instance.getCompiledPlan()))) {
@@ -7102,10 +6309,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         try {
             baseRowsBelow = countDurableRowsBelow(baseReader, outputLowTs);
             try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-                if (isStoredSuffixCountFaultSimulatedForTest) { // @TestOnly, always false in production
-                    isStoredSuffixCountFaultSimulatedForTest = false;
-                    throw CairoException.critical(0).put("simulated live view stored row count fault");
-                }
+                hooks.beforeStoredRowCount();
                 storedRowsBelow = countDurableRowsBelow(lvReader, outputLowTs);
                 storedRows = lvReader.size();
             }
@@ -7251,9 +6455,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (primaryWindow == null || replayWindow == null) {
             return 0;
         }
-        if (keyedTransplantStartObserverForTest != null) { // @TestOnly, always null in production
-            keyedTransplantStartObserverForTest.run();
-        }
+        hooks.onKeyedTransplantStart();
         final LiveViewWindowStatePlan plan = replayWindow.getCheckpointWindowStatePlan();
         if (plan == null) {
             // The route's own gate has already refused a view whose state is not fused, so
@@ -7291,10 +6493,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             );
             // After the freeze, so a simulated fault leaves the arenas holding what a real one
             // would, and before the first restore, so the primary is untouched.
-            if (isKeyedTransplantFaultSimulatedForTest) {
-                isKeyedTransplantFaultSimulatedForTest = false;
-                throw CairoException.critical(0).put("simulated live view keyed repair transplant fault");
-            }
+            hooks.beforeKeyedTransplantRestore();
             for (int i = 0, n = transplantKeys.size(); i < n; i++) {
                 // The restore appends nothing to either arena, so both pages stay framed over
                 // their bytes for the whole call.
@@ -7340,10 +6539,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
             }
         }
-        transplantedKeyCount += transplanted;
-        if (keyedTransplantEndObserverForTest != null) { // @TestOnly, always null in production
-            keyedTransplantEndObserverForTest.run();
-        }
+        stats.add(TRANSPLANTED_KEY_COUNT, transplanted);
+        hooks.onKeyedTransplantEnd();
         return transplanted;
     }
 
@@ -7647,7 +6844,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", queued=").$(loop.size()).I$();
             return SEGMENT_STEP_UNAPPLIED;
         }
-        segmentRepairCount++;
+        stats.inc(SEGMENT_REPAIR_COUNT);
         loop.segmentRepaired();
         return SEGMENT_STEP_DONE;
     }
@@ -9152,12 +8349,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final WindowRecordCursorFactory replayWindowFactory = isKeyed ? repairRuntime.getWindowFactory() : windowFactory;
         final LiveViewWindow replayAnchorWindow = isKeyed ? repairRuntime.getAnchorWindow() : instance.getAnchorWindow();
         if (isKeyed) {
-            isolatedReplayTurnCount++;
-            openSegmentKeyedResumeCount++;
+            stats.inc(ISOLATED_REPLAY_TURN_COUNT);
+            stats.inc(OPEN_SEGMENT_KEYED_RESUME_COUNT);
             instance.recordO3OpenSegmentKeyedResume();
             // Equal counts by construction, and both kept: one names the route the resume
             // took, the other names what its checkpoint positions are made of.
-            openSegmentArithmeticRowPositionCount++;
+            stats.inc(OPEN_SEGMENT_ARITHMETIC_ROW_POSITION_COUNT);
         }
         try {
             engine.detachReader(reader);
@@ -9396,7 +8593,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // position the root recorded. Avoid decoding the same
                             // immutable pages to write that state back over itself.
                             anchorLvRowPosition = instance.getLvRowsTotal();
-                            runtimeAnchorReuseCount++;
+                            stats.inc(RUNTIME_ANCHOR_REUSE_COUNT);
                             // No restore ran, so nothing stamped the baseline the freeze
                             // or the closing seal reads. Stamp it here on the same terms the
                             // restore takes: the provisional repair stamp.
@@ -9452,11 +8649,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         final long scanStart = System.nanoTime();
                         final RecordCursor outCursor = compiledPlan.wrapWindowOutput(windowCursor, executionContext);
                         Record outRecord = outCursor.getRecord();
-                        if (simulateResumeReplayStartForTest != null) { // @TestOnly, always null in production
-                            final Runnable replayStart = simulateResumeReplayStartForTest;
-                            simulateResumeReplayStartForTest = null;
-                            replayStart.run();
-                        }
+                        hooks.beforeResumeReplay();
                         while (outCursor.hasNext()) {
                             long ts = outRecord.getTimestamp(cursorTimestampIndex);
                             if (replayMaxTs == Numbers.LONG_NULL || ts > replayMaxTs) {
@@ -9561,7 +8754,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     if (!isSparse && keyedReplay.isSparse()) {
                         materializeSparseFallback(route, keyedReplay);
                         isSparseFallback = true;
-                        sparsePublicationFallbackCount++;
+                        stats.inc(SPARSE_PUBLICATION_FALLBACK_COUNT);
                         LOG.info().$("live view open segment resume abandoned its sparse publication [view=")
                                 .$(viewName)
                                 .$(", replayedRows=").$(appendedRows)
@@ -9622,8 +8815,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
                     final long commitStart = System.nanoTime();
                     if (isSparse) {
-                        openSegmentSparseResumeCount++;
-                        sparsePublicationCount++;
+                        stats.inc(OPEN_SEGMENT_SPARSE_RESUME_COUNT);
+                        stats.inc(SPARSE_PUBLICATION_COUNT);
                         // Both derived rather than counted: every stored row of an affected
                         // key is superseded by the row the replay recomputed for it, so what
                         // the replay emitted beyond the exact insert delta is exactly that
@@ -9632,7 +8825,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         final long supersededRows = Math.max(0, appendedRows - insertedRowDelta);
                         final long rowsKept =
                                 Math.max(0, durableRowsBeforeRepair - anchorRowPosition - supersededRows);
-                        sparsePublicationRowsKept += rowsKept;
+                        stats.add(SPARSE_PUBLICATION_ROWS_KEPT, rowsKept);
                         LOG.info().$("live view open segment resumed sparsely [view=").$(viewName)
                                 .$(", replayedRows=").$(appendedRows)
                                 .$(", supersededRows=").$(supersededRows)
@@ -9712,10 +8905,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     isRepairAbandoned = true;
                 }
                 CairoException.rethrowCleanupFailure(failure);
-                if (simulateRepairCleanupFaultCountdownForTest >= 0 // @TestOnly, -1 in production
-                        && simulateRepairCleanupFaultCountdownForTest-- == 0) {
-                    throw new AssertionError("injected repair cleanup fault");
-                }
+                hooks.onRepairCleanupTail();
                 isCleanupCompleted = true;
             } finally {
                 if (isRepairAbandoned || !isCleanupCompleted) {
@@ -9923,12 +9113,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // And only now the disposition planning settled on, so live_views() never
             // names an executor whose rows the counters above do not carry yet.
             instance.publishCheckpointRepairOutcome();
-            repairRouteCounts.increment(route.getRoute());
+            stats.incRoute(route.getRoute());
             final long scanCommitApplyNanos = openSegmentRepairPhases.scanWindowWalAppendNanos
                     + openSegmentRepairPhases.commitNanos
                     + openSegmentRepairPhases.applyNanos;
             if (isAdaptiveSampleValid
-                    && !isOpenSegmentKeyedReplayForcedForTest
+                    && !hooks.isOpenSegmentKeyedReplayForced()
                     && !isSparseFallback
                     && (timelineCapture == null || timelineSplice != null)) {
                 final LiveViewCheckpointOpenSegmentCost elapsedCost = instance.getOpenSegmentRepairCost();
@@ -10003,10 +9193,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // it. A resume captures no scratch overlay, so ending the session takes
                 // nothing else apart.
                 Misc.free(timelineCapture);
-                if (simulateRepairCleanupFaultCountdownForTest >= 0 // @TestOnly, -1 in production
-                        && simulateRepairCleanupFaultCountdownForTest-- == 0) {
-                    throw new AssertionError("injected repair cleanup fault");
-                }
+                hooks.onRepairCleanupTail();
             } finally {
                 endRepairSession(instance, session);
                 if (isKeyed) {
@@ -10243,7 +9430,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             assert route.isIsolated() == (repairRuntime != null);
             final boolean isIsolated = repairRuntime != null;
             if (isIsolated) {
-                isolatedReplayTurnCount++;
+                stats.inc(ISOLATED_REPLAY_TURN_COUNT);
             }
             final WindowRecordCursorFactory replayWindowFactory = isIsolated ? repairRuntime.getWindowFactory() : windowFactory;
             final LiveViewWindow replayAnchorWindow = isIsolated ? repairRuntime.getAnchorWindow() : anchorWindow;
@@ -10366,10 +9553,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // of walking the live view's stored interval. This is the same proof the
                 // keyed resume uses; the only difference is that no anchor position exists
                 // to serve as the origin.
-                if (isColdKeyedTimelineFaultSimulatedForTest) {
-                    isColdKeyedTimelineFaultSimulatedForTest = false;
-                    throw CairoException.critical(0).put("simulated live view checkpoint row position fault");
-                }
+                hooks.beforeColdKeyedRowPositionRebase();
                 timelineCapture.collectEffectiveRowPositions(
                         session.getBoundaries(),
                         openSegmentArithmeticBoundaryPositions
@@ -10389,7 +9573,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         throw CairoException.critical(0).put("live view checkpoint row position overflow");
                     }
                 }
-                openSegmentArithmeticRowPositionCount++;
+                stats.inc(OPEN_SEGMENT_ARITHMETIC_ROW_POSITION_COUNT);
             }
             final long insertedRowDelta = route.getInsertedRowDelta();
             if (session != null) {
@@ -10752,10 +9936,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         isSparseAttempt
                                 );
                                 if (route.isColdOpenSegment()) {
-                                    openSegmentColdKeyedReplayCount++;
+                                    stats.inc(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT);
                                     instance.recordO3OpenSegmentColdKeyedReplay();
                                 } else {
-                                    keyedReplaySegmentCount++;
+                                    stats.inc(KEYED_REPLAY_SEGMENT_COUNT);
                                 }
                                 LOG.info().$("live view repair replayed by key [view=").$(viewName)
                                         .$(", origin=").$(route.isColdOpenSegment() ? "segment start" : "closed segment")
@@ -11152,7 +10336,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 final boolean isSparse = route.isSparsePublication();
                                 if (!isSparse && repairKeyedReplay.isSparse()) {
                                     materializeSparseFallback(route, repairKeyedReplay);
-                                    sparsePublicationFallbackCount++;
+                                    stats.inc(SPARSE_PUBLICATION_FALLBACK_COUNT);
                                     LOG.info().$("live view keyed repair abandoned its sparse publication [view=")
                                             .$(viewName)
                                             .$(", replayedRows=").$(appendedRows)
@@ -11205,14 +10389,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs, truncatedHead);
                                 }
                                 if (isSparse) {
-                                    sparsePublicationCount++;
+                                    stats.inc(SPARSE_PUBLICATION_COUNT);
                                     final long supersededRows = route.isColdOpenSegment()
                                             ? Math.max(0, appendedRows - insertedRowDelta)
                                             : repairKeyedReplay.getSupersededRows();
                                     final long rowsKept = route.isColdOpenSegment()
                                             ? Math.max(0, durableRowsReplaced - supersededRows)
                                             : repairKeyedReplay.getMergedRows();
-                                    sparsePublicationRowsKept += rowsKept;
+                                    stats.add(SPARSE_PUBLICATION_ROWS_KEPT, rowsKept);
                                     LOG.info().$("live view keyed repair published sparsely [view=").$(viewName)
                                             .$(", origin=").$(route.isColdOpenSegment() ? "segment start" : "closed segment")
                                             .$(", replayedRows=").$(appendedRows)
@@ -11337,7 +10521,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     Throwable failure = null;
                     if (!yielded) {
                         if (!repairKeyedReplay.isSparse()) {
-                            keyedReplayMergedRows += repairKeyedReplay.getMergedRows();
+                            stats.add(KEYED_REPLAY_MERGED_ROWS, repairKeyedReplay.getMergedRows());
                         }
                         failure = closeStoredRowsBestEffort(null, repairKeyedReplay);
                     }
@@ -11385,10 +10569,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // historical root and leave that replan with no anchor below the
                             // correction, which is the age-unbounded rebuild the timeline exists to
                             // avoid.
-                            if (isRepairUnwindCleanupFaultSimulatedForTest) { // @TestOnly, always false in production
-                                isRepairUnwindCleanupFaultSimulatedForTest = false;
-                                throw new AssertionError("injected repair unwind cleanup fault");
-                            }
+                            hooks.onRepairUnwindCleanup();
                         } catch (Throwable t) {
                             // The rethrow below propagates the first failure, as elsewhere in
                             // this cleanup. A throw here used to leave the block on its own and
@@ -11398,10 +10579,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
                     }
                     CairoException.rethrowCleanupFailure(failure);
-                    if (simulateRepairCleanupFaultCountdownForTest >= 0 // @TestOnly, -1 in production
-                            && simulateRepairCleanupFaultCountdownForTest-- == 0) {
-                        throw new AssertionError("injected repair cleanup fault");
-                    }
+                    hooks.onRepairCleanupTail();
                     isCleanupCompleted = true;
                 } finally {
                     if (!replayCompleted || (!yielded && !isCleanupCompleted)) {
@@ -11756,10 +10934,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         repairKeyedReplay.clear();
                     }
 
-                    if (simulateRepairCleanupFaultCountdownForTest >= 0 // @TestOnly, -1 in production
-                            && simulateRepairCleanupFaultCountdownForTest-- == 0) {
-                        throw new AssertionError("injected repair cleanup fault");
-                    }
+                    hooks.onRepairCleanupTail();
                 } finally {
                     endRepairSession(instance, session);
                 }
@@ -11777,7 +10952,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // an executor whose rows the counters above do not carry yet. A replay that
             // parked returned above and publishes on the turn that finishes it.
             instance.publishCheckpointRepairOutcome();
-            repairRouteCounts.increment(route.getRoute());
+            stats.incRoute(route.getRoute());
             // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
             // (effectiveSeqTxn - advanceTo); a wide gap is what forces the rebuild when no
             // sealed anchor sits below the ahead range's minimum in-view ts. scanLowTs /
@@ -11849,10 +11024,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
                     failure = Misc.freeBestEffort(failure, timelineCapture);
                     CairoException.rethrowCleanupFailure(failure);
-                    if (simulateRepairCleanupFaultCountdownForTest >= 0 // @TestOnly, -1 in production
-                            && simulateRepairCleanupFaultCountdownForTest-- == 0) {
-                        throw new AssertionError("injected repair cleanup fault");
-                    }
+                    hooks.onRepairCleanupTail();
                 } finally {
                     endRepairSession(instance, session);
                 }
@@ -11974,7 +11146,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (tracker.getWriterTxn() >= committedLvSeqTxn) {
             return true;
         }
-        if (!simulateRepairApplyFailureForTest) {
+        if (!hooks.isRepairApplySkipped()) {
             try {
                 applyLiveViewWal(token);
             } catch (Throwable t) {
@@ -16876,11 +16048,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // log, and lastTxn() reads it under the sequencer READ lock, so it cannot observe the
             // appender's half-published state.
             final long lastProcessedSeqTxn = instance.getLastProcessedSeqTxn();
-            final Runnable aheadGuardAction = simulateBaseCommitBetweenAheadGuardReadsForTest;
-            if (aheadGuardAction != null) {
-                simulateBaseCommitBetweenAheadGuardReadsForTest = null;
-                aheadGuardAction.run();
-            }
+            hooks.betweenAheadGuardReads();
             // Compare against the higher of the two base heads. On a primary the cached
             // sequencer head is authoritative: the sole appender keeps it current, and the
             // watermark can sit above writerTxn because the notification-driven refresh
@@ -17174,24 +16342,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Test-only seam: closes the armed close fault, if any, and returns the throwable its
-     * {@code close()} raised, so a caller can hand it to {@code Misc.freeBestEffort} as the primary
-     * of the same call that closes the real resource. Disarms one-shot. Returns null in production,
-     * where the field is never set, at a cost of one null check.
-     *
-     * @see #setSimulateBaseMetadataCloseFailureForTest
-     */
-    @TestOnly
-    private @Nullable Throwable consumeBaseMetadataCloseFaultForTest() {
-        if (simulateBaseMetadataCloseFailureForTest == null) {
-            return null;
-        }
-        final QuietCloseable closeFault = simulateBaseMetadataCloseFailureForTest;
-        simulateBaseMetadataCloseFailureForTest = null;
-        return Misc.freeBestEffort(null, closeFault);
-    }
-
-    /**
      * Decides whether the WAL-loss re-derive must refuse outright because the base's applied
      * metadata no longer resolves every column the view REFERENCES under the same name AND type
      * ({@link LiveViewInstance#findFirstMissingOrRetypedColumn}, the same predicate
@@ -17235,7 +16385,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             brokenColumn = instance.findFirstMissingOrRetypedColumn(baseMetadata);
         } catch (Throwable e) {
             Misc.free(baseMetadata, e);
-            consumeBaseMetadataCloseFaultForTest(); // @TestOnly no-op in production; releases an armed fault the close below never reaches
+            // Releases an armed fault the close below never reaches.
+            hooks.onBaseMetadataClose();
             LOG.error().$("live view could not read the applied base metadata before re-deriving, proceeding [view=")
                     .$(viewName)
                     .$(", error=").$(e).I$();
@@ -17253,11 +16404,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // Log the close failure and drop it: the caller's contract is that this check answers rather
         // than throws.
         //
-        // consumeBaseMetadataCloseFaultForTest() is null in production and costs one null check; a
-        // test arms it to make this very close report a failure. It sits INSIDE this statement so
-        // that the statement is what a mutation has to delete or move, and deleting it deletes the
-        // fault's consumption too.
-        final Throwable closeFailure = Misc.freeBestEffort(consumeBaseMetadataCloseFaultForTest(), baseMetadata);
+        // The hook sits INSIDE this statement so that the statement is what a mutation has to delete
+        // or move, and deleting it deletes the fault's consumption too.
+        final Throwable closeFailure = Misc.freeBestEffort(hooks.onBaseMetadataClose(), baseMetadata);
         if (closeFailure != null) {
             LOG.error().$("live view could not close the applied base metadata after the dependency check [view=")
                     .$(viewName)
@@ -17428,11 +16577,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
         try {
-            if (simulateBaseApplyDuringRederiveForTest != null) { // @TestOnly, always null in production
-                final Runnable baseApply = simulateBaseApplyDuringRederiveForTest;
-                simulateBaseApplyDuringRederiveForTest = null;
-                baseApply.run();
-            }
+            hooks.beforeRederiveReplay();
             // Drop any un-flushed lead the failed cycles left published (a lead-eligible view
             // between flushes carries a non-zero leadRowCount and a slot holding those rows). The
             // replay recomputes the whole view and rewrites the on-disk tier via REPLACE_RANGE, so
@@ -17519,8 +16664,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // The recompiled retry is the only thing separating this outcome from the plain success
             // path above - both leave the view valid over the same rows - so a test asserting the
             // outcome alone cannot tell them apart. Count the branch here, where it succeeded, and
-            // the plain path stays at 0. @TestOnly, read by LiveViewSmokeTest.
-            baseMetadataDriftRecompileCount++;
+            // the plain path stays at 0.
+            stats.inc(BASE_METADATA_DRIFT_RECOMPILE_COUNT);
             LOG.info().$("live view re-derived from the applied base after base WAL loss and a base metadata change [view=")
                     .$(viewName)
                     // Not baseAppliedSeqTxn: the recompiled recovery re-reads the base writer txn
@@ -17613,11 +16758,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .getMemPressureControl().isReadyToProcess()) {
             return false;
         }
-        if (simulatePeerTurnBeforeRefreshLatchForTest != null) { // @TestOnly, always null in production
-            final Runnable peerTurn = simulatePeerTurnBeforeRefreshLatchForTest;
-            simulatePeerTurnBeforeRefreshLatchForTest = null;
-            peerTurn.run();
-        }
+        hooks.beforeRefreshLatch();
         // Another worker already holds this view's refresh latch. Report no work so this
         // worker backs off instead of busy-rescanning the registry while the holder runs.
         if (!instance.tryLockForRefresh()) {
@@ -18074,10 +17215,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // The nested finally preserves the deliberate "free under the latch" ordering.
             try {
                 stagingBuffer = Misc.free(stagingBuffer);
-                if (simulateStagingBufferCloseFaultForTest) { // @TestOnly, always false in production
-                    simulateStagingBufferCloseFaultForTest = false;
-                    throw new AssertionError("injected staging-buffer close fault");
-                }
+                hooks.afterStagingBufferClose();
             } finally {
                 executionContext.ofRefreshingInstance(null);
                 instance.unlockAfterRefresh();

@@ -30,8 +30,8 @@ import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
-import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointSegmentDirectoryReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
@@ -677,7 +677,7 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             Assert.assertTrue(viewInstance().isCheckpointRecoveryBlocked());
             Assert.assertEquals(
                     "rebuild_blocked",
-                    LiveViewCheckpointRestoreRoute.name(viewInstance().getCheckpointRestoreRoute())
+                    LiveViewCheckpointRecoveryPhase.routeName(viewInstance().getCheckpointRestoreRoute())
             );
             assertViewRows(HIGHER_FRONTIER_SEEDED_ROWS);
         });
@@ -738,7 +738,7 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             );
             Assert.assertEquals(
                     "rebuild_blocked",
-                    LiveViewCheckpointRestoreRoute.name(viewInstance().getCheckpointRestoreRoute())
+                    LiveViewCheckpointRecoveryPhase.routeName(viewInstance().getCheckpointRestoreRoute())
             );
             assertViewRows("""
                     ts\tsym\ts
@@ -894,7 +894,7 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             Assert.assertTrue(viewInstance().isCheckpointRecoveryBlocked());
             Assert.assertEquals(
                     "rebuild_blocked",
-                    LiveViewCheckpointRestoreRoute.name(viewInstance().getCheckpointRestoreRoute())
+                    LiveViewCheckpointRecoveryPhase.routeName(viewInstance().getCheckpointRestoreRoute())
             );
         });
     }
@@ -942,7 +942,7 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             restartAndRefresh();
             Assert.assertEquals(
                     "rebuild_blocked",
-                    LiveViewCheckpointRestoreRoute.name(viewInstance().getCheckpointRestoreRoute())
+                    LiveViewCheckpointRecoveryPhase.routeName(viewInstance().getCheckpointRestoreRoute())
             );
             assertViewRows(HIGHER_FRONTIER_SEEDED_ROWS);
         });

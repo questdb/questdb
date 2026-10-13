@@ -30,7 +30,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
-import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
+import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
@@ -222,6 +222,13 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * The test hooks installed on {@code job}, installing them first if the job runs none.
+     */
+    protected static LiveViewTestRefreshHooks hooks(LiveViewRefreshJob job) {
+        return LiveViewTestRefreshHooks.install(job);
+    }
+
+    /**
      * Parses a microsecond timestamp literal, for the tests that hand raw timestamps to a
      * WalWriter or compare against a live view's persisted START FROM boundary.
      */
@@ -255,8 +262,8 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     private static void assertRestoreRoute(String viewName, int expected, LiveViewInstance instance) {
         Assert.assertEquals(
                 "live view '" + viewName + "' took the wrong restart recovery route",
-                LiveViewCheckpointRestoreRoute.name(expected),
-                LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute())
+                LiveViewCheckpointRecoveryPhase.routeName(expected),
+                LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute())
         );
     }
 
@@ -333,7 +340,7 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      */
     protected void assertRebuiltFromAppliedBase(String viewName) {
         final LiveViewInstance instance = restoreWitnessInstance(viewName);
-        assertRestoreRoute(viewName, LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD, instance);
+        assertRestoreRoute(viewName, LiveViewCheckpointRecoveryPhase.ROUTE_FALLBACK_REBUILD, instance);
         Assert.assertTrue(
                 "live view '" + viewName + "' took the rebuild route without starting a rebuild",
                 instance.getCheckpointRebuildAttempts() > 0
@@ -349,7 +356,7 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      */
     protected void assertUpgradeRebuilt(String viewName) {
         final LiveViewInstance instance = restoreWitnessInstance(viewName);
-        assertRestoreRoute(viewName, LiveViewCheckpointRestoreRoute.UPGRADE_REBUILD, instance);
+        assertRestoreRoute(viewName, LiveViewCheckpointRecoveryPhase.ROUTE_UPGRADE_REBUILD, instance);
         Assert.assertTrue(
                 "live view '" + viewName + "' took the upgrade route without starting a rebuild",
                 instance.getCheckpointRebuildAttempts() > 0
@@ -376,7 +383,7 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      */
     protected void assertRestoredFromTimeline(String viewName) {
         final LiveViewInstance instance = restoreWitnessInstance(viewName);
-        assertRestoreRoute(viewName, LiveViewCheckpointRestoreRoute.TIMELINE_RESTORE, instance);
+        assertRestoreRoute(viewName, LiveViewCheckpointRecoveryPhase.ROUTE_TIMELINE_RESTORE, instance);
         Assert.assertEquals(
                 "live view '" + viewName + "' restored, but only after rebuilding from the applied base first",
                 0L,

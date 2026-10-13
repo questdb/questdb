@@ -32,6 +32,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.lv.LiveViewRefreshStats.*;
+
 /**
  * Coverage for the uniqueness verdict a real segment repair produces: whether the output
  * it emits carries each {@code (designated timestamp, projected partition key)} pair once.
@@ -67,19 +69,19 @@ public class LiveViewCheckpointRepairUniquenessTest extends AbstractLiveViewTest
 
                 commit(correction("acct-1"), job);
 
-                Assert.assertEquals(1, job.outputUniquenessCheckedRepairsForTest());
-                Assert.assertEquals(1, job.outputUniquenessUniqueRepairsForTest());
-                Assert.assertEquals(0, job.outputUniquenessDuplicateRowsForTest());
-                Assert.assertEquals(0, job.outputUniquenessUncheckedRepairsForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OUTPUT_UNIQUENESS_CHECKED_REPAIRS));
+                Assert.assertEquals(1, job.getStatsForTest().get(OUTPUT_UNIQUENESS_UNIQUE_REPAIRS));
+                Assert.assertEquals(0, job.getStatsForTest().get(OUTPUT_UNIQUENESS_DUPLICATE_ROWS));
+                Assert.assertEquals(0, job.getStatsForTest().get(OUTPUT_UNIQUENESS_UNCHECKED_REPAIRS));
                 Assert.assertEquals(
                         "a group of one never widens the detector's scratch",
                         1,
-                        job.outputUniquenessMaxGroupRowsForTest()
+                        job.getStatsForTest().get(OUTPUT_UNIQUENESS_MAX_GROUP_ROWS)
                 );
                 Assert.assertEquals(
                         "the check walks exactly the rows the replacement carries",
                         rowsOnTheSecond(),
-                        job.outputUniquenessCheckedRowsForTest()
+                        job.getStatsForTest().get(OUTPUT_UNIQUENESS_CHECKED_ROWS)
                 );
                 assertViewMatchesRecompute();
             }
@@ -100,13 +102,13 @@ public class LiveViewCheckpointRepairUniquenessTest extends AbstractLiveViewTest
 
                 commit(correction("acct-1"), job);
 
-                Assert.assertEquals(1, job.outputUniquenessCheckedRepairsForTest());
-                Assert.assertEquals(1, job.outputUniquenessUniqueRepairsForTest());
-                Assert.assertEquals(0, job.outputUniquenessDuplicateRowsForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OUTPUT_UNIQUENESS_CHECKED_REPAIRS));
+                Assert.assertEquals(1, job.getStatsForTest().get(OUTPUT_UNIQUENESS_UNIQUE_REPAIRS));
+                Assert.assertEquals(0, job.getStatsForTest().get(OUTPUT_UNIQUENESS_DUPLICATE_ROWS));
                 Assert.assertEquals(
                         "the four accounts sharing one instant are one group",
                         ACCOUNTS,
-                        job.outputUniquenessMaxGroupRowsForTest()
+                        job.getStatsForTest().get(OUTPUT_UNIQUENESS_MAX_GROUP_ROWS)
                 );
                 assertViewMatchesRecompute();
             }
@@ -128,13 +130,13 @@ public class LiveViewCheckpointRepairUniquenessTest extends AbstractLiveViewTest
 
                 commit(correction("acct-2"), job);
 
-                Assert.assertEquals(1, job.outputUniquenessCheckedRepairsForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OUTPUT_UNIQUENESS_CHECKED_REPAIRS));
                 Assert.assertEquals(
                         "the segment's output holds a repeated pair, so it is not publishable sparsely",
                         0,
-                        job.outputUniquenessUniqueRepairsForTest()
+                        job.getStatsForTest().get(OUTPUT_UNIQUENESS_UNIQUE_REPAIRS)
                 );
-                Assert.assertEquals(1, job.outputUniquenessDuplicateRowsForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OUTPUT_UNIQUENESS_DUPLICATE_ROWS));
                 Assert.assertEquals(rowsBefore + 1, count("select count() from lv"));
                 assertViewMatchesRecompute();
             }
@@ -161,11 +163,11 @@ public class LiveViewCheckpointRepairUniquenessTest extends AbstractLiveViewTest
 
                 Assert.assertTrue(
                         "a one-row replay budget must park the segment repair on its turn budget",
-                        job.segmentYieldCountForTest() > 0
+                        job.getStatsForTest().get(SEGMENT_YIELD_COUNT) > 0
                 );
-                Assert.assertEquals(1, job.outputUniquenessCheckedRepairsForTest());
-                Assert.assertEquals(1, job.outputUniquenessDuplicateRowsForTest());
-                Assert.assertEquals(0, job.outputUniquenessUniqueRepairsForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OUTPUT_UNIQUENESS_CHECKED_REPAIRS));
+                Assert.assertEquals(1, job.getStatsForTest().get(OUTPUT_UNIQUENESS_DUPLICATE_ROWS));
+                Assert.assertEquals(0, job.getStatsForTest().get(OUTPUT_UNIQUENESS_UNIQUE_REPAIRS));
                 assertViewMatchesRecompute();
             }
         });
@@ -185,9 +187,9 @@ public class LiveViewCheckpointRepairUniquenessTest extends AbstractLiveViewTest
 
                 commit(correction("acct-1"), job);
 
-                Assert.assertEquals(1, job.outputUniquenessUncheckedRepairsForTest());
-                Assert.assertEquals(0, job.outputUniquenessCheckedRepairsForTest());
-                Assert.assertEquals(0, job.outputUniquenessCheckedRowsForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OUTPUT_UNIQUENESS_UNCHECKED_REPAIRS));
+                Assert.assertEquals(0, job.getStatsForTest().get(OUTPUT_UNIQUENESS_CHECKED_REPAIRS));
+                Assert.assertEquals(0, job.getStatsForTest().get(OUTPUT_UNIQUENESS_CHECKED_ROWS));
                 assertNoRefreshFaults("lv");
             }
         });

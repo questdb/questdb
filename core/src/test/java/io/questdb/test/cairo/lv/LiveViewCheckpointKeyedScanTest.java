@@ -49,6 +49,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.lv.LiveViewRefreshStats.*;
+
 /**
  * Coverage for the pieces a keyed repair is made of: the shared partition identity a view
  * names its keys through, the forward index-backed scan that follows those keys' rows, and
@@ -100,26 +102,26 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 commit(row(5, 1, "acct-1"), job);
-                Assert.assertEquals(0, job.keyedScanPricedCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT));
 
                 commit(row(2, 3, "acct-1"), job);
 
                 Assert.assertEquals(
                         "the corrected closed day must be priced exactly once",
                         1,
-                        job.keyedScanPricedCountForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT)
                 );
-                Assert.assertEquals(0, job.keyedScanUnpricedCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_UNPRICED_COUNT));
                 Assert.assertEquals(
                         "one account of four is less to read than the whole day",
                         1,
-                        job.keyedScanCheaperCountForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT)
                 );
                 Assert.assertTrue(
                         "the keyed scan must read fewer rows than the whole segment: posting="
-                                + job.keyedScanPostingRowsForTest()
-                                + " whole=" + job.keyedScanWholeRangeRowsForTest(),
-                        job.keyedScanPostingRowsForTest() < job.keyedScanWholeRangeRowsForTest()
+                                + job.getStatsForTest().get(KEYED_SCAN_POSTING_ROWS)
+                                + " whole=" + job.getStatsForTest().get(KEYED_SCAN_WHOLE_RANGE_ROWS),
+                        job.getStatsForTest().get(KEYED_SCAN_POSTING_ROWS) < job.getStatsForTest().get(KEYED_SCAN_WHOLE_RANGE_ROWS)
                 );
                 // The corrected account holds ten seeded rows in that day plus the
                 // correction, so anything below eleven means the key never resolved to the
@@ -127,12 +129,12 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the priced keyed scan must find the corrected account's rows",
                         11,
-                        job.keyedScanPostingRowsForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_POSTING_ROWS)
                 );
                 Assert.assertEquals(
                         "the repair itself is unchanged - the segment still replays whole",
                         1,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 assertViewMatchesRecompute();
             }
@@ -168,10 +170,10 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the repair's own estimate is what the query below checks up on",
                         1,
-                        job.keyedScanPricedCountForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT)
                 );
-                Assert.assertEquals(11, job.keyedScanPostingRowsForTest());
-                Assert.assertEquals(0, job.keyedScanCheaperCountForTest());
+                Assert.assertEquals(11, job.getStatsForTest().get(KEYED_SCAN_POSTING_ROWS));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT));
 
                 final String indexed = "select count() from tx "
                         + "where created_at in '2026-01-02' and account_id = 'acct-1'";
@@ -226,13 +228,13 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
 
                 commit(row(2, 3, "acct-1") + ", " + row(2, 4, "acct-2"), job);
 
-                Assert.assertEquals(0, job.keyedScanPricedCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT));
                 Assert.assertEquals(
                         "a segment past its key budget must be reported unpriced",
                         1,
-                        job.keyedScanUnpricedCountForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_UNPRICED_COUNT)
                 );
-                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -262,7 +264,7 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                         + "FROM long_sequence(" + WIDE_REPAIR_KEYS + ")");
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
-                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                 final LiveViewCheckpointSegmentChangeSet changeSet = job.segmentChangeSetForTest();
                 Assert.assertEquals(
                         "the walk must have collected every account the correction carried, or the case covers nothing",
@@ -274,7 +276,7 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
 
                 // The next repair on the worker is a narrow one.
                 commit(row(3, 3, "acct-1"), job);
-                Assert.assertEquals(2, job.segmentRepairCountForTest());
+                Assert.assertEquals(2, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                 final long keyListBytesAfterNextRepair = LiveViewCheckpointSegmentChangeSetTest.keyListBytes(changeSet);
                 assertViewMatchesRecompute();
 
@@ -317,20 +319,20 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                     Assert.assertEquals(
                             "a segment estimated at zero rows must not walk its keys' postings",
                             0,
-                            job.keyedScanPostingRowsForTest()
+                            job.getStatsForTest().get(KEYED_SCAN_POSTING_ROWS)
                     );
-                    Assert.assertEquals(0, job.keyedScanPricedCountForTest());
-                    Assert.assertEquals(0, job.keyedScanWholeRangeRowsForTest());
-                    Assert.assertEquals(0, job.keyedScanCheaperCountForTest());
+                    Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT));
+                    Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_WHOLE_RANGE_ROWS));
+                    Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT));
                     Assert.assertEquals(
                             "the skipped segment reads whole, which is what an unpriced one does",
                             correction,
-                            job.keyedScanUnpricedCountForTest()
+                            job.getStatsForTest().get(KEYED_SCAN_UNPRICED_COUNT)
                     );
                     Assert.assertEquals(
                             "the repair itself is unchanged - the segment still replays whole",
                             correction,
-                            job.segmentRepairCountForTest()
+                            job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                     );
                 }
 
@@ -362,17 +364,17 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "a segment at or below the keyed setup floor must not walk its keys' postings",
                         0,
-                        job.keyedScanPostingRowsForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_POSTING_ROWS)
                 );
-                Assert.assertEquals(0, job.keyedScanPricedCountForTest());
-                Assert.assertEquals(0, job.keyedScanWholeRangeRowsForTest());
-                Assert.assertEquals(0, job.keyedScanCheaperCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_WHOLE_RANGE_ROWS));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT));
                 Assert.assertEquals(
                         "the skipped segment reads whole, which is what an unpriced one does",
                         1,
-                        job.keyedScanUnpricedCountForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_UNPRICED_COUNT)
                 );
-                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                 // acct-1 carries its ten seeded rows and the correction, 1 to 11, and each
                 // other account its ten seeded rows, 1 to 10: 66 + 3 * 55.
                 assertQuery("""
@@ -417,7 +419,7 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 commit(row(3, 1, "filler"), job);
-                Assert.assertEquals(0, job.keyedScanPricedCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT));
 
                 execute("INSERT INTO tx SELECT "
                         + "timestamp_sequence('2026-01-02T23:30:00.000000Z', 1), "
@@ -427,16 +429,16 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
 
-                Assert.assertEquals(1, job.keyedScanPricedCountForTest());
-                Assert.assertEquals(6_100, job.keyedScanWholeRangeRowsForTest());
-                Assert.assertEquals(0, job.keyedScanCheaperCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT));
+                Assert.assertEquals(6_100, job.getStatsForTest().get(KEYED_SCAN_WHOLE_RANGE_ROWS));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT));
                 Assert.assertEquals(
                         "pricing must stop once the setup outprices the whole day, before it"
                                 + " reaches the last hour's partition and the new keys' postings",
                         0,
-                        job.keyedScanPostingRowsForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_POSTING_ROWS)
                 );
-                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -468,12 +470,12 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "a cold replay estimated at zero rows must not walk its keys' postings",
                         0,
-                        job.openSegmentColdKeyedPostingRowsForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_POSTING_ROWS)
                 );
-                Assert.assertEquals(0, job.openSegmentColdKeyedPricedCountForTest());
-                Assert.assertEquals(1, job.openSegmentColdKeyedUnpricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentColdKeyedCheaperCountForTest());
-                Assert.assertEquals(0, job.openSegmentColdKeyedReplayCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_PRICED_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_UNPRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_CHEAPER_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
 
                 // The cold replay leaves a root at the old 23:00:01.000500 frontier. An
                 // in-order row moves the runtime past it, and a correction between the two
@@ -490,21 +492,21 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 viewInstance().getOpenSegmentRepairCost().setRatesForTest(1, 1, 1, 1, 1, 1, 1, 1, 1, 1);
                 commit("('2026-01-02T23:00:01.000600Z', 'acct-1', 1.0)", job);
 
-                Assert.assertEquals(1, job.openSegmentKeyedPricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedUnpricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedWholeRangeRowsForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_UNPRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_WHOLE_RANGE_ROWS));
                 Assert.assertEquals(
                         "a restore-bearing resume estimated at zero rows must stop counting at the"
                                 + " override's break-even",
                         22,
-                        job.openSegmentKeyedPostingRowsForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_POSTING_ROWS)
                 );
                 // The route the full count picked: the override declines, and the resume
                 // reads the whole range off the restored root.
-                Assert.assertEquals(0, job.openSegmentKeyedCheaperCountForTest());
-                Assert.assertEquals(0, job.openSegmentRestoreAwareCheaperCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
-                Assert.assertEquals(0, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_RESTORE_AWARE_CHEAPER_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT));
 
                 // The open anchor now holds five rows: 23:00:01.000000, .000200, .000500,
                 // .000600 and .000700.
@@ -533,16 +535,16 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                         job
                 );
 
-                Assert.assertEquals(1, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT));
                 Assert.assertEquals(
                         "a reusable resume estimated at zero rows must not walk its keys' postings",
                         0,
-                        job.openSegmentKeyedPostingRowsForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_POSTING_ROWS)
                 );
-                Assert.assertEquals(0, job.openSegmentKeyedPricedCountForTest());
-                Assert.assertEquals(1, job.openSegmentKeyedUnpricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedCheaperCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_UNPRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
 
                 // The open anchor holds 23:00:01.000000, .000500, .000800 and .000900.
                 assertNarrowAnchorTail(5, 11);
@@ -572,17 +574,17 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 commit("('2026-01-02T23:00:01.000700Z', 'acct-1', 1.0)", job);
                 commit("('2026-01-02T23:00:01.000600Z', 'acct-1', 1.0)", job);
 
-                Assert.assertEquals(0, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT));
                 Assert.assertEquals(
                         "a resume whose restore no keyed price undercuts must not walk its keys' postings",
                         0,
-                        job.openSegmentKeyedPostingRowsForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_POSTING_ROWS)
                 );
-                Assert.assertEquals(0, job.openSegmentKeyedPricedCountForTest());
-                Assert.assertEquals(1, job.openSegmentKeyedUnpricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedCheaperCountForTest());
-                Assert.assertEquals(0, job.openSegmentRestoreAwareCheaperCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_UNPRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_RESTORE_AWARE_CHEAPER_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
 
                 // The open anchor holds 23:00:01.000000, .000500, .000600 and .000700.
                 assertNarrowAnchorTail(5, 11);
@@ -614,26 +616,26 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
                 viewInstance().getOpenSegmentRepairCost().setRatesForTest(1_000_000_000L, 1, 1, 1, 1, 1, 1, 1, 1, 1);
                 commit("('2026-01-02T23:00:01.000600Z', 'acct-1', 1.0)", job);
 
-                Assert.assertEquals(1, job.openSegmentKeyedPricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedUnpricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedWholeRangeRowsForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_UNPRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_WHOLE_RANGE_ROWS));
                 Assert.assertEquals(
                         "a count below the break-even must reach every posting the account holds",
                         505,
-                        job.openSegmentKeyedPostingRowsForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_POSTING_ROWS)
                 );
                 Assert.assertEquals(
                         "the row verdict cannot prefer a keyed scan over a zero-row estimate",
                         0,
-                        job.openSegmentKeyedCheaperCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT)
                 );
                 Assert.assertEquals(
                         "the restore must still override it",
                         1,
-                        job.openSegmentRestoreAwareCheaperCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_RESTORE_AWARE_CHEAPER_COUNT)
                 );
-                Assert.assertEquals(1, job.openSegmentKeyedResumeCountForTest());
-                Assert.assertEquals(0, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT));
 
                 // The open anchor holds 23:00:01.000000, .000500, .000600 and .000700.
                 assertNarrowAnchorTail(5, 11);
@@ -655,9 +657,9 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
 
                 commit(row(2, 3, "acct-1"), job);
 
-                Assert.assertEquals(0, job.keyedScanPricedCountForTest());
-                Assert.assertEquals(0, job.keyedScanUnpricedCountForTest());
-                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_UNPRICED_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                 Assert.assertEquals(
                         "an unindexed SYMBOL key names no column a repair could seek through",
                         -1,
@@ -1499,7 +1501,7 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
             execute("INSERT INTO " + base + " VALUES ('2026-01-03T00:00:00.000000Z', 'acct-0', 1.0)");
             drainWalQueue();
             driveRefreshToQuiescence(job);
-            Assert.assertEquals("an in-order day closes without a repair to price", 0, job.keyedScanPricedCountForTest());
+            Assert.assertEquals("an in-order day closes without a repair to price", 0, job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT));
 
             // The correction: one late row of one account, inside the day that just closed. Its
             // timestamp deliberately misses the seed's stride, so no two rows of the account share
@@ -1511,21 +1513,21 @@ public class LiveViewCheckpointKeyedScanTest extends AbstractLiveViewTest {
             Assert.assertEquals(
                     "the corrected closed day must be priced exactly once",
                     1,
-                    job.keyedScanPricedCountForTest()
+                    job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT)
             );
-            Assert.assertEquals(0, job.keyedScanUnpricedCountForTest());
+            Assert.assertEquals(0, job.getStatsForTest().get(KEYED_SCAN_UNPRICED_COUNT));
             Assert.assertEquals(
                     "one account of eight across the day, plus the correction",
                     501,
-                    job.keyedScanPostingRowsForTest()
+                    job.getStatsForTest().get(KEYED_SCAN_POSTING_ROWS)
             );
             Assert.assertEquals(
                     "the whole day, plus the correction",
                     4_001,
-                    job.keyedScanWholeRangeRowsForTest()
+                    job.getStatsForTest().get(KEYED_SCAN_WHOLE_RANGE_ROWS)
             );
             assertViewMatchesRecompute(base, view);
-            return job.keyedScanCheaperCountForTest();
+            return job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT);
         }
     }
 

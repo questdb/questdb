@@ -2956,7 +2956,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 final long rowsBefore = instance.getLvRowsTotal();
                 Assert.assertEquals(HISTORY_COMMITS, rowsBefore);
 
-                job.setSimulateRepairApplyFailureForTest(true);
+                hooks(job).setSimulateRepairApplyFailure(true);
                 setCurrentMicros(currentMicros + 200_000);
                 execute("INSERT INTO base VALUES ('" + timestamp(25) + "', 'a', 100)");
                 drainWalQueue();
@@ -2990,7 +2990,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 // consumed, so the next tick re-detects the same out-of-order row and
                 // rebuilds it - this time against a table that holds the replacement the
                 // fallback scan's apply retry landed.
-                job.setSimulateRepairApplyFailureForTest(false);
+                hooks(job).setSimulateRepairApplyFailure(false);
                 driveRefreshToQuiescence(job);
 
                 Assert.assertEquals(Numbers.LONG_NULL, instance.getPendingReplacementLvSeqTxn());
@@ -3042,14 +3042,14 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 buildHistory(job);
 
-                job.setSimulateRepairApplyFailureForTest(true);
+                hooks(job).setSimulateRepairApplyFailure(true);
                 setCurrentMicros(currentMicros + 200_000);
                 execute("INSERT INTO base VALUES ('" + timestamp(25) + "', 'a', 100)");
                 drainWalQueue();
                 Assert.assertTrue(job.run());
                 drainWalQueue();
 
-                job.setSimulateRepairApplyFailureForTest(false);
+                hooks(job).setSimulateRepairApplyFailure(false);
                 driveRefreshToQuiescence(job);
                 // 130s is 10 seconds past the 120s frontier, so the RANGE 30 SECOND
                 // frame holds 100s, 110s, 120s and itself: 10 + 11 + 12 + 13 = 46.

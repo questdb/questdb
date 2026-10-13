@@ -61,6 +61,9 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static io.questdb.cairo.lv.LiveViewRefreshStats.SEGMENT_REPAIR_COUNT;
+import static io.questdb.cairo.lv.LiveViewRefreshStats.SEGMENT_YIELD_COUNT;
+
 /**
  * Coverage for the segment yield: one anchor segment's repair may stop on the refresh
  * turn's budget and continue on a later turn, and the loop it belongs to continues with it.
@@ -347,13 +350,13 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 drainWalQueue();
 
                 // The next cleanup chain this worker runs, which is the correction's own.
-                job.setSimulateRepairCleanupFaultForTest(0);
+                hooks(job).setSimulateRepairCleanupFault(0);
                 runOneRefreshPass(job);
 
                 Assert.assertFalse(
                         "the injected cleanup fault never fired, so no repair cleanup ran and the"
                                 + " case pinned nothing",
-                        job.isRepairCleanupFaultArmedForTest()
+                        hooks(job).isRepairCleanupFaultArmed()
                 );
                 Assert.assertNull(
                         "a repair that faulted must leave nothing parked on the view",
@@ -415,13 +418,13 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
 
                 // Let the correction's replay cleanup through, and fault the publication tail
                 // behind it.
-                job.setSimulateRepairCleanupFaultForTest(1);
+                hooks(job).setSimulateRepairCleanupFault(1);
                 runOneRefreshPass(job);
 
                 Assert.assertFalse(
                         "the injected cleanup fault never fired, so the publication tail never ran"
                                 + " and the case pinned nothing",
-                        job.isRepairCleanupFaultArmedForTest()
+                        hooks(job).isRepairCleanupFaultArmed()
                 );
                 Assert.assertNull(
                         "a repair that faulted must leave nothing parked on the view",
@@ -688,7 +691,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 drainWalQueue();
 
                 final ReadThrowingGroupKeySet injectedCopyFailure = failTheFirstUniquenessCopy(job);
-                job.setSimulateRepairUnwindCleanupFaultForTest();
+                hooks(job).setSimulateRepairUnwindCleanupFault();
                 runOneRefreshPass(job);
 
                 Assert.assertTrue(
@@ -701,7 +704,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 Assert.assertFalse(
                         "the injected cleanup fault never fired, so the unwind never reached the cleanup"
                                 + " and the case pinned nothing",
-                        job.isRepairUnwindCleanupFaultArmedForTest()
+                        hooks(job).isRepairUnwindCleanupFaultArmed()
                 );
                 Assert.assertNull(
                         "a park that failed must leave no repair parked on the view",
@@ -807,7 +810,7 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 Assert.assertSame("the worker that parked the repair must own it", owner, parked.getOwner());
                 Assert.assertTrue(
                         "a one-row replay budget must park the first segment of the loop",
-                        owner.segmentYieldCountForTest() > 0
+                        owner.getStatsForTest().get(SEGMENT_YIELD_COUNT) > 0
                 );
 
                 // The stranger's turn. Re-publishing the base head enqueues a task for tx
@@ -847,9 +850,9 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the foreign worker must not repair a segment off a snapshot it does not hold",
                         0,
-                        foreign.segmentRepairCountForTest()
+                        foreign.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
-                Assert.assertEquals(0, foreign.segmentYieldCountForTest());
+                Assert.assertEquals(0, foreign.getStatsForTest().get(SEGMENT_YIELD_COUNT));
                 Assert.assertEquals(
                         "a backed-off pass must not consume the change the parked loop still owes",
                         processedBeforeForeign,
@@ -885,12 +888,12 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "both segments must be repaired, each exactly once, across the foreign pass",
                         2,
-                        owner.segmentRepairCountForTest()
+                        owner.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 Assert.assertEquals(
                         "the foreign worker must have repaired nothing at all",
                         0,
-                        foreign.segmentRepairCountForTest()
+                        foreign.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 Assert.assertEquals(
                         "the loop's last segment must advance the watermark over the whole change",
@@ -1541,12 +1544,12 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
 
                 Assert.assertTrue(
                         "a one-row replay budget must take the segment repair across several turns",
-                        job.segmentYieldCountForTest() > 0
+                        job.getStatsForTest().get(SEGMENT_YIELD_COUNT) > 0
                 );
                 Assert.assertEquals(
                         "the parked segment must publish exactly once",
                         1,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 Assert.assertEquals(
                         "the loop's last segment must advance the watermark over the whole change",
@@ -1579,12 +1582,12 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
 
                 Assert.assertTrue(
                         "a one-row replay budget must take the segment repair across several turns",
-                        job.segmentYieldCountForTest() > 0
+                        job.getStatsForTest().get(SEGMENT_YIELD_COUNT) > 0
                 );
                 Assert.assertEquals(
                         "the closed segment must be repaired once, not once per re-classification",
                         1,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 Assert.assertEquals(
                         "the residual must run on the turn that finished the loop, consuming the change",
@@ -1644,9 +1647,9 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "a declined yield must carry the whole segment inside one turn",
                         0,
-                        job.segmentYieldCountForTest()
+                        job.getStatsForTest().get(SEGMENT_YIELD_COUNT)
                 );
-                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -1671,12 +1674,12 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
 
                 Assert.assertTrue(
                         "a one-row replay budget must park the first segment of the loop",
-                        job.segmentYieldCountForTest() > 0
+                        job.getStatsForTest().get(SEGMENT_YIELD_COUNT) > 0
                 );
                 Assert.assertEquals(
                         "both segments must be repaired, and each exactly once",
                         2,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 Assert.assertEquals(
                         "the loop's last segment must advance the watermark over the whole change",

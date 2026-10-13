@@ -68,6 +68,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import static io.questdb.cairo.lv.LiveViewRefreshStats.SEGMENT_REPAIR_COUNT;
+
 /**
  * The live-view ANCHOR runtime dispatches {@code resetPartition} to the subset of window
  * functions {@code SqlCodeGenerator} collects as "anchorable". Membership of that subset
@@ -2075,7 +2077,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                         .noLeakCheck()
                         .expectSize()
                         .returns(expectedBeforeLate);
-                final long segmentRepairsBeforeLate = job.segmentRepairCountForTest();
+                final long segmentRepairsBeforeLate = job.getStatsForTest().get(SEGMENT_REPAIR_COUNT);
 
                 for (String lateCommit : lateCommits) {
                     execute("INSERT INTO base (ts, sym, y) VALUES " + lateCommit);
@@ -2085,7 +2087,7 @@ public class LiveViewAnchorResetScopeTest extends AbstractLiveViewTest {
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
                 assertNoRefreshFaults("lv");
-                final long segmentRepairs = job.segmentRepairCountForTest() - segmentRepairsBeforeLate;
+                final long segmentRepairs = job.getStatsForTest().get(SEGMENT_REPAIR_COUNT) - segmentRepairsBeforeLate;
 
                 execute("CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM BEGINNING AS " + select);
                 drainWalQueue();

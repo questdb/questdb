@@ -62,6 +62,8 @@ import org.junit.Test;
 
 import java.lang.reflect.Field;
 
+import static io.questdb.cairo.lv.LiveViewRefreshStats.*;
+
 /**
  * Coverage for the repair of a correction that lands in the <b>open</b> anchor segment -
  * the one the runtime is still standing in, which the resume repairs by replaying every
@@ -112,47 +114,47 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 // no predecessor to resume from and the replay starts cold at the day origin.
                 commit(row(3, 2, 35, "acct-1"), job);
 
-                Assert.assertEquals(1, job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT));
+                Assert.assertEquals(1, job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT));
                 LiveViewCheckpointRepairRouteTest.assertLastRepairRoute(
                         job,
                         LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT,
                         LiveViewCheckpointRepairRoute.RUNTIME_ISOLATED,
                         LiveViewCheckpointRepairRoute.PUBLICATION_SPARSE_UPSERT
                 );
-                Assert.assertEquals(1, job.openSegmentColdKeyedPricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentColdKeyedUnpricedCountForTest());
-                Assert.assertEquals(1, job.openSegmentColdKeyedCheaperCountForTest());
-                Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_PRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_UNPRICED_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_CHEAPER_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
                 assertQuery("SELECT o3_open_segment_keyed_resume_count, "
                         + "o3_open_segment_cold_keyed_replay_count FROM live_views()")
                         .noLeakCheck()
                         .noRandomAccess()
                         .returns("o3_open_segment_keyed_resume_count\t"
                                 + "o3_open_segment_cold_keyed_replay_count\n0\t1\n");
-                Assert.assertEquals(0, job.keyedReplaySegmentCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
                 Assert.assertTrue(
-                        job.openSegmentColdKeyedPostingRowsForTest()
-                                < job.openSegmentColdKeyedWholeRangeRowsForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_POSTING_ROWS)
+                                < job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_WHOLE_RANGE_ROWS)
                 );
                 Assert.assertEquals(
-                        job.openSegmentColdKeyedPostingRowsForTest(),
+                        job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_POSTING_ROWS),
                         instance.getO3ReplayScanRows() - scanRowsBefore
                 );
                 Assert.assertEquals(
                         "checkpoint positions must come from the exact insert delta, not a stored-row scan",
                         1,
-                        job.openSegmentArithmeticRowPositionCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_ARITHMETIC_ROW_POSITION_COUNT)
                 );
                 Assert.assertEquals(
                         "a sparse cold repair must leave unaffected stored rows in place",
                         0,
-                        job.keyedReplayMergedRowsForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                 );
-                Assert.assertTrue(job.transplantedKeyCountForTest() > 0);
-                Assert.assertEquals(1, job.sparsePublicationCountForTest());
-                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
-                Assert.assertTrue(job.sparsePublicationRowsKeptForTest() > 0);
+                Assert.assertTrue(job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT) > 0);
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
+                Assert.assertTrue(job.getStatsForTest().get(SPARSE_PUBLICATION_ROWS_KEPT) > 0);
                 assertViewMatchesRecompute();
             }
         });
@@ -183,13 +185,13 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 openTheDayAboveARoot(job);
 
                 // The resume's own replay cleanup is the next chain this worker runs.
-                job.setSimulateRepairCleanupFaultForTest(0);
+                hooks(job).setSimulateRepairCleanupFault(0);
                 commit(row(4, 2, 35, "acct-1"), job);
 
                 Assert.assertFalse(
                         "the injected cleanup fault never fired, so the resume's cleanup never ran"
                                 + " and the case pinned nothing",
-                        job.isRepairCleanupFaultArmedForTest()
+                        hooks(job).isRepairCleanupFaultArmed()
                 );
                 Assert.assertEquals(
                         "the injected cleanup fault must cost exactly one refresh fault",
@@ -222,13 +224,13 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 openTheDayAboveARoot(job);
 
                 // Let the resume's replay cleanup through, and fault the tail behind it.
-                job.setSimulateRepairCleanupFaultForTest(1);
+                hooks(job).setSimulateRepairCleanupFault(1);
                 commit(row(4, 2, 35, "acct-1"), job);
 
                 Assert.assertFalse(
                         "the injected cleanup fault never fired, so the resume's publication tail"
                                 + " never ran and the case pinned nothing",
-                        job.isRepairCleanupFaultArmedForTest()
+                        hooks(job).isRepairCleanupFaultArmed()
                 );
                 Assert.assertEquals(
                         "the injected cleanup fault must cost exactly one refresh fault",
@@ -254,7 +256,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 // Same correction as the cold keyed route's own case: it sits below the
                 // seed's single head root, so the replay starts cold at the day origin and
                 // opens the stored-row merge in the prologue.
-                job.setSimulateColdKeyedTimelineFaultForTest(true);
+                hooks(job).setSimulateColdKeyedTimelineFault(true);
                 commit(row(3, 2, 35, "acct-1"), job);
 
                 Assert.assertEquals(
@@ -312,14 +314,14 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                     // beside the primary and owes it a hand-back. One refresh turn only, the way
                     // a worker would run it: driving to quiescence would let a later tick read
                     // the dirty mark and rebuild, which is the recovery a restart never sees.
-                    job.setSimulateKeyedTransplantFaultForTest(true);
+                    hooks(job).setSimulateKeyedTransplantFault(true);
                     execute("insert into tx values " + row(3, 2, 35, "acct-1"));
                     drainWalQueue();
                     setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                     Assert.assertTrue("the turn must find the correction", job.run());
                     Assert.assertFalse(
                             "the injected transplant fault never fired, so the case pinned nothing",
-                            job.isKeyedTransplantFaultArmedForTest()
+                            hooks(job).isKeyedTransplantFaultArmed()
                     );
                     // The fault fires after the freeze, so the transplant unwound holding the
                     // payloads it froze. They stay for the next transplant to clear, and the
@@ -385,14 +387,14 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
 
                 // The prologue throws, and the chain its unwind runs is the next one this worker
                 // reaches - so the cleanup fault lands on that chain rather than on a replay's.
-                job.setSimulateColdKeyedTimelineFaultForTest(true);
-                job.setSimulateRepairCleanupFaultForTest(0);
+                hooks(job).setSimulateColdKeyedTimelineFault(true);
+                hooks(job).setSimulateRepairCleanupFault(0);
                 commit(row(3, 2, 35, "acct-1"), job);
 
                 Assert.assertFalse(
                         "the injected cleanup fault never fired, so the prologue's unwind never"
                                 + " reached the cleanup and the case pinned nothing",
-                        job.isRepairCleanupFaultArmedForTest()
+                        hooks(job).isRepairCleanupFaultArmed()
                 );
                 Assert.assertNull(
                         "a repair whose prologue faulted must leave nothing parked on the view",
@@ -452,7 +454,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                     fault.installOn(instance);
                     // Same correction as the cold keyed route's own case: the prologue opens the
                     // stored-row merge, and then throws.
-                    job.setSimulateColdKeyedTimelineFaultForTest(true);
+                    hooks(job).setSimulateColdKeyedTimelineFault(true);
                     commit(row(3, 2, 35, "acct-1"), job);
                 } finally {
                     fault.returnHeldReader();
@@ -509,7 +511,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 fault.assertCloseFailedOnTheRemap();
                 Assert.assertTrue(
                         "the correction must have taken the cold keyed route",
-                        job.openSegmentColdKeyedReplayCountForTest() > 0
+                        job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT) > 0
                 );
                 Assert.assertNull(
                         "a repair whose cleanup faulted must leave nothing parked on the view",
@@ -543,8 +545,8 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 commit(row(3, 2, 35, "acct-1"), job);
-                Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
-                Assert.assertEquals(1, job.sparsePublicationCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
                 assertViewMatchesRecompute();
             }
 
@@ -572,14 +574,14 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
 
                 commit(row(3, 2, 35, "acct-1"), job);
 
-                Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
                 Assert.assertTrue(
                         "a cold keyed repair must honor the configured replay budget",
                         instance.getCheckpointRepairResumes() > resumesBefore
                 );
                 // Every resumed turn continued on the route the first turn decided, and the
                 // repair counts once, on the turn that published it.
-                Assert.assertEquals(1, job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT));
+                Assert.assertEquals(1, job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT));
                 Assert.assertEquals(
                         LiveViewCheckpointRepairRoute.routeName(LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT),
                         LiveViewCheckpointRepairRoute.routeName(job.repairRouteForTest().getRoute())
@@ -588,7 +590,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertTrue(job.repairRouteForTest().isIsolated());
                 Assert.assertTrue(
                         "the repair must have handed its keys back",
-                        job.transplantedKeyCountForTest() > 0
+                        job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT) > 0
                 );
                 assertViewMatchesRecompute();
 
@@ -630,7 +632,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                                 .isIndexedForwardTimestampRangeSupported(BASE_KEY_COLUMN_INDEX)
                 );
 
-                job.setForceOpenSegmentKeyedReplayForTest(true);
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
                 final long resumesBefore = instance.getCheckpointRepairResumes();
 
                 commit(row(3, 2, 35, "acct-1"), job);
@@ -642,13 +644,13 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertTrue(
                         "the cold keyed route must have been taken, or this drives nothing:"
                                 + " the transplant is gated on it",
-                        job.transplantedKeyCountForTest() > 0
+                        job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT) > 0
                 );
                 Assert.assertEquals(
                         "the replay must have declined the indexed substitution, which is what"
                                 + " leaves the cold route standing with the keyed one cleared",
                         0,
-                        job.openSegmentColdKeyedReplayCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT)
                 );
                 assertViewMatchesRecompute();
 
@@ -682,10 +684,10 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 // upsert on the view's identity would collapse the two output rows.
                 commit(row(3, 2, 10, "acct-1"), job);
 
-                Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
-                Assert.assertEquals(0, job.sparsePublicationCountForTest());
-                Assert.assertEquals(1, job.sparsePublicationFallbackCountForTest());
-                Assert.assertEquals(1, job.outputUniquenessDuplicateRowsForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OUTPUT_UNIQUENESS_DUPLICATE_ROWS));
                 Assert.assertEquals(rowsBefore + 1, count("select count() from lv"));
                 Assert.assertEquals(2, rowsAt("2026-01-03T02:10:00.000000Z", "acct-1"));
                 assertViewMatchesRecompute();
@@ -719,10 +721,10 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                         job
                 );
 
-                Assert.assertEquals(1, job.openSegmentColdKeyedPricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentColdKeyedCheaperCountForTest());
-                Assert.assertEquals(0, job.openSegmentColdKeyedReplayCountForTest());
-                Assert.assertEquals(0, job.transplantedKeyCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_PRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_CHEAPER_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -745,10 +747,10 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                         job
                 );
 
-                Assert.assertEquals(0, job.openSegmentColdKeyedPricedCountForTest());
-                Assert.assertEquals(1, job.openSegmentColdKeyedUnpricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentColdKeyedReplayCountForTest());
-                Assert.assertEquals(0, job.transplantedKeyCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_PRICED_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_UNPRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -780,17 +782,17 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "only the bootstrap repair should have to start cold",
                         1,
-                        job.openSegmentColdKeyedReplayCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT)
                 );
                 Assert.assertEquals(
                         "the next correction must price from the re-versioned root",
                         1,
-                        job.openSegmentKeyedPricedCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT)
                 );
                 Assert.assertEquals(
                         "this small fixture deliberately leaves the whole resume cheaper",
                         0,
-                        job.openSegmentKeyedResumeCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
                 );
                 assertViewMatchesRecompute();
             }
@@ -812,7 +814,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 openTheDayAboveARoot(job);
-                Assert.assertEquals(0, job.openSegmentKeyedPricedCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
 
                 // Below the frontier and inside the open day, and above the root the two
                 // in-order rows above sealed - which is the shape that takes the anchor
@@ -822,24 +824,24 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the open segment's resume must be priced exactly once",
                         1,
-                        job.openSegmentKeyedPricedCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT)
                 );
-                Assert.assertEquals(0, job.openSegmentKeyedUnpricedCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_UNPRICED_COUNT));
                 Assert.assertEquals(
                         "one account of four is less to read than every row above the anchor",
                         1,
-                        job.openSegmentKeyedCheaperCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT)
                 );
                 Assert.assertTrue(
                         "the keyed scan must read fewer rows than the whole range: posting="
-                                + job.openSegmentKeyedPostingRowsForTest()
-                                + " whole=" + job.openSegmentKeyedWholeRangeRowsForTest(),
-                        job.openSegmentKeyedPostingRowsForTest() < job.openSegmentKeyedWholeRangeRowsForTest()
+                                + job.getStatsForTest().get(OPEN_SEGMENT_KEYED_POSTING_ROWS)
+                                + " whole=" + job.getStatsForTest().get(OPEN_SEGMENT_KEYED_WHOLE_RANGE_ROWS),
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_POSTING_ROWS) < job.getStatsForTest().get(OPEN_SEGMENT_KEYED_WHOLE_RANGE_ROWS)
                 );
                 Assert.assertEquals(
                         "no closed segment was touched, so none may be repaired",
                         0,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 assertViewMatchesRecompute();
             }
@@ -861,18 +863,18 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 openTheDayAboveARoot(job);
-                final long keyedResumesBefore = job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR);
+                final long keyedResumesBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR);
 
                 commit(row(4, 2, 35, "acct-1"), job);
 
                 Assert.assertEquals(
                         "the resume must follow the correction's own keys",
                         1,
-                        job.openSegmentKeyedResumeCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
                 );
                 Assert.assertEquals(
                         keyedResumesBefore + 1,
-                        job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR)
+                        job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR)
                 );
                 LiveViewCheckpointRepairRouteTest.assertLastRepairRoute(
                         job,
@@ -889,25 +891,25 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "and publish only the rows it recomputed",
                         1,
-                        job.openSegmentSparseResumeCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_SPARSE_RESUME_COUNT)
                 );
                 Assert.assertEquals(
                         "checkpoint positions must come from the exact insert delta, not a stored-row scan",
                         1,
-                        job.openSegmentArithmeticRowPositionCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_ARITHMETIC_ROW_POSITION_COUNT)
                 );
                 Assert.assertEquals(
                         "nothing may abandon its attempt on output that names each pair once",
                         0,
-                        job.sparsePublicationFallbackCountForTest()
+                        job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT)
                 );
                 Assert.assertTrue(
                         "the publication must have left the other accounts' rows alone",
-                        job.sparsePublicationRowsKeptForTest() > 0
+                        job.getStatsForTest().get(SPARSE_PUBLICATION_ROWS_KEPT) > 0
                 );
                 Assert.assertTrue(
                         "the corrected keys must be handed back to the primary runtime",
-                        job.transplantedKeyCountForTest() > 0
+                        job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT) > 0
                 );
                 assertViewMatchesRecompute();
             }
@@ -947,7 +949,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 fault.assertCloseFailedOnTheRemap();
                 Assert.assertTrue(
                         "the correction must have been resumed by key",
-                        job.openSegmentKeyedResumeCountForTest() > 0
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT) > 0
                 );
                 Assert.assertEquals(
                         "the failed close must cost exactly one refresh fault",
@@ -990,8 +992,8 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 openTheDayAboveARoot(job);
 
                 commit(row(4, 2, 35, "acct-1"), job);
-                Assert.assertEquals(1, job.openSegmentKeyedResumeCountForTest());
-                final long firstTransplantedKeys = job.transplantedKeyCountForTest();
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                final long firstTransplantedKeys = job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT);
                 Assert.assertTrue(firstTransplantedKeys > 0);
                 Assert.assertEquals(
                         "every key the transplant handed back must be frozen in its arena",
@@ -1012,11 +1014,11 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
 
                 witness.watchNextTransplant(job);
                 commit(row(4, 2, 36, "acct-1"), job);
-                Assert.assertEquals(2, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(2, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
                 Assert.assertEquals(
                         "the second resume must hand back as many keys as the first",
                         2 * firstTransplantedKeys,
-                        job.transplantedKeyCountForTest()
+                        job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT)
                 );
                 Assert.assertEquals(firstTransplantedKeys, job.getTransplantKeyArenaKeyCountForTest());
                 Assert.assertEquals(
@@ -1076,15 +1078,15 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 // Each correction below touches every key, see assertKeyedRepairFreesItsKeyArena.
-                job.setForceOpenSegmentKeyedReplayForTest(true);
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
                 for (int correction = 0; correction < 2; correction++) {
                     // Each below the one before it, so every repair replays cold.
                     execute("INSERT INTO tx SELECT '2026-01-02T00:" + (30 - 10 * correction)
                             + ":00.000000Z'::timestamp + x * 1_000, " + everyAccount);
                     drainWalQueue();
                     driveRefreshToQuiescence(job);
-                    Assert.assertEquals(correction + 1, job.openSegmentColdKeyedReplayCountForTest());
-                    Assert.assertEquals((correction + 1L) * keyCount, job.transplantedKeyCountForTest());
+                    Assert.assertEquals(correction + 1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                    Assert.assertEquals((correction + 1L) * keyCount, job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT));
                     Assert.assertEquals(
                             "the view must fuse every component into one payload",
                             WIDE_PAYLOAD_BYTES,
@@ -1150,7 +1152,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                                 o3_open_segment_keyed_resume_count\to3_open_segment_cold_keyed_replay_count
                                 1\t0
                                 """);
-                Assert.assertEquals(0, job.openSegmentKeyedUnpricedCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_UNPRICED_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -1171,7 +1173,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
                 openTheDayAboveARoot(job);
                 commit(row(4, 2, 35, "acct-1"), job);
-                Assert.assertEquals(1, job.openSegmentSparseResumeCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_SPARSE_RESUME_COUNT));
                 assertViewMatchesRecompute();
             }
             restartCycle();
@@ -1217,7 +1219,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the resume must still follow the correction's own keys",
                         1,
-                        job.openSegmentKeyedResumeCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
                 );
                 LiveViewCheckpointRepairRouteTest.assertLastRepairRoute(
                         job,
@@ -1228,15 +1230,15 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "and still derive its checkpoint positions from the insert delta",
                         1,
-                        job.openSegmentArithmeticRowPositionCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_ARITHMETIC_ROW_POSITION_COUNT)
                 );
                 Assert.assertEquals(
                         "the repeated pair denies the upsert",
                         0,
-                        job.openSegmentSparseResumeCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_SPARSE_RESUME_COUNT)
                 );
-                Assert.assertEquals(1, job.sparsePublicationFallbackCountForTest());
-                Assert.assertEquals(1, job.outputUniquenessDuplicateRowsForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(OUTPUT_UNIQUENESS_DUPLICATE_ROWS));
                 Assert.assertEquals(
                         "the replacement carries the rows the resume had left alone",
                         rowsBefore + 1,
@@ -1284,15 +1286,15 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "posting-row pricing must still prefer the short whole interval",
                         0,
-                        job.openSegmentKeyedCheaperCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT)
                 );
                 Assert.assertEquals(
                         "the selected root is older than the runtime head, so restore-aware pricing must override",
                         1,
-                        job.openSegmentRestoreAwareCheaperCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_RESTORE_AWARE_CHEAPER_COUNT)
                 );
-                Assert.assertEquals(1, job.openSegmentKeyedResumeCountForTest());
-                Assert.assertEquals(0, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -1315,13 +1317,13 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                         job
                 );
 
-                Assert.assertEquals(1, job.openSegmentKeyedPricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedCheaperCountForTest());
-                Assert.assertEquals(0, job.openSegmentRestoreAwareCheaperCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
-                Assert.assertEquals(1, job.runtimeAnchorReuseCountForTest());
-                Assert.assertEquals(1, job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR));
-                Assert.assertEquals(0, job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR));
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_RESTORE_AWARE_CHEAPER_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR));
+                Assert.assertEquals(0, job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR));
                 LiveViewCheckpointRepairRouteTest.assertLastRepairRoute(
                         job,
                         LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR,
@@ -1349,11 +1351,11 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
 
                 commit(row(4, 2, 35, "acct-1"), job);
 
-                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
-                Assert.assertEquals(0, job.openSegmentSparseResumeCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_SPARSE_RESUME_COUNT));
                 // The pricing still runs and still says the keyed read is smaller, which is
                 // what says the identity is what turned the route down.
-                Assert.assertEquals(1, job.openSegmentKeyedCheaperCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -1374,9 +1376,9 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
 
                 commit(row(4, 2, 35, "acct-1"), job);
 
-                Assert.assertEquals(0, job.openSegmentKeyedPricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedUnpricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedCheaperCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_UNPRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -1396,9 +1398,9 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
 
                 commit(row(4, 2, 35, "acct-1"), job);
 
-                Assert.assertEquals(0, job.openSegmentKeyedPricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedUnpricedCountForTest());
-                Assert.assertEquals(0, job.openSegmentKeyedCheaperCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_UNPRICED_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -1425,17 +1427,17 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
 
                 commit(row(4, 2, 35, "acct-1"), job);
 
-                Assert.assertEquals(1, job.openSegmentKeyedPricedCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT));
                 Assert.assertTrue(
                         "the fixture must saturate: the estimate has to reach the whole-range"
                                 + " count it was budgeted at",
-                        job.openSegmentKeyedPostingRowsForTest()
-                                >= job.openSegmentKeyedWholeRangeRowsForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_POSTING_ROWS)
+                                >= job.getStatsForTest().get(OPEN_SEGMENT_KEYED_WHOLE_RANGE_ROWS)
                 );
                 Assert.assertEquals(
                         "a saturated count can never read as the cheaper row verdict",
                         0,
-                        job.openSegmentKeyedCheaperCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT)
                 );
                 // A restore-aware count of 0 is what the override reports for ANY of its
                 // reasons, so on its own it does not say the saturation guard is the one
@@ -1464,14 +1466,14 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "and restore-dominant rates must not turn that floor into a route",
                         0,
-                        job.openSegmentRestoreAwareCheaperCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_RESTORE_AWARE_CHEAPER_COUNT)
                 );
-                Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
                 // The resume the declined override leaves reads the whole range off a
                 // restored root rather than off the live window state, which is the same
                 // reading the sibling case that lets the override through takes of its own
                 // drive - the one this fixture repeats with two hot hours added.
-                Assert.assertEquals(0, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -1508,18 +1510,18 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             drainWalQueue();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
-                job.setForceOpenSegmentKeyedReplayForTest(true);
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
 
                 execute("INSERT INTO tx SELECT '2026-01-03T00:30:00.000000Z'::timestamp + x * 1_000, "
                         + everyAccount);
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
 
-                Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
                 Assert.assertEquals(
                         "the repair must hand back every key the correction touched",
                         keyCount,
-                        job.transplantedKeyCountForTest()
+                        job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT)
                 );
                 Assert.assertEquals(
                         "a transplant past the retention limits must free its key arena",
@@ -1586,14 +1588,14 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                     TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()
             ) {
                 driveRefreshToQuiescence(job);
-                job.setForceOpenSegmentKeyedReplayForTest(true);
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
 
                 execute("INSERT INTO tx SELECT '2026-01-02T00:30:00.000000Z'::timestamp + x * 1_000, "
                         + everyAccount);
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
-                Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
-                Assert.assertEquals(keyCount, job.transplantedKeyCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(keyCount, job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT));
 
                 // Below the first correction, so the second repair replays cold as well.
                 witness.watchNextTransplant(job, scope.getBean());
@@ -1601,8 +1603,8 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                         + everyAccount);
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
-                Assert.assertEquals(2, job.openSegmentColdKeyedReplayCountForTest());
-                Assert.assertEquals(2L * keyCount, job.transplantedKeyCountForTest());
+                Assert.assertEquals(2, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(2L * keyCount, job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT));
                 final long heap = witness.getHeapInTransplant();
                 Assert.assertTrue(
                         "a warm transplant of " + keyCount + " keys with " + WIDE_PAYLOAD_BYTES
@@ -2121,7 +2123,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             allocationsAfter = -1;
             heapBefore = -1;
             heapAfter = -1;
-            job.setKeyedTransplantObserverForTest(this::onTransplantStart, this::onTransplantEnd);
+            hooks(job).setKeyedTransplantObserver(this::onTransplantStart, this::onTransplantEnd);
         }
 
         void watchNextTransplant(LiveViewRefreshJob job, com.sun.management.ThreadMXBean heapBean) {

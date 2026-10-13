@@ -51,6 +51,8 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import static io.questdb.cairo.lv.LiveViewRefreshStats.*;
+
 /**
  * Coverage for the identity a sparse repair publication stands on: the dedup keys a live
  * view's own table carries, and the upsert commit that publishes onto them.
@@ -143,12 +145,12 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the correction must publish sparsely, or the case covers nothing",
                         1,
-                        job.sparsePublicationCountForTest()
+                        job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT)
                 );
                 Assert.assertEquals(
                         "the merge must account for every row above the last key the replay followed",
                         5,
-                        job.sparsePublicationRowsKeptForTest()
+                        job.getStatsForTest().get(SPARSE_PUBLICATION_ROWS_KEPT)
                 );
                 assertLadderCountsRowsAtOrBelowEachBoundary("after");
                 assertViewMatchesRecompute();
@@ -181,7 +183,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the repair's own output holds the repeat, which is what rules a sparse commit out",
                         1,
-                        job.outputUniquenessDuplicateRowsForTest()
+                        job.getStatsForTest().get(OUTPUT_UNIQUENESS_DUPLICATE_ROWS)
                 );
                 Assert.assertEquals(rowsBefore + 1, count("select count() from lv"));
                 Assert.assertEquals(
@@ -209,30 +211,30 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 commit(row(5, 1, 0, 0, "acct-1"), job);
                 final long rowsBefore = count("select count() from lv");
                 final String untouchedBefore = dumpRowsOf("acct-3");
-                final long keyedSegmentsBefore = job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT);
+                final long keyedSegmentsBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT);
 
                 commit(correction("acct-2"), job);
 
                 Assert.assertEquals(
                         "the correction must be repaired by key for there to be a smaller set to publish",
                         1,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 Assert.assertEquals(
                         keyedSegmentsBefore + 1,
-                        job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT)
+                        job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT)
                 );
-                Assert.assertEquals(1, job.sparsePublicationCountForTest());
-                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 Assert.assertEquals(
                         "the three accounts the correction did not touch keep every row of the day",
                         (ACCOUNTS - 1) * ROWS_PER_ACCOUNT_PER_DAY,
-                        job.sparsePublicationRowsKeptForTest()
+                        job.getStatsForTest().get(SPARSE_PUBLICATION_ROWS_KEPT)
                 );
                 Assert.assertEquals(
                         "a sparse publication writes none of the rows it kept",
                         0,
-                        job.keyedReplayMergedRowsForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                 );
                 Assert.assertEquals(rowsBefore + 1, count("select count() from lv"));
                 TestUtils.assertEquals(untouchedBefore, dumpRowsOf("acct-3"));
@@ -263,29 +265,29 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 commit(row(5, 1, 0, 0, "acct-1"), job);
                 final long rowsBefore = count("select count() from lv");
                 final String untouchedBefore = dumpRowsOf("acct-3");
-                final long keyedSegmentsBefore = job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT);
+                final long keyedSegmentsBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT);
 
                 commit(correction("acct-1"), job);
 
-                Assert.assertEquals(1, job.keyedReplaySegmentCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
                 Assert.assertEquals(
                         "the fallback publishes on the route that attempted the upsert",
                         keyedSegmentsBefore + 1,
-                        job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT)
+                        job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT)
                 );
                 Assert.assertEquals(
                         "the repeat is in the set a sparse commit would have carried",
                         1,
-                        job.outputUniquenessDuplicateRowsForTest()
+                        job.getStatsForTest().get(OUTPUT_UNIQUENESS_DUPLICATE_ROWS)
                 );
-                Assert.assertEquals(0, job.sparsePublicationCountForTest());
-                Assert.assertEquals(1, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 Assert.assertEquals(
                         "the abandoned attempt writes the rows it had only counted",
                         (ACCOUNTS - 1) * ROWS_PER_ACCOUNT_PER_DAY,
-                        job.keyedReplayMergedRowsForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                 );
-                Assert.assertEquals(0, job.sparsePublicationRowsKeptForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_ROWS_KEPT));
                 Assert.assertEquals(rowsBefore + 1, count("select count() from lv"));
                 Assert.assertEquals(
                         "the replacement carries both rows of the pair and deletes neither",
@@ -321,7 +323,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
                 commit(row(5, 1, 0, 0, "acct-1"), job);
                 commit(correction("acct-2"), job);
-                Assert.assertEquals(1, job.sparsePublicationCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
             }
             final long rowsBeforeRestart = count("select count() from lv");
 
@@ -551,9 +553,9 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
 
                 commit(row(5, 5, 0, 0, "acct-1", 100.0), job);
 
-                Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
-                Assert.assertEquals(1, job.sparsePublicationCountForTest());
-                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 TestUtils.assertEquals(
                         """
                                 created_at\taccount_id\tcumulative_sum
@@ -685,9 +687,9 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
 
                 commit(row(5, 5, 0, 0, "acct-1", 100.0), job);
 
-                Assert.assertEquals(1, job.openSegmentColdKeyedReplayCountForTest());
-                Assert.assertEquals(1, job.sparsePublicationCountForTest());
-                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 assertViewMatchesRecompute();
                 assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
             }
@@ -728,7 +730,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 for (int hour = 0; hour < 10; hour++) {
                     commit(hoursOfFourAccounts(4, hour, hour + 1), job);
                 }
-                job.setSimulateStoredSuffixCountFaultForTest();
+                hooks(job).setSimulateStoredSuffixCountFault();
 
                 execute("insert into tx values " + row(4, 2, 35, 0, "acct-1"));
                 drainWalQueue();
@@ -737,7 +739,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
 
                 Assert.assertFalse(
                         "the count must have faulted, or the case covers nothing",
-                        job.isStoredSuffixCountFaultArmedForTest()
+                        hooks(job).isStoredSuffixCountFaultArmed()
                 );
                 assertNoRefreshFaults("lv");
                 Assert.assertFalse(
@@ -747,15 +749,15 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the keyed resume must have priced cheaper, or the case covers nothing",
                         1,
-                        job.openSegmentKeyedCheaperCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT)
                 );
                 Assert.assertEquals(
                         "a count that faulted rules the keyed resume out",
                         0,
-                        job.openSegmentKeyedResumeCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
                 );
-                Assert.assertEquals(0, job.openSegmentArithmeticRowPositionCountForTest());
-                Assert.assertEquals(0, job.sparsePublicationCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_ARITHMETIC_ROW_POSITION_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
                 Assert.assertNull(
                         "a declined resume must not build the isolated runtime a keyed one replays in",
                         instanceOf("lv").getRepairRuntime()
@@ -779,13 +781,13 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
             createView(seedAnOpenDayWithALoneRowAtTen());
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
-                job.setSimulateStoredSuffixCountFaultForTest();
+                hooks(job).setSimulateStoredSuffixCountFault();
 
                 commit(row(5, 5, 0, 0, "acct-1", 100.0), job);
 
                 Assert.assertFalse(
                         "the count must have faulted, or the case covers nothing",
-                        job.isStoredSuffixCountFaultArmedForTest()
+                        hooks(job).isStoredSuffixCountFaultArmed()
                 );
                 assertViewMatchesRecompute();
                 assertColdKeyedRouteDeclined(job);
@@ -890,7 +892,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "lv_range carries no dedup keys, so its repair must not publish sparsely",
                         0,
-                        job.sparsePublicationCountForTest()
+                        job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT)
                 );
 
                 driveRefreshToQuiescence(job);
@@ -1079,19 +1081,19 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the correction must be repaired by key, or the case covers nothing",
                         1,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 Assert.assertEquals(
                         "the replay's own output names each pair once, so only the stored repeat can rule the upsert out",
                         0,
-                        job.outputUniquenessDuplicateRowsForTest()
+                        job.getStatsForTest().get(OUTPUT_UNIQUENESS_DUPLICATE_ROWS)
                 );
                 Assert.assertEquals(
                         "a stored repeat that the replay emits once rules the upsert out",
                         0,
-                        job.sparsePublicationCountForTest()
+                        job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT)
                 );
-                Assert.assertEquals(1, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 Assert.assertEquals(
                         "the replacement keeps the one row the base now holds at the pair",
                         1,
@@ -1172,14 +1174,14 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "lv2's correction must be repaired by key, or the case covers nothing",
                         1,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 Assert.assertEquals(
                         "lv2's repair must pair its stored rows, or it caches no translation",
                         1,
-                        job.sparsePublicationCountForTest()
+                        job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT)
                 );
-                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 assertViewMatchesRecompute("lv2", "tx2");
                 Assert.assertEquals(
                         "tx's integer for acct-9 must be tx2's for acct-2, or lv's repair never looks lv2's up",
@@ -1196,14 +1198,14 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "lv's correction must be repaired by key, or the case covers nothing",
                         2,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 Assert.assertEquals(
                         "a stored row the replay did not re-emit rules the upsert out",
                         1,
-                        job.sparsePublicationCountForTest()
+                        job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT)
                 );
-                Assert.assertEquals(1, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 Assert.assertEquals(0, rowsAt("2026-01-02T13:00:00.000000Z", "acct-2"));
                 assertViewMatchesRecompute();
                 assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
@@ -1260,14 +1262,14 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the wide correction must be repaired by key, or the case covers nothing",
                         1,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
-                Assert.assertEquals(1, job.sparsePublicationCountForTest());
-                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 Assert.assertEquals(
                         "every w- account must be replayed by key, so the domain the replay armed is past its retained bound",
                         heavyRows + 1,
-                        job.sparsePublicationRowsKeptForTest()
+                        job.getStatsForTest().get(SPARSE_PUBLICATION_ROWS_KEPT)
                 );
                 assertViewMatchesRecompute();
 
@@ -1282,10 +1284,10 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the narrow correction must be repaired by key, or it never pairs a stored row",
                         2,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
-                Assert.assertEquals(2, job.sparsePublicationCountForTest());
-                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(2, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 assertQuery("SELECT created_at, account_id, cumulative_sum FROM lv WHERE account_id = 'w-7'")
                         .noLeakCheck()
                         .timestamp("created_at")
@@ -1354,13 +1356,13 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
 
                 commit(correction("acct-2"), job);
 
-                Assert.assertEquals(1, job.keyedReplaySegmentCountForTest());
-                Assert.assertEquals(0, job.sparsePublicationCountForTest());
-                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 Assert.assertEquals(
                         "the replacement carries every other account's row for the day",
                         (ACCOUNTS - 1) * ROWS_PER_ACCOUNT_PER_DAY,
-                        job.keyedReplayMergedRowsForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                 );
                 Assert.assertEquals(rowsBefore + 1, count("select count() from lv"));
                 assertViewMatchesRecompute();
@@ -1748,7 +1750,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                         instance.getLvRowsTotal()
                 );
 
-                job.setSimulateForwardCommitDedupCollapseForTest(true);
+                hooks(job).setSimulateForwardCommitDedupCollapse(true);
                 commit(row(5, 1, 0, 0, "acct-1") + ", " + row(5, 1, 0, 0, "acct-1"), job);
 
                 Assert.assertEquals(
@@ -1803,7 +1805,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the correction must be repaired by key for the sparse route to be exercised",
                         1,
-                        job.sparsePublicationCountForTest()
+                        job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT)
                 );
                 Assert.assertEquals(0, instance.getCheckpointRowCountMismatches());
                 Assert.assertEquals(durableRows(), instance.getLvRowsTotal());
@@ -1959,7 +1961,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                         "the identity alone leaves nothing sparse to publish - there is no smaller"
                                 + " set without the keyed read",
                         0,
-                        job.sparsePublicationCountForTest()
+                        job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT)
                 );
                 Assert.assertEquals(
                         "the replacement carries both rows of the pair on the keyed arm",
@@ -1992,7 +1994,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 driveRefreshToQuiescence(job);
                 final LiveViewInstance keyed = instanceOf("lv");
                 final LiveViewInstance plain = instanceOf("lv_plain");
-                final long repairsBefore = job.segmentRepairCountForTest();
+                final long repairsBefore = job.getStatsForTest().get(SEGMENT_REPAIR_COUNT);
 
                 // 2026-01-02, with two later days above it: a closed segment on both arms.
                 commit(correction("acct-2"), job);
@@ -2001,15 +2003,15 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                         "both arms must repair the closed segment; a route that skipped one would"
                                 + " leave the arms agreeing about nothing",
                         repairsBefore + 2,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 Assert.assertEquals(
                         "the identity may not change what a segment repair reads",
                         plain.getO3ReplayScanRows(),
                         keyed.getO3ReplayScanRows()
                 );
-                Assert.assertEquals(0, job.sparsePublicationCountForTest());
-                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 Assert.assertEquals(
                         "the replacement carries both rows of the pair on the keyed arm",
                         2,
@@ -2036,7 +2038,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         // and both budgets are already clamped to it.
         //
         // On a forward commit forced back to the default dedup mode - the pre-item-2 path,
-        // restored through setSimulateForwardCommitDedupCollapseForTest - this fails at
+        // restored through setSimulateForwardCommitDedupCollapse - this fails at
         // expected:<2> but was:<1> on the keyed arm, while the plain arm keeps both rows and
         // the keyed arm's next seal counts the drift. That asymmetry is the reason the
         // control is a control: the same workload, the same mutation, and only the arm
@@ -2223,16 +2225,16 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         Assert.assertEquals(
                 "the cold keyed route must have priced cheaper, or the case covers nothing",
                 1,
-                job.openSegmentColdKeyedCheaperCountForTest()
+                job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_CHEAPER_COUNT)
         );
         Assert.assertEquals(
                 "stored rows that are not the base rows the view consumed rule the cold keyed route out",
                 0,
-                job.openSegmentColdKeyedReplayCountForTest()
+                job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT)
         );
-        Assert.assertEquals(0, job.openSegmentArithmeticRowPositionCountForTest());
-        Assert.assertEquals(0, job.sparsePublicationCountForTest());
-        Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+        Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_ARITHMETIC_ROW_POSITION_COUNT));
+        Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+        Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
     }
 
     /**
@@ -2300,7 +2302,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the replay must park where the case asks it to, and only there",
                         isParked,
-                        job.segmentYieldCountForTest() > 0
+                        job.getStatsForTest().get(SEGMENT_YIELD_COUNT) > 0
                 );
             }
             assertRestartRestoresFromTimeline(row(5, 2, 0, 0, "acct-2"));
@@ -2328,10 +2330,10 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
 
                 commit(correction, job);
 
-                Assert.assertEquals(1, job.keyedReplaySegmentCountForTest());
-                Assert.assertEquals(isParked, job.segmentYieldCountForTest() > 0);
-                Assert.assertEquals(1, job.sparsePublicationCountForTest());
-                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
+                Assert.assertEquals(isParked, job.getStatsForTest().get(SEGMENT_YIELD_COUNT) > 0);
+                Assert.assertEquals(1, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 Assert.assertEquals(rowsBefore + correctedRows, count("select count() from lv"));
                 assertViewMatchesRecompute();
                 assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
@@ -2356,14 +2358,14 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         Assert.assertEquals(
                 "the correction must be repaired by key, or the case covers nothing",
                 1,
-                job.keyedReplaySegmentCountForTest()
+                job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
         );
         Assert.assertEquals(
                 "a stored row the replay did not re-emit rules the upsert out",
                 0,
-                job.sparsePublicationCountForTest()
+                job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT)
         );
-        Assert.assertEquals(isSparseAttempted ? 1 : 0, job.sparsePublicationFallbackCountForTest());
+        Assert.assertEquals(isSparseAttempted ? 1 : 0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
         Assert.assertEquals(0, rowsAt(removedAt, removedAccount));
         assertViewMatchesRecompute();
         assertLadderCountsRowsAtOrBelowEachBoundary("after the repair");
@@ -2457,26 +2459,26 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the keyed resume must have priced cheaper, or the case covers nothing",
                         1,
-                        job.openSegmentKeyedCheaperCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT)
                 );
                 if (removal != null) {
                     Assert.assertEquals(
                             "a stored row whose base row is gone rules the keyed resume out",
                             0,
-                            job.openSegmentKeyedResumeCountForTest()
+                            job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
                     );
-                    Assert.assertEquals(0, job.openSegmentArithmeticRowPositionCountForTest());
-                    Assert.assertEquals(0, job.sparsePublicationCountForTest());
+                    Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_ARITHMETIC_ROW_POSITION_COUNT));
+                    Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT));
                     Assert.assertNull(
                             "a declined resume must not build the isolated runtime a keyed one replays in",
                             instanceOf("lv").getRepairRuntime()
                     );
                 } else {
-                    Assert.assertEquals(1, job.openSegmentKeyedResumeCountForTest());
-                    Assert.assertEquals(1, job.openSegmentSparseResumeCountForTest());
+                    Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
+                    Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_SPARSE_RESUME_COUNT));
                     Assert.assertNotNull(instanceOf("lv").getRepairRuntime());
                 }
-                Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 Assert.assertFalse(
                         "the resume must leave its keyed replay unarmed, whichever way it went",
                         job.isKeyedReplayArmedForTest()
@@ -2821,7 +2823,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
             driveRefreshToQuiescence(job);
         }
         final AtomicBoolean hasReplayStarted = new AtomicBoolean();
-        job.setSimulateResumeReplayStartForTest(() -> {
+        hooks(job).setSimulateResumeReplayStart(() -> {
             hasReplayStarted.set(true);
             throw CairoException.critical(0).put("simulated base scan fault");
         });
@@ -2830,7 +2832,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
         advanceClockToNextRefreshPass();
         drainJob(job);
         Assert.assertTrue("lv's resume must have reached its replay, or the case covers nothing", hasReplayStarted.get());
-        Assert.assertEquals("lv's resume must have followed acct-1 alone", 1, job.openSegmentKeyedResumeCountForTest());
+        Assert.assertEquals("lv's resume must have followed acct-1 alone", 1, job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT));
         Assert.assertEquals(1, instanceOf("lv").getRefreshFaultCount());
         return job.isKeyedReplayArmedForTest();
     }

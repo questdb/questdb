@@ -30,7 +30,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointPageRef;
-import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
+import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRoot;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
@@ -690,7 +690,7 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
             // refresh worker declined the view, so no restore and no rebuild happened.
             Assert.assertEquals(
                     "upgrade_blocked",
-                    LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute())
+                    LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute())
             );
             Assert.assertFalse(instance.isCheckpointRestoreAttempted());
             Assert.assertEquals(0, instance.getCheckpointRebuildAttempts());

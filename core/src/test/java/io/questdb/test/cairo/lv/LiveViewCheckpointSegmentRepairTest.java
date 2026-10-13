@@ -30,9 +30,9 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
-import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -47,6 +47,9 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
+
+import static io.questdb.cairo.lv.LiveViewRefreshStats.OPEN_SEGMENT_KEYED_RESUME_COUNT;
+import static io.questdb.cairo.lv.LiveViewRefreshStats.SEGMENT_REPAIR_COUNT;
 
 /**
  * Coverage for the per-segment repair: a correction repairs and publishes over the anchor
@@ -228,7 +231,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "a view carrying a bounded frame beside its anchor must take the union range",
                         0,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 assertNoRefreshFaults("lv");
                 assertBoundedViewMatchesRecompute();
@@ -253,8 +256,8 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
 
                 final long resumeBefore = viewInstance().getO3ResumeReplayRows();
                 final long boundaryBefore = viewInstance().getO3BoundaryReplayRows();
-                final long segmentRoutesBefore = job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD);
-                final long resumeRoutesBefore = job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR);
+                final long segmentRoutesBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD);
+                final long resumeRoutesBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR);
 
                 // A commit reaching back into the second day and forward at the head, which
                 // is the shape of the production workload's deep commits: rows at the
@@ -265,11 +268,11 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 // its own, then the residual at the head resumed from its anchor.
                 Assert.assertEquals(
                         segmentRoutesBefore + 1,
-                        job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD)
+                        job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD)
                 );
                 Assert.assertEquals(
                         resumeRoutesBefore + 1,
-                        job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                        job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
                 );
                 Assert.assertEquals(
                         LiveViewCheckpointRepairRoute.routeName(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR),
@@ -279,7 +282,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the second day must be repaired as a segment of its own",
                         1,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 // The segment repair emits its segment's rows at or above the correction -
                 // one row, here - rather than everything from the anchor below the
@@ -340,7 +343,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the correction must be repaired as a segment of its own",
                         1,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 Assert.assertFalse(
                         "a segment repair must leave the window holding its baseline",
@@ -394,7 +397,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the correction must be repaired as a segment of its own",
                         1,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 Assert.assertEquals(
                         "the post-repair seal must image the carried dirty keys, not the domain",
@@ -434,7 +437,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the decomposition must be off",
                         0,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 assertViewMatchesRecompute();
             }
@@ -458,17 +461,17 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 // to the end of the base table and rewrite the third, fourth and fifth days
                 // on the way; the two segments hold one changed row each, and the third day
                 // between them holds none.
-                final long segmentRoutesBefore = job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD);
+                final long segmentRoutesBefore = job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD);
                 commit(row(2, 3, "acct-1") + ", " + row(4, 3, "acct-1"), job);
 
                 Assert.assertEquals(
                         "both corrected days must be repaired as segments of their own",
                         2,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 Assert.assertEquals(
                         segmentRoutesBefore + 2,
-                        job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD)
+                        job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD)
                 );
                 LiveViewCheckpointRepairRouteTest.assertLastRepairRoute(
                         job,
@@ -538,7 +541,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the day the ahead commit corrected must be repaired as a segment of its own",
                         3,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 Assert.assertEquals(
                         "each of the three repairs must emit its own segment's tail and nothing between them",
@@ -791,7 +794,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
                 commit(row(10, 1, "acct-1"), job);
-                job.setSimulatePeerTurnBeforeRefreshLatchForTest(() -> {
+                hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> {
                     try {
                         execute("INSERT INTO tx VALUES " + row(10, 2, "acct-2"));
                         execute("INSERT INTO tx VALUES " + row(8, 3, "acct-1"));
@@ -800,9 +803,9 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                     }
                     // The turn after this one drains both commits together, and its repair's
                     // replacement does not apply.
-                    job.setSimulatePeerTurnBeforeRefreshLatchForTest(() -> {
+                    hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> {
                         drainWalQueue();
-                        job.setSimulateRepairApplyFailureForTest(true);
+                        hooks(job).setSimulateRepairApplyFailure(true);
                     });
                 });
                 execute("INSERT INTO tx VALUES " + row(9, 3, "acct-2"));
@@ -814,7 +817,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                     isReplacementPending = viewInstance().getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL;
                 }
                 Assert.assertTrue("the segment repair's replacement must stay unapplied", isReplacementPending);
-                job.setSimulateRepairApplyFailureForTest(false);
+                hooks(job).setSimulateRepairApplyFailure(false);
                 driveRefreshToQuiescence(job);
                 Assert.assertFalse(
                         "the view must recover without a rebuild the restatement guard refuses",
@@ -846,11 +849,11 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
             createBackfillView(INDEXED_KEY, "");
             final AtomicBoolean hasResidualStarted = new AtomicBoolean();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                job.setForceOpenSegmentKeyedReplayForTest(true);
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
                 driveRefreshToQuiescence(job);
                 commit(row(10, 1, "acct-1"), job);
                 commitDuringTheNextTurn(job, row(10, 2, "acct-2"), row(8, 3, "acct-1"), true);
-                job.setSimulateResumeReplayStartForTest(() -> {
+                hooks(job).setSimulateResumeReplayStart(() -> {
                     hasResidualStarted.set(true);
                     throw CairoException.critical(0).put("simulated fault ahead of the residual's replay");
                 });
@@ -860,7 +863,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 Assert.assertTrue("the residual must start for the armed fault to stop it", hasResidualStarted.get());
                 Assert.assertTrue(
                         "the open segment must take the keyed resume",
-                        job.openSegmentKeyedResumeCountForTest() > 0
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT) > 0
                 );
                 TestUtils.assertSqlCursors(
                         engine,
@@ -907,7 +910,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the late day must be repaired as a segment of its own",
                         1,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 assertViewReturns(expected);
             }
@@ -945,14 +948,14 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                     2026-01-04T04:00:00.000000Z\tacct-1\t4.0\t4
                     """;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                job.setForceOpenSegmentKeyedReplayForTest(true);
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
                 driveRefreshToQuiescence(job);
                 landARowAboveATieOnTheNewestRoot(job);
                 commit("('2026-01-04T02:30:00.000000Z', 'acct-1', 1.0)", job);
                 Assert.assertEquals(
                         "the open segment must take the keyed resume",
                         1,
-                        job.openSegmentKeyedResumeCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
                 );
                 assertViewReturns(expected);
             }
@@ -1311,7 +1314,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                     2026-01-04T03:00:00.000000Z\tacct-2\t2.0\t2
                     """;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                job.setForceOpenSegmentKeyedReplayForTest(true);
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
                 driveRefreshToQuiescence(job);
                 holdATiedRowInTheLead(job);
                 execute("INSERT INTO tx VALUES ('2026-01-04T02:30:00.000000Z', 'acct-1', 1.0)");
@@ -1321,12 +1324,12 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the open segment must take the keyed resume",
                         1,
-                        job.openSegmentKeyedResumeCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
                 );
                 Assert.assertEquals(
                         "closed segments repaired over their own range",
                         0,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
             }
 
@@ -1551,8 +1554,8 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 final LiveViewInstance instance = viewInstance();
                 Assert.assertEquals(
                         "the restart must restore the runtime from a timeline root",
-                        LiveViewCheckpointRestoreRoute.name(LiveViewCheckpointRestoreRoute.TIMELINE_RESTORE),
-                        LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute())
+                        LiveViewCheckpointRecoveryPhase.routeName(LiveViewCheckpointRecoveryPhase.ROUTE_TIMELINE_RESTORE),
+                        LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute())
                 );
                 Assert.assertEquals("the drain must flush the tied commit", 0, instance.getLeadRowCount());
                 commit(FRONTIER_SECOND_LATE_ROW, job);
@@ -1622,7 +1625,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the sub-floor row must leave the third day scoped as a segment of its own",
                         1,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 Assert.assertEquals(
                         "the segment repair must emit the corrected segment's tail alone",
@@ -1688,7 +1691,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the second day must be repaired as a segment of its own",
                         1,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 // What the segment gained, and therefore what every boundary above it owes.
                 final int segmentRowDelta = 3;
@@ -1863,7 +1866,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                     final String inOrderRow = row(10, 2 + round, round % 2 == 0 ? "acct-2" : "acct-1");
                     final String coalescedLateRow = row(lateDay - 1, 3, "acct-1");
                     final LiveViewInstance instance = viewInstance();
-                    final long segmentRepairsBefore = job.segmentRepairCountForTest();
+                    final long segmentRepairsBefore = job.getStatsForTest().get(SEGMENT_REPAIR_COUNT);
                     final long scanRowsBefore = instance.getO3ReplayScanRows();
                     commitDuringTheNextTurn(job, inOrderRow, coalescedLateRow, isAppliedBeforeTheNextPass);
                     execute("INSERT INTO tx VALUES " + row(lateDay, 3, "acct-2"));
@@ -1872,7 +1875,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                     Assert.assertEquals(
                             "round " + round + ": each late commit must repair its own closed day alone",
                             2,
-                            job.segmentRepairCountForTest() - segmentRepairsBefore
+                            job.getStatsForTest().get(SEGMENT_REPAIR_COUNT) - segmentRepairsBefore
                     );
                     // Two seeded rows and the late row on each repaired day, and the round's
                     // in-order row: the residual resumes from the root at the frontier, which
@@ -2036,7 +2039,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "closed segments repaired over their own range",
                         0,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 flushNext(job);
                 assertViewReturns(expected);
@@ -2251,7 +2254,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                         ts(NEWEST_ROOT_BELOW_THE_TIE),
                         holdATiedRowInTheLead(job)
                 );
-                job.setSimulateResumeReplayStartForTest(() -> {
+                hooks(job).setSimulateResumeReplayStart(() -> {
                     hasResumeReplayStarted.set(true);
                     throw CairoException.critical(0).put("simulated fault ahead of a resume replay");
                 });
@@ -2261,7 +2264,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 // burst ends at the fault rather than retrying past it.
                 setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                 drainJob(job);
-                segmentRepairs = job.segmentRepairCountForTest();
+                segmentRepairs = job.getStatsForTest().get(SEGMENT_REPAIR_COUNT);
                 if (!isRestarted) {
                     flushNext(job);
                     assertTiedLeadRowKept(job, TIED_LEAD_ROW_KEPT, TIED_LEAD_ROWS_AFTER_RESTART);
@@ -2365,7 +2368,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 );
                 final String lateRows = rowAtMinute(2, 2, "acct-1")
                         + (hasSecondClosedDay ? ", " + row(3, 4, "acct-2") : "");
-                job.setSimulatePeerTurnBeforeRefreshLatchForTest(() -> {
+                hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> {
                     isPeerTurnFired.set(true);
                     try {
                         execute("INSERT INTO tx VALUES " + row(4, 2, "acct-2"));
@@ -2373,7 +2376,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                     } catch (SqlException e) {
                         throw new RuntimeException(e);
                     }
-                    job.setSimulatePeerTurnBeforeRefreshLatchForTest(() -> drainWalQueue());
+                    hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> drainWalQueue());
                 });
                 execute("INSERT INTO tx VALUES " + row(3, 3, "acct-2"));
                 drainWalQueue();
@@ -2474,7 +2477,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
             String lateRow,
             boolean isAppliedBeforeTheNextPass
     ) {
-        job.setSimulatePeerTurnBeforeRefreshLatchForTest(() -> {
+        hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> {
             try {
                 execute("INSERT INTO tx VALUES " + inOrderRow);
                 execute("INSERT INTO tx VALUES " + lateRow);
@@ -2483,7 +2486,7 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
             }
             if (isAppliedBeforeTheNextPass) {
                 // Ahead of the pass that reads the two commits, which is the turn after this one.
-                job.setSimulatePeerTurnBeforeRefreshLatchForTest(() -> drainWalQueue());
+                hooks(job).setSimulatePeerTurnBeforeRefreshLatch(() -> drainWalQueue());
             }
         });
     }

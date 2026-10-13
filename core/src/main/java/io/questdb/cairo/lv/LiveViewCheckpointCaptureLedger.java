@@ -78,6 +78,23 @@ public final class LiveViewCheckpointCaptureLedger {
     private long windowKeysVisited;
 
     /**
+     * Adds every reading of {@code other} to this ledger's, which is how a view keeps its
+     * lifetime totals.
+     */
+    public void add(@NotNull LiveViewCheckpointCaptureLedger other) {
+        functionCaptures += other.functionCaptures;
+        functionIncrementalCaptures += other.functionIncrementalCaptures;
+        functionKeysImaged += other.functionKeysImaged;
+        functionKeysVisited += other.functionKeysVisited;
+        windowCaptures += other.windowCaptures;
+        windowElisionProbes += other.windowElisionProbes;
+        windowIncrementalCaptures += other.windowIncrementalCaptures;
+        windowKeysImaged += other.windowKeysImaged;
+        windowKeysRemoved += other.windowKeysRemoved;
+        windowKeysVisited += other.windowKeysVisited;
+    }
+
+    /**
      * Charges one function root's capture.
      *
      * @param keysVisited rows the walk that produced this root read, or 0 when the root

@@ -70,6 +70,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
+import static io.questdb.cairo.lv.LiveViewRefreshStats.*;
+
 /**
  * Coverage for the keyed repair of a closed anchor segment: the replay that follows only
  * the keys a correction touched, and the merge that supplies every other key's row from
@@ -154,12 +156,12 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the correction must be repaired by key, or the case covers nothing",
                         1,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 Assert.assertEquals(
                         "the merge must supply every row above the last key the replay followed",
                         5,
-                        job.keyedReplayMergedRowsForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                 );
                 assertLadderCountsRowsAtOrBelowEachBoundary("after");
                 assertViewMatchesRecompute();
@@ -200,12 +202,12 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the correction must be repaired by key",
                         1,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 Assert.assertEquals(
                         "every seeded row of the day belongs to a key the correction did not touch",
                         ACCOUNTS * ROWS_PER_ACCOUNT_PER_DAY,
-                        job.keyedReplayMergedRowsForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                 );
                 TestUtils.assertEquals(before, dumpUnaffectedRowsOnTheSecond("acct-9"));
                 Assert.assertEquals(1, count("select count() from lv where account_id = 'acct-9'"));
@@ -237,7 +239,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "a correction on the null key must be repaired by key like any other",
                         1,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 Assert.assertTrue(
                         "the null-key merge state must survive a replay-budget park",
@@ -246,7 +248,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the named accounts' rows are the ones copied forward - the null key's are replayed",
                         ACCOUNTS * ROWS_PER_ACCOUNT_PER_DAY,
-                        job.keyedReplayMergedRowsForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                 );
                 Assert.assertEquals(rowsBefore + 1, count("select count() from lv"));
                 Assert.assertEquals(
@@ -283,27 +285,27 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
 
                 Assert.assertTrue(
                         "a one-row replay budget must park the loop's first segment",
-                        job.segmentYieldCountForTest() > 0
+                        job.getStatsForTest().get(SEGMENT_YIELD_COUNT) > 0
                 );
                 Assert.assertEquals(
                         "the eight-account day must be priced whole and the one-account day keyed",
                         1,
-                        job.keyedScanCheaperCountForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT)
                 );
                 Assert.assertEquals(
                         "the segment behind the parked one must still be repaired by its keys",
                         1,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 Assert.assertEquals(
                         "and its merge must copy every unaffected account's row forward",
                         (ACCOUNTS - 1) * ROWS_PER_ACCOUNT_PER_DAY,
-                        job.keyedReplayMergedRowsForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                 );
                 Assert.assertEquals(
                         "both segments must be repaired, and each exactly once",
                         2,
-                        job.segmentRepairCountForTest()
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT)
                 );
                 assertViewMatchesRecompute();
             }
@@ -339,15 +341,15 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "both days must be repaired, and each by its own keys",
                         2,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 Assert.assertEquals(
                         "the second day copies seven accounts forward and the third six, which is the"
                                 + " ahead commit's own two keys rather than the trigger's one",
                         (ACCOUNTS - 1 + ACCOUNTS - 2) * ROWS_PER_ACCOUNT_PER_DAY,
-                        job.keyedReplayMergedRowsForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                 );
-                Assert.assertEquals(2, job.segmentRepairCountForTest());
+                Assert.assertEquals(2, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                 Assert.assertEquals(rowsBefore + 3, count("select count() from lv"));
                 assertViewMatchesRecompute();
             }
@@ -379,12 +381,12 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "both days must be repaired by key, the new account's included",
                         2,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 Assert.assertEquals(
                         "the second day copies seven accounts forward and the third all eight",
                         (ACCOUNTS - 1 + ACCOUNTS) * ROWS_PER_ACCOUNT_PER_DAY,
-                        job.keyedReplayMergedRowsForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                 );
                 Assert.assertEquals(rowsBefore + 2, count("select count() from lv"));
                 Assert.assertEquals(1, count("select count() from lv where account_id = 'acct-new'"));
@@ -476,12 +478,12 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "a filtered view over an append-only base must still be repaired by key",
                         1,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 Assert.assertEquals(
                         "and published sparsely, or the case covers the merged route only",
                         1,
-                        job.sparsePublicationCountForTest()
+                        job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT)
                 );
                 assertViewMatchesRecompute("lv", " where amount > 0");
             }
@@ -535,7 +537,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                             "roots sealed under the other fusion setting need no conversion, so the"
                                     + " splice must go through",
                             0,
-                            job.keyDomainSpliceDeclineCountForTest()
+                            job.getStatsForTest().get(KEY_DOMAIN_SPLICE_DECLINE_COUNT)
                     );
                     assertViewMatchesRecompute();
                 }
@@ -559,7 +561,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                     Assert.assertEquals(
                             "a later splice must go through as well",
                             0,
-                            job.keyDomainSpliceDeclineCountForTest()
+                            job.getStatsForTest().get(KEY_DOMAIN_SPLICE_DECLINE_COUNT)
                     );
                 }
             });
@@ -583,7 +585,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
 
                 commit(correction("acct-1"), job);
 
-                Assert.assertEquals(1, job.keyedReplaySegmentCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
                 Assert.assertTrue(
                         "a closed-segment keyed repair must honor the configured replay budget",
                         instance.getCheckpointRepairResumes() > resumesBefore
@@ -677,7 +679,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 commit("('2026-01-02T00:30:00.000000Z', 'acct-1', 1.0)", job);
                 Assert.assertTrue(
                         "the correction must take the keyed route, or the case covers nothing",
-                        job.keyedReplaySegmentCountForTest() > 0
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT) > 0
                 );
                 assertViewMatchesRecompute();
                 // The defect in its own terms, before any restart reads the roots back:
@@ -730,11 +732,11 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the whole-segment read is priced below the keyed one at this scale",
                         0,
-                        job.keyedScanCheaperCountForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT)
                 );
-                Assert.assertEquals(0, job.keyedReplaySegmentCountForTest());
-                Assert.assertEquals(0, job.keyedReplayMergedRowsForTest());
-                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS));
+                Assert.assertEquals(1, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -760,12 +762,12 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the correction must be repaired by key",
                         1,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 Assert.assertEquals(
                         "the seven untouched accounts' rows must be copied forward, not recomputed",
                         (ACCOUNTS - 1) * ROWS_PER_ACCOUNT_PER_DAY,
-                        job.keyedReplayMergedRowsForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                 );
                 TestUtils.assertEquals(
                         "an unaffected key's stored rows must survive the replacement unchanged",
@@ -797,7 +799,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 commit(row(5, 1, "acct-1"), job);
 
                 commit(correction("acct-1"), job);
-                Assert.assertEquals(1, job.keyedReplaySegmentCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
                 assertViewMatchesRecompute();
             }
 
@@ -833,7 +835,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "both corrections must be repaired by key",
                         2,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 assertViewMatchesRecompute();
             }
@@ -902,7 +904,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the pricing must pick the keyed read for January 4",
                         1,
-                        job.keyedScanCheaperCountForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT)
                 );
             }
 
@@ -1036,12 +1038,12 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 fault.assertCloseFailedOnTheRemap();
                 Assert.assertTrue(
                         "the correction must have been repaired by key",
-                        job.keyedReplaySegmentCountForTest() > 0
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT) > 0
                 );
                 Assert.assertEquals(
                         "a closed segment must not take the cold keyed route",
                         0,
-                        job.openSegmentColdKeyedReplayCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT)
                 );
                 Assert.assertEquals(
                         "the failed close must cost exactly one refresh fault",
@@ -1108,7 +1110,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                             commit(row(5, hour, "acct-2"), job);
                         }
                         fault.installOn(instance);
-                        job.setSimulateRepairUnwindCleanupFaultForTest();
+                        hooks(job).setSimulateRepairUnwindCleanupFault();
                         commit(correction("acct-1"), job);
                     } finally {
                         fault.returnHeldReader();
@@ -1117,11 +1119,11 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                     fault.assertCloseFailedOnTheRemap();
                     Assert.assertFalse(
                             "the injected cleanup fault never fired, so the unwind never reached the retire",
-                            job.isRepairUnwindCleanupFaultArmedForTest()
+                            hooks(job).isRepairUnwindCleanupFaultArmed()
                     );
                     Assert.assertTrue(
                             "the correction must have been repaired by key",
-                            job.keyedReplaySegmentCountForTest() > 0
+                            job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT) > 0
                     );
                     // Two retires: the unwind's own, ahead of the injected throw, and the retry's,
                     // which finds no timeline left to splice into and truncates to a retire.
@@ -1176,9 +1178,9 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
 
                 commit(correction("acct-1"), job);
 
-                Assert.assertEquals(0, job.keyedReplaySegmentCountForTest());
-                Assert.assertEquals(0, job.keyedReplayMergedRowsForTest());
-                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS));
+                Assert.assertEquals(1, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -1204,15 +1206,15 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the pricing still runs, and still says the keyed read is smaller",
                         1,
-                        job.keyedScanCheaperCountForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT)
                 );
                 Assert.assertEquals(
                         "and nothing takes it, because the switch declines it",
                         0,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
-                Assert.assertEquals(0, job.keyedReplayMergedRowsForTest());
-                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS));
+                Assert.assertEquals(1, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -1232,11 +1234,11 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
 
                 commit(correction("acct-1") + ", " + row(2, 0, 31, 0, "acct-2"), job);
 
-                Assert.assertEquals(1, job.keyedReplaySegmentCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT));
                 Assert.assertEquals(
                         "the six untouched accounts' rows are the ones copied forward",
                         (ACCOUNTS - 2) * ROWS_PER_ACCOUNT_PER_DAY,
-                        job.keyedReplayMergedRowsForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                 );
                 Assert.assertEquals(rowsBefore + 2, count("select count() from lv"));
                 assertViewMatchesRecompute();
@@ -1739,14 +1741,14 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "a key budget of " + keyBudget + " must leave the day repaired by key",
                         1,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
                 Assert.assertEquals(
                         "the six untouched accounts' rows are the ones copied forward",
                         (ACCOUNTS - 2) * ROWS_PER_ACCOUNT_PER_DAY,
-                        job.keyedReplayMergedRowsForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                 );
-                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                 Assert.assertEquals(rowsBefore + 2, count("select count() from lv"));
                 assertViewMatchesRecompute();
             }
@@ -1823,7 +1825,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 );
                 Assert.assertTrue(
                         "the correction must reach the per-segment repair, or the case covers nothing",
-                        job.segmentRepairCountForTest() > 0
+                        job.getStatsForTest().get(SEGMENT_REPAIR_COUNT) > 0
                 );
 
                 assertQuery("SELECT created_at, account_id, cumulative_sum FROM lv WHERE created_at = '" + replacedTimestamp + "'")
@@ -1834,7 +1836,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "a deduplicating base must keep every closed segment on the whole-segment read",
                         0,
-                        job.keyedReplaySegmentCountForTest()
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
                 );
             }
         });
@@ -1924,7 +1926,7 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                         closedDayRoots
                 );
                 Assert.assertEquals("January 2 must carry one root per commit", rootsBelowRange, earlierDayRoots);
-                final long keyedRepairsBefore = job.keyedReplaySegmentCountForTest();
+                final long keyedRepairsBefore = job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT);
                 final long rootsVersionedBefore = instance.getCheckpointRepairRootsVersioned();
 
                 // At or below the lowest root, on an account the tie does not involve.
@@ -1932,12 +1934,12 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the pricing must pick the keyed read for January 3",
                         1,
-                        job.keyedScanCheaperCountForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT)
                 );
                 Assert.assertEquals(
                         "every root in the range covers its timestamp group, so the read stays keyed",
                         1,
-                        job.keyedReplaySegmentCountForTest() - keyedRepairsBefore
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT) - keyedRepairsBefore
                 );
                 Assert.assertEquals(
                         "the splice re-versions every root in range up to the bound, and none past it",
@@ -1997,9 +1999,9 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "the pricing must pick the keyed read for January 3 whenever the key is indexed",
                         isKeyIndexed ? 1 : 0,
-                        job.keyedScanCheaperCountForTest()
+                        job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT)
                 );
-                final long keyedRepairs = job.keyedReplaySegmentCountForTest();
+                final long keyedRepairs = job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT);
                 // Ties the head.
                 commit("('2026-01-04T01:00:00.000000Z', 'acct-7', 1.0)", job);
                 // Above the root, on the account that tied it.

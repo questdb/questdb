@@ -79,6 +79,8 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.lv.LiveViewRefreshStats.OPEN_SEGMENT_KEYED_RESUME_COUNT;
+
 /**
  * Coverage for the touched-key cadence seal: a seal that freezes the partitions the
  * batch moved rather than every partition the view holds.
@@ -1211,7 +1213,7 @@ public class LiveViewCheckpointIncrementalSealTest extends AbstractLiveViewTest 
                 Assert.assertEquals(
                         "the route is pinned, so nothing here may resume by key",
                         0,
-                        job.openSegmentKeyedResumeCountForTest()
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
                 );
 
                 // Bounded, not growing. Every correction resumes from a boundary the

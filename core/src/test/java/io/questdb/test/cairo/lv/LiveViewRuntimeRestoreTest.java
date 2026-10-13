@@ -36,9 +36,9 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
-import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
@@ -72,6 +72,8 @@ import org.junit.Test;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+
+import static io.questdb.cairo.lv.LiveViewRefreshStats.*;
 
 /**
  * The restore from the checkpoint timeline that a refreshing view runs in place of a whole-view
@@ -3314,7 +3316,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 // testAReaderPinnedAcrossARestoredHandOffKeepsEachAccountUnderOneSymbolKey). The
                 // flush's in-step check stays as the backstop for a lead that does, which this
                 // case covers, so the job publishes the retry's rows as a lead all the same.
-                job.setSimulateStrandedIdLeadForTest(true);
+                hooks(job).setSimulateStrandedIdLead(true);
                 // As testAReaderPinnedAcrossAMidDrainRestoreDefersTheSymbolRewind up to the
                 // restore: acct-3 is an un-flushed lead when the reader opens on its slot, and
                 // the fault then discards three interned accounts whose ids the pin keeps the
@@ -4510,7 +4512,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
 
             final LiveViewInstance instance = instance("lv");
             Assert.assertTrue("the guard must refuse the rebuild", instance.isCheckpointRecoveryBlocked());
-            Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute()));
+            Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute()));
             Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
             Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
             capture.drain();
@@ -4974,12 +4976,12 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             Assert.assertEquals("one root per flush, none on the tie", 2, countSealedBoundaries("lv"));
             final long keyedResumes;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                job.setForceOpenSegmentKeyedReplayForTest(true);
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
                 execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
                         + "('2026-01-01T09:10:00.000000Z', 'acct-1', 8.0)");
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
-                keyedResumes = job.openSegmentKeyedResumeCountForTest();
+                keyedResumes = job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT);
             }
             assertNoRefreshFaults("lv");
             final String viewRows = """
@@ -5021,12 +5023,12 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             assertSingleRootAt("2026-01-01T09:20:00.000000Z");
             final long coldKeyedReplays;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                job.setForceOpenSegmentKeyedReplayForTest(true);
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
                 execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
                         + "('2026-01-01T09:10:00.000000Z', 'acct-1', 8.0)");
                 drainWalQueue();
                 driveRefreshToQuiescence(job);
-                coldKeyedReplays = job.openSegmentColdKeyedReplayCountForTest();
+                coldKeyedReplays = job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT);
             }
             assertNoRefreshFaults("lv");
             final String viewRows = """
@@ -6612,7 +6614,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
      * <p>
      * Such a drain now sends its rows straight to disk instead of publishing them as a lead, so
      * the job here simulates the lead it used to publish
-     * ({@link LiveViewRefreshJob#setSimulateStrandedIdLeadForTest}): the flush's in-step check
+     * ({@link LiveViewTestRefreshHooks#setSimulateStrandedIdLead}): the flush's in-step check
      * and the rewind gate it marks the tier for stay as the backstop for a lead whose ids the
      * view's pooled WAL writer put out of step.
      * <p>
@@ -6676,7 +6678,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 // The retry below publishes its rows as a lead over the stranded ids, which a
                 // lead drain whose rewind a pin refuses no longer does: this is the backstop's
                 // case, as in testALeadFlushThatCannotPersistItsWatermarkKeepsOutOfStepSymbolIdsOutOfTheTier.
-                job.setSimulateStrandedIdLeadForTest(true);
+                hooks(job).setSimulateStrandedIdLead(true);
                 // acct-3 drains on a turn of its own into the un-flushed lead, at the first id
                 // past the two committed accounts. The clock stays on the last flush, so nothing
                 // flushes.
@@ -7983,7 +7985,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + SPLICE_LATE_ROW);
             drainWalQueue();
             driveRefreshToQuiescence(job);
-            segmentRepairs = job.segmentRepairCountForTest();
+            segmentRepairs = job.getStatsForTest().get(SEGMENT_REPAIR_COUNT);
         }
         assertNoRefreshFaults("lv");
         assertViewRows(SPLICE_LATE_ROW_OUTPUT);

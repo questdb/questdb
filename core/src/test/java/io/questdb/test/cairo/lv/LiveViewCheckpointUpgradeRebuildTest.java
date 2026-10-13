@@ -28,7 +28,6 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
-import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
@@ -152,7 +151,7 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             Assert.assertFalse(instance.hasPendingInvalidationReason());
             Assert.assertEquals(
                     "a cancelled rebuild names no route",
-                    LiveViewCheckpointRestoreRoute.NONE,
+                    LiveViewCheckpointRecoveryPhase.ROUTE_NONE,
                     instance.getCheckpointRestoreRoute()
             );
             Assert.assertTrue("the older directory is untouched, so the rebuild is still owed", instance.isCheckpointUpgradeRebuildPending());
@@ -187,7 +186,7 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             // The rebuild's own seal met the older superblock and refused, once.
             capture.assertOnlyOnce(Pattern.quote("could not write live view head checkpoint [view=lv"));
             Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE, guard.getAbstention());
-            Assert.assertEquals("upgrade_rebuild", LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute()));
+            Assert.assertEquals("upgrade_rebuild", LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute()));
             Assert.assertTrue("the older superblock survived, so the upgrade is still owed", instance.isCheckpointUpgradeRebuildPending());
             Assert.assertFalse(instance.isInvalid());
             Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
@@ -238,7 +237,7 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             capture.assertLogged("live view restart applied-base rebuild failed [view=lv");
             final LiveViewInstance instance = instance("lv");
             Assert.assertTrue(instance.isInvalid());
-            Assert.assertEquals("blocked", LiveViewCheckpointRestoreRoute.name(instance.getCheckpointRestoreRoute()));
+            Assert.assertEquals("blocked", LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute()));
             TestUtils.assertContains(instance.getInvalidationReason(), "live view restart timeline recovery failed");
             // Nothing committed, so the rows are the ones the view had.
             assertViewRows(ALL_ROWS);
@@ -301,7 +300,7 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             final LiveViewInstance reloaded = instance("lv_empty");
             Assert.assertFalse(reloaded.isCheckpointUpgradeRebuildPending());
             Assert.assertEquals("nothing needed rebuilding", 0, reloaded.getCheckpointRebuildAttempts());
-            Assert.assertEquals(LiveViewCheckpointRestoreRoute.NONE, reloaded.getCheckpointRestoreRoute());
+            Assert.assertEquals(LiveViewCheckpointRecoveryPhase.ROUTE_NONE, reloaded.getCheckpointRestoreRoute());
             Assert.assertFalse(reloaded.isInvalid());
             Assert.assertFalse(
                     "the older directory must be gone, or it would refuse the view's first seal",

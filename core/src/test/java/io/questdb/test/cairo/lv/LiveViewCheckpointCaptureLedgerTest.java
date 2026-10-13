@@ -473,34 +473,34 @@ public class LiveViewCheckpointCaptureLedgerTest extends AbstractLiveViewTest {
 
         private Ledger() {
             final LiveViewInstance instance = viewInstance();
-            windowElisionProbes = instance.getCheckpointCaptureWindowElisionProbes();
-            windowCaptures = instance.getCheckpointCaptureWindowRoots();
-            windowIncrementalCaptures = instance.getCheckpointCaptureWindowRootsIncremental();
-            windowKeysVisited = instance.getCheckpointCaptureWindowKeysVisited();
-            windowKeysImaged = instance.getCheckpointCaptureWindowKeysImaged();
-            windowKeysRemoved = instance.getCheckpointCaptureWindowKeysRemoved();
-            functionCaptures = instance.getCheckpointCaptureFunctionRoots();
-            functionIncrementalCaptures = instance.getCheckpointCaptureFunctionRootsIncremental();
-            functionKeysVisited = instance.getCheckpointCaptureFunctionKeysVisited();
-            functionKeysImaged = instance.getCheckpointCaptureFunctionKeysImaged();
+            windowElisionProbes = instance.getCheckpointCaptureLedgerForTest().getWindowElisionProbes();
+            windowCaptures = instance.getCheckpointCaptureLedgerForTest().getWindowCaptures();
+            windowIncrementalCaptures = instance.getCheckpointCaptureLedgerForTest().getWindowIncrementalCaptures();
+            windowKeysVisited = instance.getCheckpointCaptureLedgerForTest().getWindowKeysVisited();
+            windowKeysImaged = instance.getCheckpointCaptureLedgerForTest().getWindowKeysImaged();
+            windowKeysRemoved = instance.getCheckpointCaptureLedgerForTest().getWindowKeysRemoved();
+            functionCaptures = instance.getCheckpointCaptureLedgerForTest().getFunctionCaptures();
+            functionIncrementalCaptures = instance.getCheckpointCaptureLedgerForTest().getFunctionIncrementalCaptures();
+            functionKeysVisited = instance.getCheckpointCaptureLedgerForTest().getFunctionKeysVisited();
+            functionKeysImaged = instance.getCheckpointCaptureLedgerForTest().getFunctionKeysImaged();
         }
 
         Delta delta() {
             final LiveViewInstance instance = viewInstance();
             final Delta delta = new Delta();
             delta.windowElisionProbes =
-                    instance.getCheckpointCaptureWindowElisionProbes() - windowElisionProbes;
-            delta.windowCaptures = instance.getCheckpointCaptureWindowRoots() - windowCaptures;
+                    instance.getCheckpointCaptureLedgerForTest().getWindowElisionProbes() - windowElisionProbes;
+            delta.windowCaptures = instance.getCheckpointCaptureLedgerForTest().getWindowCaptures() - windowCaptures;
             delta.windowIncrementalCaptures =
-                    instance.getCheckpointCaptureWindowRootsIncremental() - windowIncrementalCaptures;
-            delta.windowKeysVisited = instance.getCheckpointCaptureWindowKeysVisited() - windowKeysVisited;
-            delta.windowKeysImaged = instance.getCheckpointCaptureWindowKeysImaged() - windowKeysImaged;
-            delta.windowKeysRemoved = instance.getCheckpointCaptureWindowKeysRemoved() - windowKeysRemoved;
-            delta.functionCaptures = instance.getCheckpointCaptureFunctionRoots() - functionCaptures;
+                    instance.getCheckpointCaptureLedgerForTest().getWindowIncrementalCaptures() - windowIncrementalCaptures;
+            delta.windowKeysVisited = instance.getCheckpointCaptureLedgerForTest().getWindowKeysVisited() - windowKeysVisited;
+            delta.windowKeysImaged = instance.getCheckpointCaptureLedgerForTest().getWindowKeysImaged() - windowKeysImaged;
+            delta.windowKeysRemoved = instance.getCheckpointCaptureLedgerForTest().getWindowKeysRemoved() - windowKeysRemoved;
+            delta.functionCaptures = instance.getCheckpointCaptureLedgerForTest().getFunctionCaptures() - functionCaptures;
             delta.functionIncrementalCaptures =
-                    instance.getCheckpointCaptureFunctionRootsIncremental() - functionIncrementalCaptures;
-            delta.functionKeysVisited = instance.getCheckpointCaptureFunctionKeysVisited() - functionKeysVisited;
-            delta.functionKeysImaged = instance.getCheckpointCaptureFunctionKeysImaged() - functionKeysImaged;
+                    instance.getCheckpointCaptureLedgerForTest().getFunctionIncrementalCaptures() - functionIncrementalCaptures;
+            delta.functionKeysVisited = instance.getCheckpointCaptureLedgerForTest().getFunctionKeysVisited() - functionKeysVisited;
+            delta.functionKeysImaged = instance.getCheckpointCaptureLedgerForTest().getFunctionKeysImaged() - functionKeysImaged;
             return delta;
         }
 

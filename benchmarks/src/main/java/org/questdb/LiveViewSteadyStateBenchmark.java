@@ -35,6 +35,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewInstance;
+import io.questdb.cairo.lv.LiveViewRefreshHooks;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
 import io.questdb.cairo.lv.LiveViewWindowStatePlan;
@@ -67,6 +68,8 @@ import java.nio.file.Path;
 import java.nio.file.SimpleFileVisitor;
 import java.nio.file.attribute.BasicFileAttributes;
 import java.util.Locale;
+
+import static io.questdb.cairo.lv.LiveViewRefreshStats.*;
 
 /**
  * Steady-state companion to {@link LiveViewHighCardinalityBenchmark}, which measures one
@@ -210,6 +213,14 @@ public class LiveViewSteadyStateBenchmark {
     // - and so lets a repair land in a closed partition the apply has to rewrite whole,
     // rather than in the head partition it can append to.
     private static final long DEFAULT_TS_STEP_MICROS = 444L;
+    // Takes the open-segment keyed route whatever its scan-row price says, so both executors
+    // run over the same retained-state shape. Every other eligibility check still applies.
+    private static final LiveViewRefreshHooks FORCED_OPEN_SEGMENT_KEYED_REPLAY = new LiveViewRefreshHooks() {
+        @Override
+        public boolean isOpenSegmentKeyedReplayForced() {
+            return true;
+        }
+    };
     private static final String VIEW_NAME = "payments_view";
     // Null where the JVM does not expose per-thread allocation, which leaves the alloc_mb
     // column at -1 rather than failing the run.
@@ -735,7 +746,9 @@ public class LiveViewSteadyStateBenchmark {
                     // per-txn diff overlays and the checkpoint's encode scratch.
                     NativeTagPeakSampler sampler = new NativeTagPeakSampler(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
             ) {
-                job.setForceOpenSegmentKeyedReplayForTest(forceOpenSegmentKeyedReplay);
+                if (forceOpenSegmentKeyedReplay) {
+                    job.setHooksForTest(FORCED_OPEN_SEGMENT_KEYED_REPLAY);
+                }
                 final long seedStart = System.nanoTime();
                 drainLiveView(engine, instance, job);
                 System.out.printf(Locale.ROOT, "# seed_ms=%.3f seed_checkpoint_ms=%.3f%n",
@@ -979,8 +992,8 @@ public class LiveViewSteadyStateBenchmark {
                             instance.getO3BoundaryReplayRows() - o3BoundaryRowsAtStart,
                             instance.getO3RejectedCount(),
                             repairName(instance),
-                            job.isolatedReplayTurnCountForTest(),
-                            job.segmentYieldCountForTest()
+                            job.getStatsForTest().get(ISOLATED_REPLAY_TURN_COUNT),
+                            job.getStatsForTest().get(SEGMENT_YIELD_COUNT)
                     );
                     // The route mix: completed repairs by the route each one published on,
                     // as LiveViewRefreshJob.decideRepairRoute chose it. view, range and
@@ -990,13 +1003,13 @@ public class LiveViewSteadyStateBenchmark {
                             Locale.ROOT,
                             "# routes view=%d range=%d segment=%d keyed_segment=%d cold=%d resume=%d "
                                     + "keyed_resume=%d%n",
-                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_VIEW_REBUILD),
-                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_RANGE_REBUILD),
-                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD),
-                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT),
-                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT),
-                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR),
-                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR)
+                            job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_VIEW_REBUILD),
+                            job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RANGE_REBUILD),
+                            job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD),
+                            job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT),
+                            job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT),
+                            job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR),
+                            job.getStatsForTest().getRouteCount(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR)
                     );
                     // What a keyed replay of each corrected closed segment would have read,
                     // beside what the segment replays this run actually performed did.
@@ -1022,13 +1035,13 @@ public class LiveViewSteadyStateBenchmark {
                             Locale.ROOT,
                             "# keyed priced=%d cheaper=%d posting_rows=%d whole_rows=%d unpriced=%d "
                                     + "keyed_segments=%d merged_rows=%d%n",
-                            job.keyedScanPricedCountForTest(),
-                            job.keyedScanCheaperCountForTest(),
-                            job.keyedScanPostingRowsForTest(),
-                            job.keyedScanWholeRangeRowsForTest(),
-                            job.keyedScanUnpricedCountForTest(),
-                            job.keyedReplaySegmentCountForTest(),
-                            job.keyedReplayMergedRowsForTest()
+                            job.getStatsForTest().get(KEYED_SCAN_PRICED_COUNT),
+                            job.getStatsForTest().get(KEYED_SCAN_CHEAPER_COUNT),
+                            job.getStatsForTest().get(KEYED_SCAN_POSTING_ROWS),
+                            job.getStatsForTest().get(KEYED_SCAN_WHOLE_RANGE_ROWS),
+                            job.getStatsForTest().get(KEYED_SCAN_UNPRICED_COUNT),
+                            job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT),
+                            job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
                     );
                     // What a sparse keyed publication would cost to attempt: whether each
                     // repaired segment's own output carries every (timestamp, projected
@@ -1044,12 +1057,12 @@ public class LiveViewSteadyStateBenchmark {
                             Locale.ROOT,
                             "# unique checked=%d unique=%d rows=%d duplicate_rows=%d "
                                     + "max_group=%d unchecked=%d%n",
-                            job.outputUniquenessCheckedRepairsForTest(),
-                            job.outputUniquenessUniqueRepairsForTest(),
-                            job.outputUniquenessCheckedRowsForTest(),
-                            job.outputUniquenessDuplicateRowsForTest(),
-                            job.outputUniquenessMaxGroupRowsForTest(),
-                            job.outputUniquenessUncheckedRepairsForTest()
+                            job.getStatsForTest().get(OUTPUT_UNIQUENESS_CHECKED_REPAIRS),
+                            job.getStatsForTest().get(OUTPUT_UNIQUENESS_UNIQUE_REPAIRS),
+                            job.getStatsForTest().get(OUTPUT_UNIQUENESS_CHECKED_ROWS),
+                            job.getStatsForTest().get(OUTPUT_UNIQUENESS_DUPLICATE_ROWS),
+                            job.getStatsForTest().get(OUTPUT_UNIQUENESS_MAX_GROUP_ROWS),
+                            job.getStatsForTest().get(OUTPUT_UNIQUENESS_UNCHECKED_REPAIRS)
                     );
                     // What acting on that verdict actually did. published counts the
                     // segment repairs that committed only the rows they recomputed,
@@ -1066,22 +1079,22 @@ public class LiveViewSteadyStateBenchmark {
                             Locale.ROOT,
                             "# open_keyed priced=%d cheaper=%d posting_rows=%d whole_rows=%d unpriced=%d "
                                     + "resumes=%d arithmetic_positions=%d sparse_resumes=%d%n",
-                            job.openSegmentKeyedPricedCountForTest(),
-                            job.openSegmentKeyedCheaperCountForTest(),
-                            job.openSegmentKeyedPostingRowsForTest(),
-                            job.openSegmentKeyedWholeRangeRowsForTest(),
-                            job.openSegmentKeyedUnpricedCountForTest(),
-                            job.openSegmentKeyedResumeCountForTest(),
-                            job.openSegmentArithmeticRowPositionCountForTest(),
-                            job.openSegmentSparseResumeCountForTest()
+                            job.getStatsForTest().get(OPEN_SEGMENT_KEYED_PRICED_COUNT),
+                            job.getStatsForTest().get(OPEN_SEGMENT_KEYED_CHEAPER_COUNT),
+                            job.getStatsForTest().get(OPEN_SEGMENT_KEYED_POSTING_ROWS),
+                            job.getStatsForTest().get(OPEN_SEGMENT_KEYED_WHOLE_RANGE_ROWS),
+                            job.getStatsForTest().get(OPEN_SEGMENT_KEYED_UNPRICED_COUNT),
+                            job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT),
+                            job.getStatsForTest().get(OPEN_SEGMENT_ARITHMETIC_ROW_POSITION_COUNT),
+                            job.getStatsForTest().get(OPEN_SEGMENT_SPARSE_RESUME_COUNT)
                     );
                     System.out.printf(
                             Locale.ROOT,
                             "# sparse published=%d fallback=%d rows_kept=%d open_arithmetic_positions=%d%n",
-                            job.sparsePublicationCountForTest(),
-                            job.sparsePublicationFallbackCountForTest(),
-                            job.sparsePublicationRowsKeptForTest(),
-                            job.openSegmentArithmeticRowPositionCountForTest()
+                            job.getStatsForTest().get(SPARSE_PUBLICATION_COUNT),
+                            job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT),
+                            job.getStatsForTest().get(SPARSE_PUBLICATION_ROWS_KEPT),
+                            job.getStatsForTest().get(OPEN_SEGMENT_ARITHMETIC_ROW_POSITION_COUNT)
                     );
                 }
                 // The write side of the run, which is the term fix 3 turns on. A strictly
@@ -2386,56 +2399,56 @@ public class LiveViewSteadyStateBenchmark {
         }
 
         void advance(LiveViewInstance instance) {
-            windowCaptures = instance.getCheckpointCaptureWindowRoots();
-            windowIncrementalCaptures = instance.getCheckpointCaptureWindowRootsIncremental();
-            windowKeysVisited = instance.getCheckpointCaptureWindowKeysVisited();
-            windowKeysImaged = instance.getCheckpointCaptureWindowKeysImaged();
-            windowKeysRemoved = instance.getCheckpointCaptureWindowKeysRemoved();
-            windowElisionProbes = instance.getCheckpointCaptureWindowElisionProbes();
-            functionCaptures = instance.getCheckpointCaptureFunctionRoots();
-            functionIncrementalCaptures = instance.getCheckpointCaptureFunctionRootsIncremental();
-            functionKeysVisited = instance.getCheckpointCaptureFunctionKeysVisited();
-            functionKeysImaged = instance.getCheckpointCaptureFunctionKeysImaged();
+            windowCaptures = instance.getCheckpointCaptureLedgerForTest().getWindowCaptures();
+            windowIncrementalCaptures = instance.getCheckpointCaptureLedgerForTest().getWindowIncrementalCaptures();
+            windowKeysVisited = instance.getCheckpointCaptureLedgerForTest().getWindowKeysVisited();
+            windowKeysImaged = instance.getCheckpointCaptureLedgerForTest().getWindowKeysImaged();
+            windowKeysRemoved = instance.getCheckpointCaptureLedgerForTest().getWindowKeysRemoved();
+            windowElisionProbes = instance.getCheckpointCaptureLedgerForTest().getWindowElisionProbes();
+            functionCaptures = instance.getCheckpointCaptureLedgerForTest().getFunctionCaptures();
+            functionIncrementalCaptures = instance.getCheckpointCaptureLedgerForTest().getFunctionIncrementalCaptures();
+            functionKeysVisited = instance.getCheckpointCaptureLedgerForTest().getFunctionKeysVisited();
+            functionKeysImaged = instance.getCheckpointCaptureLedgerForTest().getFunctionKeysImaged();
         }
 
         long functionCaptures(LiveViewInstance instance) {
-            return instance.getCheckpointCaptureFunctionRoots() - functionCaptures;
+            return instance.getCheckpointCaptureLedgerForTest().getFunctionCaptures() - functionCaptures;
         }
 
         long functionIncrementalCaptures(LiveViewInstance instance) {
-            return instance.getCheckpointCaptureFunctionRootsIncremental() - functionIncrementalCaptures;
+            return instance.getCheckpointCaptureLedgerForTest().getFunctionIncrementalCaptures() - functionIncrementalCaptures;
         }
 
         long functionKeysImaged(LiveViewInstance instance) {
-            return instance.getCheckpointCaptureFunctionKeysImaged() - functionKeysImaged;
+            return instance.getCheckpointCaptureLedgerForTest().getFunctionKeysImaged() - functionKeysImaged;
         }
 
         long functionKeysVisited(LiveViewInstance instance) {
-            return instance.getCheckpointCaptureFunctionKeysVisited() - functionKeysVisited;
+            return instance.getCheckpointCaptureLedgerForTest().getFunctionKeysVisited() - functionKeysVisited;
         }
 
         long windowCaptures(LiveViewInstance instance) {
-            return instance.getCheckpointCaptureWindowRoots() - windowCaptures;
+            return instance.getCheckpointCaptureLedgerForTest().getWindowCaptures() - windowCaptures;
         }
 
         long windowElisionProbes(LiveViewInstance instance) {
-            return instance.getCheckpointCaptureWindowElisionProbes() - windowElisionProbes;
+            return instance.getCheckpointCaptureLedgerForTest().getWindowElisionProbes() - windowElisionProbes;
         }
 
         long windowIncrementalCaptures(LiveViewInstance instance) {
-            return instance.getCheckpointCaptureWindowRootsIncremental() - windowIncrementalCaptures;
+            return instance.getCheckpointCaptureLedgerForTest().getWindowIncrementalCaptures() - windowIncrementalCaptures;
         }
 
         long windowKeysImaged(LiveViewInstance instance) {
-            return instance.getCheckpointCaptureWindowKeysImaged() - windowKeysImaged;
+            return instance.getCheckpointCaptureLedgerForTest().getWindowKeysImaged() - windowKeysImaged;
         }
 
         long windowKeysRemoved(LiveViewInstance instance) {
-            return instance.getCheckpointCaptureWindowKeysRemoved() - windowKeysRemoved;
+            return instance.getCheckpointCaptureLedgerForTest().getWindowKeysRemoved() - windowKeysRemoved;
         }
 
         long windowKeysVisited(LiveViewInstance instance) {
-            return instance.getCheckpointCaptureWindowKeysVisited() - windowKeysVisited;
+            return instance.getCheckpointCaptureLedgerForTest().getWindowKeysVisited() - windowKeysVisited;
         }
     }
 

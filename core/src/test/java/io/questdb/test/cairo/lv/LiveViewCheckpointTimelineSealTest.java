@@ -1076,7 +1076,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         Assert.assertNotNull(instance);
         Assert.assertTrue(
                 "the view must have sealed a fused window root",
-                instance.getCheckpointCaptureWindowRoots() > 0
+                instance.getCheckpointCaptureLedgerForTest().getWindowCaptures() > 0
         );
         Assert.assertNotNull(instance.getAnchorWindow());
         return new WeakReference<>(instance.getAnchorWindow());

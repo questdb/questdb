@@ -41,6 +41,9 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import static io.questdb.cairo.lv.LiveViewRefreshStats.ISOLATED_REPLAY_TURN_COUNT;
+import static io.questdb.cairo.lv.LiveViewRefreshStats.SEGMENT_REPAIR_COUNT;
+
 /**
  * Coverage for the isolated repair runtime: a correction that converges below the runtime
  * frontier replays through a second compiled runtime of the view's own SELECT rather than
@@ -126,7 +129,7 @@ public class LiveViewCheckpointIsolatedRepairRuntimeTest extends AbstractLiveVie
                     Assert.assertEquals(
                             "the correction must repair on the isolated runtime",
                             1,
-                            job.isolatedReplayTurnCountForTest()
+                            job.getStatsForTest().get(ISOLATED_REPLAY_TURN_COUNT)
                     );
                     after = imageOfPrimaryRuntime();
                     assertImagesEqual(before, after);
@@ -196,14 +199,14 @@ public class LiveViewCheckpointIsolatedRepairRuntimeTest extends AbstractLiveVie
                 Assert.assertEquals(
                         "a repair whose influence reaches the frontier may not run beside it",
                         0,
-                        job.isolatedReplayTurnCountForTest()
+                        job.getStatsForTest().get(ISOLATED_REPLAY_TURN_COUNT)
                 );
                 Assert.assertNull(viewInstance().getRepairRuntime());
                 assertViewMatchesRecompute();
 
                 // The same view, a correction two days below: converging, and isolated.
                 commit(row(2, 3, "acct-1"), job);
-                Assert.assertEquals(1, job.isolatedReplayTurnCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(ISOLATED_REPLAY_TURN_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -288,7 +291,7 @@ public class LiveViewCheckpointIsolatedRepairRuntimeTest extends AbstractLiveVie
                     Assert.assertEquals(
                             "no turn of this repair may fold rows into an isolated runtime",
                             0,
-                            job.isolatedReplayTurnCountForTest()
+                            job.getStatsForTest().get(ISOLATED_REPLAY_TURN_COUNT)
                     );
                 } finally {
                     Misc.free(before);
@@ -385,7 +388,7 @@ public class LiveViewCheckpointIsolatedRepairRuntimeTest extends AbstractLiveVie
                         first,
                         viewInstance().getRepairRuntime()
                 );
-                Assert.assertEquals(2, job.isolatedReplayTurnCountForTest());
+                Assert.assertEquals(2, job.getStatsForTest().get(ISOLATED_REPLAY_TURN_COUNT));
                 assertViewMatchesRecompute();
             }
         });
@@ -415,7 +418,7 @@ public class LiveViewCheckpointIsolatedRepairRuntimeTest extends AbstractLiveVie
                     commit(row(2, 3, "acct-1"), job);
                     Assert.assertTrue(
                             "a one-row budget must take the repair across several turns",
-                            job.isolatedReplayTurnCountForTest() > 1
+                            job.getStatsForTest().get(ISOLATED_REPLAY_TURN_COUNT) > 1
                     );
                     after = imageOfPrimaryRuntime();
                     assertImagesEqual(before, after);
@@ -442,12 +445,12 @@ public class LiveViewCheckpointIsolatedRepairRuntimeTest extends AbstractLiveVie
                 commit(row(5, 1, "acct-1") + ", " + row(5, 2, "acct-2"), job);
                 commit(row(2, 3, "acct-1"), job);
 
-                Assert.assertEquals(0, job.isolatedReplayTurnCountForTest());
+                Assert.assertEquals(0, job.getStatsForTest().get(ISOLATED_REPLAY_TURN_COUNT));
                 Assert.assertNull(
                         "a declined isolated runtime must not be compiled at all",
                         viewInstance().getRepairRuntime()
                 );
-                Assert.assertEquals(1, job.segmentRepairCountForTest());
+                Assert.assertEquals(1, job.getStatsForTest().get(SEGMENT_REPAIR_COUNT));
                 assertViewMatchesRecompute();
             }
         });

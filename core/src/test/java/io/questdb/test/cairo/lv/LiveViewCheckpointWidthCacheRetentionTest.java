@@ -85,7 +85,7 @@ public class LiveViewCheckpointWidthCacheRetentionTest extends AbstractLiveViewT
                     createViewAndIngest(job, 'x', firstKeyChars, WIDE_KEY_COUNT);
                     Assert.assertTrue(
                             "the seals of view " + cycle + " must have looked every key up in the root below",
-                            assertViewSealedCleanly().getCheckpointCaptureWindowElisionProbes() >= WIDE_KEY_COUNT
+                            assertViewSealedCleanly().getCheckpointCaptureLedgerForTest().getWindowElisionProbes() >= WIDE_KEY_COUNT
                     );
                     assertQuery("SELECT count() c, sum(s) total FROM lv")
                             .noRandomAccess()
@@ -184,7 +184,7 @@ public class LiveViewCheckpointWidthCacheRetentionTest extends AbstractLiveViewT
         Assert.assertEquals("the view must not fail a checkpoint seal", 0, instance.getCheckpointSealFailures());
         Assert.assertTrue(
                 "the view must have sealed a fused window root",
-                instance.getCheckpointCaptureWindowRoots() > 0
+                instance.getCheckpointCaptureLedgerForTest().getWindowCaptures() > 0
         );
         return instance;
     }

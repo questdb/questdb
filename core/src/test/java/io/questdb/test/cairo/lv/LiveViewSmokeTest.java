@@ -95,6 +95,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.IntFunction;
 
+import static io.questdb.cairo.lv.LiveViewRefreshStats.BASE_METADATA_DRIFT_RECOMPILE_COUNT;
+import static io.questdb.cairo.lv.LiveViewRefreshStats.RUNTIME_ANCHOR_REUSE_COUNT;
+
 /**
  * End-to-end live-view regression coverage. Focused validation, checkpoint,
  * concurrency, O3, and in-memory suites live in dedicated classes; this class
@@ -2785,7 +2788,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
             final AtomicInteger closeFaults = new AtomicInteger();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                job.setSimulateBaseMetadataCloseFailureForTest(() -> {
+                hooks(job).setSimulateBaseMetadataCloseFailure(() -> {
                     closeFaults.incrementAndGet();
                     throw CairoException.critical(0).put("injected base metadata close fault");
                 });
@@ -2844,7 +2847,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 // identically - both call sites route to the same setPendingInvalidationReason and
                 // emit the same string - so deleting the entry check could stay green under a
                 // fixture edit that leaves the retained factory stale.
-                job.setSimulateBaseApplyDuringRederiveForTest(pastEntryCheck::incrementAndGet);
+                hooks(job).setSimulateBaseApplyDuringRederive(pastEntryCheck::incrementAndGet);
                 driveRefreshToQuiescence(job);
             }
 
@@ -2880,7 +2883,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
         // inside the drift catch, against metadata read again - stands between that recompile and a
         // whole-tier REPLACE_RANGE rewritten from a schema the view's query was never created against.
         //
-        // setSimulateBaseApplyDuringRederiveForTest makes that window deterministic. A thread racing
+        // setSimulateBaseApplyDuringRederive makes that window deterministic. A thread racing
         // the drive would decide the outcome by timing, and both checks read the same applied base
         // metadata, so nothing but an apply landing mid-method separates them. The hook lands the
         // ALTER exactly where a concurrent apply would; the drift the replay then throws is the real
@@ -2908,7 +2911,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final AtomicInteger midRederiveApplies = new AtomicInteger();
             final AtomicReference<Throwable> midRederiveFailure = new AtomicReference<>();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                job.setSimulateBaseApplyDuringRederiveForTest(() -> {
+                hooks(job).setSimulateBaseApplyDuringRederive(() -> {
                     // The re-derive's own catch(Throwable) would swallow anything thrown here into a
                     // plain refusal, which is the outcome this test asserts - so stash it and fail on
                     // it below rather than let a broken fixture read as a pass.
@@ -3010,7 +3013,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             final long driftRecompiles;
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
-                driftRecompiles = job.baseMetadataDriftRecompileCountForTest();
+                driftRecompiles = job.getStatsForTest().get(BASE_METADATA_DRIFT_RECOMPILE_COUNT);
             }
 
             Assert.assertFalse(
@@ -20549,7 +20552,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainJob(job);
                 drainWalQueue();
 
-                Assert.assertEquals(1L, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(1L, job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT));
                 assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                         .noLeakCheck().timestamp("ts").expectSize()
                         .returns("ts\tx\trn\n" +
@@ -20570,7 +20573,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainJob(job);
                 drainWalQueue();
 
-                Assert.assertEquals(2L, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(2L, job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT));
                 assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                         .noLeakCheck().timestamp("ts").expectSize()
                         .returns("ts\tx\trn\n" +
@@ -20629,7 +20632,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 drainJob(job);
                 drainWalQueue();
 
-                Assert.assertEquals(1L, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(1L, job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT));
                 assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts")
                         .noLeakCheck().timestamp("ts").expectSize()
                         .returns("ts\tx\trn\n" +
@@ -20684,7 +20687,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 Assert.assertEquals(
                         "a row on the head's own timestamp must deny reuse",
                         0L,
-                        job.runtimeAnchorReuseCountForTest()
+                        job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT)
                 );
                 assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts, x")
                         .noLeakCheck().timestamp("ts").expectSize()
@@ -21233,7 +21236,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
                 assertQuery("SELECT o3_resume_replay_rows, o3_boundary_replay_rows FROM live_views()")
                         .noLeakCheck().noRandomAccess()
                         .returns("o3_resume_replay_rows\to3_boundary_replay_rows\n3\t0\n");
-                Assert.assertEquals("an older anchor must still be restored", 0L, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals("an older anchor must still be restored", 0L, job.getStatsForTest().get(RUNTIME_ANCHOR_REUSE_COUNT));
 
                 // Cross-commit O3 at ts=05: below every surviving ring entry (the
                 // maxTs=10 anchor and the fresh post-resume head), so no anchor
@@ -21299,7 +21302,7 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
 
                 // Arm the one-shot staging-buffer close fault, then drive a refresh cycle
                 // whose finally frees the staging buffer and throws.
-                job.setSimulateStagingBufferCloseFaultForTest();
+                hooks(job).setSimulateStagingBufferCloseFault();
                 setCurrentMicros(200_000L);
                 execute("INSERT INTO base (ts, x) VALUES ('2026-11-01T00:00:20.000000Z', 2)");
                 drainWalQueue();

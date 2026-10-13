@@ -41,6 +41,7 @@ import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
@@ -452,15 +453,15 @@ public class LiveViewInstance implements QuietCloseable {
     // under the refresh latch; volatile so the catalogue thread can read
     // the latest value without additional synchronisation.
     private volatile boolean checkpointRestoreAttempted;
-    // Which route that one attempt took, as a LiveViewCheckpointRestoreRoute
-    // constant, and the root a TIMELINE_RESTORE selected. The route replaces the
+    // Which route that one attempt took, as a LiveViewCheckpointRecoveryPhase.ROUTE_*
+    // constant, and the root a ROUTE_TIMELINE_RESTORE selected. The route replaces the
     // boolean "did the restart resolve its derived state" flag this class used to
     // carry: both the restore and the applied-base rebuild resolve it, so the
     // boolean named the outcome without naming the operation, and a restore
     // regression could hide behind the fallback that covered for it. Each route is
     // recorded by the branch that finished the operation it names. Mutated only
     // under the refresh latch; volatile for the catalogue thread.
-    private volatile int checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.NONE;
+    private volatile int checkpointRestoreRoute = LiveViewCheckpointRecoveryPhase.ROUTE_NONE;
     private volatile long checkpointRestoreCheckpointId = Numbers.LONG_NULL;
     private volatile long checkpointRestoreGeneration = Numbers.LONG_NULL;
     // Why this view's recovery stopped rather than finished, or why it has not
@@ -504,24 +505,10 @@ public class LiveViewInstance implements QuietCloseable {
     // refresh worker, by the branch that finished the restore; volatile for the reader
     // that samples it. In-memory only, like the counters above.
     private volatile long checkpointRuntimeRestores;
-    // Lifetime capture ledger: what every publication this instance made walked, split into
-    // the window root's captures and the function roots'. Nothing in the published artifacts
-    // separates an incremental capture from a complete one - both leave a root naming the
-    // whole live domain - so this is where the structural claim that a steady seal costs the
-    // keys the batch changed is read from. Only a difference between two readings means
-    // anything, so a test or a benchmark takes one before the operation and one after.
-    // Written on the refresh worker; volatile for the reader that samples it. In-memory
-    // only, like the counters above.
-    private volatile long checkpointCaptureFunctionRoots;
-    private volatile long checkpointCaptureFunctionRootsIncremental;
-    private volatile long checkpointCaptureFunctionKeysImaged;
-    private volatile long checkpointCaptureFunctionKeysVisited;
-    private volatile long checkpointCaptureWindowRoots;
-    private volatile long checkpointCaptureWindowRootsIncremental;
-    private volatile long checkpointCaptureWindowKeysImaged;
-    private volatile long checkpointCaptureWindowKeysRemoved;
-    private volatile long checkpointCaptureWindowKeysVisited;
-    private volatile long checkpointCaptureWindowElisionProbes;
+    // What every publication this instance made walked, summed. Only a difference between two
+    // readings means anything. Written on the refresh worker and read by tests on the thread
+    // that drives it. In-memory only, like the counters above.
+    private final LiveViewCheckpointCaptureLedger checkpointCaptureLedger = new LiveViewCheckpointCaptureLedger();
     // Wall-clock (micros) of the most recent head-checkpoint seal. Numbers.LONG_NULL
     // until the first cycle that seals a root. The refresh worker compares
     // (nowUs - lastCheckpointWrittenUs) against
@@ -1347,94 +1334,12 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * @return function roots every publication this instance made froze, added up. One
-     * root per residual function and per runtime-only member per boundary, so a repair
-     * that keeps the checkpoint ladder charges one set per boundary it crossed. See
-     * {@link #checkpointCaptureFunctionRoots}
+     * @return what every publication this instance made froze and walked, summed since it was
+     * built. See {@link LiveViewCheckpointCaptureLedger} for what each reading counts
      */
-    public long getCheckpointCaptureFunctionRoots() {
-        return checkpointCaptureFunctionRoots;
-    }
-
-    /**
-     * @return of those roots, the ones frozen against an established incremental base.
-     * A residual function that requires a full scan - ring-backed RANGE state is the
-     * standing example - never contributes here however warm its predecessor is
-     */
-    public long getCheckpointCaptureFunctionRootsIncremental() {
-        return checkpointCaptureFunctionRootsIncremental;
-    }
-
-    /**
-     * @return keys those function roots published an image for, added up
-     */
-    public long getCheckpointCaptureFunctionKeysImaged() {
-        return checkpointCaptureFunctionKeysImaged;
-    }
-
-    /**
-     * @return rows the walks that produced those function roots read. This counts walks
-     * rather than roots: one seal shares a single walk of a fused group's map across every
-     * runtime-only member that agrees on the incremental disposition, so a wide SELECT list
-     * adds roots and images here without adding visits
-     */
-    public long getCheckpointCaptureFunctionKeysVisited() {
-        return checkpointCaptureFunctionKeysVisited;
-    }
-
-    /**
-     * @return window roots every publication this instance made froze, added up. One per
-     * boundary of an anchored view, and none at all for a view with no anchored window
-     */
-    public long getCheckpointCaptureWindowRoots() {
-        return checkpointCaptureWindowRoots;
-    }
-
-    /**
-     * @return of those window roots, the ones frozen against an established incremental
-     * base. A restore, a rebinding or an incompatible predecessor demotes the next capture
-     * to a complete one, which is why a first reseal after a restart is not a steady sample
-     */
-    public long getCheckpointCaptureWindowRootsIncremental() {
-        return checkpointCaptureWindowRootsIncremental;
-    }
-
-    /**
-     * @return predecessor entries those window captures looked up to decide whether they
-     * could leave the predecessor's entry standing, added up. A capture skips the lookup
-     * for every key it already knows it cannot elide - one the predecessor does not hold,
-     * or one whose anchor value has moved since it did - so this reading sits at zero for a
-     * seal whose imaged keys all crossed an anchor boundary and at the imaged count for one
-     * whose anchors held
-     */
-    public long getCheckpointCaptureWindowElisionProbes() {
-        return checkpointCaptureWindowElisionProbes;
-    }
-
-    /**
-     * @return keys those window roots published an entry for, added up
-     */
-    public long getCheckpointCaptureWindowKeysImaged() {
-        return checkpointCaptureWindowKeysImaged;
-    }
-
-    /**
-     * @return keys those window roots named as removals - the ones the frontier sweep
-     * dropped, which an incremental capture has to name because the root it builds on still
-     * holds their entries
-     */
-    public long getCheckpointCaptureWindowKeysRemoved() {
-        return checkpointCaptureWindowKeysRemoved;
-    }
-
-    /**
-     * @return rows the walks that produced those window roots read: the dirty map's for an
-     * incremental capture, the whole anchor map's for a complete one. This is the reading
-     * that separates the two, and imaged keys alone cannot - a complete capture of a domain
-     * the batch touched entirely images exactly what an incremental one would
-     */
-    public long getCheckpointCaptureWindowKeysVisited() {
-        return checkpointCaptureWindowKeysVisited;
+    @TestOnly
+    public LiveViewCheckpointCaptureLedger getCheckpointCaptureLedgerForTest() {
+        return checkpointCaptureLedger;
     }
 
     /**
@@ -1442,6 +1347,7 @@ public class LiveViewInstance implements QuietCloseable {
      * A restart that restored off its published roots leaves this at zero; see
      * {@link #checkpointRebuildAttempts}
      */
+    @TestOnly
     public long getCheckpointRebuildAttempts() {
         return checkpointRebuildAttempts;
     }
@@ -1526,20 +1432,22 @@ public class LiveViewInstance implements QuietCloseable {
 
     /**
      * @return the {@code checkpointId} of the timeline root
-     * {@link LiveViewCheckpointRestoreRoute#TIMELINE_RESTORE} rehydrated this view
+     * {@link LiveViewCheckpointRecoveryPhase#ROUTE_TIMELINE_RESTORE} rehydrated this view
      * from, or {@link Numbers#LONG_NULL} on every other route. Pair it with
      * {@link #getCheckpointRestoreGeneration()} to pin the restore to an expected
      * pre-existing root rather than to any root at all.
      */
+    @TestOnly
     public long getCheckpointRestoreCheckpointId() {
         return checkpointRestoreCheckpointId;
     }
 
     /**
      * @return the generation of the timeline root
-     * {@link LiveViewCheckpointRestoreRoute#TIMELINE_RESTORE} rehydrated this view
+     * {@link LiveViewCheckpointRecoveryPhase#ROUTE_TIMELINE_RESTORE} rehydrated this view
      * from, or {@link Numbers#LONG_NULL} on every other route
      */
+    @TestOnly
     public long getCheckpointRestoreGeneration() {
         return checkpointRestoreGeneration;
     }
@@ -1572,11 +1480,12 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * @return the {@code LiveViewCheckpointRestoreRoute} constant naming the route
+     * @return the {@code LiveViewCheckpointRecoveryPhase.ROUTE_*} constant naming the route
      * this view's single restart recovery attempt took, or
-     * {@link LiveViewCheckpointRestoreRoute#NONE} while no attempt has completed
+     * {@link LiveViewCheckpointRecoveryPhase#ROUTE_NONE} while no attempt has completed
      * one. See {@link #checkpointRestoreRoute}
      */
+    @TestOnly
     public int getCheckpointRestoreRoute() {
         return checkpointRestoreRoute;
     }
@@ -1598,6 +1507,7 @@ public class LiveViewInstance implements QuietCloseable {
      * without rebuilding the view from its base table; see
      * {@link #checkpointRuntimeRestores}
      */
+    @TestOnly
     public long getCheckpointRuntimeRestores() {
         return checkpointRuntimeRestores;
     }
@@ -1626,6 +1536,7 @@ public class LiveViewInstance implements QuietCloseable {
      * A restart that restored off its published roots leaves this at zero until
      * something else retires the ladder; see {@link #checkpointTimelineResets}
      */
+    @TestOnly
     public long getCheckpointTimelineResets() {
         return checkpointTimelineResets;
     }
@@ -1705,6 +1616,7 @@ public class LiveViewInstance implements QuietCloseable {
         return adaptiveCheckpointCorrectionCount;
     }
 
+    @TestOnly
     public long getAdaptiveCheckpointDurationMicros() {
         return adaptiveCheckpointDurationMicros;
     }
@@ -2099,11 +2011,12 @@ public class LiveViewInstance implements QuietCloseable {
      * {@link #getCheckpointRestoreRoute()} is the half that says which operation
      * actually ran.
      */
+    @TestOnly
     public boolean isCheckpointRestoreSucceeded() {
         final int route = checkpointRestoreRoute;
-        return route == LiveViewCheckpointRestoreRoute.TIMELINE_RESTORE
-                || route == LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD
-                || route == LiveViewCheckpointRestoreRoute.UPGRADE_REBUILD;
+        return route == LiveViewCheckpointRecoveryPhase.ROUTE_TIMELINE_RESTORE
+                || route == LiveViewCheckpointRecoveryPhase.ROUTE_FALLBACK_REBUILD
+                || route == LiveViewCheckpointRecoveryPhase.ROUTE_UPGRADE_REBUILD;
     }
 
     /**
@@ -2715,7 +2628,7 @@ public class LiveViewInstance implements QuietCloseable {
      * takes the view out of service; this only names the route for an observer.
      */
     public void recordCheckpointRestoreBlocked() {
-        checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.BLOCKED;
+        checkpointRestoreRoute = LiveViewCheckpointRecoveryPhase.ROUTE_BLOCKED;
     }
 
     /**
@@ -2729,8 +2642,8 @@ public class LiveViewInstance implements QuietCloseable {
      * to a field several workers read on every pass, for nothing.
      */
     public void recordCheckpointUpgradeBlocked() {
-        if (checkpointRestoreRoute != LiveViewCheckpointRestoreRoute.UPGRADE_BLOCKED) {
-            checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.UPGRADE_BLOCKED;
+        if (checkpointRestoreRoute != LiveViewCheckpointRecoveryPhase.ROUTE_UPGRADE_BLOCKED) {
+            checkpointRestoreRoute = LiveViewCheckpointRecoveryPhase.ROUTE_UPGRADE_BLOCKED;
         }
     }
 
@@ -2741,7 +2654,7 @@ public class LiveViewInstance implements QuietCloseable {
      * {@link LiveViewCheckpointRecoveryPhase#REBUILD_BLOCKED} phase it goes with.
      */
     public void recordCheckpointRestoreRebuildBlocked() {
-        checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.REBUILD_BLOCKED;
+        checkpointRestoreRoute = LiveViewCheckpointRecoveryPhase.ROUTE_REBUILD_BLOCKED;
     }
 
     /**
@@ -2751,7 +2664,7 @@ public class LiveViewInstance implements QuietCloseable {
      * replacement committed, so there is no root to name.
      */
     public void recordCheckpointRestoreRebuilt() {
-        checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.FALLBACK_REBUILD;
+        checkpointRestoreRoute = LiveViewCheckpointRecoveryPhase.ROUTE_FALLBACK_REBUILD;
     }
 
     /**
@@ -2760,7 +2673,7 @@ public class LiveViewInstance implements QuietCloseable {
      * No generation or checkpoint id goes with it: this build never read the older roots.
      */
     public void recordCheckpointRestoreUpgradeRebuilt() {
-        checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.UPGRADE_REBUILD;
+        checkpointRestoreRoute = LiveViewCheckpointRecoveryPhase.ROUTE_UPGRADE_REBUILD;
     }
 
     /**
@@ -2774,7 +2687,7 @@ public class LiveViewInstance implements QuietCloseable {
     public void recordCheckpointRestoreRestored(long generation, long checkpointId) {
         checkpointRestoreGeneration = generation;
         checkpointRestoreCheckpointId = checkpointId;
-        checkpointRestoreRoute = LiveViewCheckpointRestoreRoute.TIMELINE_RESTORE;
+        checkpointRestoreRoute = LiveViewCheckpointRecoveryPhase.ROUTE_TIMELINE_RESTORE;
     }
 
     /**
@@ -2803,28 +2716,19 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Mirrors the shape of a timeline generation this view just committed or
-     * adopted. See {@link #checkpointTimeline}.
-     */
-    /**
      * Adds one publication's capture ledger to this instance's lifetime totals. Called by
      * the refresh worker after the publication that produced the ledger is durable, while it
      * is still the newest one the writer performed - the ledger is the writer's flyweight and
      * is cleared by its next publication.
      */
     public void recordCheckpointCapture(@NotNull LiveViewCheckpointCaptureLedger ledger) {
-        checkpointCaptureWindowRoots += ledger.getWindowCaptures();
-        checkpointCaptureWindowRootsIncremental += ledger.getWindowIncrementalCaptures();
-        checkpointCaptureWindowKeysVisited += ledger.getWindowKeysVisited();
-        checkpointCaptureWindowKeysImaged += ledger.getWindowKeysImaged();
-        checkpointCaptureWindowKeysRemoved += ledger.getWindowKeysRemoved();
-        checkpointCaptureWindowElisionProbes += ledger.getWindowElisionProbes();
-        checkpointCaptureFunctionRoots += ledger.getFunctionCaptures();
-        checkpointCaptureFunctionRootsIncremental += ledger.getFunctionIncrementalCaptures();
-        checkpointCaptureFunctionKeysVisited += ledger.getFunctionKeysVisited();
-        checkpointCaptureFunctionKeysImaged += ledger.getFunctionKeysImaged();
+        checkpointCaptureLedger.add(ledger);
     }
 
+    /**
+     * Mirrors the shape of a timeline generation this view just committed or
+     * adopted. See {@link #checkpointTimeline}.
+     */
     public void recordCheckpointTimelineStats(@Nullable LiveViewCheckpointTimelineStats stats) {
         checkpointTimeline = stats == null
                 ? EMPTY_CHECKPOINT_TIMELINE
