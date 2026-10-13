@@ -55,6 +55,9 @@ import java.util.concurrent.atomic.LongAdder;
 
 public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Plannable {
     public static final LongAdder PRE_TOUCH_BLACK_HOLE = new LongAdder();
+    // Covered sidecars make fixed-width projection decoding cheap relative to replaying
+    // their posting cursor, so late materialization needs a more conservative cutoff.
+    private static final double COVERING_SELECTIVITY_THRESHOLD = 0.01;
     private final IntList columnTypes;
     private final Function filter;
     private final IntHashSet filterUsedColumnIndexes;
@@ -338,8 +341,14 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
         lateMatSkipColumnIndexes = skipSet;
     }
 
-    public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame, boolean isCountOnly) {
-        if (!isParquetFrame) {
+    public boolean shouldUseLateMaterialization(
+            int slotId,
+            boolean isParquetFrame,
+            boolean isSingleKeyCoveredFrame,
+            boolean isCountOnly
+    ) {
+        assert !isParquetFrame || !isSingleKeyCoveredFrame;
+        if (!isParquetFrame && !isSingleKeyCoveredFrame) {
             return false;
         }
         if (filterUsedColumnIndexes == null || filterUsedColumnIndexes.size() == 0) {
@@ -348,7 +357,13 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
         if (isCountOnly) {
             return true;
         }
-        return getSelectivityStats(slotId).shouldUseLateMaterialization();
+        final SelectivityStats stats = getSelectivityStats(slotId);
+        if (isSingleKeyCoveredFrame) {
+            // Start covered frames eagerly while gathering samples. Unlike Parquet,
+            // replaying a posting cursor can cost more than decoding a narrow INCLUDE.
+            return stats.shouldUseLateMaterialization(COVERING_SELECTIVITY_THRESHOLD, false);
+        }
+        return stats.shouldUseLateMaterialization();
     }
 
     @Override

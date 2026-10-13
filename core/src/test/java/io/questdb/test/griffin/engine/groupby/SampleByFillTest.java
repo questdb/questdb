@@ -2285,6 +2285,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                                       keys: [ts]
                                       keyFunctions: [timestamp_floor_utc('1h',ts)]
                                       values: [sum(c-1000)]
+                                      batchKernels: true
                                       filter: null
                                         PageFrame
                                             Row forward scan
@@ -2322,6 +2323,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                                       keys: [ts]
                                       keyFunctions: [timestamp_floor_utc('1h',ts)]
                                       values: [sum(c+1000)]
+                                      batchKernels: true
                                       filter: null
                                         PageFrame
                                             Row forward scan
@@ -2361,6 +2363,7 @@ public class SampleByFillTest extends AbstractCairoTest {
                                       keys: [ts]
                                       keyFunctions: [timestamp_floor_utc('1h',ts)]
                                       values: [sum(c*1000)]
+                                      batchKernels: true
                                       filter: null
                                         PageFrame
                                             Row forward scan

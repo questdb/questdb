@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -2271,6 +2272,192 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHourGroupByFallbackKeepsIntervalAndSubQueries() throws Exception {
+        // The hour() GROUP BY generates its base once to try the vectorised plan, and again when
+        // it cannot use it: here a filter or a non-vector aggregate. The second generation must
+        // keep the interval and the predicates (and LATEST ON) of the sub-queries the first one
+        // consumed. Before the fix it scanned every day and lost the sub-queries' predicates.
+        assertMemoryLeak(() -> {
+            execute("create table h1 (ts timestamp, sym symbol, v long) timestamp(ts) partition by day");
+            // a row a second from 2024-01-01, every third K1; the last K1 of 2024-01-01 is row 86,397
+            execute("insert into h1 select ('2024-01-01'::timestamp + x * 1_000_000L)::timestamp,"
+                    + " case when x % 3 = 0 then 'K1' else 'z' end, x from long_sequence(300_000)");
+            final StringBuilder perHour = new StringBuilder("h\tc\n");
+            for (int h = 0; h < 24; h++) {
+                perHour.append(h).append("\t1200\n");
+            }
+            assertHourResult(perHour.toString(), "select hour(ts) h, count() c from h1 where sym = 'K1' and ts in '2024-01-02' order by h");
+            assertHourResult(perHour.toString(), "select /*+ no_index */ hour(ts) h, count() c from h1 where sym = 'K1' and ts in '2024-01-02' order by h");
+            final String belowLastK1 = """
+                    h\tc
+                    0\t3599
+                    1\t3600
+                    2\t3600
+                    3\t3600
+                    4\t3600
+                    5\t3600
+                    6\t3600
+                    7\t3600
+                    8\t3600
+                    9\t3600
+                    10\t3600
+                    11\t3600
+                    12\t3600
+                    13\t3600
+                    14\t3600
+                    15\t3600
+                    16\t3600
+                    17\t3600
+                    18\t3600
+                    19\t3600
+                    20\t3600
+                    21\t3600
+                    22\t3600
+                    23\t3597
+                    """;
+            final String[] subQueries = {
+                    "(select v from h1 where sym = 'K1' and ts in '2024-01-01' order by ts desc limit 1)",
+                    "(select v from h1 where sym = 'K1' and ts in '2024-01-01' latest on ts partition by sym)",
+                    "(select min(v) from (select v from h1 where ts in '2024-01-01' latest on ts partition by sym))",
+            };
+            for (String sub : subQueries) {
+                assertHourResult(belowLastK1, "select hour(ts) h, count() c from h1 where v < " + sub + " order by h");
+            }
+            // page frames, but first() does not vectorise: the second generation of the base
+            assertHourResult(
+                    """
+                            h\tf\tc
+                            0\t86400\t3600
+                            1\t90000\t3600
+                            2\t93600\t3600
+                            23\t86398\t2
+                            """,
+                    "select hour(ts) h, first(v) f, count() c from h1"
+                            + " where ts > (select ts from h1 where sym = 'K1' and ts in '2024-01-01' latest on ts partition by sym)"
+                            + " and ts < '2024-01-02T03' order by h"
+            );
+        });
+    }
+
+    @Test
+    public void testHourGroupByFallbackKeepsLateralOuterSharedFactory() throws Exception {
+        // A LATERAL body over an hour() GROUP BY whose first() does not vectorise: the body's
+        // correlated filter joins it to the outer GROUP BY, a shared factory generated before the
+        // body. Generating the base twice must leave the outer factory's shared-factory cache
+        // entry alone.
+        assertMemoryLeak(() -> {
+            execute("create table m (ts timestamp, sym symbol, v long) timestamp(ts) partition by day");
+            execute("insert into m select (x * 1_000_000L)::timestamp, 'k' || (x % 7), x * 300 from long_sequence(1000)");
+            // a row every 10 seconds; the first row of hour h is row 360h (row 1 for hour 0)
+            execute("create table h3 (ts timestamp, v long) timestamp(ts) partition by day");
+            execute("insert into h3 select (x * 10_000_000L)::timestamp, x from long_sequence(30_000)");
+            final String sql = "SELECT o.ts, o.x, l.h, l.f, l.c FROM (SELECT ts, max(v) AS x FROM m WHERE v IN (300, 30300, 60000) GROUP BY ts) o"
+                    + " JOIN LATERAL (SELECT h, f, c FROM (SELECT hour(ts) h, first(v) f, count() c FROM h3 GROUP BY h) WHERE f < o.x / 50) l ON true"
+                    + " ORDER BY o.ts, l.h";
+            assertQuery(sql).withPlanContaining("(Shared)").inferRandomAccess().inferTimestamp().expectSize().returns(
+                    """
+                            ts\tx\th\tf\tc
+                            1970-01-01T00:00:01.000000Z\t300\t0\t1\t1439
+                            1970-01-01T00:01:41.000000Z\t30300\t0\t1\t1439
+                            1970-01-01T00:01:41.000000Z\t30300\t1\t360\t1440
+                            1970-01-01T00:03:20.000000Z\t60000\t0\t1\t1439
+                            1970-01-01T00:03:20.000000Z\t60000\t1\t360\t1440
+                            1970-01-01T00:03:20.000000Z\t60000\t2\t720\t1440
+                            1970-01-01T00:03:20.000000Z\t60000\t3\t1080\t1440
+                            """
+            );
+        });
+    }
+
+    @Test
+    public void testHourGroupByFallbackKeepsSubQueryWindowJoins() throws Exception {
+        // An intermediate WINDOW JOIN rewrites its aggregate model's columns: the second
+        // generation of the hour() GROUP BY's base must find the aggregates of the sub-query again.
+        assertMemoryLeak(() -> {
+            execute("create table h1 (ts timestamp, sym symbol, v long) timestamp(ts) partition by day");
+            execute("insert into h1 select ('2024-01-01'::timestamp + x * 1_000_000L)::timestamp,"
+                    + " case when x % 3 = 0 then 'K1' else 'z' end, x from long_sequence(300_000)");
+            execute("create table m (ts timestamp, sym symbol, v long) timestamp(ts) partition by day");
+            execute("insert into m select (x * 1_000_000L)::timestamp, 'k' || (x % 7), x * 300 from long_sequence(1000)");
+            execute("create table n (ts timestamp, sym symbol, v long) timestamp(ts) partition by day");
+            execute("insert into n select (x * 1_300_000L)::timestamp, 'k' || (x % 7), x * 200 from long_sequence(1000)");
+            // max(s1 + s2) is 1,064,000 (the windows include the prevailing row): 106,400 seconds
+            final String windowJoins = " from (select m.ts, sum(a.v) s1, sum(b.v) s2 from m"
+                    + " window join n a on (m.sym = a.sym) range between 10 seconds preceding and current row"
+                    + " window join n b on (m.sym = b.sym) range between 20 seconds preceding and current row))";
+            // a filter: the base has no page frames
+            assertQuery("select hour(ts) h, count() c from h1 where v < (select max(s1 + s2) / 10" + windowJoins + " order by h")
+                    .inferRandomAccess()
+                    .inferTimestamp()
+                    .expectSize()
+                    .returns(
+                    """
+                            h\tc
+                            0\t7199
+                            1\t7200
+                            2\t7200
+                            3\t7200
+                            4\t7200
+                            5\t5600
+                            6\t3600
+                            7\t3600
+                            8\t3600
+                            9\t3600
+                            10\t3600
+                            11\t3600
+                            12\t3600
+                            13\t3600
+                            14\t3600
+                            15\t3600
+                            16\t3600
+                            17\t3600
+                            18\t3600
+                            19\t3600
+                            20\t3600
+                            21\t3600
+                            22\t3600
+                            23\t3600
+                            """
+            );
+            // page frames (a dynamic interval), but first() does not vectorise
+            assertQuery("select hour(ts) h, first(v) f, count() c from h1"
+                    + " where ts < (select dateadd('s', (max(s1 + s2) / 10)::int, '2024-01-01')" + windowJoins + " order by h")
+                    .inferRandomAccess()
+                    .inferTimestamp()
+                    .expectSize()
+                    .returns(
+                    """
+                            h\tf\tc
+                            0\t1\t7199
+                            1\t3600\t7200
+                            2\t7200\t7200
+                            3\t10800\t7200
+                            4\t14400\t7200
+                            5\t18000\t5600
+                            6\t21600\t3600
+                            7\t25200\t3600
+                            8\t28800\t3600
+                            9\t32400\t3600
+                            10\t36000\t3600
+                            11\t39600\t3600
+                            12\t43200\t3600
+                            13\t46800\t3600
+                            14\t50400\t3600
+                            15\t54000\t3600
+                            16\t57600\t3600
+                            17\t61200\t3600
+                            18\t64800\t3600
+                            19\t68400\t3600
+                            20\t72000\t3600
+                            21\t75600\t3600
+                            22\t79200\t3600
+                            23\t82800\t3600
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testLatestByImplicitGroupBy1() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -4051,5 +4238,11 @@ public class GroupByTest extends AbstractCairoTest {
         final int close = errorMessage.indexOf(']');
         final int position = Integer.parseInt(errorMessage.substring(1, close));
         assertQuery(query).fails(position, errorMessage.substring(close + 2));
+    }
+
+    private void assertHourResult(String expected, String query) throws Exception {
+        final StringSink actual = new StringSink();
+        printSql(query, actual);
+        TestUtils.assertEquals(query, expected, actual);
     }
 }

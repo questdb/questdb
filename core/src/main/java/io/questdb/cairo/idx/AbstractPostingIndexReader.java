@@ -57,11 +57,15 @@ import io.questdb.std.str.DirectUtf8String;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
 public abstract class AbstractPostingIndexReader implements IndexReader {
+    // values of a covered key block a cursor decodes at once for its point reads, see
+    // AbstractCoveringCursor.decodeColumnWindow()
+    static final int DECODE_WINDOW = 4096;
     /**
      * Metadata explicitly requires conservative adaptive rejection without cursor traversal.
      */
@@ -2179,6 +2183,14 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         return operatingThreadId == Thread.currentThread().threadId();
     }
 
+    /**
+     * The cover count a new cursor tracks: the index's, when the caller reads covered columns
+     * through it, and 0 when it reads row ids only ({@code null} or no columns requested).
+     */
+    protected int cursorCoverCount(@Nullable int[] requiredCoverColumns) {
+        return requiredCoverColumns != null && requiredCoverColumns.length > 0 ? coverCount : 0;
+    }
+
     protected void openRequiredSidecars(int[] requiredCoverColumns) {
         if (coverCount == 0) {
             return;
@@ -2246,6 +2258,12 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         protected final DirectUtf8String varcharViewB = new DirectUtf8String();
         protected int cachedKeyBlockStride = -1;
         protected int cachedSidecarIdx;
+        // The reader's coverCount when the opener asked for covered columns, else 0. The
+        // sidecar bookkeeping (ordinals, stride key starts, per-gen sidecar offsets, the
+        // seek's skipped-value sums) serves only the covered accessors, so a cursor that
+        // reads row ids alone -- a key-major walk, a plain index scan -- skips all of it
+        // and drains its blocks in bulk, as on an index without INCLUDE columns.
+        protected int cursorCoverCount;
         protected int cursorGenCount;
         protected long decodeWorkspaceAddr;
         protected int decodeWorkspaceCapacity;
@@ -2270,13 +2288,63 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         protected int sidecarOrdinal;
         protected int sidecarStrideKeyStart;
         private long[] colCacheAddrs;
+        // colCacheAddrs minus the window's first ordinal times the value size: the address of
+        // ordinal 0, so that ordinal idx of the window reads at colCacheBases + idx * size
+        private long[] colCacheBases;
         private long[] colCacheBlockAddrs;
         private int[] colCacheCapacities;
+        // the decoded window of the block, ordinals [lo, hi), see ensureColumnDecoded()
+        private int[] colCacheHis;
+        private int[] colCacheLos;
         private long[] colPointBlockAddrs;
 
         @Override
         public ArrayView getCoveredArray(int includeIdx, int columnType) {
             return getVarSidecarArray(includeIdx, columnType);
+        }
+
+        @Override
+        public long getCoveredBlockAddress(int includeIdx) {
+            final long id = getCoveredBlockId(includeIdx);
+            if (id == 0 || !isCurrentGenDense) {
+                // a sparse generation stores the column's values raw, one array for the generation
+                return id;
+            }
+            // A dense generation's key block is compressed: a bulk reader reads its values in a
+            // run from any ordinal of the block, so decode the whole block now.
+            if (!decodeColumnWindow(includeIdx, id, 0, true)) {
+                return 0;
+            }
+            return colCacheBases[includeIdx];
+        }
+
+        @Override
+        public long getCoveredBlockId(int includeIdx) {
+            if (cursorCoverCount == 0 || cachedSidecarIdx < 0 || includeIdx < 0 || includeIdx >= cursorCoverCount) {
+                return 0;
+            }
+            if (isCurrentGenDense) {
+                return keyBlockAddrs != null && includeIdx < keyBlockAddrs.length ? keyBlockAddrs[includeIdx] : 0;
+            }
+            // as getRawSidecarXxx() read it: the generation's raw values, at the cursor's ordinal
+            if (includeIdx >= currentGenSidecarOffsets.size()) {
+                return 0;
+            }
+            final MemoryMR mem = sidecarMems.getQuick(includeIdx);
+            if (mem.size() == 0) {
+                return 0;
+            }
+            return mem.addressOf(currentGenSidecarOffsets.getQuick(includeIdx) + 4);
+        }
+
+        @Override
+        public int getCoveredBlockOrdinal() {
+            return cachedSidecarIdx;
+        }
+
+        @Override
+        public boolean isCoveredBlockCompressed() {
+            return isCurrentGenDense;
         }
 
         @Override
@@ -2299,7 +2367,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 return 0;
             }
             if (ensureColumnDecoded(includeIdx)) {
-                return Unsafe.getByte(colCacheAddrs[includeIdx] + idx);
+                return Unsafe.getByte(colCacheBases[includeIdx] + idx);
             }
             return CoveringCompressor.readByteAt(keyBlockAddrs[includeIdx], idx);
         }
@@ -2314,7 +2382,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 return Double.NaN;
             }
             if (ensureColumnDecoded(includeIdx)) {
-                return Unsafe.getDouble(colCacheAddrs[includeIdx] + (long) idx * Double.BYTES);
+                return Unsafe.getDouble(colCacheBases[includeIdx] + (long) idx * Double.BYTES);
             }
             return CoveringCompressor.readDoubleAt(keyBlockAddrs[includeIdx], idx);
         }
@@ -2329,7 +2397,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 return Float.NaN;
             }
             if (ensureColumnDecoded(includeIdx)) {
-                return Unsafe.getFloat(colCacheAddrs[includeIdx] + (long) idx * Float.BYTES);
+                return Unsafe.getFloat(colCacheBases[includeIdx] + (long) idx * Float.BYTES);
             }
             return CoveringCompressor.readFloatAt(keyBlockAddrs[includeIdx], idx);
         }
@@ -2344,7 +2412,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 return Numbers.INT_NULL;
             }
             if (ensureColumnDecoded(includeIdx)) {
-                return Unsafe.getInt(colCacheAddrs[includeIdx] + (long) idx * Integer.BYTES);
+                return Unsafe.getInt(colCacheBases[includeIdx] + (long) idx * Integer.BYTES);
             }
             return CoveringCompressor.readIntAt(keyBlockAddrs[includeIdx], idx);
         }
@@ -2359,7 +2427,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 return Numbers.LONG_NULL;
             }
             if (ensureColumnDecoded(includeIdx)) {
-                return Unsafe.getLong(colCacheAddrs[includeIdx] + (long) idx * Long.BYTES);
+                return Unsafe.getLong(colCacheBases[includeIdx] + (long) idx * Long.BYTES);
             }
             return CoveringCompressor.readLongAt(keyBlockAddrs[includeIdx], idx);
         }
@@ -2447,7 +2515,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                 return 0;
             }
             if (ensureColumnDecoded(includeIdx)) {
-                return Unsafe.getShort(colCacheAddrs[includeIdx] + (long) idx * Short.BYTES);
+                return Unsafe.getShort(colCacheBases[includeIdx] + (long) idx * Short.BYTES);
             }
             return CoveringCompressor.readShortAt(keyBlockAddrs[includeIdx], idx);
         }
@@ -3263,7 +3331,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         protected void cacheSidecarKeyAddrs(int stride, int localKey) {
-            if (coverCount == 0 || sealedGenKeyCount <= 0) {
+            if (cursorCoverCount == 0 || sealedGenKeyCount <= 0) {
                 return;
             }
             if (stride == cachedKeyBlockStride) {
@@ -3360,7 +3428,7 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
         }
 
         protected void computePerColumnSidecarOffsets(int gen) {
-            if (coverCount == 0) {
+            if (cursorCoverCount == 0) {
                 return;
             }
             currentGenSidecarOffsets.setPos(coverCount);
@@ -3382,36 +3450,55 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
          * point queries never pay the bulk-decode cost.
          */
         protected boolean ensureColumnDecoded(int includeIdx) {
-            if (colCacheBlockAddrs == null) {
-                colCacheAddrs = new long[coverCount];
-                colCacheBlockAddrs = new long[coverCount];
-                colCacheCapacities = new int[coverCount];
-                colPointBlockAddrs = new long[coverCount];
-            }
+            initColumnCache();
             long blockAddr = keyBlockAddrs[includeIdx];
             if (blockAddr == 0) {
                 return false;
             }
-            if (colCacheBlockAddrs[includeIdx] == blockAddr) {
+            final int idx = cachedSidecarIdx;
+            if (colCacheBlockAddrs[includeIdx] == blockAddr && idx >= colCacheLos[includeIdx] && idx < colCacheHis[includeIdx]) {
                 return true;
             }
-            if (colPointBlockAddrs[includeIdx] != blockAddr) {
+            if (colCacheBlockAddrs[includeIdx] != blockAddr && colPointBlockAddrs[includeIdx] != blockAddr) {
                 colPointBlockAddrs[includeIdx] = blockAddr;
                 return false;
             }
+            return decodeColumnWindow(includeIdx, blockAddr, idx, false);
+        }
+
+        /**
+         * Decodes the values of the block of column {@code includeIdx} around ordinal {@code idx}:
+         * the {@value #DECODE_WINDOW}-value window that holds it, or, with {@code isFullBlock}, the
+         * whole block. A cursor opened over a slice of a key's rows (a page frame of a parallel
+         * scan) then decodes that slice, not the whole of the key's block once per slice. False
+         * when {@code idx} is outside the block, for the point read.
+         */
+        private boolean decodeColumnWindow(int includeIdx, long blockAddr, int idx, boolean isFullBlock) {
+            initColumnCache();
             int rawCount = Unsafe.getInt(blockAddr);
             int count = rawCount & ~CoveringCompressor.RAW_BLOCK_FLAG;
             if (count == 0) {
                 colCacheBlockAddrs[includeIdx] = blockAddr;
+                colCacheLos[includeIdx] = 0;
+                colCacheHis[includeIdx] = 0;
+                colCacheBases[includeIdx] = colCacheAddrs[includeIdx];
                 return true;
             }
+            if (isFullBlock && colCacheBlockAddrs[includeIdx] == blockAddr && colCacheLos[includeIdx] == 0 && colCacheHis[includeIdx] == count) {
+                return true;
+            }
+            final int lo = isFullBlock ? 0 : (Math.max(0, idx) / DECODE_WINDOW) * DECODE_WINDOW;
+            if (lo >= count) {
+                return false;
+            }
+            final int n = isFullBlock ? count : Math.min(DECODE_WINDOW, count - lo);
             int colType = sidecarColumnTypes.getQuick(includeIdx);
             int elemSize = ColumnType.sizeOf(colType);
             // Widen: an int product wraps negative past 2^31 bytes, which fails the capacity test
             // below, skips the realloc, and leaves the decode writing into the previous, smaller
             // buffer. The writer refuses to seal a block this large, so reaching it means the
             // sidecar is corrupt.
-            long needed = (long) count * elemSize;
+            long needed = (long) n * elemSize;
             if (needed > Integer.MAX_VALUE) {
                 throw CairoException.critical(0).put(INDEX_CORRUPT)
                         .put(": sidecar block exceeds 2^31 bytes [valueCount=").put(count)
@@ -3424,26 +3511,25 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
                         needed, MemoryTag.NATIVE_INDEX_READER);
                 colCacheCapacities[includeIdx] = (int) needed;
             }
-            ensureDecodeWorkspaceCapacity(count);
-            switch (ColumnType.tagOf(colType)) {
-                case ColumnType.DOUBLE ->
-                        CoveringCompressor.decompressDoublesToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
-                case ColumnType.FLOAT ->
-                        CoveringCompressor.decompressFloatsToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
-                case ColumnType.LONG, ColumnType.TIMESTAMP, ColumnType.DATE, ColumnType.GEOLONG, ColumnType.DECIMAL64 ->
-                        CoveringCompressor.decompressLongsToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
-                case ColumnType.INT, ColumnType.IPv4, ColumnType.GEOINT, ColumnType.SYMBOL, ColumnType.DECIMAL32 ->
-                        CoveringCompressor.decompressIntsToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
-                case ColumnType.SHORT, ColumnType.CHAR, ColumnType.GEOSHORT, ColumnType.DECIMAL16 ->
-                        CoveringCompressor.decompressShortsToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
-                case ColumnType.BYTE, ColumnType.BOOLEAN, ColumnType.GEOBYTE, ColumnType.DECIMAL8 ->
-                        CoveringCompressor.decompressBytesToAddr(blockAddr, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
-                case ColumnType.LONG128, ColumnType.UUID, ColumnType.DECIMAL128, ColumnType.LONG256,
-                     ColumnType.DECIMAL256 ->
-                        Unsafe.copyMemory(blockAddr + 4, colCacheAddrs[includeIdx], (long) count * elemSize);
-            }
+            ensureDecodeWorkspaceCapacity(n);
+            CoveringCompressor.decompressRangeToAddr(colType, blockAddr, lo, n, colCacheAddrs[includeIdx], decodeWorkspaceAddr);
             colCacheBlockAddrs[includeIdx] = blockAddr;
+            colCacheLos[includeIdx] = lo;
+            colCacheHis[includeIdx] = lo + n;
+            colCacheBases[includeIdx] = colCacheAddrs[includeIdx] - (long) lo * elemSize;
             return true;
+        }
+
+        private void initColumnCache() {
+            if (colCacheBlockAddrs == null) {
+                colCacheAddrs = new long[coverCount];
+                colCacheBases = new long[coverCount];
+                colCacheBlockAddrs = new long[coverCount];
+                colCacheCapacities = new int[coverCount];
+                colCacheLos = new int[coverCount];
+                colCacheHis = new int[coverCount];
+                colPointBlockAddrs = new long[coverCount];
+            }
         }
 
         protected void ensureDecodeWorkspaceCapacity(int count) {

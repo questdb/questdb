@@ -41,6 +41,13 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 abstract class AbstractPageFrameSequence {
+    // test-only: executions of a base with a local reduce threshold, see
+    // RecordCursorFactory.getLocalReduceMaxRows(), whose frames were reduced on the query's
+    // thread, and those whose frames were dispatched; counted only while a test asks for it
+    // (countFrameOpens()), so that production opens do not share a contended counter
+    static final AtomicLong DISPATCHED_FRAME_OPENS = new AtomicLong();
+    static final AtomicLong LOCAL_FRAME_OPENS = new AtomicLong();
+    static volatile boolean isCountingFrameOpens;
     private static final int CANCEL_REASON_REDUCER_ERROR = -2;
     private static final int CANCEL_REASON_UNSET = -1;
     private final AtomicInteger cancelReason = new AtomicInteger(CANCEL_REASON_UNSET);
@@ -49,6 +56,12 @@ abstract class AbstractPageFrameSequence {
     private final FiberEventWaitQueue progressWaitQueue =
             new FiberEventWaitQueue(FiberWaitCoordinator.REASON_PROGRESS);
     private FiberDispatchContext dispatchContext;
+
+    static void countFrameOpens(boolean reduceFramesLocally) {
+        if (isCountingFrameOpens) {
+            (reduceFramesLocally ? LOCAL_FRAME_OPENS : DISPATCHED_FRAME_OPENS).incrementAndGet();
+        }
+    }
 
     public CairoException buildInterruptionException() {
         final int reason = getCancelReason();

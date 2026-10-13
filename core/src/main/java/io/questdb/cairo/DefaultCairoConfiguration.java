@@ -1941,6 +1941,16 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParallelCoveringFrameRows() {
+        return 65_536;
+    }
+
+    @Override
+    public long getSqlParallelCoveringLocalMaxRows() {
+        return 8_192;
+    }
+
+    @Override
     public boolean isSqlParallelFrameDispatchEnabled() {
         return true;
     }

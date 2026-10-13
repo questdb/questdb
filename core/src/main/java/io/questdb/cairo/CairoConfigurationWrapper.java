@@ -1985,6 +1985,16 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public long getSqlParallelCoveringFrameRows() {
+        return getDelegate().getSqlParallelCoveringFrameRows();
+    }
+
+    @Override
+    public long getSqlParallelCoveringLocalMaxRows() {
+        return getDelegate().getSqlParallelCoveringLocalMaxRows();
+    }
+
+    @Override
     public boolean isSqlParallelFrameDispatchEnabled() {
         return getDelegate().isSqlParallelFrameDispatchEnabled();
     }

@@ -79,7 +79,7 @@ public class CoveringIndexMaxValueTest extends AbstractCairoTest {
         // for the rest, so both surfaces of the clobbered base are covered.
         assertMemoryLeak(() -> {
             createTable("t_max_bulk", "POSTING", "WAL");
-            insertMaxRows("t_max_bulk", 3);
+            insertMaxRows("t_max_bulk", 3, true);
             drainWalQueue();
             assertCoveredMaxValues("t_max_bulk", 3);
         });
@@ -92,13 +92,13 @@ public class CoveringIndexMaxValueTest extends AbstractCairoTest {
         // round-tripped. Its bytes must not change.
         assertMemoryLeak(() -> {
             createTable("t_max_mixed", "POSTING", "WAL");
+            // the 2024-01-02 row first, see insertMaxRows()
+            execute("INSERT INTO t_max_mixed VALUES ('b', '10.0.0.2', 1, 1, 1::TIMESTAMP, 1::DATE, 1, 1, '2024-01-02T00:00:00.000000Z')");
             execute("""
                     INSERT INTO t_max_mixed VALUES
                         ('a', %s, '2024-01-01T00:00:00.000000Z'),
                         ('a', '10.0.0.1', 7, 7, 7::TIMESTAMP, 7::DATE, 7, 7,
-                         '2024-01-01T00:00:01.000000Z'),
-                        ('b', '10.0.0.2', 1, 1, 1::TIMESTAMP, 1::DATE, 1, 1,
-                         '2024-01-02T00:00:00.000000Z')
+                         '2024-01-01T00:00:01.000000Z')
                     """.formatted(MAX_VALUE_TUPLE));
             drainWalQueue();
             assertSidecarSealed("t_max_mixed");
@@ -151,7 +151,7 @@ public class CoveringIndexMaxValueTest extends AbstractCairoTest {
         // the all-max row is correct even on the unfixed writer.
         assertMemoryLeak(() -> {
             createTable("t_max_nowal", "POSTING", "BYPASS WAL");
-            insertMaxRows("t_max_nowal", 1);
+            insertMaxRows("t_max_nowal", 1, false);
             engine.releaseAllWriters();
             // The opposite of every other test here: one commit stays far below
             // cairo.posting.seal.gen.threshold, so the partition must NOT seal.
@@ -163,10 +163,34 @@ public class CoveringIndexMaxValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveredMaxValuesWalStraddleLeavesUnsealedGeneration() throws Exception {
+        // One WAL transaction straddling 2024-01-01/02: the single-transaction straddle split
+        // (#7574) appends the 2024-01-01 prefix in order, and the deferred compaction (#7516)
+        // leaves that partition's one generation unsealed. Its covered values are then read raw
+        // from the sidecar, and must still be the rows written.
+        assertMemoryLeak(() -> {
+            createTable("t_max_straddle", "POSTING", "WAL");
+            insertMaxRows("t_max_straddle", 3, false);
+            drainWalQueue();
+            assertSidecarUnsealed("t_max_straddle");
+            assertCoveredMaxValueRows("t_max_straddle", 3);
+            assertQuery("SELECT sym, count(), max(v_long), min(v_int), max(v_short) FROM t_max_straddle WHERE sym IN ('a', 'b') ORDER BY sym")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("CoveringIndex")
+                    .returns("""
+                            sym\tcount\tmax\tmin\tmax1
+                            a\t3\t9223372036854775807\t2147483647\t32767
+                            b\t1\t1\t1\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testCoveredMaxValuesParquet() throws Exception {
         assertMemoryLeak(() -> {
             createTable("t_max_parquet", "POSTING", "WAL");
-            insertMaxRows("t_max_parquet", 2);
+            insertMaxRows("t_max_parquet", 2, true);
             drainWalQueue();
             execute("ALTER TABLE t_max_parquet CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
             drainWalQueue();
@@ -178,7 +202,7 @@ public class CoveringIndexMaxValueTest extends AbstractCairoTest {
     public void testCoveredMaxValuesPostingDelta() throws Exception {
         assertMemoryLeak(() -> {
             createTable("t_max_delta", "POSTING DELTA", "WAL");
-            insertMaxRows("t_max_delta", 2);
+            insertMaxRows("t_max_delta", 2, true);
             drainWalQueue();
             assertCoveredMaxValues("t_max_delta", 2);
         });
@@ -188,7 +212,7 @@ public class CoveringIndexMaxValueTest extends AbstractCairoTest {
     public void testCoveredMaxValuesPostingEf() throws Exception {
         assertMemoryLeak(() -> {
             createTable("t_max_ef", "POSTING EF", "WAL");
-            insertMaxRows("t_max_ef", 2);
+            insertMaxRows("t_max_ef", 2, true);
             drainWalQueue();
             assertCoveredMaxValues("t_max_ef", 2);
         });
@@ -200,7 +224,7 @@ public class CoveringIndexMaxValueTest extends AbstractCairoTest {
         // resolves through the point-read path (readIntAt / readLongAt).
         assertMemoryLeak(() -> {
             createTable("t_max_wal", "POSTING", "WAL");
-            insertMaxRows("t_max_wal", 1);
+            insertMaxRows("t_max_wal", 1, true);
             drainWalQueue();
             assertCoveredMaxValues("t_max_wal", 1);
         });
@@ -226,15 +250,23 @@ public class CoveringIndexMaxValueTest extends AbstractCairoTest {
      * {@code 'b'} in 2024-01-02 so that 2024-01-01 leaves the active-partition
      * slot and its sidecar gets sealed.
      */
-    private static void insertMaxRows(String name, int maxRowCount) throws SqlException {
+    private static void insertMaxRows(String name, int maxRowCount, boolean isOutOfOrder) throws SqlException {
         StringBuilder sql = new StringBuilder("INSERT INTO ").append(name).append(" VALUES");
         for (int i = 0; i < maxRowCount; i++) {
             sql.append(i == 0 ? "\n" : ",\n")
                     .append("    ('a', ").append(MAX_VALUE_TUPLE)
                     .append(", ").append(rowTimestamp(i)).append(")");
         }
-        sql.append(",\n    ('b', '10.0.0.1', 1, 1, 1::TIMESTAMP, 1::DATE, 1, 1,")
-                .append(" '2024-01-02T00:00:00.000000Z')");
+        // With isOutOfOrder, the 2024-01-02 row commits first, so that the 2024-01-01 rows arrive out of order and the
+        // O3 commit seals their partition. In one transaction they would straddle the partition
+        // boundary, and the single-transaction straddle split (#7574) appends the 2024-01-01 prefix
+        // in order instead, which leaves its one generation unsealed until a later compaction.
+        final String laterRow = "('b', '10.0.0.1', 1, 1, 1::TIMESTAMP, 1::DATE, 1, 1, '2024-01-02T00:00:00.000000Z')";
+        if (isOutOfOrder) {
+            execute("INSERT INTO " + name + " VALUES " + laterRow);
+        } else {
+            sql.append(",\n    ").append(laterRow);
+        }
         execute(sql);
     }
 

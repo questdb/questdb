@@ -1241,6 +1241,54 @@ public class AlterTableDropPartitionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testForceDropActivePartitionLeavesParquetLastPartition() throws Exception {
+        // FORCE DROP of the open native partition leaves a converted parquet partition last. The
+        // writer does not open that partition, so it must still move its append horizon
+        // (partitionTimestampHi) back to it. A horizon left on the dropped partition tripped
+        // processWalCommit's partition-timestamp consistency assert on the next insert and
+        // suspended the table.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP, n LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO tango VALUES
+                    ('2024-01-04T00:00:00.000000Z', 1),
+                    ('2024-01-05T00:00:00.000000Z', 2)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE tango CONVERT PARTITION TO PARQUET LIST '2024-01-04'");
+            drainWalQueue();
+
+            execute("ALTER TABLE tango FORCE DROP PARTITION LIST '2024-01-05'");
+
+            execute("INSERT INTO tango VALUES ('2024-01-04T01:00:00.000000Z', 3)");
+            drainWalQueue();
+            execute("INSERT INTO tango VALUES ('2024-01-06T00:00:00.000000Z', 4)");
+            drainWalQueue();
+
+            Assert.assertFalse("tango is suspended", engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("tango")));
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('tango')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2024-01-04\t2\ttrue
+                            2024-01-06\t1\tfalse
+                            """);
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tn
+                            2024-01-04T00:00:00.000000Z\t1
+                            2024-01-04T01:00:00.000000Z\t3
+                            2024-01-06T00:00:00.000000Z\t4
+                            """);
+        });
+    }
+
+    @Test
     public void testForceDropPartitionExpectDrop() throws Exception {
         createXAndAssertException("alter table x force partition list '2022-02-04';", 20, "'drop' expected");
     }

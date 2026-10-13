@@ -82,6 +82,7 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
     public void disableCoveringCounters() {
         PostingIndexWriter.COVERING_COUNTERS_ENABLED = false;
         PostingIndexWriter.COVERING_FASTPATH_DISABLED = false;
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = false;
     }
 
     @Test
@@ -135,11 +136,25 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
     // the head to format 1.
     @Test
     public void testO3PreLagConcurrentReadFuzzLegacyFormat0Regression() throws Exception {
+        // Pinned to the pre-deferral path: this variant's job is to prove the
+        // publishToChain COW fires when a LEGACY format-0 head is extended in
+        // place by the O3-merge index commit. The covered append path stops that
+        // route from extending the head at all (the legacy head migrates via the
+        // reseal instead), so leaving it on would quietly retire the COW coverage
+        // rather than test it. The COW remains reachable from other extend sites.
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = true;
         runConcurrentReadFuzz(generateRandom(LOG, 0x5c1e83b7096d2fL, 0x4a90e2f1b7c358L), true, false, true);
     }
 
     @Test
     public void testO3PreLagConcurrentReadFuzzLegacyFormat0() throws Exception {
+        // Pinned to the pre-deferral path: this variant's job is to prove the
+        // publishToChain COW fires when a LEGACY format-0 head is extended in
+        // place by the O3-merge index commit. The covered append path stops that
+        // route from extending the head at all (the legacy head migrates via the
+        // reseal instead), so leaving it on would quietly retire the COW coverage
+        // rather than test it. The COW remains reachable from other extend sites.
+        PostingIndexWriter.COVERING_SEAL_APPEND_DISABLED = true;
         runConcurrentReadFuzz(generateRandom(LOG), true, false, true);
     }
 
@@ -236,11 +251,22 @@ public class CoveringIndexFastPathConcurrentReadFuzzTest extends AbstractFuzzTes
                             // (1) Covered == base at ONE snapshot: single statement, both
                             // branches share the reader txn -> any covered fragment that
                             // disagrees with the base column produces a non-empty diff.
+                            // The base arm is no_INDEX, not no_covering, and the diff is
+                            // SYMMETRIC. no_covering only disables the covered read and
+                            // leaves the index scan in place, so a posting that is
+                            // MISSING drops the row from both arms and a one-way diff
+                            // stays 0 - which is precisely what an unindexed tail looks
+                            // like. Proven by mutation: breaking the seal's rebuild
+                            // fallback left the old oracle green and fails this one.
                             final long diff = scalar(compiler, ctx,
                                     "SELECT count(*) FROM ("
-                                            + "(SELECT ts, value FROM t WHERE sym = '" + sym + "')"
+                                            + "((SELECT ts, value FROM t WHERE sym = '" + sym + "')"
                                             + " EXCEPT "
-                                            + "(SELECT /*+ no_covering */ ts, value FROM t WHERE sym = '" + sym + "'))");
+                                            + "(SELECT /*+ no_index */ ts, value FROM t WHERE sym = '" + sym + "'))"
+                                            + " UNION ALL "
+                                            + "((SELECT /*+ no_index */ ts, value FROM t WHERE sym = '" + sym + "')"
+                                            + " EXCEPT "
+                                            + "(SELECT ts, value FROM t WHERE sym = '" + sym + "')))");
                             if (diff != 0) {
                                 throw new AssertionError("covered read disagrees with base column at snapshot for "
                                         + sym + ": EXCEPT returned " + diff + " rows");

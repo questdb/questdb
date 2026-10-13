@@ -32,14 +32,12 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
-import io.questdb.mp.RingQueue;
-import io.questdb.mp.SCSequence;
+import io.questdb.mp.ConcurrentQueue;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.Os;
 import io.questdb.std.Rows;
 import io.questdb.std.Unsafe;
 import io.questdb.std.WeakMutableObjectPool;
@@ -76,9 +74,9 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private final MicrosecondClock clock;
     private final Path completedPath;
     private final int completedWriterIndex;
+    private final CairoEngine engine;
     private final FilesFacade ff;
-    private final RingQueue<PostingSealPurgeTask> inQueue;
-    private final SCSequence inSubSequence;
+    private final ConcurrentQueue<PostingSealPurgeTask> inQueue;
     private final int pathRootLen;
     private final long retryDelay;
     private final long retryDelayLimit;
@@ -88,6 +86,9 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private long completedFd = -1;
     private long completedFdPartitionTimestamp = Long.MIN_VALUE;
     private int errorCount;
+    // Counts successful log commits. A row appended under the current value is not
+    // durable yet: the writer pool rolls it back if the job loses the writer.
+    private long logCommitSeq;
     private long longBuf;
     private long nextErrorRetryAtMicros;
     private PostingSealPurgeOperator operator;
@@ -96,6 +97,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private TableWriter writer;
 
     public PostingSealPurgeJob(CairoEngine engine) throws SqlException {
+        this.engine = engine;
         try {
             CairoConfiguration configuration = engine.getConfiguration();
             this.clock = configuration.getMicrosecondClock();
@@ -105,7 +107,6 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
             this.pathRootLen = completedPath.size();
             this.longBuf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_SQL_COMPILER);
             this.inQueue = engine.getMessageBus().getPostingSealPurgeQueue();
-            this.inSubSequence = engine.getMessageBus().getPostingSealPurgeSubSeq();
             this.taskPool = new WeakMutableObjectPool<>(RetryEntry::new, configuration.getColumnPurgeTaskPoolCapacity());
             this.retryQueue = new PriorityQueue<>(configuration.getColumnPurgeQueueCapacity(), PostingSealPurgeJob::compareRetry);
             this.retryDelay = configuration.getColumnPurgeRetryDelay();
@@ -163,6 +164,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
 
     @Override
     public void close() {
+        logUnloggedTasksOnClose();
         closeCompletedFd();
         Misc.free(completedPath);
         if (longBuf != 0L) {
@@ -192,10 +194,14 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
 
     @TestOnly
     public boolean isJobAliveForTesting() {
-        // Returns true while the job is still attempting work. Before the
-        // fix, hitting MAX_ERRORS called close() and made this false
-        // forever; after the fix, error overflow only throttles via a
-        // backoff window and the job remains alive.
+        // Returns true until close(). Neither error overflow (which only
+        // throttles via a backoff window) nor the loss of the purge-log
+        // writer stops the job from consuming and purging tasks.
+        return operator != null;
+    }
+
+    @TestOnly
+    public boolean isLogWriterOpenForTesting() {
         return writer != null;
     }
 
@@ -329,10 +335,11 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         if (writer != null) {
             try {
                 writer.commit();
+                logCommitSeq++;
             } catch (Throwable th) {
-                LOG.error().$("posting seal purge: log commit failed, disabling writer [err=").$(th).I$();
+                LOG.error().$("posting seal purge: log commit failed, purging continues without the log [err=").$(th).I$();
                 errorCount++;
-                writer = Misc.free(writer);
+                releaseLogWriter();
             }
         }
     }
@@ -375,6 +382,52 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
+    /**
+     * Once the job loses its log writer, the tasks it dequeues exist only in memory.
+     * Before the job drops them, it records the ones still waiting, for example on a
+     * reader or on a file the OS refuses to delete, so that the next startup recovery
+     * purges them. Healthy jobs log every task when they dequeue it, so this finds
+     * nothing to do for them.
+     */
+    private void logUnloggedTasksOnClose() {
+        if (operator == null || retryQueue == null || tableToken == null) {
+            // already closed, or the constructor failed
+            return;
+        }
+        int unloggedCount = 0;
+        for (RetryEntry entry : retryQueue) {
+            if (entry.logRowId < 0) {
+                unloggedCount++;
+            }
+        }
+        if (unloggedCount == 0) {
+            return;
+        }
+        TableWriter logWriter = writer;
+        try {
+            if (logWriter == null) {
+                logWriter = engine.getWriter(tableToken, TableUtils.SYSTEM_WRITER_LOCK_REASON);
+            }
+            final long now = clock.getTicks();
+            for (RetryEntry entry : retryQueue) {
+                if (entry.logRowId < 0) {
+                    appendTask(logWriter, entry, now);
+                }
+            }
+            logWriter.commit();
+            LOG.info().$("posting seal purge: logged pending tasks on close [count=").$(unloggedCount).I$();
+        } catch (Throwable th) {
+            LOG.error().$("posting seal purge: could not log pending tasks on close, a restart will not purge them [count=")
+                    .$(unloggedCount)
+                    .$(", err=").$(th)
+                    .I$();
+        } finally {
+            if (logWriter != writer) {
+                Misc.free(logWriter);
+            }
+        }
+    }
+
     private void markCompleted(long rowId, long completionTime) {
         if (rowId < 0 || writer == null || completedWriterIndex < 0) {
             return;
@@ -409,31 +462,30 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         }
         try {
             entry.logRowId = appendTask(writer, entry, entry.scheduledAt);
+            entry.logCommitSeq = logCommitSeq;
         } catch (Throwable th) {
-            LOG.error().$("posting seal purge: failed to persist task, log writer disabled [err=").$(th).I$();
+            LOG.error().$("posting seal purge: failed to persist task, purging continues without the log [err=").$(th).I$();
             errorCount++;
-            writer = Misc.free(writer);
+            releaseLogWriter();
         }
     }
 
     private boolean processInQueue() {
         boolean useful = false;
         long now = clock.getTicks();
-        while (writer != null) {
-            long cursor = inSubSequence.next();
-            if (cursor < -1) {
-                Os.pause();
-                continue;
-            }
-            if (cursor < 0) {
+        // The log only lets tasks survive a restart. Losing it must not stop cleanup,
+        // so keep consuming without it, as ColumnPurgeJob does.
+        while (true) {
+            RetryEntry entry = taskPool.pop();
+            if (!inQueue.tryDequeue(entry)) {
+                taskPool.push(entry);
                 break;
             }
-            PostingSealPurgeTask src = inQueue.get(cursor);
-            RetryEntry entry = taskPool.pop();
             // First attempt immediate; retryDelay seeded with config base so
             // the first-failure backoff multiplies from a non-zero value.
-            entry.copyFrom(src, now, retryDelay, now);
-            inSubSequence.done(cursor);
+            entry.scheduledAt = now;
+            entry.retryDelay = retryDelay;
+            entry.nextRunTime = now;
             persistTask(entry);
             retryQueue.add(entry);
             useful = true;
@@ -554,8 +606,25 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         }
     }
 
+    private void releaseLogWriter() {
+        // The writer pool rolls back the rows of the uncommitted batch when the
+        // writer returns to it. Forget their row ids, so that close() logs these
+        // tasks again if they are still pending.
+        for (RetryEntry entry : retryQueue) {
+            if (entry.logRowId > -1 && entry.logCommitSeq == logCommitSeq) {
+                entry.logRowId = -1;
+            }
+        }
+        closeCompletedFd();
+        writer = Misc.free(writer);
+    }
+
     @Override
     protected boolean runSerially() {
+        if (operator == null) {
+            // closed: the job can no longer purge what it would dequeue
+            return false;
+        }
         // Throttle iterations after consecutive-error overflow: skip until
         // the backoff window elapses, then allow ONE attempt. If that
         // attempt is clean, the trailing reset below brings errorCount back
@@ -594,6 +663,7 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     }
 
     static final class RetryEntry extends PostingSealPurgeTask {
+        long logCommitSeq;
         long logRowId = -1;
         long nextRunTime;
         long retryDelay;
@@ -602,28 +672,12 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
         @Override
         public void clear() {
             super.clear();
+            logCommitSeq = 0L;
             logRowId = -1;
             nextRunTime = 0L;
             retryDelay = 0L;
             scheduledAt = 0L;
         }
 
-        void copyFrom(PostingSealPurgeTask src, long scheduledAt, long retryDelay, long nextRunTime) {
-            this.scheduledAt = scheduledAt;
-            this.retryDelay = retryDelay;
-            this.nextRunTime = nextRunTime;
-            of(
-                    src.getTableToken(),
-                    src.getIndexColumnName(),
-                    src.getPostingColumnNameTxn(),
-                    src.getSealTxn(),
-                    src.getPartitionTimestamp(),
-                    src.getPartitionNameTxn(),
-                    src.getPartitionBy(),
-                    src.getTimestampType(),
-                    src.getFromTableTxn(),
-                    src.getToTableTxn()
-            );
-        }
     }
 }

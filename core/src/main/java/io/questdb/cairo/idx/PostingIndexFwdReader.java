@@ -131,6 +131,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // the reader's close() only drains freeNullCursors and would never
             // reclaim a cursor stranded mid-of().
             try {
+                nc.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 nc.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 nc.releaseResources();
@@ -154,6 +155,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // See the NullCursor branch above: release the cursor's native buffers
             // if of() throws so a mid-of() failure cannot strand them.
             try {
+                c.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 c.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 c.releaseResources();
@@ -197,6 +199,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // never in the reader's free list, so nothing else would reclaim it; release
             // its native scratch on a mid-of() failure (mirrors getCursor).
             try {
+                nc.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 nc.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 nc.releaseResources();
@@ -213,6 +216,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             Cursor c = new Cursor();
             c.isDetached = true;
             try {
+                c.cursorCoverCount = cursorCoverCount(requiredCoverColumns);
                 c.of(key, minValue, indexMaxValue);
             } catch (Throwable th) {
                 c.releaseResources();
@@ -316,7 +320,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         return false;
                     }
                     next = value;
-                    if (coverCount > 0) {
+                    if (cursorCoverCount > 0) {
                         cachedSidecarIdx = isCurrentGenDense
                                 ? sidecarStrideKeyStart + sidecarOrdinal
                                 : sidecarOrdinal;
@@ -330,7 +334,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     if (blockBufferPos < blockBufferEnd) {
                         this.next = Unsafe.getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
                         blockBufferPos++;
-                        if (coverCount > 0) {
+                        if (cursorCoverCount > 0) {
                             cachedSidecarIdx = isCurrentGenDense
                                     ? sidecarStrideKeyStart + sidecarOrdinal
                                     : sidecarOrdinal;
@@ -348,7 +352,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                         }
                         if (value >= minValue) {
                             this.next = value;
-                            if (coverCount > 0) {
+                            if (cursorCoverCount > 0) {
                                 cachedSidecarIdx = isCurrentGenDense
                                         ? sidecarStrideKeyStart + sidecarOrdinal
                                         : sidecarOrdinal;
@@ -356,7 +360,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                             }
                             return true;
                         }
-                        if (coverCount > 0) sidecarOrdinal++;
+                        if (cursorCoverCount > 0) sidecarOrdinal++;
                     }
                 }
 
@@ -390,6 +394,65 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             return next - minValue;
         }
 
+        @Override
+        public int getCoveredRunOrdinal() {
+            return isCurrentGenDense ? sidecarStrideKeyStart + sidecarOrdinal : sidecarOrdinal;
+        }
+
+        // The rows hasNext() returns one ordinal after another: a constant-delta stream's values up
+        // to the cursor's upper bound, or a decoded block's within the cursor's row range.
+        @Override
+        public int peekCoveredRun(int maxRows) {
+            if (cursorCoverCount == 0) {
+                return 0;
+            }
+            if (constantDeltaRemaining > 0) {
+                if (constantDeltaValue > maxValue) {
+                    return 0;
+                }
+                long rows = constantDeltaRemaining;
+                if (constantDeltaStep > 0) {
+                    rows = Math.min(rows, (maxValue - constantDeltaValue) / constantDeltaStep + 1);
+                }
+                return (int) Math.min(maxRows, rows);
+            }
+            final int available = Math.min(maxRows, blockBufferEnd - blockBufferPos);
+            if (bufferRangeChecked || available <= 0) {
+                return Math.max(0, available);
+            }
+            // a block that straddles the cursor's range: hasNext() skips the values below it, one
+            // ordinal each, and ends at the first above it
+            final long first = Unsafe.getLong(blockBufferAddr + (long) blockBufferPos * Long.BYTES);
+            if (first < minValue) {
+                return 0;
+            }
+            int rows = 0;
+            while (rows < available && Unsafe.getLong(blockBufferAddr + (long) (blockBufferPos + rows) * Long.BYTES) <= maxValue) {
+                rows++;
+            }
+            return rows;
+        }
+
+        @Override
+        public void skipCoveredRun(int rows) {
+            assert rows >= 0;
+            if (rows == 0) {
+                return;
+            }
+            if (constantDeltaRemaining > 0) {
+                assert rows <= constantDeltaRemaining;
+                this.next = constantDeltaValue + (rows - 1) * constantDeltaStep;
+                constantDeltaValue += rows * constantDeltaStep;
+                constantDeltaRemaining -= rows;
+            } else {
+                assert rows <= blockBufferEnd - blockBufferPos;
+                blockBufferPos += rows;
+                this.next = Unsafe.getLong(blockBufferAddr + (long) (blockBufferPos - 1) * Long.BYTES);
+            }
+            sidecarOrdinal += rows;
+            cachedSidecarIdx = isCurrentGenDense ? sidecarStrideKeyStart + sidecarOrdinal - 1 : sidecarOrdinal - 1;
+        }
+
         /**
          * {@link #hasNext()} and {@link #next()} over the decoded block in bulk: a block wholly
          * within the cursor's row range is copied as it is; another one skips the values below
@@ -399,7 +462,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
          */
         @Override
         public long drainTo(DirectLongList sink, long rowIdBase, long maxRows) {
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 return RowCursor.drainRows(this, sink, rowIdBase, maxRows);
             }
             long n = 0;
@@ -539,15 +602,15 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                     if (minD > 0) {
                         long skip = (minValue - startValue + minD - 1) / minD;
                         if (skip >= remaining) {
-                            if (coverCount > 0) sidecarOrdinal += remaining;
+                            if (cursorCoverCount > 0) sidecarOrdinal += remaining;
                             remaining = 0;
                         } else {
                             startValue += skip * minD;
-                            if (coverCount > 0) sidecarOrdinal += (int) skip;
+                            if (cursorCoverCount > 0) sidecarOrdinal += (int) skip;
                             remaining -= (int) skip;
                         }
                     } else {
-                        if (coverCount > 0) sidecarOrdinal += remaining;
+                        if (cursorCoverCount > 0) sidecarOrdinal += remaining;
                         remaining = 0;
                     }
                 }
@@ -799,7 +862,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             this.totalValueCount = Unsafe.getInt(countsAddr + (long) localKey * Integer.BYTES);
             this.sidecarStrideKeyStart = 0;
             this.sidecarOrdinal = 0;
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 int deltaKeyStartCount = 0;
                 for (int k = 0; k < localKey; k++) {
                     deltaKeyStartCount += Unsafe.getInt(countsAddr + (long) k * Integer.BYTES);
@@ -865,7 +928,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
 
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 // O(1) via the reader-scoped memo instead of an O(start) scan of
                 // counts[] on every cursor open; version-guarded on the gen
                 // snapshot. See SparseGenSidecarPrefixSum.
@@ -915,7 +978,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
 
             long countsBase = genAddr + (long) activeKeyCount * Integer.BYTES;
 
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 // O(1) via the reader-scoped memo instead of an O(idx) scan of
                 // counts[] on every cursor open; version-guarded on the gen
                 // snapshot. See SparseGenSidecarPrefixSum.
@@ -1021,12 +1084,12 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             }
 
             // Only the covered accessors consume the skipped count (via sidecarStrideKeyStart or
-            // sidecarOrdinal, both read only when coverCount > 0), so the cursors of a non-covering
-            // index skip this O(startBlock) sum; summing it on every frame of a long list cost
-            // O(frames * blocks). coverCount is per index, not per cursor: on an INCLUDE index a
-            // query that reads no covered column still pays the sum.
+            // sidecarOrdinal, both read only when cursorCoverCount > 0), so a cursor that reads no
+            // covered column skips this O(startBlock) sum; summing it on every frame of a long list
+            // cost O(frames * blocks). cursorCoverCount is per cursor: on an INCLUDE index only a
+            // cursor opened for covered columns pays it.
             int skippedValueCount = 0;
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 for (int b = 0; b < startBlock; b++) {
                     skippedValueCount += Unsafe.getByte(baseAddr + srcValueCountsOffset + b) & 0xFF;
                 }
@@ -1044,7 +1107,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             // On a sparse gen the accessors index by sidecarOrdinal alone, so the skip goes
             // there.
             this.sidecarStrideKeyStart += skippedValueCount;
-            if (!isCurrentGenDense && coverCount > 0) {
+            if (!isCurrentGenDense && cursorCoverCount > 0) {
                 this.sidecarOrdinal += skippedValueCount;
             }
 
@@ -1123,7 +1186,7 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
             efOutputCount = rank;
             // hasNext() advances sidecarOrdinal once per value it discards below minValue; the
             // seek discards these values without visiting them, so account for them here.
-            if (coverCount > 0) {
+            if (cursorCoverCount > 0) {
                 sidecarOrdinal += rank;
             }
         }
@@ -1201,6 +1264,12 @@ public class PostingIndexFwdReader extends AbstractPostingIndexReader {
                 return;
             }
             releaseResources();
+        }
+
+        @Override
+        public int peekCoveredRun(int maxRows) {
+            // the NULL rows of the column top have no covered values
+            return nullPos < nullCount ? 0 : super.peekCoveredRun(maxRows);
         }
 
         // the NULL rows of the column top first, one at a time, then the index's rows in bulk

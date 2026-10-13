@@ -7153,7 +7153,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Async Group By workers: 1
+                        Async JIT Group By workers: 1
                           keys: [b,c,d,e,f,g,h,a]
                           values: [max(i)]
                           filter: b!=''
@@ -7206,7 +7206,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         assertQuery(query)
                 .noLeakCheck()
                 .assertsPlan("""
-                        Async Group By workers: 1
+                        Async JIT Group By workers: 1
                           keys: [b,c,d,e,f,g,h,a]
                           values: [max(i)]
                           filter: b!=''

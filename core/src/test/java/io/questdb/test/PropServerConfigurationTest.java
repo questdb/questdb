@@ -359,6 +359,8 @@ public class PropServerConfigurationTest {
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlParallelFrameDispatchEnabled());
         Assert.assertTrue(configuration.getCairoConfiguration().isSqlIndexScanChoiceEnabled());
         Assert.assertEquals(0.05, configuration.getCairoConfiguration().getSqlIndexScanChoiceMaxSelectivity(), 0);
+        Assert.assertEquals(65_536, configuration.getCairoConfiguration().getSqlParallelCoveringFrameRows());
+        Assert.assertEquals(8_192, configuration.getCairoConfiguration().getSqlParallelCoveringLocalMaxRows());
         Assert.assertEquals(10_000, configuration.getCairoConfiguration().getGroupByShardingThreshold());
         Assert.assertTrue(configuration.getCairoConfiguration().isGroupByPresizeEnabled());
         Assert.assertEquals(100_000_000, configuration.getCairoConfiguration().getGroupByPresizeMaxCapacity());
@@ -3522,6 +3524,8 @@ public class PropServerConfigurationTest {
         Assert.assertFalse(configuration.isSqlParallelFrameDispatchEnabled());
         Assert.assertFalse(configuration.isSqlIndexScanChoiceEnabled());
         Assert.assertEquals(0.25, configuration.getSqlIndexScanChoiceMaxSelectivity(), 0);
+        Assert.assertEquals(2000, configuration.getSqlParallelCoveringFrameRows());
+        Assert.assertEquals(300, configuration.getSqlParallelCoveringLocalMaxRows());
         Assert.assertEquals(2048, configuration.getGroupByMergeShardQueueCapacity());
         Assert.assertEquals(100, configuration.getGroupByShardingThreshold());
         Assert.assertEquals(1000, configuration.getGroupByParallelTopKThreshold());
