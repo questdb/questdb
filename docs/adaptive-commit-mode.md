@@ -246,6 +246,19 @@ one case and removes an endless apply loop and stray rows in another, but it doe
   job does the step again at its next pass. No row is lost. A clean shutdown keeps the step.
 - **A power loss during a parallel COPY** that has not reported it finished can leave the table in a state that
   needs a manual step (section 11.6). Nothing COPY reported done is lost.
+- **QuestDB Enterprise: the view audit table on a replica has no working manual recovery step.** The replica
+  applies it without a save point and purges its WAL once applied (it is the one table a replica writes itself).
+  A power loss can lose its most recent records and leave it suspended. `ALTER TABLE "sys.view_audit" RESUME WAL
+  FROM TXN <n>` is refused unconditionally; plain `RESUME WAL` only retries the already-failed transaction, and
+  `wal_tables()` does not expose the first transaction whose WAL still exists, so there is no `<n>` to compute
+  either. The lost records cannot be recovered; the table stays suspended until this is addressed in a follow-up.
+- **QuestDB Enterprise: an incremental backup can ship records past the local durable frontier.** The backup
+  checkpoint does not consult `localDurableSeqTxn`, so with a group window large enough (or a stalled flush) to
+  outlast the backup, the backup can capture a transaction before it is durable. A power loss that then makes the
+  primary reissue that transaction number with different content leaves the backup's copy permanently stale for
+  that partition; a restore brings back the old content with no error and no suspension. This mechanism exists
+  identically in `nosync` today (the shipped default); `adaptive`'s exposure window is much narrower (it needs a
+  group window or a flush stall that outlasts the backup).
 
 ### 7.6 Known issues in the other modes, outside this change
 
@@ -508,10 +521,14 @@ FROM wal_tables();
 |---|---|---|
 | `localDurableSeqTxn` | LONG | the highest sequence number whose WAL is on stable storage; -1 before the first. Advances in `adaptive` (and `sync`). |
 | `durableEpochSeqTxn` | LONG | the sequence number of the table's current save point. A crash replays from here. The WAL is kept from the save point before it, in case the start has to fall back to that one. |
-| `lastEpochTs` | TIMESTAMP | when the current save point was taken; NULL when there is none. |
+| `lastEpochTs` | TIMESTAMP | the last save-point publication time *this process* recorded; NULL when unknown. Not evidence that a save point is currently on disk: recovery does not restore this timestamp, and removing an epoch pin does not erase it. After a restart it stays NULL until the first WAL-apply batch publishes a save point — the writer-open check that certifies recovered coverage does not itself set it. |
 | `recoveryIncarnation` | LONG | how many times this process restored the table from its save point. |
 
-The three numbers read 0 for a table no writer has touched since the start.
+All four columns read the tracker directly, regardless of whether applied-writer coordinates are initialized yet
+(for example, a table no writer has touched since the start, or one caught by a notification-queue overflow).
+`localDurableSeqTxn` is `-1` until a flush establishes it; overflow can otherwise leave any of the four at a
+nonzero value rather than reading 0. `suspended` always reflects the tracker's real state and, for an unreadable
+`_txn` row, the genuine read error -- never a value fabricated because the writer was not yet initialized.
 
 Useful differences:
 
@@ -560,7 +577,6 @@ The start stops before it accepts connections and logs the reason with the table
 
 | Message | What it means | What to do |
 |---|---|---|
-| `adaptive recovery is disabled; refusing unsafe startup [table=...]` | `cairo.adaptive.recovery.roll.forward.enabled` is `false`. That setting exists for tests. | Remove the setting (the default is `true`) and start again. |
 | `invalid configuration value [key=cairo.commit.mode, ...]` | The mode is misspelt. | Use `nosync`, `async`, `sync` or `adaptive`. |
 | `could not open read-write [file=.../_epoch.manifest.<generation>]` or `could not rewrite adaptive save point header [path=...]` | Every `adaptive` start rewrites the header of each table's current save point and flushes it, so that nothing relies on a save point only the page cache holds. The named file cannot be opened for writing, or the write failed: its owner or permissions changed (a copy made as another user, for example), the file system is read-only, or the disk fails. | Fix the file's owner or permissions, or the disk, and start again. Nothing is lost meanwhile. |
 
@@ -778,7 +794,6 @@ directory (`<table>~<id>` under the database root), and start. The copy takes wr
 | `cairo.adaptive.epoch.flush.on.close` | `true` | A clean writer close takes a save point over any transactions after the last one, so a clean restart restores nothing. |
 | `cairo.adaptive.epoch.column.sync.batched` | `true` | On Linux, flush a save point's column files in one batch ending in one `syncfs`. `false`: a flush per column file, then the same `syncfs`. |
 | `cairo.wal.commit.writeback.drain` | `true` | Start the write-back of every file of a WAL segment, then wait for it, before the commit's flushes, so the files are written back in parallel. Speed only. |
-| `cairo.adaptive.recovery.roll.forward.enabled` | `true` | For tests. `false` stops the start when an adaptive table needs recovery. |
 
 ## Appendix B. Files
 

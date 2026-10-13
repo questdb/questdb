@@ -294,7 +294,8 @@ read by nothing and not deleted.
 1. If neither generation file exists, the table is not enrolled: nothing to do. That is two existence checks (four
    `access` calls) per WAL table, the whole cost of recovery for a table without a save point: about 2 µs per table,
    2.2 ms per 1,000 tables.
-2. If `cairo.adaptive.recovery.roll.forward.enabled` is false, refuse.
+2. If the internal roll-forward test hook is disabled, refuse. There is no server-side property for this; it
+   exists only so a test can force the refusal path.
 3. Repair an interrupted `_meta` swap (the `_todo_` file), as the writer would.
 4. Delete unpublished generation files. If none is left, the table is not enrolled.
 5. Take the valid generations, the current one first. If a file exists and none is valid, refuse: the save point
@@ -579,12 +580,24 @@ write nothing, and the purge could remove the version the `_txn` on the device s
   whose rename did not reach the disk, partitions attached before it) and the manual steps are in guide section
   11.6. A WAL table COPY creates gets no sequencer, in every mode, a base issue (guide section 7.6), so after a
   restart it cannot be written, altered or dropped.
-- **`RESUME WAL`** certifies the live cut against every on-disk candidate before the table resumes. A skip is not
-  recorded in the WAL, so one covering generation is insufficient: fallback must not replay the skipped interval.
-  Required publications run while the writer is held and the table remains suspended, outside the sequencer lock.
-  A plain or repeated RESUME checks disk coverage even if an intervening publication cleared the owed bit or a
-  pin is absent. At least one fully validated covering image must exist; header-valid older cuts are included
-  conservatively. Failure keeps suspension and asks the operator to fix the logged cause and retry RESUME WAL.
+- **`RESUME WAL`.** Ordinary plain `RESUME WAL` is writer-free when no required logical completion is outstanding,
+  as on a non-adaptive table; it no longer answers "table busy" right after a plain `SUSPEND WAL`. `RESUME WAL FROM
+  TXN` on a suspended table, and a plain RESUME with a required completion outstanding (an unfinished DETACH,
+  ATTACH, DROP, FORCE DROP, SET TTL or a previous FROM TXN), synchronously certify every selectable save-point
+  candidate and finish the pending logical finalization before the table resumes. A skip is not recorded in the
+  WAL, so one covering generation is insufficient: fallback must not replay the skipped interval. Writer
+  acquisition, enrolment, save-point publication and close for that certification run outside the sequencer WRITE
+  lock (an earlier revision held it, which could hang the global WAL purge off Linux). At least one fully
+  validated covering image must exist; header-valid older cuts are included conservatively. A failed required
+  completion leaves the table suspended; fix the logged cause and explicitly retry `RESUME WAL`.
+
+  Suspension itself is not persisted. After a restart, recovery conservatively reconstructs a completion
+  obligation for every recovered, configured-`adaptive` table (not only tables it believes were suspended, since
+  that state lives only in memory and does not survive the crash): the first `adaptive` writer certifies the
+  recovered cut before lazy apply resumes. This cold check can replace up to two lagging save points and finish a
+  pending DETACH finalization; a failure there leaves the obligation pending for the next RESUME. It is a
+  once-per-recovered-table cost at the first writer open after a restart, not a per-batch check; it has not been
+  measured.
 - **Direct logical partition changes** (ATTACH, DETACH, DROP, FORCE DROP and SET TTL through the direct writer or
   its queue) use the same synchronous completion rule, including partial-list failures and no-op retries. These
   commands have no WAL replay owner; retaining the original bytes does not preserve the requested absence or
@@ -697,9 +710,15 @@ bytes.
 - **Default mode.** Without an explicit `cairo.commit.mode`, Enterprise runs `nosync` when replication is configured.
 - **Durable acknowledgements.** `DurableUploadRegistry` composes the local and replicated frontiers on an
   eligible primary. The local gate uses the resolved mode and refuses a fenced engine; replicated follows the
-  upload frontier. A both-tier client trims only on replicated progress. The frozen demote registry advertises
-  replicated only, not a frozen local guarantee. Frames already collected for a blocked send retain their
-  snapshot. The server sends on inbound traffic or PING, not directly from a flush callback.
+  upload frontier. A both-tier client trims only on replicated progress. On a primary demote, the frozen registry
+  denies every *new* LOCAL handshake, but it still answers the LOCAL tier for a client whose grant predates the
+  freeze from the real engine-backed local frontier, not from the frozen upload snapshot — so an already-connected
+  LOCAL client keeps getting real acknowledgements through the demote instead of stalling for over 10 seconds
+  waiting on a frontier the snapshot never updates. Frames already collected for a blocked send retain their
+  snapshot. The server sends on inbound traffic or PING, not directly from a flush callback. Uploaded progress
+  alone is not proof of local durability: ordinary `adaptive`/`sync` uploads are gated on this local frontier, but
+  boot-index and carry-forward watermark seeding bypass that gate, so only freshly-uploaded transactions carry the
+  proof.
 
 ## 13. Detecting torn files
 
