@@ -143,18 +143,22 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
 
     @Test
     public void testManyKeysOverANarrowIntervalTakeTheScan() throws Exception {
-        // a 2-hour interval scans ~33K rows: 30 keys would cost a seek each for ~1K rows, so the interval is
-        // read instead (COVERING_MIN_ROWS_PER_KEY_SEEK); one key over the same interval keeps the covering plan
+        // a 10-hour interval scans ~167K rows: 30 keys would cost a seek each for ~5.6K rows, so the interval is
+        // read instead (COVERING_MIN_ROWS_PER_KEY_SEEK); one key over the same interval keeps the covering plan,
+        // and so do the 30 keys over 2 hours, ~33K rows, under COVERING_SEEK_RULE_MIN_SCANNED_ROWS
         assertMemoryLeak(() -> {
             createTable();
             final StringBuilder keys = new StringBuilder();
             for (int i = 0; i < 30; i++) {
                 keys.append(i == 0 ? "" : ",").append("'k").append(i).append('\'');
             }
-            final String interval = " and ts in '1970-01-01T02;2h'";
+            final String interval = " and ts in '1970-01-01T02;10h'";
             final String many = "select ts, sym, v, w from t where sym in (" + keys + ")" + interval + " order by ts, sym";
             assertPlanLacks(many, "CoveringIndex");
             assertSameResult(many, many.replace("select ", "select /*+ no_index */ "));
+            final String small = many.replace("10h", "2h");
+            assertPlanContains(small, "CoveringIndex");
+            assertSameResult(small, small.replace("select ", "select /*+ no_index */ "));
             final String one = "select ts, v, w from t where sym = 'R'" + interval;
             assertPlanContains(one, "CoveringIndex");
             assertSameResult(one, one.replace("select ", "select /*+ no_index */ "));
