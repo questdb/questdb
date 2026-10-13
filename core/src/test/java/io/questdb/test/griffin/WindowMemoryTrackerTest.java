@@ -484,6 +484,47 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPercentileArrayPartitionResultsFailOnManyPercentiles() throws Exception {
+        // The partitioned DOUBLE[] percentile functions keep each partition's results in
+        // resultMemory: 8 B of count plus 8 B per percentile, per key. With 200 keys and 200
+        // percentiles that is about 314 KiB, over the 256 KiB limit on its own, while the value
+        // lists hold one value per key, as in the scalar control. The scalar form finishes, so the
+        // lists, the map and the chain fit; the array forms must breach on resultMemory
+        // (NATIVE_CIRCULAR_BUFFER) in preparePass2. Without the binding they breach later, when
+        // pass2 writes the arrays into the record chain (NATIVE_RECORD_CHAIN).
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT x AS k, x::double AS v FROM long_sequence(200))");
+            drainWalQueue();
+            final StringBuilder percentiles = new StringBuilder("ARRAY[0.5");
+            for (int i = 1; i < 200; i++) {
+                percentiles.append(", 0.5");
+            }
+            percentiles.append(']');
+            final String[] functions = {
+                    "percentile_disc(v, " + percentiles + ")",
+                    "percentile_cont(v, " + percentiles + ")"
+            };
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                assertPercentileReleasesAllocations(
+                        compiler,
+                        "SELECT k, percentile_disc(v, 0.5) OVER (PARTITION BY k) FROM tab",
+                        CachedWindowRecordCursorFactory.class,
+                        200
+                );
+                for (String function : functions) {
+                    try (RecordCursorFactory factory = compiler.compile(
+                            "SELECT k, " + function + " OVER (PARTITION BY k) FROM tab",
+                            sqlExecutionContext).getRecordCursorFactory()) {
+                        assertInTree(factory, CachedWindowRecordCursorFactory.class);
+                        assertQueryMemoryLimitExceeded(factory, MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    }
+                }
+            }
+            Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
     public void testPercentilePartitionListFailsOnHighCardinality() throws Exception {
         // Percentile window functions are TWO_PASS and keep one value list per partition in
         // listMemory (and, for the DOUBLE[] forms, the per-partition results in resultMemory).
@@ -507,6 +548,47 @@ public class WindowMemoryTrackerTest extends AbstractCairoTest {
                             sqlExecutionContext).getRecordCursorFactory()) {
                         assertInTree(factory, CachedWindowRecordCursorFactory.class);
                         assertQueryMemoryLimitExceeded(factory, MemoryTag.NATIVE_CIRCULAR_BUFFER);
+                    }
+                }
+            }
+            Assert.assertEquals("busy reader count", 0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
+    public void testPercentilePartitionMapFailsOnMapAllocation() throws Exception {
+        // The partitioned percentile functions, scalar and DOUBLE[], keep their per-partition
+        // map tracker-bound through BasePartitionedWindowFunction.setMemoryTracker, which their
+        // own setMemoryTracker overrides must still call. As in
+        // testCumeDistPartitionMapFailsOnMapAllocation, an inflated small-map key capacity makes
+        // the map's first allocation at cursor open alone exceed the per-query limit, so the
+        // breach comes from the map before any value list exists. Without the super call the map
+        // allocates on the global counter only and the 100-key query completes.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tab AS (SELECT (x % 100) AS k, x::double AS v FROM long_sequence(1_000))");
+            drainWalQueue();
+            // A 64K-entry map backing dwarfs the 256 KiB limit; set after table creation so only
+            // the window query's partition map is inflated.
+            setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 64 * 1024);
+            final String[] functions = {
+                    "percentile_disc(v, 0.5)",
+                    "percentile_cont(v, 0.5)",
+                    "percentile_disc(v, ARRAY[0.5, 0.9])",
+                    "percentile_cont(v, ARRAY[0.5, 0.9])"
+            };
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String function : functions) {
+                    try (RecordCursorFactory factory = compiler.compile(
+                            "SELECT k, " + function + " OVER (PARTITION BY k) FROM tab",
+                            sqlExecutionContext).getRecordCursorFactory()) {
+                        assertInTree(factory, CachedWindowRecordCursorFactory.class);
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            Assert.fail("expected per-query memory breach during cursor open for " + function + ", got cursor: " + cursor);
+                        } catch (CairoException e) {
+                            Assert.assertTrue("expected isOutOfMemory(), got: " + e.getFlyweightMessage(), e.isOutOfMemory());
+                            TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                            TestUtils.assertContains(e.getFlyweightMessage(), "workload=QUERY");
+                        }
                     }
                 }
             }
