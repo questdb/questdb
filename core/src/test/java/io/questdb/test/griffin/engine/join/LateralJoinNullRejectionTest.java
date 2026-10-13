@@ -57,6 +57,12 @@ import java.util.regex.Pattern;
  * type of a table column and of a sub-query column that passes one through, and the code generator on
  * the type of any other sub-query column, such as a computed one, which only it knows.
  * <p>
+ * A filter that does not compile for its column type, such as BETWEEN on a FLOAT, fails the
+ * reference. The filter must then fail with the same error on the table alone, which shows that the
+ * join did not reject a valid filter. The query must fail with that error too, or, while the
+ * outer-ref join stays, with the rewriter's error, which the rewriter raises before the code
+ * generator compiles the filter. Any exception other than a SqlException fails the test at once.
+ * <p>
  * The data gives every outer row NULL-extended rows. Trade 10 holds a value in each typed column,
  * and trade 11 holds what the RIGHT join puts in NULL-extended rows: NULL, or 0 or false for BYTE,
  * SHORT and BOOLEAN. A filter therefore keeps NULL-extended rows exactly when the reference holds a
@@ -182,15 +188,16 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     try (RecordCursorFactory factory = select(sql)) {
                         for (BindValues values : new BindValues[]{BindValues.LOW, BindValues.NULL, BindValues.HIGH, BindValues.LOW}) {
                             setBindVariables(bindTypes[f], values);
+                            final String header = shape + " " + filters[f] + " " + values;
                             final List<String> actual;
                             try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                                 final StringSink rows = new StringSink();
                                 println(factory.getMetadata(), cursor, rows);
                                 actual = sortedRows(rows);
                             }
-                            final Outcome reference = run(referenceSql(shape, filters[f]));
-                            Assert.assertNull(reference.error);
-                            Assert.assertEquals(shape + " " + filters[f] + " " + values, reference.rows, actual);
+                            final Outcome reference = run(referenceSql(shape, filters[f]), header);
+                            Assert.assertNull(header, reference.error);
+                            Assert.assertEquals(header, reference.rows, actual);
                         }
                     }
                 }
@@ -221,8 +228,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                                 println(factory.getMetadata(), cursor, rows);
                                 actual = sortedRows(rows);
                             }
-                            final Outcome reference = run(referenceSql(shape, checkedFilters[f]));
-                            Assert.assertNull(reference.error);
+                            final Outcome reference = run(referenceSql(shape, checkedFilters[f]), header);
+                            Assert.assertNull(header, reference.error);
                             Assert.assertEquals(header, reference.rows, actual);
                         }
                     }
@@ -304,6 +311,11 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                 && column.hasNull() ? Expected.ROWS : Expected.ERROR;
     }
 
+    // the messages only, as the positions differ between the queries that share the filter
+    private static boolean hasSameMessage(SqlException a, SqlException b) {
+        return Chars.equals(a.getFlyweightMessage(), b.getFlyweightMessage());
+    }
+
     private static String instantiate(String template, String columnRef) {
         return template.replace("{C}", columnRef);
     }
@@ -313,19 +325,16 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     }
 
     // the error of a plan that checks, when the query runs, that a bind variable is not NULL
-    private static boolean isNullValueError(Throwable error, String sql, String template, Column column) {
-        return error instanceof SqlException e
-                && column.hasNull()
+    private static boolean isNullValueError(SqlException error, String sql, String template, Column column) {
+        return column.hasNull()
                 && template.contains("$1")
                 && RUNTIME_CHECKED.matcher(template).matches()
-                && Chars.contains(e.getFlyweightMessage(), NULL_VALUE_SUFFIX)
-                && e.getPosition() == sql.indexOf("$1");
+                && Chars.contains(error.getFlyweightMessage(), NULL_VALUE_SUFFIX)
+                && error.getPosition() == sql.indexOf("$1");
     }
 
-    private static boolean isRewriterError(Throwable error, int position) {
-        return error instanceof SqlException e
-                && Chars.contains(e.getFlyweightMessage(), ERROR_SUFFIX)
-                && e.getPosition() == position;
+    private static boolean isRewriterError(SqlException error, int position) {
+        return Chars.contains(error.getFlyweightMessage(), ERROR_SUFFIX) && error.getPosition() == position;
     }
 
     // the rewriter only proves comparisons, IN and BETWEEN
@@ -362,13 +371,18 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         return sb.toString();
     }
 
-    private static Outcome run(String sql) {
+    // Returns the rows of the query, or the SqlException that rejects it. Any other exception, such as
+    // a NullPointerException or an AssertionError of the engine, fails the test at once: no case
+    // expects one, and a case that expects an error would take it for one.
+    private static Outcome run(String sql, String header) {
         try {
             sink.clear();
             printSql(sql);
             return new Outcome(sortedRows(sink), null);
-        } catch (Throwable e) {
+        } catch (SqlException e) {
             return new Outcome(null, e);
+        } catch (Throwable e) {
+            throw new AssertionError(header + ": failed with " + e + "\n    " + sql, e);
         }
     }
 
@@ -407,10 +421,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         if (outcome.error == null) {
             return outcome.rows.size() + " rows " + outcome.rows;
         }
-        final String message = outcome.error instanceof SqlException e
-                ? "[" + e.getPosition() + "] " + e.getFlyweightMessage()
-                : String.valueOf(outcome.error.getMessage());
-        return outcome.error.getClass().getSimpleName() + ": " + message;
+        return "[" + outcome.error.getPosition() + "] " + outcome.error.getFlyweightMessage();
     }
 
     private void assertCase(
@@ -423,11 +434,20 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             List<String> failures
     ) {
         final String sql = lateralSql(shape, form, column, template);
-        final Outcome actual = run(sql);
         final String header = shape + " " + form + " " + column.type + " [" + template + "]" + (bindValues != null ? " " + bindValues : "");
+        final Outcome actual = run(sql, header);
+        final int position = sql.indexOf(shape.joinKeyword);
         if (reference.error != null) {
+            // The filter does not compile, see assertTemplate(), so the query fails with its error, or,
+            // while the outer-ref join stays, with the rewriter's error, which the rewriter raises before
+            // the code generator compiles the filter. Mode.ANY takes any SqlException.
             if (actual.error == null) {
                 failures.add(header + ": returned " + summary(actual) + ", the reference failed with " + summary(reference) + "\n    " + sql);
+            } else if (shape.mode != Mode.ANY
+                    && !hasSameMessage(actual.error, reference.error)
+                    && (shape.mode == Mode.WHERE_KEY || !isRewriterError(actual.error, position))) {
+                failures.add(header + ": failed with " + summary(actual) + ", expected the error of the filter, " + summary(reference)
+                        + (shape.mode == Mode.PINNED ? ", or [" + position + "] ... " + ERROR_SUFFIX : "") + "\n    " + sql);
             }
             return;
         }
@@ -439,8 +459,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         for (int i = 0, n = reference.rows.size(); i < n; i++) {
             keepsNullExtendedRows |= reference.rows.get(i).split("\t")[1].equals("null");
         }
+        // ROWS_OR_ERROR takes any SqlException, see Mode.ANY
         final Expected expected = expected(shape, form, column, template, keepsNullExtendedRows);
-        final int position = sql.indexOf(shape.joinKeyword);
         switch (expected) {
             case ROWS -> {
                 if (actual.error != null) {
@@ -454,11 +474,6 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     failures.add(header + ": failed with " + summary(actual) + ", expected [" + position + "] ... " + ERROR_SUFFIX + "\n    " + sql);
                 }
             }
-            default -> {
-                if (actual.error != null && !(actual.error instanceof SqlException)) {
-                    failures.add(header + ": failed with " + summary(actual) + "\n    " + sql);
-                }
-            }
         }
     }
 
@@ -468,24 +483,15 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             final List<String> failures = new ArrayList<>();
             int caseCount = 0;
             for (Column column : COLUMNS) {
-                final List<Form> forms = new ArrayList<>();
-                for (Form form : Form.values()) {
-                    // GROUP BY, DISTINCT and the like do not accept every column type
-                    final String table = form.table.replace("{c}", column.name).replace("{t}", column.type);
-                    if (run(form.prefix.replace("{c}", column.name) + "SELECT * FROM " + table).error == null) {
-                        forms.add(form);
-                    }
-                }
-                Assert.assertTrue(column.type, forms.contains(Form.TABLE));
                 for (String template : column.filters) {
-                    caseCount += assertTemplate(shape, column, forms, template, null, failures);
+                    caseCount += assertTemplate(shape, column, template, null, failures);
                 }
                 if (column.bindType != null) {
                     for (String template : column.bindFilters) {
                         for (BindValues values : BindValues.values()) {
                             // SHORT has no NULL
                             if (values != BindValues.NULL || !column.bindType.equals("short")) {
-                                caseCount += assertTemplate(shape, column, forms, template, values, failures);
+                                caseCount += assertTemplate(shape, column, template, values, failures);
                             }
                         }
                     }
@@ -493,7 +499,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             }
             bindVariableService.clear();
             if (!failures.isEmpty()) {
-                Assert.fail(failures.size() + " of " + caseCount + " cases failed:\n" + String.join("\n", failures.subList(0, Math.min(40, failures.size()))));
+                Assert.fail(failures.size() + " failures in " + caseCount + " cases:\n" + String.join("\n", failures.subList(0, Math.min(40, failures.size()))));
             }
         });
     }
@@ -501,7 +507,6 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     private int assertTemplate(
             Shape shape,
             Column column,
-            List<Form> forms,
             String template,
             BindValues bindValues,
             List<String> failures
@@ -510,11 +515,26 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         if (bindValues != null) {
             setBindVariables(column.bindType, bindValues);
         }
-        final Outcome reference = run(referenceSql(shape, instantiate(template, "t." + column.name)));
-        for (int i = 0, n = forms.size(); i < n; i++) {
-            assertCase(shape, forms.get(i), column, template, bindValues, reference, failures);
+        final String filter = instantiate(template, "t." + column.name);
+        final String sql = referenceSql(shape, filter);
+        final String header = shape + " " + column.type + " [" + template + "]" + (bindValues != null ? " " + bindValues : "");
+        final Outcome reference = run(sql, header);
+        if (reference.error != null) {
+            // The reference fails only because its filter does not compile for the column type, so the
+            // filter fails on the table alone with the same error. If it runs there, the join rejected a
+            // valid filter, which the cases below would take for the error of the filter.
+            final Outcome alone = run("SELECT id FROM trades t WHERE " + filter, header);
+            if (alone.error == null || !hasSameMessage(alone.error, reference.error)) {
+                failures.add(header + ": the reference failed with " + summary(reference) + ", and the filter on the table alone "
+                        + (alone.error == null ? "returned " : "failed with ") + summary(alone) + "\n    " + sql);
+            }
         }
-        return forms.size();
+        // every form accepts every column type, so a form that stops accepting one fails its cases
+        final Form[] forms = Form.values();
+        for (Form form : forms) {
+            assertCase(shape, form, column, template, bindValues, reference, failures);
+        }
+        return forms.length;
     }
 
     private enum BindValues {
@@ -590,6 +610,6 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         }
     }
 
-    private record Outcome(List<String> rows, Throwable error) {
+    private record Outcome(List<String> rows, SqlException error) {
     }
 }
