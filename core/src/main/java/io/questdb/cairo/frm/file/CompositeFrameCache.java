@@ -105,9 +105,10 @@ public class CompositeFrameCache implements QuietCloseable {
     }
 
     /**
-     * Run once the insert commit that ran this commit's plans has landed in {@code _txn}: stamps every entry a plan
-     * {@link #release}d this commit with {@code tableTxn}, which makes it reusable by the next commit, and closes every
-     * other entry. An entry is not stamped either when its partition is no longer attached under the name txn it was
+     * Run once the insert commit that ran this commit's plans has landed in {@code _txn}: trims what each plan
+     * {@link #release}d this commit reserved and did not write, resets its frame so nothing of this commit carries into
+     * the next, and stamps it with {@code tableTxn}, which makes it reusable by the next commit; and closes every other
+     * entry. An entry is not stamped either when its partition is no longer attached under the name txn it was
      * opened at - the commit dropped it, or rebuilt it as a fresh version.
      *
      * @param canKeep false when something other than the plans may have written the frames' files in this same txn;
@@ -121,6 +122,7 @@ public class CompositeFrameCache implements QuietCloseable {
                 e.evictOnRelease = true;
             } else if (canKeep && e.marked && e.target != null
                     && txReader.getPartitionNameTxnByPartitionTimestamp(e.partitionTimestamp, Long.MIN_VALUE) == e.nameTxn) {
+                e.target.resetReservation(true);
                 e.certifiedTxn = tableTxn;
                 e.marked = false;
             } else {
@@ -192,25 +194,16 @@ public class CompositeFrameCache implements QuietCloseable {
      * Returns an entry {@link #acquire} handed out, with the extent the plan left the partition at. A plan that went
      * through MARKS the entry, which keeps it only until {@link #certify}; until then nothing reuses it. With
      * {@code success} false, or after an {@link #evictAll} that ran while the entry was in use, its frames are closed.
-     * <p>
-     * A plan that went through gives back here what it reserved and did not write, not when its frames close: they
-     * may close commits later, after a write through other frames has made their sizes stale.
      */
-    public void release(Entry entry, boolean success, long extent) {
-        if (success && entry.target != null) {
-            // Outside the lock: only the caller uses the entry until the release below.
-            entry.target.trimUnusedReservation(entry.source);
-        }
-        synchronized (this) {
-            assert entry.inUse;
-            entry.inUse = false;
-            entry.certifiedTxn = -1;
-            if (!success || entry.evictOnRelease) {
-                entry.evict();
-            } else {
-                entry.extent = extent;
-                entry.marked = true;
-            }
+    public synchronized void release(Entry entry, boolean success, long extent) {
+        assert entry.inUse;
+        entry.inUse = false;
+        entry.certifiedTxn = -1;
+        if (!success || entry.evictOnRelease) {
+            entry.evict();
+        } else {
+            entry.extent = extent;
+            entry.marked = true;
         }
     }
 
@@ -254,8 +247,11 @@ public class CompositeFrameCache implements QuietCloseable {
                         .$(", nameTxn=").$(nameTxn)
                         .I$();
             }
-            // The source first: it maps the files the target trims as it closes after a failed plan, and Windows
-            // refuses to shorten a file while a view of it is mapped.
+            if (target != null) {
+                // A cached frame trims only in certify(), right after the commit that wrote through it: by the time
+                // it closes, another handle may have written its files past the sizes it knows.
+                target.resetReservation(false);
+            }
             source = Misc.free(source);
             target = Misc.free(target);
             partitionTimestamp = Long.MIN_VALUE;

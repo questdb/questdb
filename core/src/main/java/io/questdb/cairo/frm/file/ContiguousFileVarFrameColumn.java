@@ -341,11 +341,6 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     @Override
-    public boolean isOverReserved() {
-        return !isReadOnly && (isAuxOverReserved() || isDataOverReserved());
-    }
-
-    @Override
     public boolean isSyncPending() {
         return isAuxSyncPending || isDataSyncPending;
     }
@@ -526,6 +521,36 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
     }
 
     @Override
+    public void resetReservation(boolean isTrimUnused) {
+        // See ContiguousFileFixFrameColumn#resetReservation.
+        if (isTrimUnused && !isReadOnly) {
+            if (auxFd != -1 && allocatedAuxBytes > Files.ceilPageSize(usedAuxBytes)) {
+                if (auxMapAddr != 0) {
+                    ff.munmap(auxMapAddr, auxMapSize, MEMORY_TAG);
+                    auxMapAddr = 0;
+                    auxMapSize = 0;
+                }
+                ContiguousFileFixFrameColumn.trimUnused(ff, auxFd, allocatedAuxBytes, usedAuxBytes, columnIndex);
+            }
+            if (dataFd != -1 && allocatedDataBytes > Files.ceilPageSize(usedDataBytes)) {
+                if (dataMapAddr != 0) {
+                    ff.munmap(dataMapAddr, dataMapSize, MEMORY_TAG);
+                    dataMapAddr = 0;
+                    dataMapSize = 0;
+                }
+                ContiguousFileFixFrameColumn.trimUnused(ff, dataFd, allocatedDataBytes, usedDataBytes, columnIndex);
+            }
+        }
+        allocatedAuxBytes = 0;
+        allocatedDataBytes = 0;
+        usedAuxBytes = 0;
+        usedDataBytes = 0;
+        isAllocatedAuxBytesKnown = false;
+        isAllocatedDataBytesKnown = false;
+        isTrimOnClose = false;
+    }
+
+    @Override
     public void reserve(long rowLo, long rowHi, long dataBytes, boolean isDedup) {
         this.isDedup = isDedup;
         final long rows = rowHi - columnTop;
@@ -575,30 +600,6 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             ff.fsync(auxFd);
             isAuxSyncPending = false;
         }
-    }
-
-    @Override
-    public void trimUnusedReservation() {
-        // See ContiguousFileFixFrameColumn#trimUnusedReservation.
-        if (!isReadOnly) {
-            if (isAuxOverReserved()) {
-                if (auxMapAddr != 0) {
-                    ff.munmap(auxMapAddr, auxMapSize, MEMORY_TAG);
-                    auxMapAddr = 0;
-                    auxMapSize = 0;
-                }
-                allocatedAuxBytes = ContiguousFileFixFrameColumn.trimUnused(ff, auxFd, allocatedAuxBytes, usedAuxBytes, columnIndex);
-            }
-            if (isDataOverReserved()) {
-                if (dataMapAddr != 0) {
-                    ff.munmap(dataMapAddr, dataMapSize, MEMORY_TAG);
-                    dataMapAddr = 0;
-                    dataMapSize = 0;
-                }
-                allocatedDataBytes = ContiguousFileFixFrameColumn.trimUnused(ff, dataFd, allocatedDataBytes, usedDataBytes, columnIndex);
-            }
-        }
-        isTrimOnClose = false;
     }
 
     /**
@@ -729,14 +730,6 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
         assert isAllocatedDataBytesKnown;
         assert fileOffsetHi <= allocatedDataBytes : "positioned data write exceeds reservation [column=" + columnIndex
                 + ", writeHi=" + fileOffsetHi + ", allocated=" + allocatedDataBytes + ']';
-    }
-
-    private boolean isAuxOverReserved() {
-        return auxFd != -1 && allocatedAuxBytes > Files.ceilPageSize(usedAuxBytes);
-    }
-
-    private boolean isDataOverReserved() {
-        return dataFd != -1 && allocatedDataBytes > Files.ceilPageSize(usedDataBytes);
     }
 
     private void mapAllRows(long rowHi) {

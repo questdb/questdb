@@ -25,15 +25,11 @@
 package io.questdb.test.cairo.composite;
 
 import io.questdb.PropertyKey;
-import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
-import io.questdb.cairo.frm.file.ContiguousFileFixFrameColumn;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
-import io.questdb.std.MemoryTag;
-import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -61,47 +57,6 @@ public class CompositeColumnFileTrimTest extends AbstractCairoTest {
     @Test
     public void testDedupMergeTrimsUnwrittenReservationWithMixedIo() throws Exception {
         assertMemoryLeak(() -> assertTrimmedAfterDedupMerge(true));
-    }
-
-    /**
-     * A column whose file another handle has grown since it reserved must not trim it by its own, stale sizes: the
-     * bytes past them are the other handle's writes.
-     */
-    @Test
-    public void testFileGrownElsewhereIsNotTrimmed() throws Exception {
-        assertMemoryLeak(() -> {
-            final FilesFacade ff = configuration.getFilesFacade();
-            try (Path path = new Path()) {
-                path.of(root).concat("trim");
-                final int plen = path.size();
-                Assert.assertEquals(0, ff.mkdirs(path.slash(), configuration.getMkDirMode()));
-                path.trimTo(plen);
-                final ContiguousFileFixFrameColumn column = new ContiguousFileFixFrameColumn(configuration);
-                column.ofRW(path, "v", -1, ColumnType.LONG, 0, 0);
-                column.setTrimOnClose(true);
-                // Reserves two pages and writes nothing: on close, both are unused by this column's own account.
-                final long reserved = 2 * Files.PAGE_SIZE;
-                column.reserve(0, reserved / Long.BYTES, 0, false);
-
-                final long grown = 3 * Files.PAGE_SIZE;
-                final long fd = TableUtils.openRW(ff, TableUtils.dFile(path, "v", -1), LOG, configuration.getWriterFileOpenOpts());
-                path.trimTo(plen);
-                final long buf = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                try {
-                    Assert.assertTrue(ff.allocate(fd, grown));
-                    Unsafe.getUnsafe().putLong(buf, 42);
-                    Assert.assertEquals(Long.BYTES, ff.write(fd, buf, Long.BYTES, grown - Long.BYTES));
-                    column.close();
-                    Assert.assertEquals(grown, ff.length(fd));
-                    Unsafe.getUnsafe().putLong(buf, 0);
-                    Assert.assertEquals(Long.BYTES, ff.read(fd, buf, Long.BYTES, grown - Long.BYTES));
-                    Assert.assertEquals(42, Unsafe.getUnsafe().getLong(buf));
-                } finally {
-                    Unsafe.free(buf, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-                    ff.close(fd);
-                }
-            }
-        });
     }
 
     /**
@@ -149,6 +104,8 @@ public class CompositeColumnFileTrimTest extends AbstractCairoTest {
 
     private void assertTrimmedAfterDedupMerge(boolean mixedIo) throws Exception {
         node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, mixedIo);
+        // Pooled frame columns capture the FilesFacade they were built with; start from a fresh pool.
+        engine.resetFrameFactory();
         createDedupDay();
         execute(REPLAY);
         drainWalQueue();

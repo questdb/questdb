@@ -497,6 +497,19 @@ public class FrameImpl implements Frame {
         this.windowHi = Long.MAX_VALUE;
     }
 
+    /**
+     * Resets every kept column's reservation; see {@link FrameColumn#resetReservation}. For a writable frame that
+     * outlives the plan that wrote through it.
+     */
+    public void resetReservation(boolean isTrimUnused) {
+        for (int i = 0, n = keptColumns.size(); i < n; i++) {
+            final FrameColumn column = keptColumns.getQuick(i);
+            if (column != null) {
+                column.resetReservation(isTrimUnused);
+            }
+        }
+    }
+
     @Override
     public void reserve(long rowHi, Frame source1, LongList source1Ranges, @Nullable Frame source2, @Nullable LongList source2Ranges) {
         if (rowHi <= rowCount) {
@@ -612,26 +625,6 @@ public class FrameImpl implements Frame {
     }
 
     /**
-     * Trims every kept column's unused reservation now rather than on close; see
-     * {@link FrameColumn#trimUnusedReservation}. For a writable frame that outlives the plan that wrote through it.
-     *
-     * @param source the read-only frame kept open over the same files, if any: it lets go of a column the trim is
-     *               about to shorten, and opens it afresh when next asked for it - Windows refuses to shorten a file
-     *               while a view of it is mapped
-     */
-    public void trimUnusedReservation(@Nullable FrameImpl source) {
-        for (int i = 0, n = keptColumns.size(); i < n; i++) {
-            final FrameColumn column = keptColumns.getQuick(i);
-            if (column != null) {
-                if (source != null && column.isOverReserved()) {
-                    source.closeKeptColumn(i);
-                }
-                column.trimUnusedReservation();
-            }
-        }
-    }
-
-    /**
      * Extends a column's leading NULL run over the source rows of {@code ranges}, taken in the order the plan appends
      * them: a row under the source column's top lengthens the run, and the first row holding a value ends it. The run
      * is carried as its length while it is open and as that length's bitwise complement once it has ended - see
@@ -686,14 +679,6 @@ public class FrameImpl implements Frame {
             bytes += driver.getDataVectorSize(auxAddr, lo - top, hi - 1 - top);
         }
         return bytes;
-    }
-
-    private void closeKeptColumn(int columnIndex) {
-        final FrameColumn column = keptColumns.getQuiet(columnIndex);
-        if (column != null && column != DeletedFrameColumn.INSTANCE) {
-            column.close();
-            keptColumns.setQuick(columnIndex, null);
-        }
     }
 
     private void closeColumns(Frame source1, @Nullable Frame source2, int columnLo, int columnHi) {

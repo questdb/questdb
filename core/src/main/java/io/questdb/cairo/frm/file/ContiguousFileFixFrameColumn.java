@@ -366,11 +366,6 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
-    public boolean isOverReserved() {
-        return fd > -1 && !isReadOnly && allocatedBytes > Files.ceilPageSize(usedBytes);
-    }
-
-    @Override
     public boolean isSyncPending() {
         return isSyncPending;
     }
@@ -424,6 +419,24 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
     }
 
     @Override
+    public void resetReservation(boolean isTrimUnused) {
+        if (isTrimUnused && fd > -1 && !isReadOnly && allocatedBytes > Files.ceilPageSize(usedBytes)) {
+            // Unmapped first: Windows refuses to shorten a mapped file, and no mapping may reach past the new end.
+            // The next write maps the file afresh.
+            if (mapAddr != 0) {
+                ff.munmap(mapAddr, mapSize, MEMORY_TAG);
+                mapAddr = 0;
+                mapSize = 0;
+            }
+            trimUnused(ff, fd, allocatedBytes, usedBytes, columnIndex);
+        }
+        allocatedBytes = 0;
+        usedBytes = 0;
+        isAllocatedBytesKnown = false;
+        isTrimOnClose = false;
+    }
+
+    @Override
     public void reserve(long rowLo, long rowHi, long dataBytes, boolean isDedup) {
         // Fixed width: the rows alone say how long the file gets, whatever is written into them.
         final long rows = rowHi - columnTop;
@@ -460,21 +473,6 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
             ff.fsync(fd);
             isSyncPending = false;
         }
-    }
-
-    @Override
-    public void trimUnusedReservation() {
-        if (isOverReserved()) {
-            // Unmapped first: Windows refuses to shorten a mapped file, and no mapping may reach past the new end.
-            // The next write maps the file afresh.
-            if (mapAddr != 0) {
-                ff.munmap(mapAddr, mapSize, MEMORY_TAG);
-                mapAddr = 0;
-                mapSize = 0;
-            }
-            allocatedBytes = trimUnused(ff, fd, allocatedBytes, usedBytes, columnIndex);
-        }
-        isTrimOnClose = false;
     }
 
     /**
@@ -601,30 +599,13 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
      * Shortens a file this open grew to {@code usedBytes}, page rounded, when it was grown past that - and makes no
      * call at all otherwise: an exact reservation is page aligned at the same length, and a file this open never grew
      * has {@code allocatedBytes} at most its own length. Never below {@code usedBytes}, which is no shorter than the
-     * length the file had when this open first looked, so nothing written before this open is touched. Nor when the
-     * file is no longer the length this open left it at: another handle has written it since, past what this one
-     * knows, and only that handle can say which bytes are in use. Best-effort: Windows refuses while any view of the
-     * file is mapped, a reader's included, and the bytes then stay, which only means the next open writes into them
-     * instead of allocating.
-     *
-     * @return the length this open may assume the file has from here on
+     * length the file had when this open first looked, so nothing written before this open is touched. Best-effort:
+     * Windows refuses while any view of the file is mapped, a reader's included, and the bytes then stay, which only
+     * means the next open writes into them instead of allocating.
      */
-    static long trimUnused(FilesFacade ff, long fd, long allocatedBytes, long usedBytes, int columnIndex) {
+    static void trimUnused(FilesFacade ff, long fd, long allocatedBytes, long usedBytes, int columnIndex) {
         final long size = Files.ceilPageSize(usedBytes);
-        if (allocatedBytes <= size) {
-            return allocatedBytes;
-        }
-        final long length = ff.length(fd);
-        if (length != allocatedBytes) {
-            LOG.info().$("skipped trim of a file changed since it was reserved [fd=").$(fd)
-                    .$(", columnIndex=").$(columnIndex)
-                    .$(", allocated=").$(allocatedBytes)
-                    .$(", length=").$(length)
-                    .$(", used=").$(usedBytes)
-                    .I$();
-            return allocatedBytes;
-        }
-        if (!ff.truncate(fd, size)) {
+        if (allocatedBytes > size && !ff.truncate(fd, size)) {
             final int errno = ff.errno();
             LOG.debug().$("could not trim unused reservation [fd=").$(fd)
                     .$(", columnIndex=").$(columnIndex)
@@ -632,9 +613,7 @@ public class ContiguousFileFixFrameColumn implements FrameColumn {
                     .$(", used=").$(usedBytes)
                     .$(", errno=").$(errno)
                     .I$();
-            return allocatedBytes;
         }
-        return size;
     }
 
     private void of(int columnType, long columnTop, int columnIndex) {
