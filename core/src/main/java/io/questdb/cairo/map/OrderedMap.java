@@ -101,6 +101,13 @@ import static io.questdb.std.Numbers.MAX_SAFE_INT_POW_2;
  * Length field is present for var-size keys only. It stores key length in bytes.
  */
 public class OrderedMap implements Map, Reopenable {
+    // the batch key cache: 2^bits slots; after the first BATCH_KEY_CACHE_TRIAL_ROWS rows of a batch,
+    // a cache that hit fewer than half of them is dropped for the rest of the batch
+    private static final int BATCH_KEY_CACHE_BITS = 8;
+    private static final int BATCH_KEY_CACHE_SIZE = 1 << BATCH_KEY_CACHE_BITS;
+    private static final int BATCH_KEY_CACHE_TRIAL_ROWS = 256;
+    // keys up to this size take the batch key cache; longer ones compare too slowly to gain
+    private static final long BATCH_KEY_CACHE_MAX_KEY_SIZE = 32;
     static final long VAR_KEY_HEADER_SIZE = 4;
     // The largest heap the biased compressed offsets address. Note that it is 16 bytes below 2^35,
     // i.e. not a power of two, hence resize() has to clamp to it rather than reject an overshoot.
@@ -129,7 +136,11 @@ public class OrderedMap implements Map, Reopenable {
     // valueTypes argument is @Transient and must not outlive the call.
     private final long[] valueOffsets;
     private final long valueSize;
+    // The batch probe's direct-mapped cache of recent keys: the value offset of the entry whose key
+    // last hashed to the slot, -1 for none. Valid within one probeBatch*FixedSize() call only.
+    private final long[] batchKeyCache = new long[BATCH_KEY_CACHE_SIZE];
     private long batchEmptyValueStart;
+    private int batchKeyCacheHits;
     private int free;
     // The map owns the heap range [heapAddr, heapLimit) and derives the heap size from that pair
     // rather than caching it in a field of its own. No ordering of assignments can then commit a
@@ -863,6 +874,27 @@ public class OrderedMap implements Map, Reopenable {
         return asNew(keyWriter, index, hashCodeLo, value);
     }
 
+    // The batch key cache's slot of the fixed-size key at addr.
+    private static int batchKeyCacheSlot(long addr, long size) {
+        long h;
+        if (size == Integer.BYTES) {
+            h = Unsafe.getInt(addr);
+        } else {
+            h = 0;
+            long i = 0;
+            for (; i + Long.BYTES <= size; i += Long.BYTES) {
+                h = (h ^ Unsafe.getLong(addr + i)) * 0x9E3779B97F4A7C15L;
+            }
+            for (; i + Integer.BYTES <= size; i += Integer.BYTES) {
+                h = (h ^ Unsafe.getInt(addr + i)) * 0x9E3779B97F4A7C15L;
+            }
+            for (; i < size; i++) {
+                h = (h ^ Unsafe.getByte(addr + i)) * 0x9E3779B97F4A7C15L;
+            }
+        }
+        return (int) ((h * 0x9E3779B97F4A7C15L) >>> (64 - BATCH_KEY_CACHE_BITS));
+    }
+
     private static boolean keyEquals(long a, long b, long size) {
         long i = 0;
         for (; i + Long.BYTES <= size; i += Long.BYTES) {
@@ -898,7 +930,34 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         final Key k = key;
-        for (long p = batchStart; p < batchEnd; p++) {
+        long p = batchStart;
+        if (keySize <= BATCH_KEY_CACHE_MAX_KEY_SIZE && batchEnd - batchStart > BATCH_KEY_CACHE_TRIAL_ROWS) {
+            final long[] cache = resetBatchKeyCache();
+            final long trialEnd = batchStart + BATCH_KEY_CACHE_TRIAL_ROWS;
+            batchKeyCacheHits = 0;
+            for (; p < trialEnd; p++) {
+                final long r = Unsafe.getLong(rowIdsAddr + (p << 3));
+                record.setRowIndex(r);
+                k.startAddr = kPos;
+                k.appendAddr = kPos;
+                mapSink.copy(record, k);
+                Unsafe.putLong(batchAddr, probeCached(k, cache, r));
+                batchAddr += Long.BYTES;
+            }
+            if (batchKeyCacheHits >= BATCH_KEY_CACHE_TRIAL_ROWS / 2) {
+                for (; p < batchEnd; p++) {
+                    final long r = Unsafe.getLong(rowIdsAddr + (p << 3));
+                    record.setRowIndex(r);
+                    k.startAddr = kPos;
+                    k.appendAddr = kPos;
+                    mapSink.copy(record, k);
+                    Unsafe.putLong(batchAddr, probeCached(k, cache, r));
+                    batchAddr += Long.BYTES;
+                }
+                return heapAddr;
+            }
+        }
+        for (; p < batchEnd; p++) {
             final long r = Unsafe.getLong(rowIdsAddr + (p << 3));
             record.setRowIndex(r);
             k.startAddr = kPos;
@@ -913,6 +972,35 @@ public class OrderedMap implements Map, Reopenable {
             batchAddr += Long.BYTES;
         }
         return heapAddr;
+    }
+
+    /**
+     * The batch entry of the fixed-size key the sink has just written at kPos, as createValue()
+     * gives it: the key's entry when the cache slot holds it, else the map's, which the slot then
+     * holds. The heap must have room for the key's entry (the batch probes reserve it): a cached
+     * offset stays valid while the heap only grows.
+     */
+    private long probeCached(Key k, long[] cache, long rowIndex) {
+        final long keyAddr = kPos;
+        final int slot = batchKeyCacheSlot(keyAddr, keySize);
+        final long cached = cache[slot];
+        if (cached != -1 && keyEquals(keyAddr, heapAddr + cached - keySize, keySize)) {
+            batchKeyCacheHits++;
+            return Map.encodeBatchEntry(rowIndex, cached, false);
+        }
+        final FlyweightPackedMapValue v = (FlyweightPackedMapValue) k.createValue();
+        if (v.isNew() && batchEmptyValueStart != 0) {
+            v.copyRawValue(batchEmptyValueStart);
+        }
+        final long offset = v.getValueAddress() - heapAddr;
+        cache[slot] = offset;
+        return Map.encodeBatchEntry(rowIndex, offset, v.isNew());
+    }
+
+    private long[] resetBatchKeyCache() {
+        final long[] cache = batchKeyCache;
+        java.util.Arrays.fill(cache, -1L);
+        return cache;
     }
 
     private long probeBatchFilteredVarSize(
@@ -956,7 +1044,32 @@ public class OrderedMap implements Map, Reopenable {
         }
 
         final Key k = key;
-        for (long r = batchStart; r < batchEnd; r++) {
+        long r = batchStart;
+        if (keySize <= BATCH_KEY_CACHE_MAX_KEY_SIZE && batchEnd - batchStart > BATCH_KEY_CACHE_TRIAL_ROWS) {
+            final long[] cache = resetBatchKeyCache();
+            final long trialEnd = batchStart + BATCH_KEY_CACHE_TRIAL_ROWS;
+            batchKeyCacheHits = 0;
+            for (; r < trialEnd; r++) {
+                record.setRowIndex(r);
+                k.startAddr = kPos;
+                k.appendAddr = kPos;
+                mapSink.copy(record, k);
+                Unsafe.putLong(batchAddr, probeCached(k, cache, r));
+                batchAddr += Long.BYTES;
+            }
+            if (batchKeyCacheHits >= BATCH_KEY_CACHE_TRIAL_ROWS / 2) {
+                for (; r < batchEnd; r++) {
+                    record.setRowIndex(r);
+                    k.startAddr = kPos;
+                    k.appendAddr = kPos;
+                    mapSink.copy(record, k);
+                    Unsafe.putLong(batchAddr, probeCached(k, cache, r));
+                    batchAddr += Long.BYTES;
+                }
+                return heapAddr;
+            }
+        }
+        for (; r < batchEnd; r++) {
             record.setRowIndex(r);
             // Inline Key.init(): reset startAddr/appendAddr, skip checkCapacity (pre-reserved above).
             // keyOffset is 0 for fixed-size keys.
