@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
@@ -330,6 +331,22 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         });
     }
 
+    // A parallel filter hands the crash of a worker to the caller as a CairoException, so run() must
+    // fail the test on a CairoException too, not take it for the error of a query that the engine rejects
+    @Test
+    public void testCrashInParallelFilterFailsTheTest() throws Exception {
+        // enables the npe() test function, which throws a NullPointerException
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        assertMemoryLeak(() -> {
+            createTables();
+            final String sql = "SELECT id FROM trades WHERE npe()";
+            assertQuery(sql).noLeakCheck().assertsPlanContaining("Async Filter");
+            final AssertionError error = Assert.assertThrows(AssertionError.class, () -> run(sql, "H"));
+            TestUtils.assertContains(error.getMessage(), "H: failed with " + CairoException.class.getName());
+            Assert.assertTrue(error.getCause() instanceof CairoException);
+        });
+    }
+
     @Test
     public void testFullJoinAfterCorrelatedInnerJoin() throws Exception {
         assertShape(Shape.INNER_ON_FULL);
@@ -565,8 +582,9 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
 
     // Returns the rows of the query, or the message and the position of the SqlException that rejects
     // it, copied, as SqlException reuses one instance per thread unless assertions are on. Any other
-    // exception, such as a NullPointerException or an AssertionError of the engine, fails the test at
-    // once: no case expects one, and a case that expects an error would take it for one.
+    // exception fails the test at once: a NullPointerException or an AssertionError of the engine, and
+    // a CairoException too, as a parallel filter hands the crash of a worker to the caller as one. No
+    // case expects one, and a case that expects an error would take it for one.
     private static Outcome run(String sql, String header) {
         try {
             sink.clear();
