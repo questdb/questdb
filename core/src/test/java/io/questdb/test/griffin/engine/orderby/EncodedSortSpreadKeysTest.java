@@ -30,6 +30,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -97,19 +98,28 @@ public class EncodedSortSpreadKeysTest extends AbstractCairoTest {
         });
     }
 
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        // as a server compiles: an ORDER BY over a projected column memoizes it
+        allowFunctionMemoization();
+    }
+
     @Test
     public void testCapacityHintAcrossExecutions() throws Exception {
-        // a cursor sized from its previous execution, smaller or larger than this one's
+        // a cursor sized from its previous execution, smaller or larger than this one's, past and
+        // below the count at which it grows to the previous execution's
         assertMemoryLeak(() -> {
             execute(
                     "create table t as (select rnd_int(0, 1000, 0) i, rnd_double(0) d, rnd_str(3, 8, 1) s, " +
-                            "timestamp_sequence('2026-04-01', 1_000_000L) ts from long_sequence(20000)) timestamp(ts) partition by hour"
+                            "timestamp_sequence('2026-04-01', 100_000L) ts from long_sequence(200000)) timestamp(ts) partition by hour"
             );
             final String[] queries = {
                     "select ts, d, s from t where i > $1 order by d desc",
                     "select ts, d, s from (select ts, d, s from t where i > $1 union all select ts, d, s from t where i < 0) order by d",
             };
-            final int[] bounds = {10, 900, 990, 0, 500, 1000, 3};
+            final int[] bounds = {10, 900, 990, 0, 500, 1000, 3, 700, 2};
             for (String query : queries) {
                 final String[] expected = new String[bounds.length];
                 for (int j = 0; j < bounds.length; j++) {

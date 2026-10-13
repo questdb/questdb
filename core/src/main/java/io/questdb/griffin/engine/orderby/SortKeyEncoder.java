@@ -268,6 +268,9 @@ public class SortKeyEncoder implements QuietCloseable {
      * the light value budget - so each setting keeps binding on its own even when
      * the other is left at its effectively unbounded default.
      */
+    // the keys spreadKeyWords() samples for the core range: its sample array's length
+    public static final int SPREAD_SAMPLE_SIZE = 4096;
+
     /**
      * Rewrites the key words of {@code count} entries of one key word and a row id (16 bytes
      * each, from {@code addr}), compared as unsigned words then by row id, into words that sort
@@ -286,7 +289,7 @@ public class SortKeyEncoder implements QuietCloseable {
      * than 56 significant bits are left as they are. The row ids are not touched; the sorted
      * entries are read only for them.
      */
-    public static void spreadKeyWords(long addr, long count) {
+    public static void spreadKeyWords(long addr, long count, long[] sample) {
         if (count < 2) {
             return;
         }
@@ -320,13 +323,12 @@ public class SortKeyEncoder implements QuietCloseable {
             return;
         }
         // the core range, from a sample's 1st to its 99th percentile, as offsets from minV
-        final int sampleSize = (int) Math.min(count, 4096);
-        final long[] sample = new long[sampleSize];
+        final int sampleSize = (int) Math.min(count, sample.length);
         final long stride = count / sampleSize;
         for (int i = 0; i < sampleSize; i++) {
             sample[i] = (Unsafe.getLong(addr + i * stride * 16) >>> tz) - minV;
         }
-        Arrays.sort(sample);
+        Arrays.sort(sample, 0, sampleSize);
         final long lo = sample[sampleSize / 100];
         final long hi = sample[sampleSize - 1 - sampleSize / 100];
         final long top = maxV - minV;

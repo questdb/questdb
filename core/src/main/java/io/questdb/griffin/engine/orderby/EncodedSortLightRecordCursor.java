@@ -52,6 +52,8 @@ import io.questdb.std.Vect;
 class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCursor.RowIdSource {
     private final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
+    // the entries an execution sized from the previous one starts with
+    static final long CAPACITY_HINT_START = 64 * 1024;
     private final DirectLongList entryMem;
     private final long keyCapBytes;
     private final MemoryCARW keyHeap;
@@ -63,6 +65,10 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     private long count;
     // the previous execution's entry count, a capacity hint for the next
     private long lastCount;
+    // the entry count at which this execution grows to the previous one's, -1 for none
+    private long hintAt = -1;
+    // the sample the key spread reads, see SortKeyEncoder.spreadKeyWords()
+    private long[] spreadSample;
     private long currentAddr;
     private long endAddr;
     private int entrySize;
@@ -249,10 +255,17 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
                 SortKeyEncoder.throwSortHeapOverflow(maxEntryMemBytes);
             }
             entryMem.setCapacity(estimatedSize * longsPerEntry);
-        } else if (lastCount > 0 && !isVariable) {
+        }
         // A size the base does not know is guessed from the previous execution's, so that a
-        // repeated large sort does not grow its entries (and copy them) a doubling at a time.
-            entryMem.setCapacity(Math.min(lastCount, maxEntries) * longsPerEntry);
+        // repeated large sort does not grow its entries (and copy them) a doubling at a time:
+        // the entries start at no more than CAPACITY_HINT_START, and grow to the previous
+        // execution's count once this one reaches that start. A small execution after a large one
+        // stays small.
+        hintAt = -1;
+        if (estimatedSize <= 0 && lastCount > 0 && !isVariable) {
+            final long start = Math.min(Math.min(lastCount, maxEntries), CAPACITY_HINT_START);
+            entryMem.setCapacity(start * longsPerEntry);
+            hintAt = Math.min(lastCount, maxEntries) > start ? start : -1;
         }
 
         // Collect (key, rowId) entries
@@ -290,7 +303,10 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
                 long addr = entryMem.getAppendAddress();
                 encoder.encode(baseRecord, addr, baseRecord.getRowId());
                 entryMem.skip(longsPerEntry);
-                count++;
+                if (++count == hintAt) {
+                    hintAt = -1;
+                    entryMem.setCapacity(Math.max(entryMem.getCapacity(), Math.min(lastCount, maxEntries) * longsPerEntry));
+                }
             }
         }
 
@@ -300,7 +316,10 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
                 Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold);
             } else {
                 if (keyType.keyLength() == Long.BYTES && count >= parallelThreshold) {
-                    SortKeyEncoder.spreadKeyWords(entryMem.getAddress(), count);
+                    if (spreadSample == null) {
+                        spreadSample = new long[SortKeyEncoder.SPREAD_SAMPLE_SIZE];
+                    }
+                    SortKeyEncoder.spreadKeyWords(entryMem.getAddress(), count, spreadSample);
                 }
                 Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
             }

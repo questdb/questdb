@@ -51,6 +51,8 @@ import io.questdb.std.Vect;
 
 class EncodedSortRecordCursor implements DelegatingRecordCursor {
     private final SortKeyEncoder encoder;
+    // the entries an execution sized from the previous one starts with
+    static final long CAPACITY_HINT_START = 64 * 1024;
     private final DirectLongList entryMem;
     private final MemoryCARW keyHeap;
     private final long maxEntryMemBytes;
@@ -61,6 +63,10 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     private long count;
     // the previous execution's entry count, a capacity hint for the next
     private long lastCount;
+    // the entry count at which this execution grows to the previous one's, -1 for none
+    private long hintAt = -1;
+    // the sample the key spread reads, see SortKeyEncoder.spreadKeyWords()
+    private long[] spreadSample;
     private long lastChainBytes;
     // the value sizes of the chain's columns when every one is of a fixed-size, non-symbol type
     // the chain lays out at a fixed offset, so that a block of the base's rows is copied into it
@@ -223,11 +229,17 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                 throwLimitOverflow();
             }
             entryMem.setCapacity(estimatedSize * longsPerEntry);
-        } else if (lastCount > 0 && !isVariable) {
+        }
         // A size the base does not know is guessed from the previous execution's, so that a
-        // repeated large sort does not grow its entries (and copy them) a doubling at a time.
-            entryMem.setCapacity(Math.min(lastCount, maxEntries) * longsPerEntry);
-            recordChain.reserve(lastChainBytes);
+        // repeated large sort does not grow its entries (and copy them) a doubling at a time:
+        // the entries start at no more than CAPACITY_HINT_START, and grow to the previous
+        // execution's count once this one reaches that start. A small execution after a large one
+        // stays small.
+        hintAt = -1;
+        if (estimatedSize <= 0 && lastCount > 0 && !isVariable) {
+            final long start = Math.min(Math.min(lastCount, maxEntries), CAPACITY_HINT_START);
+            entryMem.setCapacity(start * longsPerEntry);
+            hintAt = Math.min(lastCount, maxEntries) > start ? start : -1;
         }
 
         entryMem.clear();
@@ -269,7 +281,9 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                 long addr = entryMem.getAppendAddress();
                 encoder.encode(record, addr, chainOffset);
                 entryMem.skip(longsPerEntry);
-                count++;
+                if (++count == hintAt) {
+                    applyCapacityHint(maxEntries);
+                }
             }
         }
         // Success-path free of the encoder's rank maps; a mid-build throw leaves them
@@ -282,7 +296,10 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                 Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold);
             } else {
                 if (keyType.keyLength() == Long.BYTES && count >= parallelThreshold) {
-                    SortKeyEncoder.spreadKeyWords(entryMem.getAddress(), count);
+                    if (spreadSample == null) {
+                        spreadSample = new long[SortKeyEncoder.SPREAD_SAMPLE_SIZE];
+                    }
+                    SortKeyEncoder.spreadKeyWords(entryMem.getAddress(), count, spreadSample);
                 }
                 Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
             }
@@ -397,6 +414,9 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
                 entryMem.skip(longsPerEntry);
             }
             count += n;
+            if (hintAt > 0 && count >= hintAt) {
+                applyCapacityHint(maxEntries);
+            }
         }
     }
 
@@ -408,7 +428,15 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         entryMem.ensureCapacity(longsPerEntry);
         encoder.encode(record, entryMem.getAppendAddress(), chainOffset);
         entryMem.skip(longsPerEntry);
-        count++;
+        if (++count == hintAt) {
+            applyCapacityHint(maxEntries);
+        }
+    }
+
+    private void applyCapacityHint(long maxEntries) {
+        hintAt = -1;
+        entryMem.setCapacity(Math.max(entryMem.getCapacity(), Math.min(lastCount, maxEntries) * longsPerEntry));
+        recordChain.reserve(lastChainBytes);
     }
 
     private void forceClose() {
