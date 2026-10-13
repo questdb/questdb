@@ -116,6 +116,20 @@ public class ObjectPoolTest extends AbstractTest {
     }
 
     @Test
+    public void testCeilingBelowInitialSizeKeepsInitialSize() {
+        final ObjectPool<TestObject> bounded = new ObjectPool<>(TestObject::new, INITIAL_SIZE, 1);
+        final ObjList<TestObject> taken = take(bounded, 10);
+        Assert.assertEquals(16, bounded.getCapacity());
+
+        bounded.clear();
+        Assert.assertEquals(INITIAL_SIZE, bounded.getCapacity());
+        for (int i = 0; i < INITIAL_SIZE; i++) {
+            Assert.assertSame(taken.getQuick(i), bounded.peekQuick(i));
+            Assert.assertEquals(0, taken.getQuick(i).getValue());
+        }
+    }
+
+    @Test
     public void testClearUnboundedKeepsPeakAndClearsLazily() {
         final ObjList<TestObject> taken = take(pool, 20);
         pool.clear();

@@ -209,6 +209,25 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testStatefulTextElementEvaluatedOncePerRow() throws Exception {
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    x
+                    1
+                    2
+                    3
+                    4
+                    """;
+            assertQuery("SELECT x FROM long_sequence(4) WHERE (x - 1)::timestamp IN (timestamp_sequence(0, 1)::varchar, 100::timestamp)")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT x FROM long_sequence(4) WHERE (x - 1)::timestamp IN (timestamp_sequence(0, 1)::string, 100::timestamp)")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testNowInTickExprWithDateVariableReevaluatesOnCachedExecution() throws Exception {
         assertMemoryLeak(() -> {
             // T1 = 1_000_000_000 micros (1000 seconds since epoch)

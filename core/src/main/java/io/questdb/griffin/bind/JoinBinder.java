@@ -363,7 +363,8 @@ final class JoinBinder implements Mutable {
         int position = -1;
         for (LogicalPlan plan = input; plan.getOutput().getTimestampIndex() < 0; plan = plan.inputAt(0)) {
             switch (plan) {
-                case ProjectPlan project when LogicalPlans.isColumnProjection(project) -> position = project.getPosition();
+                case ProjectPlan project when LogicalPlans.isColumnProjection(project) ->
+                        position = project.getPosition();
                 case LimitPlan _ -> position = -1;
                 case FilterPlan _ -> {
                 }

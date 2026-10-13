@@ -834,6 +834,165 @@ public class UnionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUnionAllKeepsLateralAliasDependency() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("""
+                    SELECT b FROM (
+                        SELECT x+1 a, a+1 b FROM long_sequence(3)
+                        UNION ALL
+                        SELECT x+10 a, a+1 b FROM long_sequence(3)
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Union All
+                                SelectedRecord
+                                    VirtualRecord
+                                      functions: [x+1,a+1]
+                                        long_sequence count: 3
+                                SelectedRecord
+                                    VirtualRecord
+                                      functions: [x+10,a+1]
+                                        long_sequence count: 3
+                            """)
+                    .returns("""
+                            b
+                            3
+                            4
+                            5
+                            12
+                            13
+                            14
+                            """);
+            assertQuery("""
+                    SELECT c FROM (
+                        SELECT x a, a+1 b, b*10 c, x*100 d FROM long_sequence(3)
+                        UNION ALL
+                        SELECT x+5 a, a+1 b, b*10 c, x*7 d FROM long_sequence(3)
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            Union All
+                                SelectedRecord
+                                    VirtualRecord
+                                      functions: [x+1,b*10]
+                                        long_sequence count: 3
+                                SelectedRecord
+                                    VirtualRecord
+                                      functions: [x+5,a+1,b*10]
+                                        long_sequence count: 3
+                            """)
+                    .returns("""
+                            c
+                            20
+                            30
+                            40
+                            70
+                            80
+                            90
+                            """);
+            assertQuery("""
+                    SELECT b FROM (
+                        SELECT x a, a+1 b FROM long_sequence(2)
+                        UNION ALL (
+                            SELECT x+10 a, a+1 b FROM long_sequence(2)
+                            UNION ALL
+                            SELECT x+20 a, a*2 b FROM long_sequence(2)
+                        )
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            b
+                            2
+                            3
+                            12
+                            13
+                            42
+                            44
+                            """);
+            assertQuery("""
+                    SELECT b FROM (
+                        SELECT x, row_number() OVER (ORDER BY x) rn, rn*10 b FROM long_sequence(3)
+                        UNION ALL
+                        SELECT x, row_number() OVER (ORDER BY x DESC) rn, rn*10 b FROM long_sequence(3)
+                    )""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            b
+                            10
+                            20
+                            30
+                            30
+                            20
+                            10
+                            """);
+            assertQuery("""
+                    SELECT b FROM (
+                        SELECT x+1 a, a+1 b FROM long_sequence(3)
+                        UNION ALL
+                        SELECT x+10 a, a+1 b FROM long_sequence(3)
+                    ) ORDER BY b DESC""")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            b
+                            14
+                            13
+                            12
+                            5
+                            4
+                            3
+                            """);
+            assertQuery("""
+                    SELECT t.b, u.x FROM (
+                        SELECT x a, a+1 b FROM long_sequence(3)
+                        UNION ALL
+                        SELECT x+10 a, a+1 b FROM long_sequence(2)
+                    ) t JOIN long_sequence(20) u ON t.b = u.x""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            b\tx
+                            2\t2
+                            3\t3
+                            4\t4
+                            12\t12
+                            13\t13
+                            """);
+            assertQuery("""
+                    WITH t AS (
+                        SELECT x a, a+1 b FROM long_sequence(3)
+                        UNION ALL
+                        SELECT x+10 a, a+1 b FROM long_sequence(2)
+                    )
+                    SELECT b FROM t UNION ALL SELECT a FROM t""")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            b
+                            2
+                            3
+                            4
+                            12
+                            13
+                            1
+                            2
+                            3
+                            11
+                            12
+                            """);
+        });
+    }
+
+    @Test
     public void testUnionAllOfAllSupportedTypes() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """

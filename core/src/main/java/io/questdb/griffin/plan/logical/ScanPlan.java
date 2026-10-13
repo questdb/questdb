@@ -393,6 +393,7 @@ public final class ScanPlan extends LogicalPlan {
             if (key instanceof BindVariableExpression || key instanceof ConstantExpression constant && switch (ColumnType.tagOf(constant.getDataType())) {
                 case ColumnType.CHAR -> constant.getLongValue() == 0;
                 case ColumnType.STRING -> constant.getStrValue() == null;
+                case ColumnType.VARCHAR -> constant.getVarcharValue() == null;
                 default -> true;
             }) {
                 return true;

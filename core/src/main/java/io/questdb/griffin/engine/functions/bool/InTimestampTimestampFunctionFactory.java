@@ -53,6 +53,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
+import org.jetbrains.annotations.Nullable;
 
 import static io.questdb.griffin.model.IntervalUtils.isInIntervals;
 
@@ -191,14 +192,30 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
     /**
      * Adds the element's value at the column's precision; an element no column value equals adds nothing.
      */
-    private static void addElement(LongList values, Function func, Record rec, TimestampDriver driver) throws NumericException {
-        final int type = elementType(func, rec, driver);
-        final long value = elementValue(func, rec, type, driver);
+    private static void addElement(LongList values, Function func, Record rec, TimestampDriver driver) {
+        switch (ColumnType.tagOf(func.getType())) {
+            case ColumnType.DATE -> values.add(driver.fromDate(func.getDate(rec)));
+            case ColumnType.TIMESTAMP -> addValue(values, func.getTimestamp(rec), func.getType(), driver);
+            case ColumnType.LONG, ColumnType.INT -> values.add(func.getTimestamp(rec));
+            case ColumnType.STRING, ColumnType.SYMBOL -> {
+                final CharSequence text = func.getStrA(rec);
+                final int type = textType(text, driver);
+                addValue(values, parseText(text, type), type, driver);
+            }
+            case ColumnType.VARCHAR -> {
+                final Utf8Sequence text = func.getVarcharA(rec);
+                final int type = textType(text, driver);
+                addValue(values, parseText(text, type), type, driver);
+            }
+            default -> values.add(Numbers.LONG_NULL);
+        }
+    }
+
+    private static void addValue(LongList values, long value, int type, TimestampDriver driver) {
         if (driver.isExactFrom(value, type)) {
             values.add(driver.ceilFrom(value, type));
         }
     }
-
 
     private static boolean containsDateVariable(CharSequence seq, int lo, int lim) {
         for (int i = lo; i < lim - 1; i++) {
@@ -209,33 +226,22 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return false;
     }
 
-    /**
-     * The timestamp type at which an IN element is exact: its own timestamp type, the finer of a
-     * literal's precision and the column's, or the column's for any other value.
-     */
-    private static int elementType(Function func, Record rec, TimestampDriver driver) {
+    private static boolean isElementEqual(Function func, Record rec, long ts, TimestampDriver driver) {
         return switch (ColumnType.tagOf(func.getType())) {
-            case ColumnType.TIMESTAMP -> func.getType();
+            case ColumnType.DATE -> driver.fromDate(func.getDate(rec)) == ts;
+            case ColumnType.TIMESTAMP -> isValueEqual(func.getTimestamp(rec), func.getType(), ts, driver);
+            case ColumnType.LONG, ColumnType.INT -> func.getTimestamp(rec) == ts;
             case ColumnType.STRING, ColumnType.SYMBOL -> {
-                final CharSequence value = func.getStrA(rec);
-                yield value == null ? driver.getTimestampType() : IntervalUtils.literalTimestampType(driver, value);
+                final CharSequence text = func.getStrA(rec);
+                final int type = textType(text, driver);
+                yield isValueEqual(parseText(text, type), type, ts, driver);
             }
             case ColumnType.VARCHAR -> {
-                final Utf8Sequence value = func.getVarcharA(rec);
-                yield value == null ? driver.getTimestampType() : IntervalUtils.literalTimestampType(driver, value.asAsciiCharSequence());
+                final Utf8Sequence text = func.getVarcharA(rec);
+                final int type = textType(text, driver);
+                yield isValueEqual(parseText(text, type), type, ts, driver);
             }
-            default -> driver.getTimestampType();
-        };
-    }
-
-    private static long elementValue(Function func, Record rec, int type, TimestampDriver driver) throws NumericException {
-        return switch (ColumnType.tagOf(func.getType())) {
-            case ColumnType.DATE -> driver.fromDate(func.getDate(rec));
-            case ColumnType.TIMESTAMP, ColumnType.LONG, ColumnType.INT -> func.getTimestamp(rec);
-            case ColumnType.STRING, ColumnType.SYMBOL ->
-                    ColumnType.getTimestampDriver(type).parseFloorLiteral(func.getStrA(rec));
-            case ColumnType.VARCHAR -> ColumnType.getTimestampDriver(type).parseFloorLiteral(func.getVarcharA(rec));
-            default -> Numbers.LONG_NULL;
+            default -> ts == Numbers.LONG_NULL;
         };
     }
 
@@ -245,6 +251,10 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         }
         Function rightFn = args.getQuick(1);
         return ColumnType.isVarcharOrString(rightFn.getType());
+    }
+
+    private static boolean isValueEqual(long value, int type, long ts, TimestampDriver driver) {
+        return driver.ceilFrom(value, type) == ts && driver.floorFrom(value, type) == ts;
     }
 
     /**
@@ -287,6 +297,22 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         return allConst ? LIST_CONSTANT : allRuntimeConst ? LIST_RUNTIME_CONSTANT : LIST_VARIABLE;
     }
 
+    private static long parseText(@Nullable CharSequence text, int type) {
+        try {
+            return ColumnType.getTimestampDriver(type).parseFloorLiteral(text);
+        } catch (NumericException e) {
+            throw CairoException.nonCritical().put("Invalid timestamp: ").put(text);
+        }
+    }
+
+    private static long parseText(@Nullable Utf8Sequence text, int type) {
+        try {
+            return ColumnType.getTimestampDriver(type).parseFloorLiteral(text);
+        } catch (NumericException e) {
+            throw CairoException.nonCritical().put("Invalid timestamp: ").put(text);
+        }
+    }
+
     /**
      * Parses the elements of a constant list into its sorted values. When an element is text that spells intervals
      * rather than a timestamp, the list holds instead the union of the element intervals, each value spelling the
@@ -315,7 +341,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             }
             try {
                 addElement(res, func, null, driver);
-            } catch (NumericException e) {
+            } catch (CairoException e) {
                 final CharSequence text = ColumnType.tagOf(func.getType()) == ColumnType.VARCHAR
                         ? func.getVarcharA(null).asAsciiCharSequence() : func.getStrA(null);
                 if (intervals == null) {
@@ -340,6 +366,14 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
         res.clear();
         res.add(intervals);
         return true;
+    }
+
+    private static int textType(@Nullable CharSequence text, TimestampDriver driver) {
+        return text == null ? driver.getTimestampType() : IntervalUtils.literalTimestampType(driver, text);
+    }
+
+    private static int textType(@Nullable Utf8Sequence text, TimestampDriver driver) {
+        return text == null ? driver.getTimestampType() : IntervalUtils.literalTimestampType(driver, text.asAsciiCharSequence());
     }
 
     private static class EqTimestampCompiledTickExprFunction extends NegatableBooleanFunction implements UnaryFunction {
@@ -552,11 +586,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             timestampValues.clear();
             for (int i = 1, n = args.size(); i < n; i++) {
                 final Function func = args.getQuick(i);
-                try {
-                    addElement(timestampValues, func, null, driver);
-                } catch (NumericException e) {
-                    throw CairoException.nonCritical().put("Invalid timestamp: ").put(func.getStrA(null));
-                }
+                addElement(timestampValues, func, null, driver);
             }
         }
 
@@ -660,14 +690,7 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             final long ts = args.getQuick(0).getTimestamp(rec);
             for (int i = 1, n = args.size(); i < n; i++) {
                 final Function func = args.getQuick(i);
-                final int type = elementType(func, rec, driver);
-                final long value;
-                try {
-                    value = elementValue(func, rec, type, driver);
-                } catch (NumericException e) {
-                    throw CairoException.nonCritical().put("Invalid timestamp: ").put(func.getStrA(rec));
-                }
-                if (driver.ceilFrom(value, type) == ts && driver.floorFrom(value, type) == ts) {
+                if (isElementEqual(func, rec, ts, driver)) {
                     return !negated;
                 }
             }

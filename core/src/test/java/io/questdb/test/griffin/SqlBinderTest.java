@@ -549,8 +549,8 @@ public class SqlBinderTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine) {
                 @Override
                 protected RecordCursorFactory generateSelectOneShot(
-                                QueryModel queryModel,
-                                @Nullable Subquery subquery,
+                        QueryModel queryModel,
+                        @Nullable Subquery subquery,
                         SqlExecutionContext executionContext,
                         boolean generateProgressLogger
                 ) throws SqlException {
@@ -677,8 +677,8 @@ public class SqlBinderTest extends AbstractCairoTest {
             try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine) {
                 @Override
                 protected RecordCursorFactory generateSelectOneShot(
-                                QueryModel queryModel,
-                                @Nullable Subquery subquery,
+                        QueryModel queryModel,
+                        @Nullable Subquery subquery,
                         SqlExecutionContext executionContext,
                         boolean generateProgressLogger
                 ) throws SqlException {

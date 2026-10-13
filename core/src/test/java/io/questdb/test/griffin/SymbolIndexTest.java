@@ -489,6 +489,210 @@ public class SymbolIndexTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testLongExclusionChainKeepsIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            createTelemetry();
+            final StringBuilder sql = new StringBuilder("SELECT * FROM telemetry WHERE s != 'ex0'");
+            for (int i = 1; i < 2_048; i++) {
+                sql.append(" AND s != 'ex").append(i).append('\'');
+            }
+            sql.append(" AND s != 'b'::VARCHAR");
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .withPlanContaining("FilterOnExcludedValues")
+                    .inferTimestamp()
+                    .inferRandomAccess()
+                    .sizeMayVary()
+                    .returns("""
+                            s	v	ts
+                            device_42	1	2020-01-01T00:00:00.000000Z
+                            	3	2020-01-01T02:00:00.000000Z
+                            é	4	2020-01-01T03:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testVarcharConstantKeysUseIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            createTelemetry();
+            assertTelemetry(
+                    "SELECT * FROM telemetry WHERE s = 'device_42'::VARCHAR",
+                    """
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: s
+                                  filter: s=1
+                                Frame forward scan on: telemetry
+                            """,
+                    """
+                            s	v	ts
+                            device_42	1	2020-01-01T00:00:00.000000Z
+                            """
+            );
+            assertTelemetry(
+                    "SELECT * FROM telemetry WHERE s = null::VARCHAR",
+                    """
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: s
+                                  filter: s=0
+                                Frame forward scan on: telemetry
+                            """,
+                    """
+                            s	v	ts
+                            	3	2020-01-01T02:00:00.000000Z
+                            """
+            );
+            assertTelemetry(
+                    "SELECT * FROM telemetry WHERE s = 'é'::VARCHAR",
+                    """
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: s
+                                  filter: s=3
+                                Frame forward scan on: telemetry
+                            """,
+                    """
+                            s	v	ts
+                            é	4	2020-01-01T03:00:00.000000Z
+                            """
+            );
+            assertTelemetry(
+                    "SELECT * FROM telemetry WHERE s != 'device_42'::VARCHAR",
+                    """
+                            FilterOnExcludedValues
+                              symbolFilter: s not in ['device_42']
+                                Table-order scan
+                                    Index forward scan on: s
+                                      filter: s=2
+                                    Index forward scan on: s
+                                      filter: s=3
+                                    Index forward scan on: s
+                                      filter: s=0
+                                Frame forward scan on: telemetry
+                            """,
+                    """
+                            s	v	ts
+                            b	2	2020-01-01T01:00:00.000000Z
+                            	3	2020-01-01T02:00:00.000000Z
+                            é	4	2020-01-01T03:00:00.000000Z
+                            """
+            );
+            assertTelemetry(
+                    "SELECT * FROM telemetry WHERE s IN ('device_42'::VARCHAR, 'é'::VARCHAR)",
+                    """
+                            FilterOnValues
+                                Table-order scan
+                                    Index forward scan on: s
+                                      filter: s=3
+                                    Index forward scan on: s
+                                      filter: s=1
+                                Frame forward scan on: telemetry
+                            """,
+                    """
+                            s	v	ts
+                            device_42	1	2020-01-01T00:00:00.000000Z
+                            é	4	2020-01-01T03:00:00.000000Z
+                            """
+            );
+            assertTelemetry(
+                    "SELECT * FROM telemetry WHERE s NOT IN ('device_42'::VARCHAR, null::VARCHAR)",
+                    """
+                            FilterOnExcludedValues
+                              symbolFilter: s not in ['device_42',null]
+                                Table-order scan
+                                    Index forward scan on: s
+                                      filter: s=2
+                                    Index forward scan on: s
+                                      filter: s=3
+                                Frame forward scan on: telemetry
+                            """,
+                    """
+                            s	v	ts
+                            b	2	2020-01-01T01:00:00.000000Z
+                            é	4	2020-01-01T03:00:00.000000Z
+                            """
+            );
+            assertTelemetry(
+                    "SELECT * FROM telemetry WHERE s IN ('device_42'::VARCHAR, 'b') AND s != 'b'::VARCHAR",
+                    """
+                            DeferredSingleSymbolFilterPageFrame
+                                Index forward scan on: s
+                                  filter: s=1
+                                Frame forward scan on: telemetry
+                            """,
+                    """
+                            s	v	ts
+                            device_42	1	2020-01-01T00:00:00.000000Z
+                            """
+            );
+            assertTelemetry(
+                    "SELECT * FROM telemetry WHERE s = 'device_42'::VARCHAR LATEST ON ts PARTITION BY s",
+                    """
+                            PageFrame
+                                Index backward scan on: s
+                                  filter: s=1
+                                Frame backward scan on: telemetry
+                            """,
+                    """
+                            s	v	ts
+                            device_42	1	2020-01-01T00:00:00.000000Z
+                            """
+            );
+            assertTelemetry(
+                    "SELECT * FROM telemetry WHERE s IN ('device_42'::VARCHAR, 'é'::VARCHAR) LATEST ON ts PARTITION BY s",
+                    """
+                            Index backward scan on: s
+                              symbolFilter: s in [1,3]
+                                Frame backward scan on: telemetry
+                            """,
+                    """
+                            s	v	ts
+                            device_42	1	2020-01-01T00:00:00.000000Z
+                            é	4	2020-01-01T03:00:00.000000Z
+                            """
+            );
+            assertTelemetry(
+                    "SELECT * FROM telemetry WHERE s NOT IN ('b'::VARCHAR, null::VARCHAR) LATEST ON ts PARTITION BY s",
+                    """
+                            LatestByDeferredListValuesFiltered
+                              excludedSymbols: ['b',null]
+                                Frame backward scan on: telemetry
+                            """,
+                    """
+                            s	v	ts
+                            device_42	1	2020-01-01T00:00:00.000000Z
+                            é	4	2020-01-01T03:00:00.000000Z
+                            """
+            );
+        });
+    }
+
+    private void assertTelemetry(String varcharSql, String plan, String expected) throws Exception {
+        assertTelemetryPlan(varcharSql, plan, expected);
+        assertTelemetryPlan(varcharSql.replace("::VARCHAR", ""), plan, expected);
+    }
+
+    private void assertTelemetryPlan(String sql, String plan, String expected) throws Exception {
+        assertQuery(sql)
+                .noLeakCheck()
+                .withPlan(plan)
+                .inferTimestamp()
+                .inferRandomAccess()
+                .sizeMayVary()
+                .returns(expected);
+    }
+
+    private void createTelemetry() throws SqlException {
+        execute("CREATE TABLE telemetry(s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("""
+                INSERT INTO telemetry VALUES
+                ('device_42',1,'2020-01-01'),
+                ('b',2,'2020-01-01T01'),
+                (null,3,'2020-01-01T02'),
+                ('é',4,'2020-01-01T03')
+                """);
+    }
+
     private void assertIndex(String sql, String specialization, String shape, String expected) throws Exception {
         try (RecordCursorFactory factory = select(sql)) {
             final TextPlanSink sink = new TextPlanSink();

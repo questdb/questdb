@@ -695,10 +695,11 @@ final class ColumnPruning implements OptimiserPass {
 
     private void pruneUnionAll(SetOperationPlan plan) {
         retainedColumnIndexes.clear();
+        retainedColumns.clear();
         final OutputSchema output = plan.getOutput();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             if (requiredColumnIds.contains(output.getColumnId(i))) {
-                retainedColumnIndexes.add(i);
+                retainColumn(i);
             }
         }
         if (retainedColumnIndexes.size() == output.getColumnCount()) {
@@ -709,7 +710,7 @@ final class ColumnPruning implements OptimiserPass {
             final LogicalPlan input = plan.inputAt(i);
             final OutputSchema inputSchema = input.getOutput();
             if (input instanceof ProjectPlan branch && !branch.hasUpdateConversions()
-                    && inputSchema.getColumnCount() == output.getColumnCount()) {
+                    && inputSchema.getColumnCount() == output.getColumnCount() && !readsDroppedColumn(branch)) {
                 permuteProjection(branch);
                 continue;
             }
@@ -730,6 +731,33 @@ final class ColumnPruning implements OptimiserPass {
         }
         plan.remapSymbolColumns(retainedColumnIndexes);
         output.retain(retainedColumnIndexes);
+    }
+
+    /**
+     * A kept column can read an earlier column of the same projection by alias.
+     */
+    private boolean readsDroppedColumn(ProjectPlan project) {
+        for (int i = 0, n = retainedColumnIndexes.size(); i < n; i++) {
+            if (readsDroppedColumn(project.getExpressions().getQuick(retainedColumnIndexes.getQuick(i)), project.getOutput())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean readsDroppedColumn(BoundExpression expression, OutputSchema output) {
+        if (expression instanceof ColumnExpression column) {
+            final int index = output.getColumnIndexById(column.getColumnId());
+            return index >= 0 && !retainedColumns.get(index);
+        }
+        if (expression instanceof FunctionExpression call) {
+            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
+                if (readsDroppedColumn(call.argumentAt(i), output)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     private void rebuildHorizonJoinSchema(HorizonJoinPlan plan, int previousMasterCount) {

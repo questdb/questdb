@@ -59,15 +59,15 @@ public class ObjectPool<T extends Mutable> implements Mutable {
      * {@link #rewind(int)} clear the objects they release, so a kept object holds no reference into the work that
      * released it, and {@link #clear()} drops every object past the first {@code maxRetainedSize}.
      *
-     * @param maxRetainedSize the most objects the pool keeps once {@link #clear()} releases them
+     * @param maxRetainedSize the most objects the pool keeps once {@link #clear()} releases them, never fewer than
+     *                        {@code size}
      */
     public ObjectPool(@NotNull ObjectFactory<T> factory, int size, int maxRetainedSize) {
-        assert maxRetainedSize >= size : "maxRetainedSize below the initial size";
         this.list = new ObjList<>(size);
         this.factory = factory;
         this.size = size;
         this.initialSize = size;
-        this.maxRetainedSize = maxRetainedSize;
+        this.maxRetainedSize = Math.max(size, maxRetainedSize);
         fill();
     }
 

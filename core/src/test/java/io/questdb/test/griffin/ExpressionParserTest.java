@@ -879,29 +879,27 @@ public class ExpressionParserTest extends AbstractCairoTest {
 
     @Test
     public void testCastAsAcceptsPgTypeAliases() throws Exception {
-        assertMemoryLeak(() -> assertQuery("""
+        assertQuery("""
                 SELECT CAST(1 AS float8) a, CAST(1 AS int4) b, CAST(1 AS int8) c, CAST(1 AS int2) d, CAST(1 AS float4) e,
                 CAST(1 AS float8[]) f, CAST(1 AS "int") g, CAST(1 / 3.0 AS float) h, (1 / 3.0)::float i, CAST('pg_class' AS regclass) j
                 """)
-                .noLeakCheck()
                 .expectSize()
                 .returns("""
                         a\tb\tc\td\te\tf\tg\th\ti\tj
                         1.0\t1\t1\t1\t1.0\t[1.0]\t1\t0.33333334\t0.3333333333333333\t1259
-                        """));
+                        """);
     }
 
     @Test
     public void testCastTargetTypeNames() throws Exception {
-        assertMemoryLeak(() -> assertQuery("""
+        assertQuery("""
                 SELECT 1::geohash(4c) g, 1::decimal(5, 2) d, 1::double precision p, 1::"int" i, 1::float8 f, '1'::numeric::decimal(5, 2) n
                 """)
-                .noLeakCheck()
                 .expectSize()
                 .returns("""
                         g\td\tp\ti\tf\tn
                         0001\t1.00\t1.0\t1\t1.0\t1.00
-                        """));
+                        """);
     }
 
     @Test

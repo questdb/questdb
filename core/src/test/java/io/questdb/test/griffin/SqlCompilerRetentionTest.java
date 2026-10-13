@@ -179,6 +179,30 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMinimalPoolCapacitiesCompile() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_EXPRESSION_POOL_CAPACITY, "1");
+            setProperty(PropertyKey.CAIRO_COLUMN_POOL_CAPACITY, "1");
+            setProperty(PropertyKey.CAIRO_MODEL_POOL_CAPACITY, "1");
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY, "1");
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                assertQuery("""
+                        SELECT a.x, b.x y, row_number() OVER (ORDER BY a.x) n
+                        FROM long_sequence(3) a
+                        JOIN long_sequence(3) b ON a.x = b.x
+                        WHERE a.x > 1""")
+                        .withCompiler(compiler)
+                        .expectSize()
+                        .returns("""
+                                x\ty\tn
+                                2\t2\t1
+                                3\t3\t2
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testOrdinaryStatementsKeepCapacity() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

@@ -416,7 +416,8 @@ final class OrderPlanning implements OptimiserPass {
             case AggregatePlan aggregate -> requireAggregate(aggregate, orderColumnId, direction, order);
             case JoinPlan join -> requireJoin(join, orderColumnId, direction, order, isRowOrderRequired);
             case WindowJoinPlan windowJoin -> requireWindowJoin(windowJoin);
-            case SetOperationPlan operation when wasRandomAccessRequired -> requireSetOperation(operation, -1, null, isRowOrderRequired);
+            case SetOperationPlan operation when wasRandomAccessRequired ->
+                    requireSetOperation(operation, -1, null, isRowOrderRequired);
             case SetOperationPlan operation ->
                     requireSetOperation(operation, orderColumnId, direction, isRowOrderRequired);
             default -> requireUnary(plan, orderColumnId, direction, order, limit, isRowOrderRequired);

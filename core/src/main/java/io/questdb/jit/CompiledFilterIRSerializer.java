@@ -304,6 +304,8 @@ public class CompiledFilterIRSerializer implements Mutable {
     private final ScalarModeDetector scalarModeDetector = new ScalarModeDetector();
     private final StringSink sink;
     private final ObjList<BoundExpression> sortedPredicates = new ObjList<>();
+    private final IntList traverseIndexes = new IntList();
+    private final ObjList<BoundExpression> traverseNodes = new ObjList<>();
     // Operand type codes of the IR walks in hasUnharmonisedOperandWidths() and
     // ensureOnlyVarSizeHeaderChecks(), mirroring the value stack the backend builds while it emits
     // the same stream. Deliberately NOT an IntStack: IntStack spells an absent entry as -1, which
@@ -423,6 +425,8 @@ public class CompiledFilterIRSerializer implements Mutable {
         intWidthNullElements.clear();
         i64WidenLeaves.clear();
         narrowKeptConstants.clear();
+        traverseIndexes.clear();
+        traverseNodes.clear();
     }
 
     public CompiledFilterIRSerializer of(
@@ -610,20 +614,39 @@ public class CompiledFilterIRSerializer implements Mutable {
      * Post-order walk that visits the right operand before the left one, the order the IR
      * operands take on the backend's value stack.
      */
-    private static void traverse(BoundExpression node, Visitor visitor) throws SqlException {
-        if (node == null || !visitor.descend(node)) {
-            return;
-        }
-        traverse(rhs(node), visitor);
-        final int paramCount = paramCount(node);
-        if (paramCount < 3) {
-            traverse(lhs(node), visitor);
-        } else {
-            for (int i = 0; i < paramCount; i++) {
-                traverse(argAt(node, i), visitor);
+    private void traverse(BoundExpression node, Visitor visitor) throws SqlException {
+        // Iterative: under -ea every NumericException the walk throws fills in the whole call
+        // stack, so recursion made long AND chains quadratic. Re-entrant calls work above base.
+        final int base = traverseNodes.size();
+        try {
+            while (traverseNodes.size() > base || node != null) {
+                if (node != null) {
+                    if (!visitor.descend(node)) {
+                        node = null;
+                        continue;
+                    }
+                    traverseNodes.add(node);
+                    traverseIndexes.add(0);
+                    node = rhs(node);
+                } else {
+                    final int top = traverseNodes.size() - 1;
+                    final BoundExpression peek = traverseNodes.getQuick(top);
+                    final int paramCount = paramCount(peek);
+                    final int index = traverseIndexes.getQuick(top);
+                    if (paramCount < 3 ? index == 0 : index < paramCount) {
+                        traverseIndexes.setQuick(top, index + 1);
+                        node = paramCount < 3 ? lhs(peek) : argAt(peek, index);
+                    } else {
+                        traverseNodes.setPos(top);
+                        traverseIndexes.setPos(top);
+                        visitor.visit(peek);
+                    }
+                }
             }
+        } finally {
+            traverseNodes.setPos(base);
+            traverseIndexes.setPos(base);
         }
-        visitor.visit(node);
     }
 
     private int columnIndex(BoundExpression node) {

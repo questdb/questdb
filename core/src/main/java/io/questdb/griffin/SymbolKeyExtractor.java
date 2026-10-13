@@ -42,8 +42,10 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.SingleCharCharSequence;
+import io.questdb.std.str.Utf8Sequence;
 
 /**
  * Symbol key intrinsics of one native scan occurrence: the included and excluded key sets of a
@@ -54,7 +56,7 @@ public final class SymbolKeyExtractor implements Mutable {
     private final ObjList<BoundExpression> excludedConjuncts = new ObjList<>();
     private final KeySet included = new KeySet();
     private final ObjList<BoundExpression> includedConjuncts = new ObjList<>();
-    private final ObjList<BoundExpression> intrinsics = new ObjList<>();
+    private final ObjHashSet<BoundExpression> intrinsics = new ObjHashSet<>();
     private final KeySet merged = new KeySet();
     private final KeySet pending = new KeySet();
     private int columnId = -1;
@@ -71,8 +73,7 @@ public final class SymbolKeyExtractor implements Mutable {
             return switch (ColumnType.tagOf(constant.getDataType())) {
                 case ColumnType.CHAR -> constant.getLongValue() == 0 ? StrConstant.NULL
                         : StrConstant.fromValue(SingleCharCharSequence.get((char) constant.getLongValue()));
-                case ColumnType.NULL -> StrConstant.NULL;
-                default -> StrConstant.fromValue(constant.getStrValue());
+                default -> StrConstant.fromValue(textOf(constant));
             };
         }
         final Function function = instantiator.instantiate(value, input, metadata, executionContext);
@@ -142,20 +143,17 @@ public final class SymbolKeyExtractor implements Mutable {
     }
 
     /**
-     * The code of a one-character constant, CHAR or STRING, so that both spellings compare equal; -1 otherwise.
+     * The code of a one-character constant, CHAR, STRING or VARCHAR, so that every spelling compares equal; -1 otherwise.
      */
     private static int charCodeOf(BoundExpression value) {
         if (!(value instanceof ConstantExpression constant)) {
             return -1;
         }
-        return switch (ColumnType.tagOf(constant.getDataType())) {
-            case ColumnType.CHAR -> constant.getLongValue() == 0 ? -1 : (int) constant.getLongValue();
-            case ColumnType.STRING -> {
-                final String text = constant.getStrValue();
-                yield text != null && text.length() == 1 ? text.charAt(0) : -1;
-            }
-            default -> -1;
-        };
+        if (ColumnType.tagOf(constant.getDataType()) == ColumnType.CHAR) {
+            return constant.getLongValue() == 0 ? -1 : (int) constant.getLongValue();
+        }
+        final CharSequence text = textOf(constant);
+        return text != null && text.length() == 1 ? text.charAt(0) : -1;
     }
 
     private static boolean isBind(BoundExpression value) {
@@ -187,7 +185,7 @@ public final class SymbolKeyExtractor implements Mutable {
     private static boolean isKeyValue(BoundExpression value) {
         final int type = ColumnType.tagOf(value.getDataType());
         return value instanceof ConstantExpression
-                && (type == ColumnType.STRING || type == ColumnType.CHAR || type == ColumnType.NULL)
+                && (type == ColumnType.STRING || type == ColumnType.VARCHAR || type == ColumnType.CHAR || type == ColumnType.NULL)
                 || value instanceof BindVariableExpression parameter && parameter.isDirectReference()
                 && (type == ColumnType.STRING || type == ColumnType.VARCHAR);
     }
@@ -248,11 +246,18 @@ public final class SymbolKeyExtractor implements Mutable {
     }
 
     /**
-     * The text of a constant that {@link #charCodeOf} does not encode; null for a NULL value.
+     * The UTF-16 text of a STRING or VARCHAR constant; null for a NULL value or any other type.
      */
     private static CharSequence textOf(BoundExpression value) {
         final ConstantExpression constant = (ConstantExpression) value;
-        return ColumnType.tagOf(constant.getDataType()) == ColumnType.STRING ? constant.getStrValue() : null;
+        return switch (ColumnType.tagOf(constant.getDataType())) {
+            case ColumnType.STRING -> constant.getStrValue();
+            case ColumnType.VARCHAR -> {
+                final Utf8Sequence text = constant.getVarcharValue();
+                yield text == null ? null : text.isAscii() ? text.asAsciiCharSequence() : text.toString();
+            }
+            default -> null;
+        };
     }
 
     private void addExcluded(FunctionExpression call, BoundExpression value) {
@@ -490,19 +495,8 @@ public final class SymbolKeyExtractor implements Mutable {
         return isKeyOperand(expression) && ((ColumnExpression) expression).getColumnId() == columnId;
     }
 
-    private boolean isMarked(BoundExpression expression) {
-        for (int i = 0, n = intrinsics.size(); i < n; i++) {
-            if (intrinsics.getQuick(i) == expression) {
-                return true;
-            }
-        }
-        return false;
-    }
-
     private void mark(BoundExpression conjunct) {
-        if (!isMarked(conjunct)) {
-            intrinsics.add(conjunct);
-        }
+        intrinsics.add(conjunct);
     }
 
     private void markExcluded(BoundExpression conjunct) {
@@ -527,7 +521,7 @@ public final class SymbolKeyExtractor implements Mutable {
     }
 
     private BoundExpression residual(BoundExpression predicate, BoundExpressionRewriter rewriter) {
-        if (isMarked(predicate)) {
+        if (intrinsics.contains(predicate)) {
             return null;
         }
         if (predicate instanceof FunctionExpression call && call.isAnd()) {
@@ -538,12 +532,7 @@ public final class SymbolKeyExtractor implements Mutable {
 
     private void revert(ObjList<BoundExpression> conjuncts) {
         for (int i = 0, n = conjuncts.size(); i < n; i++) {
-            final BoundExpression conjunct = conjuncts.getQuick(i);
-            for (int k = intrinsics.size() - 1; k > -1; k--) {
-                if (intrinsics.getQuick(k) == conjunct) {
-                    intrinsics.remove(k);
-                }
-            }
+            intrinsics.remove(conjuncts.getQuick(i));
         }
         conjuncts.clear();
     }
