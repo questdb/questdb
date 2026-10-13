@@ -1268,8 +1268,8 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     public void testFillPrevKeyedBucketKeyRenamedByAggregateAlias() throws Exception {
         // The emitted avg(val) aggregate claims the alias avg first, so the group-by model
         // renames the bucket key to avg1. The column surfaces as avg1 instead of avg: that
-        // naming comes from the pre-existing key rename,
-        // not from fill, and this test does not endorse it.
+        // naming comes from the pre-existing key rename, not from fill, and this test does
+        // not endorse it.
         assertMemoryLeak(() -> {
             SampleByFillNullValueTest.createBucketAliasTable();
             assertQuery("SELECT k, avg(val) * 2 AS v, ts AS avg FROM t SAMPLE BY 1h FILL(PREV) ORDER BY k, v")

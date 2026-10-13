@@ -1684,8 +1684,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * the output does not carry it. SqlOptimiser.rewriteSampleBy records the bucket key
      * node on the model that holds the fill parameters, and the group-by column that
      * carries that very node is the bucket, under whatever alias the optimizer gave it.
-     * The lookup never compares names, so a user column that shares the timestamp's
-     * name or collides with the bucket's alias cannot be taken for the bucket (#7838).
+     * The lookup never identifies the bucket by name, so a user column that shares the
+     * timestamp's name or collides with the bucket's alias cannot be taken for the
+     * bucket (#7838).
      * The TIMESTAMP check guards getTimestampDriver downstream.
      */
     private static int findFillBucketIndex(IQueryModel model, RecordMetadata metadata, IQueryModel fillModel) {
