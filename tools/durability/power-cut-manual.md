@@ -1,10 +1,13 @@
 # dm-flakey Power-Cut Durability — Manual Step-by-Step
 
-This document mirrors `power-cut-dmflakey.sh` but gives each command individually so you can
-run them interactively, inspect state between steps, and debug if the all-in-one script hits
-a timing or kernel issue (the script is UNTESTED — no root access in the dev environment).
+This is a manual SYNC/NOSYNC, non-WAL example of the `dm-flakey` mechanism. For adaptive WAL,
+the group window and its frontier oracle, use the current `power-cut-dmflakey.sh` or the
+[VM replay harness](vm/README.md); do not change just MODE in this example.
 
-Run every command below as **root** (`sudo -i` or `sudo bash` for each line).
+These commands format a disposable device and kill a test JVM. Run them only on a dedicated
+Linux test machine, as root. Set WT to the checkout and use its supported JDK and built native
+libraries. No harness execution is implied by this documentation; record revisions and results
+for each actual run.
 
 ---
 
@@ -18,9 +21,9 @@ lsmod | grep dm_flakey      # should show dm_flakey
 # Tools: dmsetup, losetup, mkfs.ext4, blockdev
 which dmsetup losetup mkfs.ext4 blockdev
 
-# Java 21+ and the benchmarks jar
+# Use the JDK required by this checkout (Java 25+ for this revision).
 java -version
-ls -lh ~/claude/wt/oss/sync-batch/benchmarks/target/benchmarks.jar
+# Set WT and check the built benchmarks jar in the next section.
 ```
 
 ---
@@ -28,16 +31,33 @@ ls -lh ~/claude/wt/oss/sync-batch/benchmarks/target/benchmarks.jar
 ## Variables (set these once in your shell)
 
 ```bash
-WT="$HOME/claude/wt/oss/sync-batch"
+WT="/absolute/path/to/questdb"
 JAR="$WT/benchmarks/target/benchmarks.jar"
-IMG="/data/qdb-pcut.img"     # on a REAL disk; NOT tmpfs
-MNT="/mnt/qdbpcut"
-DM_NAME="qdbflakey"
+RUN_ID="manual-$$"
+IMG="/data/qdb-pcut-$RUN_ID.img"     # disposable; on disk, not tmpfs
+MNT="/mnt/qdbpcut-$RUN_ID"
+DM_NAME="qdbflakey-$RUN_ID"
 DM_DEV="/dev/mapper/$DM_NAME"
 DBDIR="$MNT/db"
 MODE="SYNC"                  # change to NOSYNC for the contrast run
 MIN_COMMITTED=50000
+EVIDENCE=$(mktemp -d /var/tmp/qdb-pcut-evidence.XXXXXX)  # outside the tested filesystem
+QDB_JVM=(
+  --enable-native-access=ALL-UNNAMED
+  --sun-misc-unsafe-memory-access=allow
+  --add-opens=java.base/java.lang=ALL-UNNAMED
+  --add-opens=java.base/java.lang.reflect=ALL-UNNAMED
+  --add-opens=java.base/java.nio=ALL-UNNAMED
+  --add-opens=java.base/java.time.zone=ALL-UNNAMED
+  --add-exports=java.base/jdk.internal.vm=ALL-UNNAMED
+)
+test -f "$JAR" || exit 1
+test ! -e "$IMG" && test ! -e "$MNT" && test ! -e "$DM_DEV" || exit 1
 ```
+
+Do not reuse an existing image, mapper name or mount. Keep the evidence directory after cleanup.
+The JVM flags must match the checkout's harness; without the continuation export, workers can die
+and invalidate the experiment.
 
 ---
 
@@ -72,7 +92,8 @@ up=0s, down=180s, 1 feature: `drop_writes` → always in down phase, all writes 
 > **Why `drop_writes` and not just down?**
 > Plain "down" mode returns I/O errors to the kernel, which makes ext4 remount read-only.
 > `drop_writes` silently drops writes (returns success) so the filesystem keeps writing —
-> just none of it reaches the image. That is the correct model for a power cut.
+> just none of it reaches the image. This models losing writes still above the mapper at the cut,
+> not every physical power-loss state. Unflushed writes that reached the image earlier survive too.
 
 ---
 
@@ -113,10 +134,10 @@ mkdir -p "$DBDIR"
 ## Step 4 — Start CrashIngestWriter
 
 ```bash
-java -cp "$JAR" \
-    -DcommitMode="$MODE" \
+java "${QDB_JVM[@]}" -cp "$JAR" \
+    -DcommitMode="$MODE" -Dwal.table=false \
     org.questdb.CrashIngestWriter "$DBDIR" \
-    > /tmp/writer.log 2>&1 &
+    > "$EVIDENCE/writer.log" 2>&1 &
 WRITER_PID=$!
 echo "WRITER_PID=$WRITER_PID"
 ```
@@ -125,7 +146,7 @@ Watch progress:
 
 ```bash
 # In another terminal (or poll in this one):
-tail -f /tmp/writer.log
+tail -f "$EVIDENCE/writer.log"
 # or:
 watch -n1 "cat $DBDIR/_progress 2>/dev/null || echo waiting"
 ```
@@ -151,8 +172,9 @@ because the `_progress` file itself may not survive the power cut (NOSYNC) and w
 this number to interpret the verifier result:
 
 ```bash
-COMMITTED=$(cat "$DBDIR/_progress")
-echo "COMMITTED=$COMMITTED  (write this down!)"
+cp "$DBDIR/_progress" "$EVIDENCE/progress-before-cut"
+COMMITTED=$(head -1 "$EVIDENCE/progress-before-cut")
+echo "COMMITTED=$COMMITTED  (keep the evidence file)"
 ```
 
 ---
@@ -169,13 +191,14 @@ At this point the page cache still holds all dirty pages.  No data has been cut 
 
 ---
 
-## Step 7 — THE POWER CUT (6 commands)
+## Step 7 — Drop later writes
 
 This is the critical sequence. Execute them in order without pausing.
 
 ```bash
-# 7a. Suspend the dm device (queues any in-flight I/O)
-dmsetup suspend "$DM_NAME"
+# 7a. Suspend WITHOUT freezing/flushing the filesystem first.
+# Plain suspend can flush the very dirty state the experiment needs to lose.
+dmsetup suspend --nolockfs "$DM_NAME"
 
 # 7b. Load the "always DOWN + drop_writes" table
 dmsetup load "$DM_NAME" --table "0 $SECTORS flakey $LOOP 0 0 180 1 drop_writes"
@@ -184,7 +207,7 @@ dmsetup load "$DM_NAME" --table "0 $SECTORS flakey $LOOP 0 0 180 1 drop_writes"
 dmsetup resume "$DM_NAME"
 
 # 7d. Unmount — the kernel writes back dirty pages, dm-flakey DROPS them
-#     Un-fsync'd data never reaches the image.  This is the power cut.
+#     Writes still dirty at the cut are discarded; earlier background writes remain.
 umount "$MNT"
 
 # 7e. Suspend again to switch back to UP mode
@@ -197,7 +220,9 @@ dmsetup load "$DM_NAME" --table "0 $SECTORS flakey $LOOP 0 180 0"
 dmsetup resume "$DM_NAME"
 ```
 
-The "power cut" is complete.  The image now contains exactly what was fsync'd before step 7d.
+The write-drop phase is complete. The image contains writes that reached it before the drop
+phase, whether from explicit flushes or background writeback. A passing sample does not prove
+that every required barrier exists; run negative controls and retain the storage configuration.
 
 ---
 
@@ -206,7 +231,10 @@ The "power cut" is complete.  The image now contains exactly what was fsync'd be
 ```bash
 mount "$DM_DEV" "$MNT"
 echo "=== MODE=$MODE committed_before_cut=$COMMITTED ==="
-java -cp "$JAR" org.questdb.CrashVerifier "$DBDIR"
+java "${QDB_JVM[@]}" -cp "$JAR" -DcommitMode="$MODE" -Dwal.table=false \
+    org.questdb.CrashVerifier "$DBDIR" > "$EVIDENCE/verifier.log" 2>&1
+cat "$EVIDENCE/verifier.log"
+# Compare count to the external COMMITTED value, not just the on-disk watermark.
 ```
 
 ---
@@ -245,8 +273,9 @@ dmsetup targets | grep flakey
 # Look for the version; drop_writes was added in kernel 3.9 / dm-flakey v1.1
 ```
 
-If `drop_writes` is not recognised, try the feature name `error_writes` (some older kernels
-used this name) or check `/proc/device-mapper` / `dmesg` for the rejection reason.
+If `drop_writes` is not recognised, stop and inspect the kernel's target documentation and
+`dmesg`. Do not substitute `error_writes`: reporting I/O errors is a different failure model
+and can remount the filesystem read-only.
 
 **`umount: target is busy`**
 
@@ -254,12 +283,12 @@ The writer wasn't killed cleanly or a shell still has a CWD inside `$MNT`:
 
 ```bash
 fuser -mv "$MNT"      # list what has the mount open
-fuser -mk "$MNT"      # force-kill those processes
+# Stop only this experiment's remaining holders, then retry a normal unmount.
 umount "$MNT"
 ```
 
-Or use `umount -l "$MNT"` (lazy unmount) — the writeback still happens, but the
-unmount returns immediately.  This is fine for the power-cut simulation.
+Do not proceed to remount after a lazy unmount: return from `umount -l` does not establish
+that the old mount and its pending writeback are gone. Record this as an incomplete run.
 
 **`mount` after step 7g fails with "wrong fs type" or journal errors**
 
@@ -272,10 +301,9 @@ e2fsck -fn "$DM_DEV"   # check without fixing; see what's damaged
 mount -o ro,noload "$DM_DEV" "$MNT"
 ```
 
-If ext4 journal itself is torn you may need to add `-o journal_data` to mkfs.ext4
-so the journal uses data mode (slower, but journals both metadata AND data), which
-makes the power-cut model cleaner.  For the SYNC test what matters is that QuestDB's
-own fsync calls hit the device before the cut.
+Preserve the failed image before any repair. Changing journal or mount settings creates a
+new experiment; it must not turn the original failure into a reported pass. Diagnose whether
+the failure came from setup, the failure model, storage or the database.
 
 **SYNC shows DURABILITY_FAILURE (count < COMMITTED)**
 
@@ -292,8 +320,8 @@ Possible causes:
    file's block I/O but barriers may not propagate correctly on older kernels.  Prefer
    a real block device (e.g. `/dev/sdb`) over a loop device for production validation.
 3. QuestDB's SYNC path is calling `msync(MS_SYNC)` but a kernel version change altered
-   when mmap-backed pages are actually written to the block layer.  Check `dmesg` and
-   QuestDB startup logs for the `nobarrier` warning.
+   when mmap-backed pages reach the block layer. Check `dmesg` and the actual mount/device
+   settings. This feature adds no startup warning that certifies barriers are enabled.
 
 **The `_progress` file disappears after the cut (NOSYNC run)**
 

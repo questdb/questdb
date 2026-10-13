@@ -1,9 +1,10 @@
 # Durability & power-loss test harnesses
 
-Manual, **root-required** harnesses that validate QuestDB's crash and power-loss behaviour.
-They are deliberately **not** part of the JUnit suite — they need `dm-flakey`, block-layer
-control, and abrupt process kills, so run them by hand on a real Linux box (the JVM-level
-crash-consistency tests live in `core/src/test/java/io/questdb/test/cairo/crash/`).
+Harnesses for process-crash and power-loss models. The host `dm-flakey` tools require root and
+must use disposable test devices. The QEMU harness needs no host root; privileged operations
+stay in its guest, while images and logs live in its configured host state directory.
+These are separate from the JVM crash tests in `core/src/test/java/io/questdb/test/cairo/crash/`.
+For the product contract, see [adaptive commit mode](../../docs/adaptive-commit-mode.md).
 
 | Tool | What it tests | Method |
 |---|---|---|
@@ -11,13 +12,16 @@ crash-consistency tests live in `core/src/test/java/io/questdb/test/cairo/crash/
 | `power-cut-dmflakey.sh` | **power-loss durability** — un-fsync'd writes in the page cache are lost | `dm-flakey drop_writes` over a loop device, `umount` (writeback dropped), remount, assert survival per commit mode |
 | `power-cut-manual.md` | — | step-by-step runbook for the dm-flakey harness, for running interactively / debugging a timing or kernel issue |
 | `syncfs-microtest.sh` | does `syncfs(2)` **durably journal** ext4's unwritten→written extent conversion across a power cut? (what the batched-flush optimisation relies on) | QuestDB-independent `xfs_io` + the same dm-flakey power cut |
-| [`vm/`](vm/README.md) | **power-loss durability, repeatably** — the same guarantee as `power-cut-dmflakey.sh`, but automated, matrixed over commit modes, and safe to run on a shared machine | one QEMU guest: `dm-flakey drop_writes` armed *inside* it, then `kill -9` on the VMM. Needs **no host root** and touches nothing on the host |
+| [`vm/`](vm/README.md) | repeatable crash states on a real guest kernel and block layer | record with `dm-log-writes`, reset the disposable device and replay selected flush boundaries; killing QEMU only ends recording |
 
-**The core distinction:** `crash-consistency-pkill.sh` leaves the page cache intact (a
-process crash), so it proves *consistency* but not *durability*; `power-cut-dmflakey.sh`
-discards un-fsync'd writes at the block layer, so it proves *durability* (and distinguishes
-the commit modes — a NOSYNC table loses its tail, a durable one does not).
+A process kill leaves the kernel page cache alive and does not test loss of volatile writes.
+`dm-flakey` drops writes submitted after its cut, including unmount writeback. Data already
+written before the cut can survive even without an explicit flush. VM replay reconstructs
+selected block-log boundaries; it does not enumerate every possible device tear or reordering.
+Neither mechanism is an actual hardware power cut.
 
-Each script's header documents its exact usage and pass/fail verdicts. The dm-flakey harness
-has been run on real hardware against adaptive commit — `W=0` DURABLE (zero loss), `W=50ms`
-RPO_OK (loss ≤ W), `SYNC` DURABLE, `NOSYNC` total loss (the expected control).
+Use the scripts' current arguments and JVM flags. For every result retain the exact server and
+client revisions, native artifacts, mode, workload, selected boundaries and negative controls.
+A historical green run is not validation of a newer revision. `RPO_OK` establishes the tested
+frontier inequality, not a hard elapsed-time loss bound under worker or storage stalls. These
+harnesses were not rerun as part of the documentation update.

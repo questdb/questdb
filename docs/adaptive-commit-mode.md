@@ -28,10 +28,10 @@ pass, because it flushes the large table files as well as the small log.
 
 Adaptive makes the WAL durable and leaves the table files lazy:
 
-- **The commit is durable.** Before a commit is acknowledged, the writer's own WAL files (column data, the event
-  log) are flushed to the device with `fdatasync`, and then the shared sequencer log that orders the commits is
-  flushed too. With the group-commit window at 0 every acknowledged commit is on stable storage when the call
-  returns. With a window above 0 the sequencer flush is shared by the commits of one window (section 4).
+- **The WAL becomes durable before the durable frontier advances.** The writer flushes its private WAL files
+  before sequencing. With the group-commit window at 0 it also flushes the sequencer log before acknowledging the
+  commit. With a window above 0 an ordinary commit acknowledgement can precede that shared flush; only a durable
+  acknowledgement confirms stable storage (sections 4 and 5).
 - **The apply is lazy.** The WAL is applied to the table files exactly as in `nosync`: no flush per commit. The
   table files are a copy of the WAL that can be rebuilt.
 - **A save point bounds the rebuild.** Once a minute, or after 5 million applied rows, whichever comes first, each
@@ -46,10 +46,17 @@ Adaptive makes the WAL durable and leaves the table files lazy:
 - **Damage is detected.** `_txn` and `_cv` carry checksums, and so does every record of the version 2 sequencer
   log. A torn file is noticed instead of being read as data.
 
-The result: after a crash of any kind, every acknowledged transaction is back once the WAL apply catches up, and
-the table files are consistent.
+After recovery and WAL catch-up, every transaction covered by the durable frontier is back and the table files
+are consistent. With a nonzero group window, ordinary acknowledgements ahead of that frontier remain at risk.
+These guarantees require storage that honours flushes; the limits in section 7 still apply.
 
 Adaptive covers WAL tables. A table created with `BYPASS WAL` has no WAL to replay and behaves as in `nosync`.
+
+Some operations cannot rely on WAL replay alone: DETACH completion, RESUME and direct logical partition changes
+require every selectable save point to cover their effect. They can take a second synchronous save point and fail
+if coverage cannot be established. This completion is distinct from an earlier acknowledgement that merely
+queued a command in WAL. Ordinary data commits and physical conversions do not acquire a blanket two-save-point
+rule; see the internals guide for the individual paths.
 
 ## 3. Turning it on
 
@@ -90,9 +97,9 @@ The window trades the recovery point (how much acknowledged data a power loss ca
   itself before it returns. A power loss can lose the commits acknowledged in the last window.
 
 When commits stop in the middle of a window, the last flush is made by a background job that runs on the shared
-worker pool, so the bound for that last batch is the window plus the pool's sleep time
-(`shared.worker.sleep.timeout`). Keep that sleep short when the window is very small. A clock that jumps backwards
-forces the flush at once.
+worker pool. Its nominal delay is the window plus the pool's sleep time (`shared.worker.sleep.timeout`), with
+scheduling and flush time on top. This is not a hard wall-clock loss bound if workers stall or storage is slow.
+Keep that sleep short when the window is very small. A clock that jumps backwards forces the flush at once.
 
 A negative value counts as 0. A client that needs to know when its rows are durable, whatever the window, asks for
 the durable acknowledgement (section 5).
@@ -120,9 +127,19 @@ The server grants the whole request or none of it. A grant echoes the tiers in `
 leaves that header out, and the client fails the connection with a durable-ack mismatch instead of waiting for
 acknowledgements that never come. It never grants a weaker tier than the one asked for.
 
-- The `local` tier is served only when the instance runs in `adaptive` mode and no flush has failed. It reports,
-  per table, the highest sequence number whose WAL is on stable storage (`STATUS_LOCAL_DURABLE_ACK`).
-- The `replicated` tier reports the replicated frontier (`STATUS_DURABLE_ACK`).
+- The `local` tier is served only when the resolved mode is `adaptive` and the engine has not been fenced by a
+  fatal flush failure. An Enterprise replica resolves configured `adaptive` to `nosync` and cannot grant it.
+  The tier reports the local durable frontier (`STATUS_LOCAL_DURABLE_ACK`, 0x0E). It survives a power loss,
+  not loss of the disk.
+- The `replicated` tier reports the upload frontier (`STATUS_DURABLE_ACK`). OSS cannot grant it. Enterprise's
+  upload-backed registry composes both tiers on an eligible primary; this is implemented, not deferred.
+- With both tiers requested, the client trims its store-and-forward copy only on the replicated acknowledgement;
+  local acknowledgements are progress signals. `request_durable_ack=on` retains the legacy `true`/`enabled` wire
+  exchange and means replicated, never local.
+
+The server sends these frames in response to inbound traffic, including the client's keepalive PING. The Java
+client defaults to a 200 ms keepalive while awaiting durable acknowledgements. Idle acknowledgement latency
+therefore includes keepalive, scheduling and network delay; it is not the group-commit window.
 
 A store-and-forward client keeps its copy of the rows until the strongest tier it asked for acknowledges them, and
 can then replay without duplicates. A table dropped while a connection waits is acknowledged as covered. When a
@@ -142,9 +159,10 @@ These hold for WAL tables on an instance in `adaptive` mode. On QuestDB Enterpri
    lost, in any mode.
 2. **The table is consistent after recovery.** `_txn` names only partitions and rows that are on the disk, and
    `_meta`, `_cv` and `_txn` agree on their versions.
-3. **An ordinary crash never stops the start.** A start refuses only when a save point is damaged, which needs
-   damage on the disk or a defect, or when a save point file cannot be written (section 11 says what to do). When
-   only the newer of a table's two save points is damaged, the start falls back to the older one and loses nothing.
+3. **Recovery does not silently trust a damaged save point.** It uses the newer valid generation, or falls back
+   to the older one with its retained WAL and partition versions. If neither is trustworthy, or a required read,
+   write or flush fails, startup refuses rather than silently using unsafe live files. Section 11 lists recovery
+   steps; damage outside the protected files can still require a backup.
 4. **Recovery can itself be interrupted.** A crash or power loss at any step of the start, and a second start,
    give the same result as one uninterrupted start.
 5. **A clean restart restores nothing.** After a clean shutdown, the start finds the table files equal to the
@@ -154,9 +172,9 @@ These hold for WAL tables on an instance in `adaptive` mode. On QuestDB Enterpri
    restart right after a crash. Section 8 says what each switch does.
 7. **Tables from a released version need nothing.** Their files carry no save point and no checksums. They read
    as not yet enrolled and unverified, never as damaged, and the first adaptive writer enrols them.
-8. **The other modes keep their behaviour.** `nosync`, `async` and `sync` make the same file system calls on a
-   commit and a one-row apply pass as before, except that `sync` flushes the directories of a partition an apply
-   opens (section 9 lists the measured differences). Section 8.1 lists what changes in them.
+8. **Other modes retain their durability grades, with explicit changes.** `nosync` and `async` gain no power-loss
+   guarantee. Detection, recovery checks and the fixes in section 8.1 also run outside `adaptive`. Section 9 gives
+   historical measurements, not a blanket claim that every current path has identical cost or system calls.
 
 ## 7. What adaptive does not promise or support
 
@@ -198,23 +216,25 @@ one case and removes an endless apply loop and stray rows in another, but it doe
 
 ### 7.5 Other limits
 
-- **Storage that ignores flushes.** The promises need `fsync` and `fdatasync` to reach stable storage. A file
-  system mounted without write barriers, a network file system, a virtual disk set to write-through on the guest, or
-  a Linux guest on a macOS host can break them. QuestDB does not check the storage: make sure it honours flushes.
+- **Storage that ignores flushes.** The promises require flushes to reach stable storage through the filesystem,
+  virtual disk, host and physical device. Disabled barriers or a layer that acknowledges flushes without persisting
+  the data can break them. A cache-mode name or host OS alone establishes neither safety nor failure. This feature
+  adds no startup check that certifies the storage; validate the actual stack.
 - **The last window.** With a window above 0, commits acknowledged in the last window before a power loss can be
   lost (section 4). Use a window of 0, or the QWP durable acknowledgement, where that matters.
-- **Enterprise replicas.** A replica keeps no save points; its source of truth is the object store. A power loss on
-  a replica behaves as in `nosync`, and the replica catches up from the object store. ATTACH and DETACH PARTITION
-  finish at once on a replica, as outside `adaptive`. With `adaptive` configured, the resolved structural
-  apply-state and downloaded-log gates use `nosync` grade. This does not change other cold-storage flush gates
+- **Enterprise replicas.** A replica keeps no new save points; demotion removes inherited ones only after their
+  state is durable. The object store is the durable source, but the downloader resumes from the local sequencer:
+  this feature does not promise to re-download and repair all local state automatically after a replica power
+  loss. ATTACH and DETACH PARTITION finish at once on a replica, as outside `adaptive`. With `adaptive`
+  configured, the resolved structural apply-state and downloaded-log gates use `nosync` grade. This does not change other cold-storage flush gates
   or mandatory repair barriers; explicit `sync` replicas, local commits, promotion and boot retain their
   configured grade.
 - **A power loss during a `nosync` or `async` run** loses what those modes lose, also after a switch to `adaptive`
   later.
 - **Detection is for torn writes.** Damage to an already written record of a version 1 sequencer log (bit rot, a
   foreign write) is not detected. The checksums are not a full integrity check.
-- **The save point is not a backup.** It bounds the replay after a crash. `CHECKPOINT` and backups are unchanged and
-  still needed.
+- **The save point is not a backup.** It bounds replay, but does not protect against losing the disk or all valid
+  copies. Checkpoints and backups are still needed. Their restore paths have additional flushes (section 8.1).
 - **A role switch in the middle of an apply batch that then fails** (QuestDB Enterprise). If a node is promoted while
   an apply batch that began on the replica is still running, and that batch then fails, the rows it applied after
   the promotion are neither flushed nor covered by a save point until the table is resumed or the server restarts.
@@ -251,6 +271,20 @@ Found while this mode was built, not yet filed:
   read but not written, altered or dropped. Create the table first (`CREATE TABLE ... WAL`) and COPY into it;
   section 11.6 says how to get out of the state.
 
+### 7.7 Deferred work and accepted costs
+
+- The shipped default remains `nosync`; changing it needs a separate decision supported by measurements.
+- Enterprise demotion still flushes enrolled tables individually. Batching those flushes is a follow-up, not part
+  of this implementation. Batching repeated full-manifest checks per pending partition is also deferred; neither
+  that cost nor final synchronous two-generation completion has a fresh measured bound.
+- Rust flush errors do not yet carry the Java fatal-durability classification across JNI (section 11.2).
+- The extra SYNC V2 part flushes and macOS `F_FULLFSYNC` in `fsyncAndClose` remain. Reducing either cost awaits
+  measurement; the Linux figures do not establish their macOS cost.
+- There is no database-level marker to skip save-point checks at a `nosync` start. The measured startup cost was
+  accepted, as were the reader length checks and SYNC COPY directory flushes (section 9).
+- No per-table startup quarantine or general repair of arbitrary corrupt storage is provided. Some failures stop
+  startup and require the manual steps in section 11.
+
 ## 8. Changing the commit mode
 
 `cairo.commit.mode` can change at any restart, in any direction, any number of times.
@@ -282,10 +316,10 @@ Found while this mode was built, not yet filed:
 
 ### 8.1 What changes in `nosync`, `async` and `sync`
 
-- **Torn-file detection** runs in every mode (section 2): it costs nanoseconds per commit and no system call, and
-  about 9 µs on the first reader of each table (four more file size checks). Each open of a version 1 sequencer log
-  reads the records added since its previous open (no system call), and a torn tail it cuts after a crash is
-  flushed, in every mode.
+- **Torn-file detection** runs in every mode (section 2). The historical measurements found no extra per-commit
+  system call for the checksum work and about 9 µs on the first reader (four file-size checks). WAL column length
+  guards also refresh a cached length when the committed range grows past it. Each V1 sequencer open scans from
+  its hint, and a torn tail that it cuts is flushed in every mode; mode-switch rescans are described in section 8.
 - **Held-back transactions** are applied again from the WAL after a restart instead of being read from `_txn`, in
   every mode. Before, a crash at the wrong moment could lose or duplicate those rows
   ([#7804](https://github.com/questdb/questdb/issues/7804)).
@@ -318,10 +352,13 @@ Found while this mode was built, not yet filed:
   ([#7842](https://github.com/questdb/questdb/issues/7842)). Before, that happened when the apply job lost a race,
   and in `adaptive` a kill or power loss after the REBASE made it certain. A table that already reads 1970 from
   this keeps that minimum.
-- **`sync` stops the server on a failed flush**, as `adaptive` does (section 11.2), and makes a few more files
-  durable: the schema file swap, the directories of a partition an apply opens (two `fsync`), and the directories
-  of ALTER COLUMN TYPE, CONVERT PARTITION and the Parquet partition switch. A version 2 sequencer log writes the
-  record before the header that names it.
+- **`sync` uses the fatal Java flush-failure policy**, as `adaptive` does, with the exceptions in section 11.2.
+  Additional barriers cover the schema file swap, partition directories, ALTER COLUMN TYPE, partition conversions,
+  event files before sequencing (including non-data events), and the WAL segment `_meta` before its first record.
+  A version 2 sequencer log flushes the part before its header and flushes a part before closing it. The
+  ADD COLUMN SYMBOL event rewrite also flushes its rewritten files in SYNC and requests writeback in ASYNC.
+- **Checkpoint restore** flushes restored state in every mode before completing the restore. RENAME TABLE and
+  table-registry compaction also flush the database directory around publication. These are not per-row costs.
 - **A partition conversion keeps the new partition** once its `_txn` is written, even when the flush of that `_txn`
   fails, and in `sync` a writer open flushes `_txn` again before it removes old partition versions. Before, a
   restart could find the partition missing (CONVERT PARTITION) or its rows gone (the Parquet partition switch).
@@ -329,21 +366,28 @@ Found while this mode was built, not yet filed:
   table (2.2 ms per 1,000 tables).
 - **The first `sync` start after a `nosync` or `async` run** reads and flushes each version 1 sequencer log once, as
   the switch into `adaptive` does (section 8).
-- `nosync` and `async` otherwise behave and cost as before (section 9).
+- The selected NOSYNC/ASYNC steady-state measurements were within noise. That does not establish unchanged cost
+  for every workload, filesystem or final integrated revision (section 9).
 
 ## 9. What it costs
 
-Measured on one Linux machine (AMD Ryzen 9 7900, ext4 on a Samsung 990 PRO NVMe disk), in one process with the
-apply run on the calling thread, against the release this change starts from. Each figure is the median of three
-runs; "as before" means within the spread of runs of the unchanged release. Other file systems, other devices,
-macOS and Windows (where a save point flushes file by file) can differ widely.
+Historical measurements: OSS `d3b877ccc9` against `8a71ef801f`, and Enterprise `c10e48336` against `d8e549cdb`.
+These predate the final repair commits and upstream integration. They used one Linux machine (AMD Ryzen 9 7900,
+ext4 on a Samsung 990 PRO NVMe), one process, and apply on the calling thread. Each figure is the median of three
+runs; "as before" describes those measured revisions, not a guarantee about every current path.
+
+The commit figures predate the overlapped writeback drain. The structural-operation figures do not measure the
+final synchronous completion rule: DETACH, RESUME and direct logical changes can need two save points so every
+selectable recovery generation covers the effect. That final overhead has not been remeasured. Other filesystems,
+devices, macOS and Windows (which flush file by file) can differ widely. Timings elsewhere in this guide and its
+internals companion have the same historical scope unless stated otherwise.
 
 | Mode | One commit | One apply pass | One save point | At start | One schema change |
 |---|---|---|---|---|---|
 | `nosync` (default) | as before: no system call, 4.5 µs for one row | as before: 101 µs for one row, the same system calls | none | about 2 µs more per WAL table (two file checks), and about 9 µs more for the first reader of each table | as before |
 | `async` | as before: 8 µs for one row | as before | none | as `nosync` | as before |
 | `sync` | as before: 12.1 ms for one row, 38.8 ms for 100,000 rows; with a version 2 sequencer log, one more `msync` to write the record before the header that names it | as before: 11.6 ms | none | as `nosync` | about 12 ms more (four `fsync` that make the `_meta` swap durable): 32 ms to add a column, 26-28 ms to rename, drop or change a type; a few more `fsync` for ALTER COLUMN TYPE and partition conversions, which could lose data on a power loss before |
-| `adaptive`, window 0 | 6.6 ms for one row, 30.5 ms for 100,000 rows (`sync`: 12.1 and 38.8 ms) | 127 µs for one row, the same system calls as `nosync` | 19-24 ms, nearly all of it one `syncfs`; at most once a minute per table by default (about 0.03% of one core), and once at each table's first apply after a start | clean: 28 ms for 20 tables (`nosync` 9 ms), 0.24 s for 1,000 tables, of which one `syncfs` of 51 ms; after a crash: about 34 ms per table with 20 commits to replay | 25-30 ms; ALTER COLUMN TYPE 48 ms, because it takes a save point, as partition conversions, ATTACH and DETACH do |
+| `adaptive`, window 0 | 6.6 ms for one row, 30.5 ms for 100,000 rows (`sync`: 12.1 and 38.8 ms) | 127 µs for one row, the same system calls as `nosync` | 19-24 ms, nearly all of it one `syncfs`; periodic time trigger once a minute, with additional row-count, structural, enrolment, close and idle triggers | clean: 28 ms for 20 tables (`nosync` 9 ms), 0.24 s for 1,000 tables, of which one `syncfs` of 51 ms; after a crash: about 34 ms per table with 20 commits to replay | 25-30 ms; ALTER COLUMN TYPE 48 ms, because it takes a save point, as partition conversions, ATTACH and DETACH do |
 | `adaptive`, window 50 ms | 5.2 ms for one row, 28.7 ms for 100,000 rows | 141 µs | as window 0 | as window 0 | as window 0 |
 
 Steady ingestion, 100-row commits from one writer: `nosync` 5.2 million rows/s, `async` 3.9 million, `sync` 5,800,
@@ -472,7 +516,7 @@ The three numbers read 0 for a table no writer has touched since the start.
 Useful differences:
 
 ```sql
--- acknowledged commits not yet on stable storage (at most one window's worth with a window above 0)
+-- commits not yet covered by the local durable frontier (not a wall-clock loss bound)
 SELECT name, sequencerTxn - localDurableSeqTxn AS not_yet_durable FROM wal_tables();
 
 -- how far a crash now would replay (the WAL kept reaches one save point further back)
@@ -505,10 +549,10 @@ a switch to `adaptive` until every table has been written once; use `wal_tables(
 
 ## 11. Operations: when a start refuses or a table is stuck
 
-Every state below either repairs itself or has a manual step, named in its message or in this section, that clears
-it, and following the step keeps every acknowledged row. Two steps say where they cannot: skipping a transaction
-that can never be applied (section 11.4), and a damaged save point after a power loss, which needs damage on the
-disk or a defect and is cleared by a restore from a backup (section 11.1).
+These steps cover the named failure states, not every possible storage failure. Keep the logs and a copy of the
+affected files before manual repair. Skipping WAL transactions, restoring a backup, or dropping an interrupted
+COPY's target can discard data; the relevant sections state the limits. Do not remove save points merely to make
+startup succeed after an unknown crash.
 
 ### 11.1 The start refuses
 
@@ -579,12 +623,13 @@ and report it.
 
 ### 11.2 The server stops after a failed flush
 
-In `sync` and `adaptive` mode, a failed `fsync`, `fdatasync`, `syncfs`, `sync_file_range` or synchronous `msync` stops
-the server at once, wherever it happens (a table, its WAL, a checkpoint), because the data it was flushing, or other
-data on the same disk, may not be on the disk. (A write-back that could not start for lack of memory, or was
-interrupted, is retried by the wait and the flush after it and does not stop the server.) So does a failed flush of a
-conversion to non-WAL, in every mode. A parallel COPY's work files count as table data: a failed flush of its index chunks or of the staging tables that
-become the table's partitions stops the server too, also when `cairo.sql.copy.work.root` is on another disk, and a
+In resolved `sync` and `adaptive` mode, a failed Java durability barrier reported through the flush-failure factory
+stops the server at once: the data it was flushing, or other data on the same disk, may not be on the disk. This
+covers `fsync`, `fdatasync`, `syncfs`, `sync_file_range` and synchronous `msync`. The Rust and final checkpoint
+`sync()` exceptions are described below. A write-back kick that returns ENOMEM, EAGAIN or EINTR is retried by the
+wait and barrier after it, rather than immediately stopping the server. A failed mandatory flush before conversion
+to non-WAL stops it in every mode. A parallel COPY's work files count as table data: in a durable mode, a failed
+flush of its index chunks or staging tables stops the server too, even if `cairo.sql.copy.work.root` is on another disk. A
 restart clears it. The server stops at the failed flush itself, before any clean-up, so a parallel COPY never
 reports an import done that is not on the disk, and section 11.6 says what it can leave behind. An Enterprise replica
 decides by the mode it runs in: in `adaptive` it follows `nosync` (the object store holds the durable copy), so it
@@ -614,15 +659,18 @@ does.
 A flush that the Rust code runs does not stop the server yet: the Parquet metadata (`_pm`) barriers of an
 out-of-order merge into a Parquet partition or of an ATTACH, and Enterprise cold storage. Its failure fails the
 statement or suspends the table (section 11.3) instead; no acknowledged data is lost, because the `_pm` footer is
-written past the committed size and the retry rewrites it.
+written past the committed size and the retry rewrites it. Also, the final `sync()` of `CHECKPOINT CREATE`
+checks its return code outside the Java failure factory and fails the statement rather than poisoning the engine.
+Neither exception is a claim that all Rust or checkpoint failures are harmless.
 
 ### 11.3 A table is suspended or its save point is late
 
 | Message | What it means | What to do |
 |---|---|---|
-| `could not take the durable epoch the table owes, the table stays suspended; retry RESUME WAL [table=...]` | `ALTER TABLE ... RESUME WAL` takes the save point the table owes before it resumes, and that save point failed. | Fix the cause in the log line before it (usually the disk), then run `ALTER TABLE ... RESUME WAL` again. |
+| `could not take the durable epoch the table owes, the table stays suspended; retry RESUME WAL [table=...]` | RESUME could not establish coverage of the live state in every selectable save point. It checks this even when no save point is marked owed. | Fix the logged cause, which can be an I/O error or a busy epoch pin, then retry `ALTER TABLE ... RESUME WAL`. Do not delete a save point to bypass the refusal. |
+| `could not complete durable epoch after <operation>; retry the operation or RESUME WAL [table=...]` | DETACH or a direct logical change could not finish the required save points. The effect may already be visible, but completion was refused. | Fix the logged cause and retry the operation or RESUME. Keep the temporary partition files; the writer finishes them when every selectable generation covers the effect. |
 | `could not advance adaptive durable epoch [table=..., error=...]` | A periodic save point failed. The table keeps its previous save point and its WAL. | Fix the cause. The next apply pass tries again; nothing is lost meanwhile, but the WAL grows and the replay after a crash gets longer. |
-| `durable epoch skipped after <operation>, a crash before the next one undoes it [table=...]` | A save point that should follow a schema change or a partition operation did not run. The change stays in effect. | Nothing: the save point is owed and taken at the next apply pass, `RESUME WAL` or clean close. A crash before then replays the WAL from the previous save point. |
+| `durable epoch skipped after <operation>, a crash before the next one undoes it [table=...]` | A best-effort save point, for example after a physical conversion or WAL ATTACH, was skipped. The change stays visible and a save point is owed. | Check the cause and that a later publication succeeds. This is not a successful completion of DETACH, RESUME or a direct logical change: those require coverage of every selectable generation before completion. |
 
 A suspended table is otherwise resumed as in every release: `ALTER TABLE ... RESUME WAL`. Section 7.4 explains why
 `RESUME WAL FROM TXN` loses a transaction on a table with held-back transactions.
@@ -668,8 +716,8 @@ stays a WAL table with the rows of its save point. The rows after the save point
 | Message | What to do |
 |---|---|
 | `UDP line protocol cannot write a WAL table in ADAPTIVE commit mode, skipping its lines until restart [table=...]` | Send those rows over ILP on HTTP or TCP, or over QWP, or write them into a non-WAL table (section 7.2). |
-| A QWP client fails its connection with a durable-ack mismatch | The client asked for the `local` tier and the server is not in `adaptive` mode (or a flush failed earlier). Switch the server to `adaptive`, or stop asking for `local`. |
-| `partition source next to the attached partition may share its files, do not attach it again [table=..., partition=...]` (at a writer open) or `could not remove attached partition source, it shares files with the attached partition and is unsafe to attach again [path=..., errno=...]` | On an enrolled table ATTACH PARTITION links the files of the `.attachable` directory instead of moving them, and deletes the directory once both save point generations cover the attach. A crash in between, or a failed deletion, leaves it behind. The partition is attached. Delete the `.attachable` directory of that partition; do not attach it again, its files are the attached partition's files. Delete it only after a restart, or after the table has taken two save points since the ATTACH (two `adaptive durable epoch [table=...]` lines for the table in the log): until then a start that falls back to the older save point can still replay the ATTACH from it, and the writer deletes it itself once both save points cover the attach. |
+| A QWP client fails its connection with a durable-ack mismatch | Check the whole requested tier set and the server version, role and resolved mode. OSS cannot grant replicated; local needs an unfenced adaptive primary or standalone server. Older servers may not understand tier tokens. Choose a server that supports the required guarantee; do not silently weaken the request. |
+| `partition source next to the attached partition may share its files, do not attach it again [table=..., partition=...]` (at a writer open) or `could not remove attached partition source, it shares files with the attached partition and is unsafe to attach again [path=..., errno=...]` | On an enrolled table ATTACH PARTITION links the files of the `.attachable` directory instead of moving them, and deletes the directory once both save point generations cover the attach. A crash in between, or a failed deletion, leaves it behind. The partition is attached. Do not attach the source again: its files are the attached partition's files. Prefer letting the writer remove it. Manual deletion is safe only after both selectable generations cover the ATTACH (two successful save points covering it); a restart alone does not establish this. Before then, fallback can need the source to replay the ATTACH. |
 | `adaptive save point failed its checksums, trying the other generation [table=..., generation=..., epochSeqTxn=...]` or `removing adaptive save point that failed its content checks [table=..., generation=..., ...]` | The newer save point of the table is damaged. When the start goes on, it used the older one, whose WAL is still kept, so the replay brings back every row: nothing to do for the data. It means damage on the disk or a defect: keep the log for a report. If neither save point passes, the start refuses instead (section 11.1). |
 | `adaptive epoch roll-forward restored durable cut [table=..., epochSeqTxn=...]` | Information: the start restored the table after a crash. No action. |
 | `adaptive epoch belongs to a superseded WAL lineage, discarding anchor [table=..., epochSeqTxn=..., seqLastTxn=...]` | Information: the save point named transactions the sequencer no longer has (the table's WAL was replaced). The start removes it, and in `adaptive` the table takes a new one at its first writer. No action. |
@@ -725,8 +773,8 @@ directory (`<table>~<id>` under the database root), and start. The copy takes wr
 |---|---|---|
 | `cairo.commit.mode` | `nosync` | `nosync`, `async`, `sync` or `adaptive`, for the whole instance. QuestDB Enterprise defaults to `nosync` when replication is configured; an explicit value wins. |
 | `cairo.adaptive.commit.group.window` | `50ms` | The group-commit window (section 4). `0`: every acknowledged commit is on stable storage. Negative counts as 0. |
-| `cairo.adaptive.epoch.interval` | `60s` | The time between periodic save points of a table. `0`: a save point after every apply pass. Negative: no periodic save points, no row cap and no idle save point; save points are then taken only after ALTER COLUMN TYPE, partition conversions, ATTACH and DETACH, and at a clean close only when one of those failed or was skipped; the WAL is kept from the older of the last two, which can be days old, and a crash replays all of it. Not for production. |
-| `cairo.adaptive.epoch.max.rows` | `5000000` | A save point once this many rows were applied since the last one, whatever the interval. `0` or negative: off. |
+| `cairo.adaptive.epoch.interval` | `60s` | The periodic time trigger. `0`: a save point after every apply pass. Negative disables the periodic, row-count and idle triggers, not enrolment, required completion or retry of owed save points. DETACH, RESUME and direct logical changes still require complete coverage. WAL retention and replay can grow without a time bound. Not for production. |
+| `cairo.adaptive.epoch.max.rows` | `5000000` | A periodic save point once this many rows were applied since the last one, while the interval is nonnegative. `0` or negative disables the row trigger. |
 | `cairo.adaptive.epoch.flush.on.close` | `true` | A clean writer close takes a save point over any transactions after the last one, so a clean restart restores nothing. |
 | `cairo.adaptive.epoch.column.sync.batched` | `true` | On Linux, flush a save point's column files in one batch ending in one `syncfs`. `false`: a flush per column file, then the same `syncfs`. |
 | `cairo.wal.commit.writeback.drain` | `true` | Start the write-back of every file of a WAL segment, then wait for it, before the commit's flushes, so the files are written back in parallel. Speed only. |
@@ -738,7 +786,10 @@ Each enrolled WAL table holds two save point files in its directory, `_epoch.man
 Each is one save point: a 120-byte header and copies of `_txn`, `_cv` and `_meta`. Do not edit, copy or delete them
 while QuestDB runs. A switch out of `adaptive` removes them (section 8).
 
-This version also changes three existing formats, in every mode, using space that older releases leave unused: a
-checksum in each `_txn` record, a trailer after each `_cv` area, and a checksum in each record of the version 2
-sequencer log (plus a hint in the version 1 log's header). No format version changes. Files an older release wrote
-read as unverified. [`adaptive-commit-internals.md`](adaptive-commit-internals.md), section 14, has the details.
+Changed existing formats: a checksum and stamp in each `_txn` record, a trailer after each `_cv` area, and a
+checksum in each V2 sequencer record. V1 `_txnlog` has a scan hint at offset 40; V2 has an adaptive scan hint at
+40 and a known-tail slot at 48. Their sign and update rules differ by mode. No existing format version changes;
+a plain upgrade accepts older files as unverified. `_meta` keeps the base layout: save-point presence, not a
+`_meta` enrolment field, records enrolment. `_event.c`, `_txnlog.c` and partition `_chk` files are not written.
+[`adaptive-commit-internals.md`](adaptive-commit-internals.md), section 14, describes the layouts and removed
+intermediate-build files. This is not downgrade-after-write support (section 7.1).

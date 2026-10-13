@@ -6,6 +6,10 @@ Methods are named rather than line numbers, which drift.
 
 `W` is the group-commit window, `cairo.adaptive.commit.group.window`.
 
+Timing and system-call totals below are historical measurements, not fresh measurements of the final design.
+The measured revisions, machine and limitations are in the [guide, section 9](adaptive-commit-mode.md#9-what-it-costs).
+In particular, the final required completion of every selectable save point was not remeasured.
+
 ## 1. The idea
 
 Adaptive keeps two things apart that `sync` treats alike:
@@ -38,8 +42,12 @@ frontiers bound what a crash can take, not what a query sees.
 
 ### One mode per instance
 
-`cairo.commit.mode` is read once at start, so every table answers to the same mode and no commit straddles a
-change. `CommitMode` holds the predicates the code uses:
+`cairo.commit.mode` is the configured instance mode, fixed for the process lifetime; there is no SQL per-table
+mode. Enterprise roles can change while the process runs. Applied-state and downloaded-log flush decisions use
+`LocalDurabilityPolicy.resolveCommitMode`: configured `adaptive` becomes `nosync` on a replica; explicit `sync`
+stays `sync`. Local WAL commits, boot before role installation and the promotion flush keep the configured grade.
+Save-point lifecycle checks also retain the configured mode so inherited save points can be reconciled after a
+role change. `CommitMode` holds the predicates applied to those mode values:
 
 - `appliesColumnSync(mode)`: true for `sync` and `async` only. It gates the apply path's flushes of columns,
   indexes, symbol maps, `_cv` and `_txn`. `adaptive` is excluded: that is the lazy apply.
@@ -64,7 +72,7 @@ number, then updates the durable frontier.
 |---|---|---|---|
 | `nosync` | nothing | nothing | nothing |
 | `async` | `msync(MS_ASYNC)` | `msync(MS_ASYNC)` | nothing |
-| `sync` | `msync(MS_SYNC)` | `msync(MS_SYNC)` | nothing |
+| `sync` | `msync(MS_SYNC)` | `msync(MS_SYNC)` | event files and the segment `_meta` are flushed before sequencing |
 | `adaptive` (any `W`) | `msync(MS_ASYNC)`, a write-back drain (if `cairo.wal.commit.writeback.drain`: `sync_file_range(WRITE)` on every column and `_event` file, then `WRITE \| WAIT_AFTER` on each, so the files are written back in parallel), then a barrier per file | drain, `msync(MS_ASYNC)`, barrier | every private WAL byte is on the device |
 
 The barrier is `Files.barrierFsync`: `fdatasync` on Linux and Windows, `F_BARRIERFSYNC` (ordering only) on macOS,
@@ -87,11 +95,15 @@ The flushes make the part file durable before the header that names its record. 
 write-back can still write the header page first, so outside `sync` and `adaptive` with `W` = 0 a power loss can
 leave a header that names a record past the durable frontier that is not on the disk.
 
-**The batched flush** (`W` > 0). `recordPendingDurable` registers the commit in `WalGroupCommitFlushQueue`. When the
-oldest pending commit is `W` old, `flushPendingDurable` runs `fdatasyncTxnLog` and `markWriterDurable`, which moves
-the frontier to the highest transaction the flush covered with no older one still pending. When commits stop, the
-`WalPurgeJob` pass flushes the idle tail (`forceDurableIfPending`), so the bound is `W` plus the shared worker's
-sleep. A failed barrier fences the frontier for the life of the process, and the engine stops (section 9).
+**The batched flush** (`W` > 0). Pending registration under the sequencer lock prevents a peer flush from
+advancing past an unregistered transaction. `recordPendingDurable` adds the writer to `WalGroupCommitFlushQueue`.
+When its oldest pending commit is `W` old, `flushPendingDurable` runs `fdatasyncTxnLog` and `markWriterDurable`.
+The flush returns the transaction sampled under the sequencer lock; the frontier cannot include a later commit
+made after that lock was released. It also cannot pass an older pending writer.
+
+When commits stop, `WalPurgeJob` checks the queue on its worker passes, independently of its slower purge cadence,
+and calls `forceDurableIfPending`. Nominal delay is `W` plus worker sleep, scheduling and flush time, not a hard
+real-time RPO bound. A fatal barrier failure fences the frontier and the engine (section 9).
 
 Because each writer's private WAL is durable before it takes a sequence number, one writer's sequencer flush can
 never make durable a record whose data another writer has not flushed.
@@ -168,8 +180,10 @@ and its partition versions are kept until the next save point overwrites it (sec
 1. Note whether the target already holds a valid header, which means its name is already durable.
 2. Open the target, truncate it to 0, write the three sections from byte 120, `fsync` the file.
 3. If the name is new, `fsync` the table directory.
-4. Write the header in one call at offset 0 and flush it to the device (`fsyncDurable`). That flush is the publish
-   point: a crash before it leaves a file without a header, which never counts.
+4. Write the header in one call at offset 0 and flush it to the device (`fsyncDurable`). That flush is the
+   publication barrier. A crash before the header write leaves no published header; a write interrupted before
+   the barrier may or may not survive. Recovery validates the surviving header and sections instead of inferring
+   whether the publishing call returned.
 
 ## 5. When a save point is taken
 
@@ -238,7 +252,8 @@ purge the partitions of a selectable fallback just because a failed publication 
 After the column flush a save point makes six sync calls on Linux: `msync` and `fsync` of `_cv`, the same of `_txn`,
 and two `fsync` of the generation file (sections, then header). In all, a save point of a 4-column table makes 47
 system calls (168 at 64 columns, 552 at 256) and takes 19 ms, nearly all of it the `syncfs`; it barely grows with
-width or partitions (22 ms at 1,000 partitions or at 256 columns).
+width or partitions in that experiment (22 ms at 1,000 partitions or at 256 columns). These are the older
+measurements identified above, not a bound on current structural operations, which may publish two generations.
 
 ## 7. Enrolment and exit
 
@@ -449,7 +464,7 @@ under writer monitors or the sequencer lock, would deadlock or free memory under
 its host. Enterprise installs the handler at construction (`EntBootstrap` passes the bootstrap's handler to the
 `EntCairoEngine` constructor), so a failure inside the partial constructor halts as one after it does.
 
-Known gap (D62): a flush that Rust runs (the Parquet `_pm` barriers in an O3 merge or an ATTACH, Enterprise cold
+Known gap: a flush that Rust runs (the Parquet `_pm` barriers in an O3 merge or an ATTACH, Enterprise cold
 storage) reaches Java as a plain error without the flag, so it fails the statement or suspends the table instead of
 stopping the engine. No acknowledged data is lost: the `_pm` footer is written past the committed size and `_txn`
 does not move, so the retry rewrites the same region. One Java flush also stays outside the
@@ -516,7 +531,8 @@ write nothing, and the purge could remove the version the `_txn` on the device s
   source; otherwise it keeps it and logs `partition source next to the attached partition may share its files, do
   not attach it again [...]` (advisory), and a failed deletion logs `could not remove attached partition source, it
   shares files with the attached partition and is unsafe to attach again [...]` (critical). The operator deletes
-  such a leftover after a restart or once two save points followed the ATTACH. On a replica
+  such a leftover only after both selectable generations cover the ATTACH; a restart alone is not proof of
+  coverage. Prefer the writer's own deferred cleanup. On a replica
   (`TableWriter.defersPartitionMoves` is false without local durability), in other modes, and with
   `cairo.attach.partition.copy`, ATTACH works as before.
 - **DETACH PARTITION**, in every mode. The partition is linked (copied across devices) into a temporary directory
@@ -551,9 +567,11 @@ write nothing, and the purge could remove the version the `_txn` on the device s
   so the same sync covers its entry in the database root); elsewhere the first walks the `.attachable` directories
   (`DurableEpochManifest.fsyncDirectoryFiles`, since `_txn` does not name them yet) and the table root
   (`fsyncTableRoot`), and the second is `fsyncTableFiles`. A data sync failure anywhere in the import, a failed
-  `_txn` flush in the writer's attach included, reaches the import's catch unwrapped in `sync` and `adaptive`: the
-  clean-up drops a created table or truncates an existing one (best effort), then the engine stops. In `nosync`,
-  `async` and for a non-WAL table in `adaptive` nothing is flushed. In `sync` the import also flushes each
+  `_txn` flush in the writer's attach included, notifies the engine at the failure factory. With `ServerMain`,
+  the process halts before the import's catch can clean up: created tables and partially attached partitions may
+  remain. An embedded engine fences itself but does not halt, so its catch can attempt cleanup. A nonfatal
+  required-save-point failure also reaches COPY's cleanup. These are different outcomes (guide section 11.6).
+  In `nosync`, `async` and for a non-WAL table in `adaptive` nothing is flushed. In `sync` the import also flushes each
   partition directory it creates in its work directory, and that directory's parent, and the attach flushes the
   partition and table directories: about 60 directory `fsync` for 30 partitions. A 5-million-row import takes
   2.52 s in `sync` against 2.36 s in the base release (+6.7%, of which the two `syncfs` are 31 ms) and 1.83 s in
@@ -599,10 +617,12 @@ bytes.
 
 ## 12. QuestDB Enterprise
 
-- **Replicas keep no save points.** A replica installs `LocalDurabilityPolicy.REPLICA_SKIP`: its writers take no
-  save points and its truth is the object store. Its WAL floor comes from any save point files still on disk. It
-  never rewinds, so ATTACH and DETACH PARTITION finish at once there (section 10), and it never asks for an idle save
-  point (section 9). With `adaptive` configured, structural flush gates on applied state and on the downloaded
+- **Replicas take no new save points.** A replica installs `LocalDurabilityPolicy.REPLICA_SKIP`: its writers take
+  no save points and its durable source is the object store. Inherited save points still protect their WAL until
+  safely removed. Startup recovery runs before role installation, including over inherited anchors (section 8).
+  Once reconciled out, the replica has no adaptive rewind; ATTACH and DETACH finish at once (section 10), and it
+  never asks for an idle save point (section 9). With `adaptive` configured, structural flush gates on applied
+  state and on the downloaded
   log resolve to `nosync` through the live policy (`CairoEngine.getResolvedCommitMode` and
   `TableWriter.getFlushCommitMode`). Explicit `sync` replicas remain `sync`. The promote flush, boot before
   role installation, and local commits (including REBASE staging and view definitions) keep their configured
@@ -675,8 +695,11 @@ bytes.
   synced once more before the trigger file goes. On Linux that is about 11 ms per table in every mode: 200 small
   tables restore in 5.3-5.6 s against 3.2-3.3 s with the flushes turned off.
 - **Default mode.** Without an explicit `cairo.commit.mode`, Enterprise runs `nosync` when replication is configured.
-- **Durable acknowledgements.** The `local` tier is served only on an `adaptive` primary; the `replicated` tier
-  follows the upload frontier.
+- **Durable acknowledgements.** `DurableUploadRegistry` composes the local and replicated frontiers on an
+  eligible primary. The local gate uses the resolved mode and refuses a fenced engine; replicated follows the
+  upload frontier. A both-tier client trims only on replicated progress. The frozen demote registry advertises
+  replicated only, not a frozen local guarantee. Frames already collected for a blocked send retain their
+  snapshot. The server sends on inbound traffic or PING, not directly from a flush callback.
 
 ## 13. Detecting torn files
 
@@ -743,8 +766,9 @@ change reads as unverified, never as torn, and a released binary ignores the new
   (`CairoEngine.hydrateRecentWriteTracker`), unless a write gets there first. Damage to a V1 record already written
   (bit rot, a foreign write) is not detected.
 - **WAL segment length guard.** Before applying, the writer checks that each WAL column file is long enough for
-  the committed rows, from the mapping it already holds, and that the last aux entry of a var-size column is whole
-  (`WAL segment column too short for committed row range [...]`, `WAL segment column has a torn aux entry [...]`).
+  the committed rows, using a cached length and another `fstat` when the committed range passes that length. It
+  also checks that the last aux entry of a var-size column is whole (`WAL segment column too short for committed
+  row range [...]`, `WAL segment column has a torn aux entry [...]`).
 
 A torn `_txn` or `_cv` live area makes a reader stay on the previous transaction (`_txn live area is torn, reader
 cannot advance past the previous transaction [...]`) and a writer refuse to build on it, rather than read wrong data.
@@ -781,7 +805,8 @@ field and body checksum. The save point removal deletes the first four when it f
 
 ## 15. Caveats
 
-1. The mode is fixed for the life of the process; there is no per-table mode.
+1. The configured mode is fixed for the process lifetime; Enterprise's resolved apply grade can change with the
+   role. There is no per-table mode.
 2. `syncfs` flushes the whole file system, so a save point's cost depends on unrelated dirty data on the same file
    system.
 3. On macOS and Windows a save point flushes every file written since the last one, then the table directory, then
@@ -797,3 +822,21 @@ field and body checksum. The save point removal deletes the first four when it f
    process's `syncfs` collected first, or any error on an older kernel, goes unseen. The save point's batched flush
    (for every file but the open partition's columns and the symbol maps, whose write-back its drain waits on and
    checks), the exit, the recovery header flush and the Enterprise uploader start flush rely on that report alike.
+8. Downgrade, write with an older binary, then re-upgrade is unsupported. V2's known-tail slot avoids cutting
+   records appended by a writer unaware of its hint; that defensive handling does not broaden the compatibility
+   contract. A plain upgrade and mode changes between restarts remain supported.
+9. Deferred cost changes: Enterprise demote batching, reducing SYNC V2 part flushes, and splitting the macOS
+   `F_FULLFSYNC` upgrade out of `fsyncAndClose`. Current barriers remain; the latter two need measurements first.
+   Completion/open can also validate full manifests per pending partition; optional batching is deferred and no
+   final cost bound has been measured. Rust error classification across JNI is deferred, as section 9 describes.
+
+## 16. Reading validation evidence
+
+A unit test's simulated power loss, a process kill, a fresh-engine restart and a VM block-write replay test
+exercise different failure models. None by itself proves behaviour under every physical power loss or storage
+failure. See [the durability harnesses](../tools/durability/README.md) for their mechanisms and limits.
+
+Tests cover the pending-frontier race, generation fallback, required DETACH/RESUME/direct-change completion,
+resource ownership after failed publication, and fatal-failure fencing. CI configuration is not evidence that a
+particular revision passed: retain the exact revisions, command-selected reports, mode and negative controls.
+Historical benchmark numbers do not certify the final synchronous-completion overhead.

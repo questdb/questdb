@@ -4,15 +4,17 @@ Repeatable, unattended-capable crash testing of adaptive commit on a **real kern
 block layer**, inside one QEMU guest.
 
 The JUnit tiers in `core/src/test/java/io/questdb/test/cairo/crash/` model power loss with
-`CrashFaultFilesFacade`. That model is well gated, but it is a model. This harness is the
-cross-check.
+`CrashFaultFilesFacade`. This harness provides a different failure model, not a replacement
+for those tests. A configured workload is not evidence of an executed check. Results must name
+the exact revisions, workload, boundaries and controls; historical examples below do not
+certify the current branch. See the [product contract](../../../docs/adaptive-commit-mode.md).
 
 ## The instrument
 
 One workload run is recorded by `dm-log-writes`; every flush in that recording is a crash
-point, reconstructed by replaying the log up to it. Replaying to flush N yields exactly the
-device state a volatile write cache would have left at N: everything before it durable,
-everything after it gone.
+point, reconstructed by replaying the log up to it on a reset device. This produces the
+recorded block-log prefix through flush N, without later writes. It tests those selected
+states, not every state a physical device could leave after torn, reordered or unflushed writes.
 
 ```bash
 bash run-flush-sweep.sh adaptive 0        # zero-loss bar: every committed txn survives
@@ -54,8 +56,10 @@ immediately; both produce false green.
 
 ## Coverage vs the Java crash suite
 
-Every code path the modelled suite covers is also exercised here, on a real kernel — **17 of 17
-dimensions**, each verified to actually execute.
+The harness offers the following workload dimensions. They are not exhaustive coverage of
+the Java suite or of the current recovery design. Count one as executed only when that run's
+logs show its preconditions and assertions ran. Test-family names below describe the original
+mapping and may change as tests are consolidated.
 
 | # | Dimension | Java crash test | E2E |
 |---|---|---|---|
@@ -93,8 +97,8 @@ java ... -Dsibling.table=true org.questdb.CrashVerifier /mnt/qdb/db \
 Do the same for any dimension added later. A green sweep whose check never executed reads as
 evidence and is not.
 
-A uniform failure across every boundary is the signature of a setup fault rather than a product
-defect; a real crash-state defect does not land identically every time.
+A uniform failure across boundaries is a reason to inspect setup and controls, not proof of a
+setup fault. Product defects can also fail at every selected boundary; diagnose before classifying.
 
 ### Dimension 15 (mat-view): a view ahead of its base after an RPO rollback
 
@@ -106,10 +110,11 @@ view aggregates 268000 rows   refresh_base_table_txn=268
 view_status=valid   invalidation_reason=null
 ```
 
-The base correctly discarded at-risk transactions permitted by the RPO window, but the view kept
-aggregates derived from them. Startup now detects `lastRefreshBaseTxn > baseTableLastTxn` and marks
-the view invalid; the user rebuilds it with a full refresh. The view cannot report the stranded rows
-as valid.
+In that historical experiment the base discarded at-risk transactions, but the view kept
+aggregates derived from them. The cell checks for a valid view ahead of the recovered base.
+Do not infer an automatic repair promise from the presence of this cell: the separate materialized-view
+crash-repair work was removed from the adaptive feature scope. Establish the current product behaviour
+and the cell's result at the revision under test.
 
 The VM cell is the regression test for the exact W>0 state. It disables durable epochs so an apply
 checkpoint cannot close the base WAL gap and records the base frontier before the six view refreshes.
@@ -137,11 +142,13 @@ leaves a coherent registry and table". Crashing inside the rename/fsync window i
 `F >= Wm` bar deliberately — REBASE WAL discards pending WAL by design — and holds "rename is
 not publish" instead: the name must resolve to a directory that exists and is coherent.
 
-## What each arm proves — and what it does not
+## What each arm checks — and what it does not
 
-| Arm | Mechanism | Proves | Does **not** prove |
+A pass applies to the executed workload and selected boundaries only.
+
+| Arm | Mechanism | Checks | Does **not** establish |
 |---|---|---|---|
-| **reference** | `CrashIngestWriter` embedded, `CrashVerifier` runs the production recovery triple | The engine's durability contract on real storage: every acked txn survives; loss confined to `(Wm, C]` and bounded by W | Anything about the shipped server binary, its entry point, or the wire |
+| **reference** | `CrashIngestWriter` embedded, `CrashVerifier` runs the production recovery triple | W=0: recovered frontier F >= acknowledged C; W>0: F >= durable frontier Wm, with loss permitted in (Wm, C] | Anything about the shipped server binary, its entry point, or the wire |
 | **qwp** | A real classpath-launched server plus the real WebSocket client; the SERVER tracks and recovers | The wire protocol's write path — frame decode, ingress buffering, server-side commit — and that the server alone honours the bar | That a client can close the server's RPO window; anything about packaging |
 | **qwp-sf** | As `qwp`, plus the client requests the LOCAL durable-ack tier and holds un-acked rows in a store-and-forward buffer **on the crashed device** | That the client puts back what the server's RPO window legitimately dropped, measured as a delta between two verifications of the same boundary | Anything about packaging or the entry point — same shade-jar as `qwp` |
 | **product** | The release tarball unpacked in the guest and started by the real `questdb.sh`, plus the same client and oracle `qwp-sf` uses | The **shipped artifact** writes, survives a cut, and **recovers**: same RPO bar as `qwp-sf`, on the artifact a user downloads, launched as a named JPMS module | That the enterprise distribution ships correctly (different artifact, and this arm refuses `QDB_EDITION=ent`); that the bundled web console ships |
@@ -227,11 +234,11 @@ barrier" inexpressible. `t10` therefore asserts every verification reports `wal.
 before counting its verdict: a NOSYNC run that fell back to the bypass-WAL path would go red for
 `t07`'s reason and look like a passing control.
 
-**A WAL table at SYNC or NOSYNC has no durable frontier at all.** `WalWriter` advances
-`localDurableSeqTxn` only under ADAPTIVE, so `Wm` stays `-1` and the RPO bar cannot be drawn
-from it. `CrashVerifier` grades both against the acknowledged frontier `C` instead and ignores
-`W`. Without that branch the W>0 bar would find `Wm=-1`, skip its comparison and print `RPO_OK`
-— a pass produced precisely because the durability under test is absent.
+**The SYNC/NOSYNC control uses acknowledged frontier C, not Wm.** `CrashVerifier` deliberately
+ignores `W` outside ADAPTIVE. SYNC can advance a local frontier in current code, but the QWP local
+tier remains adaptive-only, and a missing or negative Wm must never make the negative control
+pass vacuously. NOSYNC is tested against the stronger zero-loss bar here to verify that the
+instrument detects missing barriers; that is not a NOSYNC product guarantee.
 
 ## Running it
 
@@ -327,7 +334,9 @@ dashboard cannot display does not answer "which build produced this?".
 
 ## Host safety
 
-The host is never touched by a test. Everything privileged happens in the guest.
+Privileged block-device operations happen in the guest. The harness still creates host images,
+logs and processes under its configured state directory; inspect that directory and its ownership
+before running cleanup.
 
 - **No `dmsetup`, no `losetup`, no container, no bound service port on the host.** The guest's
   data disk is raw `/dev/vdb` and the device-mapper stack sits over it inside the guest.
