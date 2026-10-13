@@ -270,6 +270,7 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
             // the negative LIMIT's cursor reads its rows back through its own records, never the
             // frames' projected values
             frameSequence.getAtom().setProjecting(false);
+            frameSequence.getAtom().setGathering(false);
             negativeLimitCursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);
             return negativeLimitCursor;
         }

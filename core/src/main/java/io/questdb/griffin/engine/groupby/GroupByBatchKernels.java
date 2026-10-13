@@ -858,12 +858,17 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
 
     private boolean column(Node node, long out) {
         final long addr;
+        // a block column laid out one value per block row, whatever the block's own row indexes
+        boolean dense = false;
         if (block != null) {
-            // in the block's layout: values at the column type's size, at the batch's rows
+            // in the block's layout: values at the column type's size, at the batch's rows, or
+            // one after another (a column the block's producer gathered)
             final long a = block.getColumnAddress(node.columnIndex);
+            final long columnRows = block.getColumnRowIndexesAddress(node.columnIndex);
             addr = a != 0
                     && block.getColumnStride(node.columnIndex) == ColumnType.sizeOf(node.op)
-                    && block.getColumnRowIndexesAddress(node.columnIndex) == rowsAddr ? a : 0;
+                    && (columnRows == rowsAddr || columnRows == 0) ? a : 0;
+            dense = columnRows == 0;
         } else {
             addr = record.getPageAddress(node.columnIndex);
         }
@@ -876,6 +881,9 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
         // class's conversion, in one pass, with the row access chosen once per load.
         if (mode == MODE_RANGE) {
             loadRange(node.type, node.op, addr, lo, out, rowCount);
+        } else if (dense) {
+            // a block's rows start at 0
+            loadRange(node.type, node.op, addr, 0, out, rowCount);
         } else {
             if (!rowsDecoded) {
                 decodeRows();

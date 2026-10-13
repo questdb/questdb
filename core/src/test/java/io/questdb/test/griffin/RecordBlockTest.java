@@ -189,6 +189,30 @@ public class RecordBlockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncFilterGathersColumnsOnWorkerPool() throws Exception {
+        // a cursor whose first call is a peek has its filtering threads gather the selected rows'
+        // fixed-size columns: the blocks offer them as dense columns (no row indexes), and the
+        // var-size columns, and the column tops, still at the frame's rows
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, context) -> {
+                final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) context;
+                ctx.changePageFrameSizes(1, 64);
+                createAllTypes(engine, ctx);
+                final Rnd rnd = TestUtils.generateRandom(LOG);
+                for (String query : new String[]{"select * from at where l > 5000", "select * from at where s = 'k7'", "select * from at where v like '%3%'"}) {
+                    Assert.assertTrue(query, assertGathered(engine, ctx, query, true) > 0);
+                    // a row read first: the frames are not gathered, the blocks read the frames' rows
+                    Assert.assertEquals(query, 0, assertGathered(engine, ctx, query, false));
+                    for (int run = 0; run < 3; run++) {
+                        Assert.assertTrue(query, assertBlocksMatchRows(engine, ctx, query, rnd) > 0);
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testAsyncFilterOverParquetFrames() throws Exception {
         assertMemoryLeak(() -> {
             createAllTypes();
@@ -659,6 +683,65 @@ public class RecordBlockTest extends AbstractCairoTest {
         }
         TestUtils.assertEquals(query, expected, actual);
         return blockRows;
+    }
+
+    /**
+     * Reads the query through blocks, after a first row when {@code peekFirst} is false, and checks
+     * each block's values against its records.
+     *
+     * @return the block rows whose fixed-size columns were all dense (gathered)
+     */
+    private static long assertGathered(CairoEngine engine, SqlExecutionContext ctx, String query, boolean peekFirst) throws Exception {
+        long gatheredRows = 0;
+        try (RecordCursorFactory factory = engine.select(query, ctx); RecordCursor cursor = factory.getCursor(ctx)) {
+            final RecordMetadata metadata = factory.getMetadata();
+            if (!peekFirst) {
+                Assert.assertTrue(cursor.hasNext());
+            }
+            while (true) {
+                final RecordBlock block = cursor.peekRecordBlock(1000);
+                if (block == null) {
+                    if (!cursor.hasNext()) {
+                        break;
+                    }
+                    continue;
+                }
+                Assert.assertNotEquals(0, block.getRowIndexesAddress());
+                boolean dense = true;
+                for (int c = 0, n = metadata.getColumnCount(); c < n; c++) {
+                    final int type = metadata.getColumnType(c);
+                    if (ColumnType.isVarSize(type)) {
+                        Assert.assertEquals(0, block.getColumnAddress(c));
+                        continue;
+                    }
+                    final long address = block.getColumnAddress(c);
+                    if (address == 0) {
+                        // a column top
+                        continue;
+                    }
+                    final boolean gatheredType = switch (ColumnType.tagOf(type)) {
+                        case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR, ColumnType.INT,
+                             ColumnType.IPv4, ColumnType.FLOAT, ColumnType.SYMBOL, ColumnType.LONG, ColumnType.DATE,
+                             ColumnType.TIMESTAMP, ColumnType.DOUBLE -> true;
+                        default -> false;
+                    };
+                    final long rowIndexes = block.getColumnRowIndexesAddress(c);
+                    if (gatheredType) {
+                        dense &= rowIndexes == 0;
+                    } else {
+                        Assert.assertEquals(metadata.getColumnName(c), block.getRowIndexesAddress(), rowIndexes);
+                    }
+                }
+                for (int r = 0, n = block.getRowCount(); r < n; r++) {
+                    assertAddresses(block, r, block.getRecordAt(r), metadata);
+                }
+                if (dense) {
+                    gatheredRows += block.getRowCount();
+                }
+                cursor.skipRecordBlock(block.getRowCount());
+            }
+        }
+        return gatheredRows;
     }
 
     private static void assertFilterBlocks(CairoEngine engine, SqlExecutionContext ctx, Rnd rnd) throws Exception {
