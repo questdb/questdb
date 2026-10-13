@@ -640,7 +640,10 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
             taskRowCounts.add(rows);
             estimatedRows += rows;
         }
-        freeze(reader);
+        if (frameLazy.getQuick(frameLo) == 0) {
+            freeze(reader);
+        }
+        // else frozen by the slot of its first unit, see prepare()
     }
 
     // Brings a unit's reader taken without a reload to this query's snapshot, warmed and frozen, once:
@@ -657,10 +660,6 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
     }
 
     private void freeze(AbstractPostingIndexReader reader) {
-        if (isUnitMode && lazyReaders.size() > 0 && lazyReaders.getQuick(lazyReaders.size() - 1) == reader) {
-            // frozen by the slot of its first unit, see prepare()
-            return;
-        }
         if (!reader.isFrozen()) {
             // positioned at this query's index snapshot, with its value memory mapped in full, so
             // the workers' detached cursors read it without changing it; an interval scan meets a
