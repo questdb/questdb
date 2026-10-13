@@ -523,7 +523,9 @@ public final class DurableEpochManifest {
                 final int type = ff.findType(findPtr);
                 if (Files.notDots(namePtr) && (type == Files.DT_FILE || type == Files.DT_UNKNOWN)) {
                     dirPath.trimTo(dirLen).concat(namePtr);
-                    final long fd = TableUtils.openRW(ff, dirPath.$(), LOG, configuration.getWriterFileOpenOpts());
+                    final long fd = Os.isWindows()
+                            ? TableUtils.openRW(ff, dirPath.$(), LOG, configuration.getWriterFileOpenOpts())
+                            : TableUtils.openRO(ff, dirPath.$(), LOG);
                     if (fd == -1) {
                         throw CairoException.critical(ff.errno()).put("could not open adaptive file for fsync [path=").put(dirPath).put(']');
                     }
@@ -551,8 +553,8 @@ public final class DurableEpochManifest {
      * Flushes a table's materialized state file by file: every file of every attached partition and the partition
      * directory, then every file in the table root and the root itself, then one device barrier. This is the
      * fallback for platforms where {@link FilesFacade#syncfs(long)} flushes a single file, and it covers the same
-     * write set as the writer's first epoch there ({@code TableWriter.fsyncAttachedPartitionFiles}). A read-only
-     * partition is a soft link to storage nothing writes, so it holds nothing to flush.
+     * write set as the writer's first epoch there ({@code TableWriter.fsyncAttachedPartitionFiles}). Sealing
+     * a partition does not make its last writes durable.
      *
      * <p>The per-file fsync moves each file's bytes to the drive, and the closing {@code syncfs} flushes the drive
      * cache once for all of them: F_FULLFSYNC on macOS acts as a barrier for data fsync'd on the same device before
@@ -568,9 +570,6 @@ public final class DurableEpochManifest {
                         .put(tableToken.getTableName()).put(']');
             }
             for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
-                if (txReader.isPartitionReadOnly(i)) {
-                    continue;
-                }
                 TableUtils.setPathForNativePartition(
                         path.trimTo(rootLen),
                         timestampType,

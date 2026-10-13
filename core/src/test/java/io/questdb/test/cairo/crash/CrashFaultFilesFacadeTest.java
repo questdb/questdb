@@ -165,6 +165,16 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
     }
 
     @Test
+    public void testSyncfsNonWideFlushesOnlyItsFile() throws Exception {
+        assertSyncfsScope(false);
+    }
+
+    @Test
+    public void testSyncfsWideFlushesBothFiles() throws Exception {
+        assertSyncfsScope(true);
+    }
+
+    @Test
     public void testSyncfsPersistsNamespaceChanges() throws Exception {
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
         final String dir = temp.newFolder("namespace-syncfs").getAbsolutePath();
@@ -382,6 +392,29 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
         final byte[] expected = new byte[8];
         java.util.Arrays.fill(expected, value);
         Assert.assertArrayEquals(expected, java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(file.toString())));
+    }
+
+    private void assertSyncfsScope(boolean isWide) throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        ff.setSyncfsFileSystemWide(isWide);
+        final String dir = temp.newFolder("syncfs-scope-" + isWide).getAbsolutePath();
+        try (Path a = new Path().of(dir).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
+            writeAndSync(ff, a, (byte) 1);
+            writeAndSync(ff, b, (byte) 1);
+            ff.markDurableBaseline(dir);
+            final long aFd = openAndWrite(ff, a, (byte) 2);
+            try {
+                final long bFd = openAndWrite(ff, b, (byte) 3);
+                ff.close(bFd);
+                ff.syncfs(aFd);
+                ff.powerLoss();
+            } finally {
+                ff.close(aFd);
+            }
+            ff.crash(dir);
+            assertFileBytes(a, (byte) 2);
+            assertFileBytes(b, isWide ? (byte) 3 : (byte) 1);
+        }
     }
 
     private static long openAndWrite(CrashFaultFilesFacade ff, Path file, byte value) {

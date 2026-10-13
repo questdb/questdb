@@ -888,18 +888,17 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * A read-only (soft-linked) attached partition must not stall the epoch on a platform whose syncfs is
-     * not filesystem-wide, where {@code fsyncAttachedPartitionFiles} is the epoch's column-flush path.
-     * <p>
-     * Such a partition is backed by storage this writer never writes, so it holds nothing an epoch needs to
-     * flush, and {@code openRW} on its files fails. A failed open would reach
-     * {@code handleBestEffortDurableEpochFailure}, which only logs: {@code durableEpochSeqTxn} would stay 0,
-     * {@code WalPurgeJob} would hold the purge floor at 0, and the WAL would grow without bound. The test
-     * therefore asserts the published epoch, not just the absence of an exception.
-     */
     @Test
-    public void testEpochSkipsReadOnlyPartitionsOnNonWideSyncfsPlatform() throws Exception {
+    public void testEpochFlushesReadOnlyPartitionsOnNonWideSyncfsPlatform() throws Exception {
+        assertReadOnlyPartitionFlushed(false);
+    }
+
+    @Test
+    public void testFullTableFlushIncludesReadOnlyPartitions() throws Exception {
+        assertReadOnlyPartitionFlushed(true);
+    }
+
+    private void assertReadOnlyPartitionFlushed(boolean isFullTableFlush) throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
 
@@ -920,19 +919,21 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             final long appliedSeqTxn = tracker.getWriterTxn();
             try (TableWriter tableWriter = getWriter(tt)) {
                 Assert.assertEquals(2, tableWriter.getTxWriter().getPartitionCount());
-                // Flag the first partition read-only exactly as attachPartition does for a soft link, and
-                // make its files unopenable for write exactly as the read-only mount behind one would.
+                // A locally written partition can be sealed before its bytes have been flushed.
                 tableWriter.getTxWriter().setPartitionReadOnlyByTimestamp(0L, true);
+                tableWriter.commitSeqTxn(appliedSeqTxn);
                 ff.denyWritesUnder("1970-01-01");
-
-                tableWriter.advanceDurableEpoch(1L);
+                if (isFullTableFlush) {
+                    DurableEpochManifest.fsyncTableFiles(
+                            engine.getConfiguration(), tt,
+                            tableWriter.getMetadata().getTimestampType(), tableWriter.getPartitionBy()
+                    );
+                } else {
+                    tableWriter.advanceDurableEpoch(1L);
+                    Assert.assertEquals(appliedSeqTxn, tracker.getDurableEpochSeqTxn());
+                }
             }
-
-            Assert.assertEquals(
-                    "the epoch must publish despite the read-only partition",
-                    appliedSeqTxn,
-                    tracker.getDurableEpochSeqTxn()
-            );
+            Assert.assertTrue("the read-only partition still owes a flush", ff.partitionOpenAttempts() > 0);
             Assert.assertEquals(
                     "no file under a read-only partition may be opened for write by the epoch",
                     0,
@@ -1849,14 +1850,24 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         }
 
         @Override
+        public long openRO(LPSZ name) {
+            trackPartition(name);
+            return super.openRO(name);
+        }
+
+        @Override
         public long openRW(LPSZ name, int opts) {
+            trackPartition(name);
+            return super.openRW(name, opts);
+        }
+
+        private void trackPartition(LPSZ name) {
             for (int day = 1; day <= 3; day++) {
                 final String dir = "1970-01-0" + day;
                 if (Utf8s.containsAscii(name, dir)) {
                     openedPartitionDirs.add(dir);
                 }
             }
-            return super.openRW(name, opts);
         }
 
         public java.util.Set<String> openedPartitionDirs() {
@@ -1869,12 +1880,13 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * Non-wide syncfs plus a partition directory whose files refuse to open for write, standing in for the
-     * read-only mount behind a soft-linked attached partition.
+     * A readable partition on the per-file flush path. POSIX permits fsync on a readable handle; Windows
+     * needs a writable handle for FlushFileBuffers, so only POSIX refuses write opens in this fixture.
      */
     static class ReadOnlyPartitionSyncfsFacade extends WalFdatasyncFacade {
         private final AtomicInteger deniedOpenAttempts = new AtomicInteger();
         private volatile String deniedDir;
+        private final AtomicInteger partitionOpenAttempts = new AtomicInteger();
 
         public int deniedOpenAttempts() {
             return deniedOpenAttempts.get();
@@ -1890,13 +1902,29 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         }
 
         @Override
+        public long openRO(LPSZ name) {
+            final String denied = deniedDir;
+            if (denied != null && Utf8s.containsAscii(name, denied)) {
+                partitionOpenAttempts.incrementAndGet();
+            }
+            return super.openRO(name);
+        }
+
+        @Override
         public long openRW(LPSZ name, int opts) {
             final String denied = deniedDir;
             if (denied != null && Utf8s.containsAscii(name, denied)) {
-                deniedOpenAttempts.incrementAndGet();
-                return -1;
+                partitionOpenAttempts.incrementAndGet();
+                if (!Os.isWindows()) {
+                    deniedOpenAttempts.incrementAndGet();
+                    return -1;
+                }
             }
             return super.openRW(name, opts);
+        }
+
+        public int partitionOpenAttempts() {
+            return partitionOpenAttempts.get();
         }
     }
 }

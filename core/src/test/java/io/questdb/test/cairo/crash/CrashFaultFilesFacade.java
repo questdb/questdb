@@ -218,6 +218,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private boolean killImageTaken;
     private int killPoints = 0;
     private String killRoot;
+    private boolean isSyncfsFileSystemWide = super.isSyncfsFileSystemWide();
     private int syncfsCount = 0; // number of syncfs(2) calls observed (filesystem-wide flushes)
     private String dbRootPrefix; // set via setDbRoot(); scopes cached-fd reclamation to per-table files
     // Handles open under a table directory of the root when crash() rolled it back. A mutation through one after
@@ -468,7 +469,21 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     @Override
+    public boolean isSyncfsFileSystemWide() {
+        return isSyncfsFileSystemWide;
+    }
+
+    public void setSyncfsFileSystemWide(boolean isSyncfsFileSystemWide) {
+        this.isSyncfsFileSystemWide = isSyncfsFileSystemWide;
+    }
+
+    @Override
     public void syncfs(long fd) {
+        // Model the single-file primitive as well as its capability on non-syncfs platforms.
+        if (!isSyncfsFileSystemWide()) {
+            fsync(fd);
+            return;
+        }
         assertNotStale(fd, "syncfs");
         if (isNeutered()) {
             return;

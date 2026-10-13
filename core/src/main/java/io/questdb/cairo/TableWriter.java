@@ -16695,9 +16695,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // to the drive but leaves them in its volatile cache, and the call below flushes that cache
                 // once. fcntl(2) documents this composition for F_FULLFSYNC: "data that had been fsync'd on the
                 // same device before is guaranteed to be persisted when this call returns". The cost then does
-                // not grow with the file count. "On the same device" holds because the sweep skips read-only
-                // partitions, the soft-linked ones that may live on another volume. On Windows FlushFileBuffers
-                // is durable per file, so there this call is redundant.
+                // not grow with the local file count. On Windows FlushFileBuffers is durable per file,
+                // so there this call is redundant.
                 fsyncAttachedPartitionFiles();
                 // The entry of every partition directory, new or a new version of an old one, lives in the table
                 // directory, which the sweep does not reach. Linux gets it from syncfs. Every time, not only for
@@ -16758,13 +16757,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final LongHashSet cvDirty = columnVersionWriter.getDirtyPartitions();
         final boolean scanAll = epochWriteSetIncomplete;
         for (int partitionIndex = 0, partitionCount = txWriter.getPartitionCount(); partitionIndex < partitionCount; partitionIndex++) {
-            // A read-only partition is a soft link to storage this writer never writes (ATTACH PARTITION of a
-            // symlinked directory), so it holds no dirty pages, and the openRW below would fail on it. That
-            // failure would unwind into handleBestEffortDurableEpochFailure, which only logs, so no epoch would
-            // ever publish, and WalPurgeJob would keep the purge floor at 0 while the WAL grows without bound.
-            if (txWriter.isPartitionReadOnly(partitionIndex)) {
-                continue;
-            }
             if (!scanAll) {
                 final long ts = txWriter.getPartitionTimestampByIndex(partitionIndex);
                 if (txnDirty.excludes(ts) && cvDirty.excludes(ts)) {
@@ -16802,7 +16794,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final int type = ff.findType(findPtr);
                     if (Files.notDots(namePtr) && (type == Files.DT_FILE || type == Files.DT_UNKNOWN)) {
                         path.trimTo(partitionDirLen).concat(namePtr);
-                        final long fd = TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+                        final long fd = Os.isWindows()
+                                ? TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts())
+                                : TableUtils.openRO(ff, path.$(), LOG);
                         try {
                             // Plain fsync: it moves this file's bytes to the drive, and the one F_FULLFSYNC
                             // the caller issues after the sweep flushes the drive cache for all of them (see
