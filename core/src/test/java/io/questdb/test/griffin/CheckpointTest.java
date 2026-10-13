@@ -57,6 +57,7 @@ import io.questdb.cairo.mv.MatViewDefinition;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
@@ -4451,6 +4452,40 @@ public class CheckpointTest extends AbstractCairoTest {
                 execute("checkpoint release");
                 Assert.assertFalse(engine.isWalPurgeJobLocked());
             }
+        });
+    }
+
+    @Test
+    public void testRunWalPurgeJobLockTimeoutNoopCircuitBreaker() throws Exception {
+        // Scheduled backups create the checkpoint with a no-op circuit breaker; the WAL purge
+        // lock wait must still be bounded by the query timeout.
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, name symbol, val int)");
+            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                public long getQueryTimeout() {
+                    return 200;
+                }
+            };
+            Assert.assertTrue(engine.tryLockWalPurgeJob(0, TimeUnit.SECONDS)); // emulate WalPurgeJob running with lock
+            try {
+                final long start = System.nanoTime();
+                try {
+                    engine.checkpointCreate(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER, false);
+                    Assert.fail();
+                } catch (CairoException ex) {
+                    TestUtils.assertContains(ex.getFlyweightMessage(), "timed out waiting for WAL purge job to pause");
+                }
+                Assert.assertTrue(System.nanoTime() - start >= TimeUnit.MILLISECONDS.toNanos(200));
+                Assert.assertFalse(engine.getCheckpointStatus().isInProgress());
+            } finally {
+                engine.unlockWalPurgeJob();
+            }
+
+            engine.checkpointCreate(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER, false);
+            Assert.assertTrue(engine.isWalPurgeJobLocked());
+            execute("checkpoint release");
+            Assert.assertFalse(engine.isWalPurgeJobLocked());
         });
     }
 
