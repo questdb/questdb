@@ -393,23 +393,6 @@ public final class LiveViewCheckpointPartitionMapEntry implements QuietCloseable
         return target;
     }
 
-    static boolean refsEqual(LiveViewCheckpointStatePageRef[] left, LiveViewCheckpointStatePageRef[] right) {
-        if (left.length != right.length) {
-            return false;
-        }
-        for (int i = 0; i < left.length; i++) {
-            final LiveViewCheckpointStatePageRef a = left[i];
-            final LiveViewCheckpointStatePageRef b = right[i];
-            if (a.getSegmentId() != b.getSegmentId() || a.getOffset() != b.getOffset()
-                    || a.getStoredLength() != b.getStoredLength() || a.getDecodedLength() != b.getDecodedLength()
-                    || a.getPageKind() != b.getPageKind() || a.getCodec() != b.getCodec()
-                    || a.getRowCount() != b.getRowCount() || a.getFlags() != b.getFlags()) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     LiveViewCheckpointStatePageRef[] statePageRefs() {
         return statePageRefs;
     }

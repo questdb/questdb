@@ -392,13 +392,6 @@ public final class LiveViewRebuildRestatementGuard implements Mutable {
     }
 
     /**
-     * @return rows the pinned base snapshot held when the guard was armed
-     */
-    public long getBaseRows() {
-        return baseRows;
-    }
-
-    /**
      * @return rows the view's table held when the guard was armed
      */
     public long getDurableRows() {
