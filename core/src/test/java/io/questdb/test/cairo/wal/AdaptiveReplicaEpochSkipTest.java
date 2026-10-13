@@ -27,9 +27,11 @@ package io.questdb.test.cairo.wal;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
@@ -108,18 +110,22 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                 baselineGeneration = saved[0].generation;
             }
 
-            // Calls 0-3 construct the apply job and writer (including its two structural purge gates).
-            // Call 4 reconciles the anchor, call 5 is maybeAdvanceDurableEpoch's gate, and call 6 is
+            // Calls 0-4 construct the apply job and writer (including purge gates and tracking ownership).
+            // Call 5 reconciles the anchor, call 6 is maybeAdvanceDurableEpoch's gate, and call 7 is
             // advance()'s re-check. Only the re-check and subsequent calls see the demote.
             final AtomicInteger calls = new AtomicInteger();
             final boolean[] sawEnabledAtGate = {false};
             final boolean[] sawDisabledAtRecheck = {false};
             final LocalDurabilityPolicy demoteInWindow = () -> {
                 final int call = calls.getAndIncrement();
-                final boolean enabled = call < 6;
-                if (call == 5) {
+                final boolean enabled = call < 7;
+                if (call == 6) {
+                    Assert.assertEquals("maybeAdvanceDurableEpoch", StackWalker.getInstance().walk(
+                            frames -> frames.skip(1).findFirst().orElseThrow().getMethodName()));
                     sawEnabledAtGate[0] = true;
-                } else if (call == 6) {
+                } else if (call == 7) {
+                    Assert.assertEquals("advanceDurableEpoch", StackWalker.getInstance().walk(
+                            frames -> frames.skip(1).findFirst().orElseThrow().getMethodName()));
                     sawDisabledAtRecheck[0] = true;
                 }
                 return enabled;
@@ -143,7 +149,7 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
                         0L, tracker.getLastEpochTs());
 
                 // Pin the exact sequence so a new policy reader cannot silently move the demote before the gate.
-                Assert.assertEquals("setup, reconcile, gate, then disabled re-check", 7, calls.get());
+                Assert.assertEquals("setup, reconcile, gate, then disabled re-check", 8, calls.get());
 
                 // Enrollment may have published an epoch-0 baseline before this window. The demoted node must
                 // not advance or replace that save point.
@@ -185,6 +191,74 @@ public class AdaptiveReplicaEpochSkipTest extends AbstractCairoTest {
             final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
             Assert.assertTrue("ALWAYS_ON (default) must advance the durable epoch frontier",
                     tracker.getDurableEpochSeqTxn() > 0L);
+        });
+    }
+
+    @Test
+    public void testPromoteAfterUntrackedIntervalFlushesFullBaseline() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        final AdaptiveWalDurabilityTest.EpochOpenTrackingFacade ff = new AdaptiveWalDurabilityTest.EpochOpenTrackingFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("insert into x values ('1970-01-01', 1), ('1970-01-02', 2)");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("x");
+            final TableWriter first;
+            try {
+                try (TableWriter writer = getWriter(token)) {
+                    first = writer;
+                    writer.advanceDurableEpoch(100L);
+                    Assert.assertNotNull(writer.getTxWriter().getDirtyPartitions());
+                    Assert.assertNotNull(AdaptiveWalDurabilityTest.columnVersionWriter(writer).getDirtyPartitions());
+                    engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+                    writer.reconcileDurableEpochAnchor();
+                    Assert.assertNull(writer.getTxWriter().getDirtyPartitions());
+                    Assert.assertNull(AdaptiveWalDurabilityTest.columnVersionWriter(writer).getDirtyPartitions());
+                }
+                execute("insert into x values ('1970-01-03', 3)");
+                execute("update x set v = v + 10 where ts = '1970-01-02'");
+                drainWalQueue();
+                try (TableWriter writer = getWriter(token)) {
+                    Assert.assertSame("promotion must reuse the untracked writer", first, writer);
+                    Assert.assertNull(writer.getTxWriter().getDirtyPartitions());
+                    Assert.assertNull(AdaptiveWalDurabilityTest.columnVersionWriter(writer).getDirtyPartitions());
+                    engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+                    // Explicit epochs do not enrol tracking. Even after one clears the incomplete flag,
+                    // another must scan fully; leave a stale anchor before the promotion reconciliation.
+                    for (int value = 4; value <= 5; value++) {
+                        ff.reset();
+                        writer.advanceDurableEpoch(100L + value);
+                        Assert.assertEquals(java.util.Set.of("1970-01-01", "1970-01-02", "1970-01-03"), ff.openedPartitionDirs());
+                        Assert.assertNull(writer.getTxWriter().getDirtyPartitions());
+                        Assert.assertNull(AdaptiveWalDurabilityTest.columnVersionWriter(writer).getDirtyPartitions());
+                        final TableWriter.Row row = writer.newRow(2 * Micros.DAY_MICROS + value);
+                        row.putLong(1, value);
+                        row.append();
+                        writer.commit();
+                    }
+                    ff.reset();
+                    writer.reconcileDurableEpochAnchor();
+                    Assert.assertEquals(java.util.Set.of("1970-01-01", "1970-01-02", "1970-01-03"), ff.openedPartitionDirs());
+                    Assert.assertEquals(0, writer.getTxWriter().getDirtyPartitions().size());
+                    Assert.assertEquals(0, AdaptiveWalDurabilityTest.columnVersionWriter(writer).getDirtyPartitions().size());
+                    final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+                    Assert.assertEquals(writer.getTxn(), tracker.getPinnedEpochTxn());
+                    ff.reset();
+                    writer.advanceDurableEpoch(200L);
+                    Assert.assertTrue("a successful full baseline permits incremental coverage", ff.openedPartitionDirs().isEmpty());
+                    final TableWriter.Row row = writer.newRow(2 * Micros.DAY_MICROS + 6);
+                    row.putLong(1, 6);
+                    row.append();
+                    writer.commit();
+                    ff.reset();
+                    writer.advanceDurableEpoch(300L);
+                    Assert.assertEquals(java.util.Set.of("1970-01-03"), ff.openedPartitionDirs());
+                }
+            } finally {
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            }
         });
     }
 

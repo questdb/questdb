@@ -36,6 +36,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
+import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
@@ -44,15 +45,6 @@ import static io.questdb.cairo.TableUtils.*;
 
 public final class TxWriter extends TxReader implements Closeable, Mutable, SymbolValueCountCollector {
     private final CairoConfiguration configuration;
-    // Partition timestamps whose on-disk files this writer changed since the last drain. A save point drains
-    // the set to flush only those partitions (TableWriter.fsyncAttachedPartitionFiles), so its cost scales
-    // with the writes since the previous save point, not with the table's history. The set must be complete,
-    // or a power loss loses rows a save point references: every mutator of the attached-partition table
-    // marks, including the flag setters, since markPartitionParquetReady() sets parquetGenerated after an
-    // async job wrote data.parquet into the existing partition directory with no size change. Column-file
-    // changes that leave this table untouched (an UPDATE rewriting a column under a new name txn) go to the
-    // sibling set in ColumnVersionWriter, which TableWriter unions with this one.
-    private final LongHashSet dirtyPartitions = new LongHashSet();
     // The partition-table part of the body checksum (TableUtils.combineTxnBodyChecksum), one entry per A/B
     // slot, hashed from the bytes that slot's area holds. The fast path rewrites only header words of the
     // area it republishes, so its checksum needs the header hash plus this entry -- O(1) instead of a pass
@@ -64,6 +56,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private final PartitionTableHash partitionTableHashA = new PartitionTableHash();
     private final PartitionTableHash partitionTableHashB = new PartitionTableHash();
     private long baseVersion;
+    // Adaptive partition-metadata obligations; TableWriter also covers CV changes and active appends.
+    // Null outside a consuming writer's lifecycle. Same-size and flag changes still need marking.
+    private LongHashSet dirtyPartitions;
     private TableWriter.ExtensionListener extensionListener;
     // Set only for the duration of the load in ofRW(path, true).
     private boolean isTornLiveAreaTolerated;
@@ -199,10 +194,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     @Override
     public void clear() {
-        // Only a save point drains this set, and only adaptive WAL tables take save points. Without this,
-        // other writers would grow the set for their whole life, and a pooled writer would carry stale
-        // timestamps into its next use.
-        dirtyPartitions.clear();
+        dirtyPartitions = null;
         clearData();
         invalidatePartitionTableHashes();
         tornLiveVersion = -1;
@@ -602,10 +594,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     }
 
     /**
-     * Partition timestamps mutated since {@link #clearDirtyPartitions()}. See the {@code dirtyPartitions}
-     * field for the completeness contract this set carries.
+     * Partition metadata changed since the last successful epoch, or null when tracking is disabled.
      */
-    public LongHashSet getDirtyPartitions() {
+    public @Nullable LongHashSet getDirtyPartitions() {
         return dirtyPartitions;
     }
 
@@ -614,7 +605,17 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
      * save point retries with the same set.
      */
     public void clearDirtyPartitions() {
-        dirtyPartitions.clear();
+        if (dirtyPartitions != null) {
+            dirtyPartitions.clear();
+        }
+    }
+
+    public void setDirtyPartitionTracking(boolean isEnabled) {
+        if (!isEnabled) {
+            dirtyPartitions = null;
+        } else if (dirtyPartitions == null) {
+            dirtyPartitions = new LongHashSet();
+        }
     }
 
     public void setExtensionListener(TableWriter.ExtensionListener extensionListener) {
@@ -1032,7 +1033,9 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             extensionListener.onTableExtended(partitionTimestamp);
         }
         recordStructureVersion++;
-        dirtyPartitions.add(partitionTimestamp);
+        if (dirtyPartitions != null) {
+            dirtyPartitions.add(partitionTimestamp);
+        }
         initPartitionAt(index, partitionTimestamp, partitionSize, partitionNameTxn);
     }
 
@@ -1171,7 +1174,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     // over-broad set costs one extra fsync, an under-broad one leaves data non-durable behind a save point
     // that references it.
     private void markPartitionDirtyByRawIndex(int indexRaw) {
-        if (indexRaw > -1) {
+        if (dirtyPartitions != null && indexRaw > -1) {
             dirtyPartitions.add(attachedPartitions.getQuick(indexRaw + PARTITION_TS_OFFSET));
         }
     }

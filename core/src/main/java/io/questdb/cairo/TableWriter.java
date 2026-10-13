@@ -733,6 +733,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     && tableToken.isWal()
                     && metadata.isWalEnabled()
                     && effectiveCommitMode == CommitMode.ADAPTIVE;
+            setDirtyPartitionTracking(enrolledAdaptive && getFlushCommitMode() == CommitMode.ADAPTIVE);
 
             // Replay any posting seal-purge intents a prior close spilled to a
             // table-local file because it could not reach the purge queue or the
@@ -3508,11 +3509,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         if (engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
             publishAnchorForTableWithoutOne();
+            setDirtyPartitionTracking(enrolledAdaptive);
             // A replica-open writer can survive promotion. Its durable baseline now permits partition purge;
             // the two save point pins still protect versions needed by either generation.
             engine.markPartitionPurgeSafe(tableToken);
             adaptiveAnchorPolicyVersion = policyVersion;
         } else if (removeSavePointForReplica()) {
+            setDirtyPartitionTracking(false);
             adaptiveAnchorPolicyVersion = policyVersion;
         }
     }
@@ -3993,7 +3996,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * save point, which a replica tenure leaves, enrols before anything is applied lazily.
      */
     private void publishAnchorForTableWithoutOne() {
-        if (DurableEpochManifest.loadCandidates(ff, path.trimTo(pathSize), pathSize, tableToken.getTableId()).length > 0) {
+        // An untracked interval must validate the live cut, not merely find an old anchor.
+        if (txWriter.getDirtyPartitions() != null
+                && DurableEpochManifest.loadCandidates(ff, path.trimTo(pathSize), pathSize, tableToken.getTableId()).length > 0) {
             return;
         }
         publishAdaptiveBaselineOrFail();
@@ -15582,6 +15587,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return dataSizeBytes;
     }
 
+    private void setDirtyPartitionTracking(boolean isEnabled) {
+        txWriter.setDirtyPartitionTracking(isEnabled);
+        columnVersionWriter.setDirtyPartitionTracking(isEnabled);
+        if (!isEnabled) {
+            epochWriteSetIncomplete = true;
+        }
+    }
+
     private void setO3AppendPosition(final long position) {
         for (int i = 0; i < columnCount; i++) {
             int columnType = metadata.getColumnType(i);
@@ -16497,6 +16510,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // A no-op or failed command can leave a pending seqTxn. Flush and publish only the committed record.
         final long epochSeqTxn = txWriter.getCommittedSeqTxn();
+        // Active appends need not change partition metadata. Keep the exact physical (possibly split) timestamp.
+        final LongHashSet txnDirty = txWriter.getDirtyPartitions();
+        if (txnDirty != null && getTxn() > tracker.getPinnedEpochTxn() && lastOpenPartitionTs != Long.MIN_VALUE) {
+            txnDirty.add(lastOpenPartitionTs);
+        }
         fsyncMaterializedState();
 
         if (epochSeqTxn > 0) {
@@ -16714,13 +16732,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         publishPendingPostingSealPurges(txWriter.getTxn());
     }
 
-    /**
-     * True while this writer cannot vouch for the completeness of the epoch write set (see
-     * {@link #fsyncAttachedPartitionFiles()}). It starts true for every writer life, so the first epoch after
-     * open covers partitions a previous writer left without an epoch, and is set again whenever this writer
-     * rebuilds its view from disk instead of changing it (a rollback, a {@code _txn} reload), because the
-     * dirty sets then describe a table state this writer does not hold.
-     */
+    // Open, rollback/reload and disabled intervals require a full sweep before incremental coverage is trusted.
     private boolean epochWriteSetIncomplete = true;
 
     private void handleBestEffortDurableEpochFailure(Throwable failure, CharSequence operation) {
@@ -16742,20 +16754,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Flushes the partitions this writer has written since the last durable epoch: the macOS and Windows
-     * fallback for the Linux filesystem-wide {@code syncfs}, since there {@code syncfs(fd)} flushes one file.
-     * <p>
-     * The scope is the write set, not the table: an epoch must make durable what its {@code _txn} and
-     * {@code _cv} reference, and the previous epoch made everything older durable, so the cost does not grow
-     * with the table's history. The write set is {@link TxWriter#getDirtyPartitions()} (row counts, partition
-     * versions, format and flag flips) together with {@link ColumnVersionWriter#getDirtyPartitions()} (column
-     * files rewritten in place, as by UPDATE); every mutator that can change a partition's bytes marks one.
-     * While {@code epochWriteSetIncomplete} is set, the sweep walks every partition.
+     * Non-wide syncfs fallback: flush partition-metadata and column-version obligations plus active appends.
+     * A complete, enabled write set avoids re-walking untouched history; otherwise every partition is covered.
      */
     private void fsyncAttachedPartitionFiles() {
         final LongHashSet txnDirty = txWriter.getDirtyPartitions();
         final LongHashSet cvDirty = columnVersionWriter.getDirtyPartitions();
-        final boolean scanAll = epochWriteSetIncomplete;
+        final boolean scanAll = epochWriteSetIncomplete || txnDirty == null || cvDirty == null;
         for (int partitionIndex = 0, partitionCount = txWriter.getPartitionCount(); partitionIndex < partitionCount; partitionIndex++) {
             if (!scanAll) {
                 final long ts = txWriter.getPartitionTimestampByIndex(partitionIndex);

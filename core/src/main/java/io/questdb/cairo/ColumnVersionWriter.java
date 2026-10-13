@@ -33,17 +33,15 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
+import org.jetbrains.annotations.Nullable;
 
 public class ColumnVersionWriter extends ColumnVersionReader {
     private final CairoConfiguration configuration;
-    // Partitions whose column files changed, whether or not the attached-partition table changed (an UPDATE
-    // rewriting a column under a new column name txn, for one). A save point unions this with TxWriter's set
-    // to flush only what changed (see TableWriter.fsyncAttachedPartitionFiles). It may hold the
-    // COL_TOP_DEFAULT_PARTITION and SYMBOL_TABLE_VERSION_PARTITION sentinels; the consumer intersects it with
-    // the real partition table, so they have no effect.
-    private final LongHashSet dirtyPartitions = new LongHashSet();
     private final MemoryCMARW mem;
     private final boolean partitioned;
+    // Adaptive column-file obligations, including UPDATEs with no partition-metadata change.
+    // Null without a consumer; TableWriter intersects sentinel timestamps with live partitions.
+    private LongHashSet dirtyPartitions;
     private boolean hasChanges;
     private long size;
     // The commit mode this writer flushes _cv under. Seeded from the instance-global cairo.commit.mode
@@ -74,6 +72,7 @@ public class ColumnVersionWriter extends ColumnVersionReader {
 
     @Override
     public void close() {
+        dirtyPartitions = null;
         mem.close(false);
     }
 
@@ -278,7 +277,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      * @param columnTop   column top
      */
     public void upsert(long timestamp, int columnIndex, long txn, long columnTop) {
-        dirtyPartitions.add(timestamp);
+        if (dirtyPartitions != null) {
+            dirtyPartitions.add(timestamp);
+        }
         final int sz = cachedColumnVersionList.size();
         int index = cachedColumnVersionList.binarySearchBlock(BLOCK_SIZE_MSB, timestamp, Vect.BIN_SEARCH_SCAN_UP);
         boolean insert = true;
@@ -321,9 +322,9 @@ public class ColumnVersionWriter extends ColumnVersionReader {
     }
 
     /**
-     * Partitions whose column files changed since {@link #clearDirtyPartitions()}.
+     * Column files changed since the last successful epoch, or null when tracking is disabled.
      */
-    public LongHashSet getDirtyPartitions() {
+    public @Nullable LongHashSet getDirtyPartitions() {
         return dirtyPartitions;
     }
 
@@ -331,13 +332,25 @@ public class ColumnVersionWriter extends ColumnVersionReader {
      * Drops the accumulated write set. A save point calls this only after its flush succeeded.
      */
     public void clearDirtyPartitions() {
-        dirtyPartitions.clear();
+        if (dirtyPartitions != null) {
+            dirtyPartitions.clear();
+        }
+    }
+
+    public void setDirtyPartitionTracking(boolean isEnabled) {
+        if (!isEnabled) {
+            dirtyPartitions = null;
+        } else if (dirtyPartitions == null) {
+            dirtyPartitions = new LongHashSet();
+        }
     }
 
     public void upsertColumnTop(long partitionTimestamp, int columnIndex, long colTop) {
         int recordIndex = getRecordIndex(partitionTimestamp, columnIndex);
         if (recordIndex > -1L) {
-            dirtyPartitions.add(partitionTimestamp);
+            if (dirtyPartitions != null) {
+                dirtyPartitions.add(partitionTimestamp);
+            }
             cachedColumnVersionList.setQuick(recordIndex + COLUMN_TOP_OFFSET, colTop);
             hasChanges = true;
         } else {

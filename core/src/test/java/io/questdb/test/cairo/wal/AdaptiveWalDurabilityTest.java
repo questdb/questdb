@@ -29,6 +29,7 @@ import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.ColumnVersionWriter;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -635,28 +636,27 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
      */
     @Test
     public void testEpochMarkerDoesNotAdvanceWhenNextPinSlotIsBusy() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
-        assertMemoryLeak(() -> {
-            execute("create table pin_busy (ts timestamp, v long) timestamp(ts) partition by day wal");
-            execute("insert into pin_busy values ('2024-01-01T00:00:00.000000Z', 1)");
-            drainWalQueue();
-            final TableToken token = engine.verifyTableName("pin_busy");
-            final long occupiedTxn = 1_000_000L;
-            try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token);
-                 TableWriter writer = getWriter(token)) {
-                writer.advanceDurableEpoch(100L);
-                final int generationBefore = readMarkerGeneration(token);
-                Assert.assertTrue(scoreboard.incrementTxn(TxnScoreboard.EPOCH_ID_B, occupiedTxn));
-                try {
-                    writer.advanceDurableEpoch(200L);
-                    Assert.assertEquals("a busy pin slot must leave the prior marker authoritative",
-                            generationBefore, readMarkerGeneration(token));
-                } finally {
-                    scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_B, occupiedTxn);
-                }
-            }
-        });
+        assertWriteSetRetained(true);
+    }
+
+    @Test
+    public void testEpochRetainsWriteSetAfterManifestOpenFailure() throws Exception {
+        assertWriteSetRetained(false);
+    }
+
+    @Test
+    public void testAsyncDoesNotCollectPartitionWriteSets() throws Exception {
+        assertNoPartitionWriteSets("async");
+    }
+
+    @Test
+    public void testNosyncDoesNotCollectPartitionWriteSets() throws Exception {
+        assertNoPartitionWriteSets("nosync");
+    }
+
+    @Test
+    public void testSyncDoesNotCollectPartitionWriteSets() throws Exception {
+        assertNoPartitionWriteSets("sync");
     }
 
     /**
@@ -861,6 +861,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                         "an epoch with an empty write set must open no partition file, saw: " + ff.openedPartitionDirs(),
                         ff.openedPartitionDirs().isEmpty()
                 );
+                Assert.assertEquals(0, tableWriter.getTxWriter().getDirtyPartitions().size());
+                Assert.assertEquals(0, columnVersionWriter(tableWriter).getDirtyPartitions().size());
+
             }
 
             // Write to the last partition only, then epoch again: history must not be re-walked.
@@ -884,6 +887,18 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                         "the epoch must NOT re-walk untouched history, saw: " + ff.openedPartitionDirs(),
                         ff.openedPartitionDirs().contains("1970-01-02")
                 );
+
+                // Run this last: returning a direct-append writer to WAL apply triggers a rollback/full sweep.
+                // Active appends themselves need not mutate the partition metadata table.
+                final TableWriter.Row row = tableWriter.newRow(2 * Micros.DAY_MICROS + 2);
+                row.putLong(1, 5L);
+                row.append();
+                tableWriter.commit();
+                ff.reset();
+                tableWriter.advanceDurableEpoch(4L);
+                Assert.assertEquals(java.util.Set.of("1970-01-03"), ff.openedPartitionDirs());
+                Assert.assertEquals(0, tableWriter.getTxWriter().getDirtyPartitions().size());
+                Assert.assertEquals(0, columnVersionWriter(tableWriter).getDirtyPartitions().size());
             }
         });
     }
@@ -896,6 +911,119 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     @Test
     public void testFullTableFlushIncludesReadOnlyPartitions() throws Exception {
         assertReadOnlyPartitionFlushed(true);
+    }
+
+    static ColumnVersionWriter columnVersionWriter(TableWriter writer) throws Exception {
+        final java.lang.reflect.Field field = TableWriter.class.getDeclaredField("columnVersionWriter");
+        field.setAccessible(true);
+        return (ColumnVersionWriter) field.get(writer);
+    }
+
+    private void assertNoPartitionWriteSets(String mode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
+        assertMemoryLeak(() -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("x");
+            TableWriter first = null;
+            for (int day = 0; day < 16; day++) {
+                try (WalWriter writer = engine.getWalWriter(token)) {
+                    commitRow(writer, day * Micros.DAY_MICROS, day);
+                }
+                drainWalQueue();
+                execute("update x set v = v + 1");
+                drainWalQueue();
+                if (day > 0) {
+                    final String date = "1970-01-" + (day < 9 ? "0" : "") + (day + 1);
+                    execute("alter table x drop partition where ts < '" + date + "'");
+                    drainWalQueue();
+                }
+                try (TableWriter writer = getWriter(token)) {
+                    if (first == null) {
+                        first = writer;
+                    }
+                    Assert.assertSame("exercise one long-lived writer", first, writer);
+                    Assert.assertEquals(1, writer.getTxWriter().getPartitionCount());
+                }
+            }
+            try (TableWriter writer = getWriter(token)) {
+                Assert.assertTrue("UPDATE must exercise column versions", writer.getTxWriter().getColumnVersion() >= 16);
+                final var txnDirty = writer.getTxWriter().getDirtyPartitions();
+                final var cvDirty = columnVersionWriter(writer).getDirtyPartitions();
+                Assert.assertTrue("ordinary commits must not retain marks [txn=" + txnDirty + ", cv=" + cvDirty + "]",
+                        txnDirty == null && cvDirty == null);
+            }
+        });
+    }
+
+    private void assertWriteSetRetained(boolean isBusyPin) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        final EpochOpenTrackingFacade ff = new EpochOpenTrackingFacade();
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(1_000_000L);
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken token = engine.verifyTableName("x");
+            try (WalWriter writer = engine.getWalWriter(token)) {
+                commitRow(writer, 0, 1);
+                commitRow(writer, Micros.DAY_MICROS, 2);
+                commitRow(writer, 2 * Micros.DAY_MICROS, 3);
+            }
+            drainWalQueue();
+            final TableWriter first;
+            try (TableWriter writer = getWriter(token)) {
+                first = writer;
+                writer.advanceDurableEpoch(100L);
+                Assert.assertEquals(0, writer.getTxWriter().getDirtyPartitions().size());
+                Assert.assertEquals(0, columnVersionWriter(writer).getDirtyPartitions().size());
+            }
+            execute("update x set v = v + 10 where ts < '1970-01-02'");
+            try (WalWriter writer = engine.getWalWriter(token)) {
+                commitRow(writer, 2 * Micros.DAY_MICROS + 1, 4);
+            }
+            drainWalQueue();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            final int slot = tracker.isPinnedEpochSlotA() ? TxnScoreboard.EPOCH_ID_B : TxnScoreboard.EPOCH_ID_A;
+            final long occupiedTxn = 1_000_000L;
+            try (TxnScoreboard scoreboard = engine.getTxnScoreboard(token);
+                 TableWriter writer = getWriter(token)) {
+                Assert.assertSame(first, writer);
+                final var txnDirty = writer.getTxWriter().getDirtyPartitions();
+                final var cvDirty = columnVersionWriter(writer).getDirtyPartitions();
+                Assert.assertFalse(txnDirty.excludes(2 * Micros.DAY_MICROS));
+                Assert.assertFalse(cvDirty.excludes(0));
+                final int generationBefore = readMarkerGeneration(token);
+                ff.reset();
+                if (isBusyPin) {
+                    Assert.assertTrue(scoreboard.incrementTxn(slot, occupiedTxn));
+                    try {
+                        writer.advanceDurableEpoch(200L);
+                    } finally {
+                        scoreboard.releaseTxn(slot, occupiedTxn);
+                    }
+                } else {
+                    ff.failManifestOpen = true;
+                    try {
+                        final CairoException error = Assert.assertThrows(CairoException.class, () -> writer.advanceDurableEpoch(200L));
+                        Assert.assertTrue(error.getFlyweightMessage().toString().contains("injected manifest open"));
+                    } finally {
+                        ff.failManifestOpen = false;
+                    }
+                }
+                Assert.assertEquals(generationBefore, readMarkerGeneration(token));
+                Assert.assertEquals(java.util.Set.of("1970-01-01", "1970-01-03"), ff.openedPartitionDirs());
+                Assert.assertSame(txnDirty, writer.getTxWriter().getDirtyPartitions());
+                Assert.assertSame(cvDirty, columnVersionWriter(writer).getDirtyPartitions());
+                Assert.assertFalse(txnDirty.excludes(2 * Micros.DAY_MICROS));
+                Assert.assertFalse(cvDirty.excludes(0));
+                ff.reset();
+                writer.advanceDurableEpoch(300L);
+                Assert.assertNotEquals(generationBefore, readMarkerGeneration(token));
+                Assert.assertEquals(java.util.Set.of("1970-01-01", "1970-01-03"), ff.openedPartitionDirs());
+                Assert.assertEquals(0, txnDirty.size());
+                Assert.assertEquals(0, cvDirty.size());
+            }
+        });
     }
 
     private void assertReadOnlyPartitionFlushed(boolean isFullTableFlush) throws Exception {
@@ -1843,6 +1971,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
      */
     static class EpochOpenTrackingFacade extends WalFdatasyncFacade {
         private final java.util.Set<String> openedPartitionDirs = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        private boolean failManifestOpen;
 
         @Override
         public boolean isSyncfsFileSystemWide() {
@@ -1857,6 +1986,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
 
         @Override
         public long openRW(LPSZ name, int opts) {
+            if (failManifestOpen && Utf8s.containsAscii(name, "_epoch.manifest")) {
+                throw CairoException.critical(0).put("injected manifest open failure");
+            }
             trackPartition(name);
             return super.openRW(name, opts);
         }
