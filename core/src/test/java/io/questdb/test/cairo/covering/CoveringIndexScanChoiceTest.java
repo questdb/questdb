@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.async.PageFrameSequence;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -458,6 +459,90 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
                             }
                         }
                     }
+                }, configuration, LOG);
+            });
+        }
+    }
+
+    @Test
+    public void testParallelArmsWithFrameDispatchOnWorkerPool() throws Exception {
+        // Covered Async Filter and Async GROUP BY plans with frame dispatch on (deferred frame
+        // addresses, frame groups), reduced locally and dispatched to four workers, return the rows
+        // of the no_covering plan with dispatch off. Covered frames are never grouped, though at
+        // 500 rows they are small enough to be: a covering page-frame cursor does not defer, and a
+        // group takes only uncovered native frames. A no_index scan of the same table, which does
+        // defer and group, is the positive control.
+        final String[] queries = {
+                "select ts, v, w from t where sym = 'R' and w > 100",
+                "select ts, v from t where sym = 'R' and v % 3 = 0 limit -7",
+                "select count(), sum(v) from t where sym = 'R' and ts in '1970-01-02'",
+                "select count(), sum(v), max(w), min(ts), max(ts) from t where sym = 'R'",
+                "select s2, count(), max(v % 7) m, min(w) from t where sym = 'R' order by s2",
+        };
+        final String scan = "select /*+ no_index */ ts, v, w from t where sym = 'R' and w > 100";
+        // small scan frames, so that the no_index control forms groups
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_COVERING_FRAME_ROWS, 500);
+        final String[] expected = new String[queries.length];
+        // {dispatch, local threshold}: the first arm is the reference; a threshold above every
+        // selection reduces locally, 1 dispatches every non-empty open (0 would turn the per-open
+        // decision off, and with it the counting)
+        final Object[][] arms = {{false, Long.MAX_VALUE}, {true, Long.MAX_VALUE}, {true, 1L}, {false, 1L}};
+        for (Object[] arm : arms) {
+            final boolean dispatchOn = (Boolean) arm[0];
+            final long localMaxRows = (Long) arm[1];
+            final boolean local = localMaxRows > 1;
+            final boolean reference = expected[0] == null;
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, String.valueOf(dispatchOn));
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_COVERING_LOCAL_MAX_ROWS, localMaxRows);
+            assertMemoryLeak(() -> {
+                final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+                TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                    if (engine.getTableTokenIfExists("t") == null) {
+                        createTable(engine, ctx);
+                    }
+                    if (reference) {
+                        for (int i = 0; i < queries.length; i++) {
+                            final String q = queries[i].replaceFirst("select ", "select /*+ no_covering */ ");
+                            final StringSink plan = new StringSink();
+                            TestUtils.printSql(compiler, ctx, "explain " + q, plan);
+                            Assert.assertFalse(q + '\n' + plan, plan.toString().contains("CoveringIndex"));
+                            final StringSink sink = new StringSink();
+                            TestUtils.printSql(compiler, ctx, q, sink);
+                            expected[i] = sink.toString();
+                        }
+                    }
+                    for (int i = 0; i < queries.length; i++) {
+                        final String q = queries[i];
+                        final StringSink plan = new StringSink();
+                        TestUtils.printSql(compiler, ctx, "explain " + q, plan);
+                        Assert.assertTrue(q + '\n' + plan, plan.toString().contains("CoveringIndex"));
+                        Assert.assertTrue(q + '\n' + plan, plan.toString().contains("Async"));
+                        try (RecordCursorFactory factory = compiler.compile(q, ctx).getRecordCursorFactory()) {
+                            // one factory, opened three times
+                            for (int j = 0; j < 3; j++) {
+                                final long[] before = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                                final long groupsBefore = PageFrameSequence.getGroupsDispatched();
+                                final StringSink actual = new StringSink();
+                                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                    println(factory.getMetadata(), cursor, actual);
+                                }
+                                final long[] after = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                                final String what = q + " [dispatch=" + dispatchOn + ", local=" + local + ']';
+                                TestUtils.assertEquals(what, expected[i], actual);
+                                Assert.assertTrue(what, after[local ? 0 : 1] > before[local ? 0 : 1]);
+                                Assert.assertEquals(what, before[local ? 1 : 0], after[local ? 1 : 0]);
+                                Assert.assertEquals(what + ": covered frames grouped", groupsBefore, PageFrameSequence.getGroupsDispatched());
+                            }
+                        }
+                    }
+                    // the positive control: an uncovered scan defers its frames and, with dispatch
+                    // on, groups them
+                    final long groupsBefore = PageFrameSequence.getGroupsDispatched();
+                    final StringSink actual = new StringSink();
+                    TestUtils.printSql(compiler, ctx, scan, actual);
+                    TestUtils.assertEquals(scan, expected[0], actual);
+                    Assert.assertEquals(scan + " grouped", dispatchOn, PageFrameSequence.getGroupsDispatched() > groupsBefore);
                 }, configuration, LOG);
             });
         }
