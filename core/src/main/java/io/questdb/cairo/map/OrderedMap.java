@@ -350,6 +350,11 @@ public class OrderedMap implements Map, Reopenable {
     }
 
     @Override
+    public long getBatchBaseAddress() {
+        return heapAddr;
+    }
+
+    @Override
     public void clear() {
         kPos = heapAddr;
         free = (int) (keyCapacity * loadFactor);

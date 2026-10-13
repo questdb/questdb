@@ -78,6 +78,8 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
     // True when every grouping key reads only build-side columns (or constants): a probe row's group then
     // follows from which build row it joined, so the aggregation loops can reuse that group's map value.
     private boolean keysReadBuildOnly;
+    // Whether every aggregate's arguments read probe columns alone, which the probe's frame record serves
+    private boolean aggregatesReadProbeOnly;
     // With keysReadBuildOnly, the one probe SYMBOL column the keys also read (its symbol key then joins the build
     // key in the group cache), or -1 when they read build columns only.
     private int keyProbeSymbolColumn = -1;
@@ -133,6 +135,7 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
                     keysReadBuildOnly = true;
                     keyProbeSymbolColumn = probeSymbolColumn;
                 }
+                aggregatesReadProbeOnly = aggregatesReadProbeOnly(groupByFunctions, metadata.getProbeColumnCount());
             }
             SqlCodeGenerator.WorkerFunctionLists workers = generator.compilePerWorkerInnerProjectionFunctions(
                     executionContext, metadata.getColumns(), innerFunctions, workerCount, joined, flags);
@@ -257,6 +260,10 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
         return keyProbeSymbolColumn;
     }
 
+    public boolean isAggregatesReadProbeOnly() {
+        return aggregatesReadProbeOnly;
+    }
+
     public boolean isKeysReadBuildOnly() {
         return keysReadBuildOnly;
     }
@@ -363,6 +370,50 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
             }
         }
         return probeColumn;
+    }
+
+    private static boolean aggregatesReadProbeOnly(ObjList<GroupByFunction> functions, int probeColumnCount) {
+        final IntList columns = new IntList();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            columns.clear();
+            if (!collectArgumentColumns(functions.getQuick(i), columns)) {
+                return false;
+            }
+            for (int c = 0, m = columns.size(); c < m; c++) {
+                if (columns.getQuick(c) >= probeColumnCount) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // The columns an aggregate's arguments read: its own state is the map value's, and one without
+    // arguments, count(*), reads none.
+    private static boolean collectArgumentColumns(Function function, IntList columns) {
+        if (function instanceof UnaryFunction f) {
+            return collectColumns(f.getArg(), columns);
+        }
+        if (function instanceof BinaryFunction f) {
+            return collectColumns(f.getLeft(), columns) && collectColumns(f.getRight(), columns);
+        }
+        if (function instanceof TernaryFunction f) {
+            return collectColumns(f.getLeft(), columns) && collectColumns(f.getCenter(), columns)
+                    && collectColumns(f.getRight(), columns);
+        }
+        if (function instanceof QuaternaryFunction f) {
+            return collectColumns(f.getFunc0(), columns) && collectColumns(f.getFunc1(), columns)
+                    && collectColumns(f.getFunc2(), columns) && collectColumns(f.getFunc3(), columns);
+        }
+        if (function instanceof MultiArgFunction f) {
+            final ObjList<Function> args = f.args();
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (!collectColumns(args.getQuick(i), columns)) {
+                    return false;
+                }
+            }
+        }
+        return true;
     }
 
     private static boolean keyFunctionsReadBuildOnly(ObjList<Function> keyFunctions, int probeColumnCount) {

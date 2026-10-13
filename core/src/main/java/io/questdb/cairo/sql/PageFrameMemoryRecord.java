@@ -674,6 +674,10 @@ public class PageFrameMemoryRecord implements Record, StableStringSource, QuietC
         return Rows.toRowID(frameIndex, rowIndex);
     }
 
+    public long getRowIndex() {
+        return rowIndex;
+    }
+
     @Override
     public short getShort(int columnIndex) {
         if (hasTypeCasts) {

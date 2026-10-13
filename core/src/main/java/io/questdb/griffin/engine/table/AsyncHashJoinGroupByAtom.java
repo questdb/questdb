@@ -48,6 +48,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.SimpleMapValue;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
@@ -60,10 +62,12 @@ import io.questdb.jit.CompiledFilter;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
+
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
@@ -211,6 +215,12 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                         perWorkerLocks, workerCount);
             }
             final boolean hasSymbolKey = symbolKeyProbeColumns.size() > 0;
+            // the batched build-key aggregation, see AsyncHashJoinGroupByRecordCursorFactory.addByBuildKey()
+            final boolean isBatched = functions.isKeyed() && functions.isKeysReadBuildOnly() && functions.isAggregatesReadProbeOnly();
+            final int batchSize = configuration.getGroupByBatchSize();
+            final GroupByBatchKernels.Program kernelProgram = isBatched && configuration.isSqlParallelGroupByBatchKernelsEnabled()
+                    ? GroupByBatchKernels.compile(functions.getGroupByFunctions(-1), batchSize, workerCount + 1)
+                    : null;
             for (int i = -1; i < workerCount; i++) {
                 // Sinks hold scratch state, so each slot probes and builds through ones of its own,
                 // and so does the translating record the staged key sink reads from.
@@ -224,6 +234,12 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                     slot.value = new SimpleMapValue(functions.getValueTypes().getColumnCount());
                 }
                 slots.add(slot);
+                if (isBatched) {
+                    slot.batchSize = batchSize;
+                    slot.batchList = new DirectLongList(batchSize, MemoryTag.NATIVE_DEFAULT);
+                    slot.batchMapValue = new FlyweightPackedMapValue(functions.getValueTypes());
+                    slot.batchKernels = kernelProgram != null ? kernelProgram.newInstance(functions.getGroupByFunctions(i)) : null;
+                }
                 records.add(slot.joinedRecord);
             }
         } catch (Throwable th) {
@@ -1037,6 +1053,20 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         // The map's size when the cache was last valid: a cleared or reused map has another size, so a stale
         // address is never read.
         long groupValueMapSize = -1;
+        // The batched form of the cache, see AsyncHashJoinGroupByRecordCursorFactory.addByBuildKey(): each group's
+        // value offset into the map's heap, which survives the heap growing, and the batch of rows that update
+        // existing groups. Null batchList when the aggregates do not batch.
+        final GroupValueCache batchOffsetCache = new GroupValueCache();
+        long batchBaseRowId;
+        int batchCount;
+        @Nullable
+        GroupByBatchKernels batchKernels;
+        @Nullable
+        DirectLongList batchList;
+        Map batchMap;
+        long batchMapSize = -1;
+        FlyweightPackedMapValue batchMapValue;
+        int batchSize;
 
         Slot(
                 HashJoinGroupByRecord joinedRecord,
@@ -1075,6 +1105,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             failure = Misc.freeBestEffort(failure, symbolKeyView);
             failure = Misc.freeBestEffort(failure, probeRecord);
             failure = Misc.freeBestEffort(failure, buildRecord);
+            failure = Misc.freeBestEffort(failure, batchList);
+            batchList = null;
+            failure = Misc.freeBestEffort(failure, batchKernels);
+            batchKernels = null;
             CairoException.rethrowCleanupFailure(failure);
         }
 
@@ -1092,6 +1126,10 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
             }
             groupValueMap = null;
             groupValueMapSize = -1;
+            batchMap = null;
+            batchMapSize = -1;
+            batchCount = 0;
+            Misc.clear(batchKernels);
             joinedRecord.clear();
             probeRecord.of(null);
             buildRecord.of(null);

@@ -25,9 +25,11 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.griffin.engine.table.AsyncHashJoinGroupByRecordCursorFactory;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -51,6 +53,7 @@ public class HashJoinGroupByBuildKeyGroupsTest extends AbstractCairoTest {
                     + "(x % 89)::double, x % 7, timestamp_sequence('2024-01-05', 3_000_000L) from long_sequence(5_000)");
             execute("create table e (ex symbol, name symbol)");
             execute("insert into e values ('N','nyse'),('P','arca'),('T','arca'),('Z',null)");
+            final long batchedBefore = AsyncHashJoinGroupByRecordCursorFactory.getBatchedRowsForTesting();
             for (int workers : new int[]{1, 4}) {
                 try (SqlExecutionContextImpl context = HashJoinGroupByQualificationTest.context(engine, workers)) {
                     context.changePageFrameSizes(1_000, 1_000);
@@ -72,6 +75,8 @@ public class HashJoinGroupByBuildKeyGroupsTest extends AbstractCairoTest {
                     }
                 }
             }
+            // the keys read the build alone and the aggregates the probe: the rows updated in batches
+            Assert.assertTrue(AsyncHashJoinGroupByRecordCursorFactory.getBatchedRowsForTesting() > batchedBefore);
         });
     }
 

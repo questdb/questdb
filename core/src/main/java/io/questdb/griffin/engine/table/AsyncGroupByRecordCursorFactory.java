@@ -869,7 +869,7 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
     }
 
-    private static void updateBatch(
+    static void updateBatch(
             PageFrameMemoryRecord record,
             ObjList<GroupByFunction> functions,
             int functionCount,
