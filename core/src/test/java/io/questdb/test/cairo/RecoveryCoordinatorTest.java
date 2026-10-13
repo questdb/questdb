@@ -2445,10 +2445,11 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             }
 
             // Kill at the conversion's final replay flush, not at the recovered writer's earlier coverage flush.
+            // The facade names every file with '/' separators, Windows included.
             private void killIfArmed(String path) {
-                if (path.endsWith(io.questdb.std.Files.SEPARATOR + TableUtils.TXN_FILE_NAME) && armed.get()) {
+                if (path.endsWith("/" + TableUtils.TXN_FILE_NAME) && armed.get()) {
                     try (Path p = new Path(); TxReader tx = new TxReader(this)) {
-                        tx.ofRO(p.of(path).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
+                        tx.ofRO(p.of(path.replace('/', io.questdb.std.Files.SEPARATOR)).$(), ColumnType.TIMESTAMP, PartitionBy.DAY);
                         if (tx.unsafeLoadAll() && tx.getSeqTxn() == 7 && armed.compareAndSet(true, false)) {
                             markerAtKill.set(exists(p.of(markerPath.get()).$()));
                             throw new Error("simulated kill");
