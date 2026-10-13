@@ -43,6 +43,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Before;
 import org.junit.Test;
 
 /**
@@ -71,7 +72,83 @@ public class FrameProjectionTest extends AbstractCairoTest {
             "select ts, (bid + ask) / 2 mid from q where sym = 'C' order by mid, ts",
             // NULLs from a column top
             "select ts, n + 1 n1, (bid + ask) / 2 mid from q where x % 5 = 1",
+            // TAQ idx 15: an order over a projected column memoizes it, light and materialized sorts
+            "select ts, (bid + ask) / 2 mid from q where sym = 'A' order by mid desc",
+            "select ts, mid from (select ts, (bid + ask) / 2 mid from q where sym = 'A' union all " +
+                    "select ts, (bid + ask) / 2 mid from q where 1 = 0) order by mid desc",
+            "select ts, (bid + ask) / 2 mid, bsize * 2 b2 from q where sym = 'B' order by b2, mid desc, ts",
+            // a memoized column another column reads
+            "select ts, (bid + ask) / 2 mid, mid * 3 m3 from q where sym = 'A' order by mid desc",
     };
+
+    @Override
+    @Before
+    public void setUp() {
+        super.setUp();
+        // as a server compiles: a column read more than once per row, or that asks for it, is memoized
+        allowFunctionMemoization();
+    }
+
+    @Test
+    public void testStatefulFunctionsOnWorkerPool() throws Exception {
+        // A function with per-call state (timestamp_sequence() asks to be memoized, the variable
+        // form does not), or a random draw, would restart or diverge on each worker's copy: such a
+        // projection stays on the query's thread, with the switch on and off alike.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                engine.execute(
+                        "create table q2 as (select rnd_symbol('A','B','C') sym, rnd_double() bid, x, (x * 3_000_000L)::timestamp ts " +
+                                "from long_sequence(400000)) timestamp(ts) partition by hour bypass wal",
+                        ctx
+                );
+                final String[] compared = {
+                        "select ts, timestamp_sequence(0, 1) seq from q2 where sym = 'A'",
+                        "select ts, timestamp_sequence(0, 1) seq, bid * 2 b2 from q2 where bid > 0.3",
+                        "select ts, timestamp_sequence(0, 1) seq, bid * 2 b2 from q2 where bid > 0.3 order by b2 desc, ts",
+                        "select ts, timestamp_sequence(ts, 1) seq, bid * 2 b2 from q2 where sym = 'B'",
+                        "select ts, timestamp_sequence(0, 1) + 1 seq1 from q2 where sym = 'C'",
+                        "select ts, bid * 2 b2, row_number() over (order by ts) rn from q2 where sym = 'A'",
+                        "select ts, timestamp_sequence(0, 1) seq, sum(bid) over (order by ts) s from q2 where sym = 'A'",
+                        // a memoized column that is not stateful is still projected, and equal
+                        "select ts, bid * 2 b2 from q2 where bid > 0.3 order by b2 desc, ts",
+                        "select ts, bid * 2 b2, b2 + 1 b3 from q2 where bid > 0.3 order by b2 desc, ts",
+                };
+                for (String query : compared) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "false");
+                    final String expected;
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        expected = read(factory, ctx, null);
+                    }
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        for (int run = 0; run < 2; run++) {
+                            TestUtils.assertEquals(query + " [run " + run + "]", expected, read(factory, ctx, null));
+                        }
+                        if (query.contains("timestamp_sequence")) {
+                            Assert.assertNull(query, findProjection(factory));
+                        }
+                    }
+                }
+                // a random draw is not compared (each execution draws anew), it is not projected
+                final String[] random = {
+                        "select ts, rnd_double() r from q2 where sym = 'A'",
+                        "select ts, bid * rnd_double() r, bid * 2 b2 from q2 where bid > 0.3",
+                        "select ts, rnd_int() + x r from q2 where sym = 'B' order by r",
+                };
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+                for (String query : random) {
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        Assert.assertNull(query, findProjection(factory));
+                    }
+                }
+                // and the plain projection is, so the assertions above are not vacuous
+                try (RecordCursorFactory factory = engine.select("select ts, bid * 2 b2 from q2 where bid > 0.3 order by b2 desc, ts", ctx)) {
+                    Assert.assertNotNull(findProjection(factory));
+                }
+            }, configuration, LOG);
+        });
+    }
 
     @Test
     public void testMemoryLimitLeavesTheValuesToTheProjection() throws Exception {
@@ -155,6 +232,20 @@ public class FrameProjectionTest extends AbstractCairoTest {
                 createTable(engine, ctx);
                 assertArms(engine, ctx, true);
             }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testMemoizedColumnIsProjected() throws Exception {
+        // the column the ORDER BY reads twice per row is memoized, the filtering threads compute it
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+            try (RecordCursorFactory factory = select("select ts, (bid + ask) / 2 mid from q where sym = 'A' order by mid desc")) {
+                final FrameProjection projection = findProjection(factory);
+                Assert.assertNotNull(projection);
+                Assert.assertEquals(1, projection.getColumnCount());
+            }
         });
     }
 

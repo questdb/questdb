@@ -14459,10 +14459,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
         final IntList projected = new IntList();
         final IntList projectedTypes = new IntList();
+        final IntList memoized = new IntList();
         for (int i = 0, n = functions.size(); i < n; i++) {
-            final Function function = functions.getQuick(i);
-            if (function == null || function instanceof MemoizerFunction) {
+            Function function = functions.getQuick(i);
+            if (function == null) {
                 return;
+            }
+            if (function instanceof MemoizerFunction memoizer) {
+                // memoized because the column is read more than once per row, e.g. by an ORDER BY
+                // over it; a column another column of this projection reads stays on the query's
+                // thread, the copies would not see its value
+                if (isReadByOtherColumn(columns, i)) {
+                    return;
+                }
+                function = memoizer.getArg();
             }
             final int type = function.getType();
             if (ColumnType.tagOf(type) == ColumnType.SYMBOL && ColumnFunction.unwrap(function) == null) {
@@ -14474,6 +14484,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             projected.add(i);
             projectedTypes.add(type);
+            if (functions.getQuick(i) instanceof MemoizerFunction) {
+                memoized.add(i);
+            }
         }
         if (projected.size() == 0) {
             return;
@@ -14493,6 +14506,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         Misc.freeObjList(copies.getQuick(k));
                     }
                     return;
+                }
+                // a copy computes a memoized column once per row by itself: its memoizer, which
+                // nothing on the workers clears, would serve the first row's value to every row
+                for (int k = 0, m = memoized.size(); k < m; k++) {
+                    final int c = memoized.getQuick(k);
+                    copy.setQuick(c, ((MemoizerFunction) copy.getQuick(c)).getArg());
                 }
                 copies.add(copy);
             }
@@ -14526,6 +14545,41 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             functions.setQuick(i, new ProjectedColumnFunction(functions.getQuick(i), projection, j));
         }
         virtual.setFrameProjection(projection);
+    }
+
+    // Whether the function's value at a row depends on the row alone: no per-call state, no random
+    // draws, stable within the execution (deterministic, or now() and bind variables).
+    private static boolean isRowPure(Function function) {
+        return !function.shouldMemoize() && !function.isRandom() && function.isStableWithinExecution();
+    }
+
+    // Whether a column of the projection other than the index-th reads the index-th's alias.
+    private static boolean isReadByOtherColumn(ObjList<QueryColumn> columns, int index) {
+        final CharSequence alias = columns.getQuick(index).getAlias();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (i != index && readsLiteral(columns.getQuick(i).getAst(), alias)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static boolean readsLiteral(ExpressionNode node, CharSequence alias) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, alias)) {
+            return true;
+        }
+        if (readsLiteral(node.lhs, alias) || readsLiteral(node.rhs, alias)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (readsLiteral(node.args.getQuick(i), alias)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // Whether the expression reads one of the projection's own symbol columns, whose symbol table
@@ -14569,6 +14623,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0; i < columnCount; i++) {
             final ExpressionNode ast = columns.getQuick(i).getAst();
             if (hasSubQuery(ast) || hasRandomFunction(ast)) {
+                return null;
+            }
+        }
+        // A copy computes its column for the rows the worker it belongs to is given, so the value
+        // must be the row's alone: a function that keeps state from call to call
+        // (timestamp_sequence(), which also asks to be memoized), draws from a generator, or is not
+        // proven to give the same result for the same row within the execution, restarts or
+        // diverges on every copy. Checked on the owner's compiled functions, which carry these
+        // properties up from every argument.
+        for (int i = 0, n = ownerFunctions.size(); i < n; i++) {
+            final Function ownerFunction = ownerFunctions.getQuick(i);
+            if (ownerFunction != null && !isRowPure(ownerFunction)) {
                 return null;
             }
         }

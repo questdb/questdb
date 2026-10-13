@@ -40,7 +40,7 @@ public class UnionAllRecordCursorFactory extends AbstractSetRecordCursorFactory 
     ) {
         super(metadata, factoryA, factoryB, castFunctionsA, castFunctionsB);
         try {
-            this.cursor = new UnionAllRecordCursor(castFunctionsA, castFunctionsB);
+            this.cursor = new UnionAllRecordCursor(castFunctionsA, castFunctionsB, UnionAllRecordCursor.canOfferBlocks(metadata, castFunctionsA));
         } catch (Throwable th) {
             close();
             throw th;
