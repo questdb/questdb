@@ -32,7 +32,6 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -84,6 +83,9 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
 
         if (!percentilesFunc.isConstant()) {
             throw SqlException.$(percentilesPos, "percentile argument must be a constant");
+        }
+        if (ColumnType.decodeWeakArrayDimensionality(percentilesFunc.getType()) > 1) {
+            throw SqlException.$(percentilesPos, "array is not one-dimensional");
         }
 
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
@@ -295,8 +297,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
                 if (size > 0) {
                     // Get percentiles array
                     ArrayView percentiles = percentilesFunc.getArray(record);
-                    FlatArrayView view = percentiles.flatView();
-                    int percentileCount = view.length();
+                    int percentileCount = SqlUtil.getPercentileCount(percentiles, percentilesPos);
 
                     // Sort the list (values start at listPtr + DATA_OFFSET)
                     DoubleSort.sort(listMemory.getPageAddress(0) + listPtr + DATA_OFFSET, 0, size - 1);
@@ -307,7 +308,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
 
                     // Calculate each percentile
                     for (int i = 0; i < percentileCount; i++) {
-                        double percentile = SqlUtil.validatePercentile(view.getDoubleAtAbsIndex(i), percentilesPos);
+                        double percentile = SqlUtil.getPercentile(percentiles, i, percentilesPos);
                         long N = SqlUtil.getPercentileDiscIndex(percentile, size);
                         double resultValue = listMemory.getDouble(listPtr + DATA_OFFSET + N * 8L);
                         resultMemory.putDouble(resultPtr + 8 + i * 8L, resultValue);
@@ -453,8 +454,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             }
 
             ArrayView percentiles = percentilesFunc.getArray(null);
-            FlatArrayView view = percentiles.flatView();
-            int percentileCount = view.length();
+            int percentileCount = SqlUtil.getPercentileCount(percentiles, percentilesPos);
 
             // Sort the list
             DoubleSort.sort(listMemory.getPageAddress(0), 0, size - 1);
@@ -465,7 +465,7 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             }
 
             for (int i = 0; i < percentileCount; i++) {
-                double percentile = SqlUtil.validatePercentile(view.getDoubleAtAbsIndex(i), percentilesPos);
+                double percentile = SqlUtil.getPercentile(percentiles, i, percentilesPos);
                 long N = SqlUtil.getPercentileDiscIndex(percentile, size);
                 results[i] = listMemory.getDouble(N * 8L);
             }

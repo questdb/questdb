@@ -994,6 +994,39 @@ public class SqlUtil {
     }
 
     /**
+     * Returns the validated percentile at the given logical index of a one-dimensional
+     * percentile list. The list may be a slice or sub-array of a larger array, so this
+     * method reads through the list's stride and offset rather than its backing buffer.
+     *
+     * @param percentiles   the percentile list, checked by {@link #getPercentileCount}
+     * @param index         the logical index, below {@link #getPercentileCount}
+     * @param percentilePos the position of the percentile argument in the SQL text
+     * @return the percentile
+     */
+    public static double getPercentile(ArrayView percentiles, int index, int percentilePos) {
+        return validatePercentile(percentiles.getDouble(index * percentiles.getStride(0)), percentilePos);
+    }
+
+    /**
+     * Returns the number of percentiles in a percentile list, or 0 for a NULL list. The list
+     * must be one-dimensional: the result array of the percentile functions is always
+     * one-dimensional, so flattening a deeper list would silently lose its shape.
+     *
+     * @param percentiles   the percentile list
+     * @param percentilePos the position of the percentile argument in the SQL text
+     * @return the number of percentiles
+     */
+    public static int getPercentileCount(ArrayView percentiles, int percentilePos) {
+        if (percentiles.isNull()) {
+            return 0;
+        }
+        if (percentiles.getDimCount() != 1) {
+            throw CairoException.nonCritical().position(percentilePos).put("array is not one-dimensional");
+        }
+        return percentiles.getDimLen(0);
+    }
+
+    /**
      * Returns the index of the percentile_disc() value in a sorted list of {@code size} values.
      * The SQL standard defines the value as the first one whose cumulative distribution reaches
      * the percentile; the k-th value's cumulative distribution is {@code k / size}, which this

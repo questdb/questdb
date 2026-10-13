@@ -25,12 +25,16 @@
 package io.questdb.test.griffin.engine.functions.groupby;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -161,6 +165,179 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                 39,
                 "invalid percentile"
         );
+    }
+
+    @Test
+    public void testSlicedPercentiles() throws Exception {
+        // a slice or sub-array shares the backing buffer of its parent array, starting at an
+        // offset and possibly striding over it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");
+            final String expected = """
+                    p\tq
+                    [50.0,90.0]\t[50.0,90.0]
+                    """;
+            for (String percentiles : new String[]{
+                    "ARRAY[0.5, 0.9]",
+                    "ARRAY[0.1, 0.5, 0.9, 0.99][2:4]",
+                    "ARRAY[[0.1, 0.2], [0.5, 0.9]][2]",
+                    "ARRAY[[0.1, 0.5], [0.2, 0.9]][1:, 2]",
+                    // the slice leaves out the invalid percentile
+                    "ARRAY[-1.0, 0.5, 0.9][2:4]"
+            }) {
+                assertQuery("SELECT percentile_disc(x, " + percentiles + ") p, quantile_disc(x, " + percentiles + ") q FROM test")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+            }
+            assertQuery("SELECT percentile_disc(x, ARRAY[0.1, 0.5][2:2]) p FROM test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            p
+                            []
+                            """);
+        });
+    }
+
+    @Test
+    public void testSlicedPercentilesInvalidPercentileInSlice() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");
+            final String sql = "SELECT percentile_disc(x, ARRAY[0.5, -1.0, 0.9][2:4]) FROM test";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("[2:4]"), "invalid percentile [expected=range(0.0, 1.0), actual=-1.0]");
+        });
+    }
+
+    @Test
+    public void testPercentilesNotOneDimensional() throws Exception {
+        // the result is always one-dimensional, so a deeper percentile list would lose its shape
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");
+            for (String function : new String[]{"percentile_disc", "quantile_disc"}) {
+                String sql = "SELECT " + function + "(x, ARRAY[[0.1, 0.5], [0.9, 0.99]]) FROM test";
+                assertExceptionNoLeakCheck(sql, sql.indexOf('['), "array is not one-dimensional");
+                sql = "SELECT " + function + "(x, transpose(ARRAY[[0.1, 0.5], [0.9, 0.99]])) FROM test";
+                assertExceptionNoLeakCheck(sql, sql.indexOf("transpose"), "array is not one-dimensional");
+            }
+        });
+    }
+
+    @Test
+    public void testPercentilesNotOneDimensionalWeakDimsBindVariable() throws Exception {
+        // PGWire declares array bind variables without their dimension count, so the factory
+        // accepts them and the function checks the bound array when it computes the result
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");
+            final String sql = "SELECT percentile_disc(x, $1) FROM test";
+            bindVariableService.clear();
+            bindVariableService.define(0, ColumnType.encodeArrayTypeWithWeakDims(ColumnType.DOUBLE, true), 0);
+            try (
+                    RecordCursorFactory factory = select(sql);
+                    DirectArray percentiles = new DirectArray()
+            ) {
+                percentiles.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 2));
+                percentiles.setDimLen(0, 2);
+                percentiles.setDimLen(1, 2);
+                percentiles.applyShape();
+                percentiles.putDouble(0, 0.1);
+                percentiles.putDouble(1, 0.5);
+                percentiles.putDouble(2, 0.9);
+                percentiles.putDouble(3, 0.99);
+                // the bind variable pool hands the factory's variable back, as PGWire does on execute
+                bindVariableService.clear();
+                bindVariableService.setArray(0, percentiles);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    cursor.getRecord().getArray(0, ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                    Assert.fail("expected 'array is not one-dimensional'");
+                } catch (CairoException e) {
+                    Assert.assertEquals(sql.indexOf('$'), e.getPosition());
+                    TestUtils.assertContains(e.getFlyweightMessage(), "array is not one-dimensional");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNullPercentiles() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");
+            assertQuery("SELECT percentile_disc(x, NULL::DOUBLE[]) p FROM test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            p
+                            []
+                            """);
+        });
+    }
+
+    @Test
+    public void testSlicedPercentilesGroupByAndSampleBy() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE test AS (
+                        SELECT x::DOUBLE x, (x % 2)::INT k, timestamp_sequence('2024-01-01', 3_600_000_000L) ts
+                        FROM long_sequence(100)
+                    ) TIMESTAMP(ts) PARTITION BY DAY
+                    """);
+            for (String percentiles : new String[]{"ARRAY[0.5, 0.9]", "ARRAY[0.1, 0.5, 0.9, 0.99][2:4]"}) {
+                assertQuery("SELECT k, percentile_disc(x, " + percentiles + ") p FROM test ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tp
+                                0\t[50.0,90.0]
+                                1\t[49.0,89.0]
+                                """);
+                assertQuery("SELECT ts, percentile_disc(x, " + percentiles + ") p FROM test SAMPLE BY 50h ALIGN TO FIRST OBSERVATION")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tp
+                                2024-01-01T00:00:00.000000Z\t[25.0,45.0]
+                                2024-01-03T02:00:00.000000Z\t[75.0,95.0]
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testSlicedPercentilesRuntimeConstant() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");
+            final String expected = """
+                    p
+                    [50.0,90.0]
+                    """;
+            assertQuery("DECLARE @p := ARRAY[0.1, 0.5, 0.9, 0.99] SELECT percentile_disc(x, @p[2:4]) p FROM test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns(expected);
+
+            try (DirectArray percentiles = new DirectArray()) {
+                percentiles.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+                percentiles.setDimLen(0, 4);
+                percentiles.applyShape();
+                percentiles.putDouble(0, 0.1);
+                percentiles.putDouble(1, 0.5);
+                percentiles.putDouble(2, 0.9);
+                percentiles.putDouble(3, 0.99);
+                bindVariableService.clear();
+                bindVariableService.setArray(0, percentiles);
+                assertQuery("SELECT percentile_disc(x, ($1)[2:4]) p FROM test")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(expected);
+            }
+        });
     }
 
     @Test
@@ -726,6 +903,31 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
                                 2\t[98.0,1098.0,2098.0]
                                 3\t[99.0,1099.0,2099.0]
                                 """);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testParallelGroupBySlicedPercentiles() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("CREATE TABLE tab AS (SELECT x::DOUBLE v, (x % 2)::INT k FROM long_sequence(1_000))", sqlExecutionContext);
+                final String expected = """
+                        k\tp
+                        0\t[500.0,900.0]
+                        1\t[499.0,899.0]
+                        """;
+                for (String percentiles : new String[]{"ARRAY[0.5, 0.9]", "ARRAY[0.1, 0.5, 0.9, 0.99][2:4]"}) {
+                    assertQuery("SELECT k, percentile_disc(v, " + percentiles + ") p FROM tab ORDER BY k")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .expectSize()
+                            .withPlanContaining("Async Group By workers: 4")
+                            .returns(expected);
+                }
             }, configuration, LOG);
         });
     }

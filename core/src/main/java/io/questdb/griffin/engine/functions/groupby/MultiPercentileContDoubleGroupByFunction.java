@@ -28,7 +28,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
@@ -68,20 +67,19 @@ public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDis
         }
 
         ArrayView percentiles = percentileFunc.getArray(record);
-        FlatArrayView view = percentiles.flatView();
-        int viewLength = view.length();
+        int percentileCount = SqlUtil.getPercentileCount(percentiles, percentilePos);
 
         if (out == null) {
             out = new DirectArray();
         }
         out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
-        out.setDimLen(0, viewLength);
+        out.setDimLen(0, percentileCount);
         out.applyShape();
 
         // Collect all unique indices needed for interpolation
         indexSet.clear();
-        for (int i = 0, len = view.length(); i < len; i++) {
-            double percentile = SqlUtil.validatePercentile(view.getDoubleAtAbsIndex(i), percentilePos);
+        for (int i = 0; i < percentileCount; i++) {
+            double percentile = SqlUtil.getPercentile(percentiles, i, percentilePos);
 
             // Calculate the continuous percentile position
             double position = percentile * (size - 1);
@@ -117,8 +115,8 @@ public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDis
         listA.quickSelectMultiple(0, size - 1, contIndices, 0, indexCount);
 
         // Now compute interpolated values
-        for (int i = 0, len = view.length(); i < len; i++) {
-            double percentile = view.getDoubleAtAbsIndex(i);
+        for (int i = 0; i < percentileCount; i++) {
+            double percentile = SqlUtil.getPercentile(percentiles, i, percentilePos);
             double position = percentile * (size - 1);
             int lowerIndex = (int) Math.floor(position);
             int upperIndex = (int) Math.ceil(position);

@@ -234,6 +234,54 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     }
 
     @Test
+    public void testPercentilesNotOneDimensional() throws Exception {
+        // the result is always one-dimensional, so a deeper percentile list would lose its shape
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::DOUBLE d, x l FROM long_sequence(100))");
+            for (String args : new String[]{"d, %s", "d, %s, 4", "l, %s", "l, %s, 4"}) {
+                String sql = "SELECT approx_percentile(" + args.formatted("ARRAY[[0.1, 0.5], [0.9, 0.99]]") + ") FROM t";
+                assertExceptionNoLeakCheck(sql, sql.indexOf('['), "array is not one-dimensional");
+                sql = "SELECT approx_percentile(" + args.formatted("transpose(ARRAY[[0.1, 0.5], [0.9, 0.99]])") + ") FROM t";
+                assertExceptionNoLeakCheck(sql, sql.indexOf("transpose"), "array is not one-dimensional");
+            }
+        });
+    }
+
+    @Test
+    public void testSlicedPercentiles() throws Exception {
+        // a slice or sub-array shares the backing buffer of its parent array, starting at an
+        // offset and possibly striding over it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x::DOUBLE d, x l FROM long_sequence(100))");
+            for (String percentiles : new String[]{
+                    "ARRAY[0.5, 0.9]",
+                    "ARRAY[0.1, 0.5, 0.9, 0.99][2:4]",
+                    "ARRAY[[0.1, 0.2], [0.5, 0.9]][2]",
+                    "ARRAY[[0.1, 0.5], [0.2, 0.9]][1:, 2]",
+                    // the slice leaves out the invalid percentile
+                    "ARRAY[-1.0, 0.5, 0.9][2:4]"
+            }) {
+                assertQuery("SELECT " + allVariants(percentiles) + " FROM t")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                d1\td4\tl1\tl4
+                                [51.9375,91.9375]\t[50.00189208984375,90.00384521484375]\t[51.0,91.0]\t[50.0,90.0]
+                                """);
+            }
+            assertQuery("SELECT " + allVariants("ARRAY[0.1, 0.5][2:2]") + " FROM t")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            d1\td4\tl1\tl4
+                            []\t[]\t[]\t[]
+                            """);
+        });
+    }
+
+    @Test
     public void testEmptyArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT CAST(x AS DOUBLE) x FROM long_sequence(100))");

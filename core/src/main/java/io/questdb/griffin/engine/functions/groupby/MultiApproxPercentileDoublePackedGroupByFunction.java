@@ -28,7 +28,6 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
@@ -135,16 +134,14 @@ public class MultiApproxPercentileDoublePackedGroupByFunction extends ArrayFunct
         }
 
         ArrayView percentiles = percentileFunc.getArray(rec);
-        FlatArrayView view = percentiles.flatView();
-        int viewLength = view.length();
+        int percentileCount = SqlUtil.getPercentileCount(percentiles, percentilesPos);
 
         out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
-        out.setDimLen(0, viewLength);
+        out.setDimLen(0, percentileCount);
         out.applyShape();
 
-        for (int i = 0; i < viewLength; i++) {
-            double p = view.getDoubleAtAbsIndex(i);
-            double percentile = SqlUtil.validatePercentile(p, percentilesPos);
+        for (int i = 0; i < percentileCount; i++) {
+            double percentile = SqlUtil.getPercentile(percentiles, i, percentilesPos);
             out.putDouble(i, histogram.getValueAtPercentile(percentile * 100));
         }
         return out;

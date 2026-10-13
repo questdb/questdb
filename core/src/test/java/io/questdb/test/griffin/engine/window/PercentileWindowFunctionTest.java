@@ -908,6 +908,74 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiPercentileContSlicedPercentiles() throws Exception {
+        // a slice or sub-array shares the backing buffer of its parent array, starting at an
+        // offset and possibly striding over it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE v, (x % 2)::INT k FROM long_sequence(4))");
+            for (String percentiles : new String[]{
+                    "ARRAY[0.25, 0.5]",
+                    "ARRAY[0.1, 0.25, 0.5, 0.99][2:4]",
+                    "ARRAY[[0.1, 0.25], [0.2, 0.5]][1:, 2]",
+                    // the slice leaves out the invalid percentile
+                    "ARRAY[-1.0, 0.25, 0.5][2:4]"
+            }) {
+                assertQuery("SELECT v, percentile_cont(v, " + percentiles + ") OVER () p, quantile_cont(v, " + percentiles + ") OVER (PARTITION BY k) q FROM test")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                v\tp\tq
+                                1.0\t[1.75,2.5]\t[1.5,2.0]
+                                2.0\t[1.75,2.5]\t[2.5,3.0]
+                                3.0\t[1.75,2.5]\t[1.5,2.0]
+                                4.0\t[1.75,2.5]\t[2.5,3.0]
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testMultiPercentileRejectsMultiDimensionalPercentiles() throws Exception {
+        // the result is always one-dimensional, so a deeper percentile list would lose its shape
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v DOUBLE, k INT)");
+            for (String function : new String[]{"percentile_disc", "quantile_disc", "percentile_cont", "quantile_cont"}) {
+                String sql = "SELECT " + function + "(v, ARRAY[[0.1, 0.5], [0.9, 0.99]]) OVER () FROM t";
+                assertExceptionNoLeakCheck(sql, sql.indexOf('['), "array is not one-dimensional");
+                sql = "SELECT " + function + "(v, transpose(ARRAY[[0.1, 0.5], [0.9, 0.99]])) OVER (PARTITION BY k) FROM t";
+                assertExceptionNoLeakCheck(sql, sql.indexOf("transpose"), "array is not one-dimensional");
+            }
+        });
+    }
+
+    @Test
+    public void testMultiPercentileDiscSlicedPercentiles() throws Exception {
+        // a slice or sub-array shares the backing buffer of its parent array, starting at an
+        // offset and possibly striding over it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE v, (x % 2)::INT k FROM long_sequence(4))");
+            for (String percentiles : new String[]{
+                    "ARRAY[0.5, 0.9]",
+                    "ARRAY[0.1, 0.5, 0.9, 0.99][2:4]",
+                    "ARRAY[[0.1, 0.5], [0.2, 0.9]][1:, 2]",
+                    // the slice leaves out the invalid percentile
+                    "ARRAY[-1.0, 0.5, 0.9][2:4]"
+            }) {
+                assertQuery("SELECT v, percentile_disc(v, " + percentiles + ") OVER () p, quantile_disc(v, " + percentiles + ") OVER (PARTITION BY k) q FROM test")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                v\tp\tq
+                                1.0\t[2.0,4.0]\t[1.0,3.0]
+                                2.0\t[2.0,4.0]\t[2.0,4.0]
+                                3.0\t[2.0,4.0]\t[1.0,3.0]
+                                4.0\t[2.0,4.0]\t[2.0,4.0]
+                                """);
+            }
+        });
+    }
+
+    @Test
     public void testMultiPercentileDiscOverPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (" +

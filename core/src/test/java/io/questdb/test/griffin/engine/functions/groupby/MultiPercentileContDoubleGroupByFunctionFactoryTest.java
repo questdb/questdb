@@ -199,6 +199,62 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
     }
 
     @Test
+    public void testPercentilesNotOneDimensional() throws Exception {
+        // the result is always one-dimensional, so a deeper percentile list would lose its shape
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");
+            for (String function : new String[]{"percentile_cont", "quantile_cont"}) {
+                String sql = "SELECT " + function + "(x, ARRAY[[0.1, 0.5], [0.9, 0.99]]) FROM test";
+                assertExceptionNoLeakCheck(sql, sql.indexOf('['), "array is not one-dimensional");
+                sql = "SELECT " + function + "(x, transpose(ARRAY[[0.1, 0.5], [0.9, 0.99]])) FROM test";
+                assertExceptionNoLeakCheck(sql, sql.indexOf("transpose"), "array is not one-dimensional");
+            }
+        });
+    }
+
+    @Test
+    public void testSlicedPercentiles() throws Exception {
+        // a slice or sub-array shares the backing buffer of its parent array, starting at an
+        // offset and possibly striding over it
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x, (x % 2)::INT k FROM long_sequence(100))");
+            for (String percentiles : new String[]{
+                    "ARRAY[0.25, 0.5]",
+                    "ARRAY[0.1, 0.25, 0.5, 0.99][2:4]",
+                    "ARRAY[[0.1, 0.2], [0.25, 0.5]][2]",
+                    "ARRAY[[0.1, 0.25], [0.2, 0.5]][1:, 2]",
+                    // the slice leaves out the invalid percentile
+                    "ARRAY[-1.0, 0.25, 0.5][2:4]"
+            }) {
+                assertQuery("SELECT percentile_cont(x, " + percentiles + ") p, quantile_cont(x, " + percentiles + ") q FROM test")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                p\tq
+                                [25.75,50.5]\t[25.75,50.5]
+                                """);
+                assertQuery("SELECT k, percentile_cont(x, " + percentiles + ") p FROM test ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                k\tp
+                                0\t[26.5,51.0]
+                                1\t[25.5,50.0]
+                                """);
+            }
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.1, 0.5][2:2]) p FROM test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            p
+                            []
+                            """);
+        });
+    }
+
+    @Test
     public void testNegativePercentileInArray() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");

@@ -32,7 +32,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
-import static io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory.checkPercentile;
+import static io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory.checkPercentileArray;
 
 public class MultiQuantileDiscDoubleGroupByFunctionFactory implements FunctionFactory {
 
@@ -54,7 +54,7 @@ public class MultiQuantileDiscDoubleGroupByFunctionFactory implements FunctionFa
             CairoConfiguration configuration,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        checkPercentile(args.getQuick(1), argPositions.getQuick(1));
+        checkPercentileArray(args.getQuick(1), argPositions.getQuick(1));
         return new MultiPercentileDiscDoubleGroupByFunction(configuration, args.getQuick(0), args.getQuick(1), argPositions.getQuick(1));
     }
 }
