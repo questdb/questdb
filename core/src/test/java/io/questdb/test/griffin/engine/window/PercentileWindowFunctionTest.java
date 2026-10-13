@@ -574,6 +574,34 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiPercentileContEmptyArrayLiteralOverPartition() throws Exception {
+        // the untyped ARRAY[] literal takes the DOUBLE[] type of the percentile list parameter
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x % 2 category, x::DOUBLE value FROM long_sequence(4))");
+            assertQuery("SELECT category, value, percentile_cont(value, ARRAY[]) OVER (PARTITION BY category) p FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            category\tvalue\tp
+                            1\t1.0\t[]
+                            0\t2.0\t[]
+                            1\t3.0\t[]
+                            0\t4.0\t[]
+                            """);
+            assertQuery("SELECT value, percentile_disc(value, ARRAY[]) OVER () p FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            value\tp
+                            1.0\t[]
+                            2.0\t[]
+                            3.0\t[]
+                            4.0\t[]
+                            """);
+        });
+    }
+
+    @Test
     public void testMultiPercentileContOverPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (" +
