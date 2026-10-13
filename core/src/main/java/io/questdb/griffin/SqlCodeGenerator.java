@@ -14547,6 +14547,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         virtual.setFrameProjection(projection);
     }
 
+    // Whether the function's value at a row depends on the row alone: no per-call state, no random
+    // draws, stable within the execution (deterministic, or now() and bind variables).
+    private static boolean isRowPure(Function function) {
+        return !function.shouldMemoize() && !function.isRandom() && function.isStableWithinExecution();
+    }
+
     // Whether a column of the projection other than the index-th reads the index-th's alias.
     private static boolean isReadByOtherColumn(ObjList<QueryColumn> columns, int index) {
         final CharSequence alias = columns.getQuick(index).getAlias();
@@ -14617,6 +14623,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         for (int i = 0; i < columnCount; i++) {
             final ExpressionNode ast = columns.getQuick(i).getAst();
             if (hasSubQuery(ast) || hasRandomFunction(ast)) {
+                return null;
+            }
+        }
+        // A copy computes its column for the rows the worker it belongs to is given, so the value
+        // must be the row's alone: a function that keeps state from call to call
+        // (timestamp_sequence(), which also asks to be memoized), draws from a generator, or is not
+        // proven to give the same result for the same row within the execution, restarts or
+        // diverges on every copy. Checked on the owner's compiled functions, which carry these
+        // properties up from every argument.
+        for (int i = 0, n = ownerFunctions.size(); i < n; i++) {
+            final Function ownerFunction = ownerFunctions.getQuick(i);
+            if (ownerFunction != null && !isRowPure(ownerFunction)) {
                 return null;
             }
         }
