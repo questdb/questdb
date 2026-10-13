@@ -408,6 +408,18 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             final DirectLongList rows = task.getFilteredRows();
             rows.clear();
 
+            // A single-symbol index scan's parallel plan: the frame's rows of the symbol come from
+            // its posting index, see IndexKeyPageFrameCursor; a frame without one takes the filter.
+            if (!isParquetFrame
+                    && task.getFrameSequence().getPageFrameCursor() instanceof IndexKeyPageFrameCursor indexRows
+                    && indexRows.readRows(task.getFrameIndex(), rows)) {
+                task.setFilteredRowCount(rows.size());
+                if (!task.isCountOnly()) {
+                    atom.project(workerId, owner, task, record, circuitBreaker);
+                }
+                return;
+            }
+
             final Function filter = atom.getFilter(filterId);
             if (task.isCountOnly()) {
                 long count = 0;

@@ -315,6 +315,8 @@ import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursor
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
 import io.questdb.griffin.engine.table.FrameProjection;
+import io.questdb.griffin.engine.table.IndexKeyScanFrameFactory;
+import io.questdb.griffin.engine.table.SymbolKeyEqualsFunction;
 import io.questdb.griffin.engine.table.ProjectedColumnFunction;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
@@ -16539,6 +16541,64 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && IndexType.isPosting(reader.getMetadata().getColumnIndexType(readerKeyColumnIndex));
     }
 
+    // The parallel plan of a single-symbol index scan, see DeferredSingleSymbolFilterPageFrameRecordCursorFactory:
+    // an Async Filter over the scan's partitions whose workers read each frame's rows of the symbol
+    // from its posting index. It shares the scan's partition frames and key function.
+    private void attachParallelIndexScan(
+            DeferredSingleSymbolFilterPageFrameRecordCursorFactory serial,
+            RecordMetadata queryMeta,
+            PartitionFrameCursorFactory dfcFactory,
+            Function symbolFunc,
+            int keyColumnIndex,
+            IntList columnIndexes,
+            IntList columnSizeShifts,
+            SqlExecutionContext executionContext
+    ) {
+        final IndexKeyScanFrameFactory frames = new IndexKeyScanFrameFactory(queryMeta, dfcFactory, symbolFunc, keyColumnIndex, columnIndexes, columnSizeShifts);
+        try {
+            final IntHashSet usedColumns = new IntHashSet();
+            usedColumns.add(keyColumnIndex);
+            serial.setParallelScan(new AsyncFilteredRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    configuration,
+                    executionContext.getMessageBus(),
+                    frames,
+                    new SymbolKeyEqualsFunction(keyColumnIndex, symbolFunc),
+                    usedColumns,
+                    reduceTaskFactory,
+                    null,
+                    expressionNodePool.next().of(LITERAL, "index key", 0, 0),
+                    null,
+                    0,
+                    executionContext.getSharedQueryWorkerCount(),
+                    false
+            ));
+        } catch (Throwable th) {
+            // the serial scan still runs; the frames borrow, so they free nothing of it
+            Misc.free(frames);
+            throw th;
+        }
+    }
+
+    private boolean isParallelIndexScanCandidate(
+            IQueryModel model,
+            TableReader reader,
+            int readerKeyColumnIndex,
+            int order,
+            int indexDirection,
+            SqlExecutionContext executionContext
+    ) {
+        return configuration.isSqlParallelFrameDispatchEnabled()
+                && executionContext.isParallelFilterEnabled()
+                && executionContext.getSharedQueryWorkerCount() > 0
+                && order == ORDER_ASC
+                && indexDirection == IndexReader.DIR_FORWARD
+                && !model.isUpdate()
+                && !executionContext.isLiveViewCompile()
+                && !reader.getTableToken().isLiveView()
+                && IndexType.isPosting(reader.getMetadata().getColumnIndexType(readerKeyColumnIndex));
+    }
+
     private boolean isNoIndex(IQueryModel model) {
         return model == forcedScanModel || SqlHints.hasNoIndexHint(model);
     }
@@ -17145,7 +17205,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (filter == null) {
                                     // This special case factory can later be disassembled to framing and index
                                     // cursors in SAMPLE BY processing
-                                    RecordCursorFactory result = new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
+                                    final DeferredSingleSymbolFilterPageFrameRecordCursorFactory result = new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
                                             configuration,
                                             keyColumnIndex,
                                             symbolFunc,
@@ -17157,7 +17217,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                             columnSizeShifts,
                                             supportsRandomAccess
                                     );
+                                    final Function resultSymbolFunc = symbolFunc;
                                     symbolFunc = null;
+                                    if (isParallelIndexScanCandidate(model, reader, columnIndexes.getQuick(keyColumnIndex), order, indexDirection, executionContext)) {
+                                        try {
+                                            attachParallelIndexScan(result, queryMeta, dfcFactory, resultSymbolFunc, keyColumnIndex, columnIndexes, columnSizeShifts, executionContext);
+                                        } catch (Throwable th) {
+                                            // the scan owns the partition frames: freed with it, not by the outer catch
+                                            dfcFactory = null;
+                                            Misc.free(result);
+                                            throw th;
+                                        }
+                                    }
                                     return result;
                                 }
                                 if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {

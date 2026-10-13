@@ -352,6 +352,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         return frameCount;
     }
 
+    /**
+     * The page frame cursor the frames come from, valid while the sequence is open.
+     */
+    public PageFrameCursor getPageFrameCursor() {
+        return frameCursor;
+    }
+
     public long getFrameRowCount(int frameIndex) {
         return frameRowCounts.getQuick(frameIndex);
     }
