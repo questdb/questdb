@@ -314,6 +314,8 @@ import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncTopKRecordCursorFactory;
+import io.questdb.griffin.engine.table.FrameProjection;
+import io.questdb.griffin.engine.table.ProjectedColumnFunction;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
@@ -13258,13 +13260,20 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            return new VirtualRecordCursorFactory(
+            final VirtualRecordCursorFactory virtual = new VirtualRecordCursorFactory(
                     virtualMetadata,
                     priorityMetadata,
                     functions,
                     factory,
                     virtualColumnReservedSlots
             );
+            try {
+                projectOnFilterWorkers(model, virtual, executionContext);
+            } catch (Throwable th) {
+                Misc.free(virtual);
+                throw th;
+            }
+            return virtual;
         } catch (Throwable e) {
             // Constant-folding a cast (e.g. `(-1234567L)::DECIMAL(4,2)`) can throw
             // ImplicitCastException at compile time. That escapes a narrower catch
@@ -14270,6 +14279,120 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * compiled {@code owner}'s, against the same input. Returns null, having freed what it
      * compiled, when a copy does not come out as the owner's function did.
      */
+    /**
+     * Lets the threads that filter an Async Filter's frames compute the virtual columns of the
+     * projection over it, see {@link FrameProjection}: columns of a fixed-size numeric type whose
+     * expression is not a plain column. Each worker slot gets a copy of the projection's
+     * functions, compiled as the window stages' copies are ({@link #compileProjectionCopy}); the
+     * projection's own functions are wrapped to read the frames' values
+     * ({@link ProjectedColumnFunction}). Nothing changes when the frame dispatch switch is off,
+     * when the base is not an Async Filter (or a selection of one), when a column memoizes, or when
+     * a copy cannot be compiled the same.
+     */
+    private void projectOnFilterWorkers(
+            IQueryModel model,
+            VirtualRecordCursorFactory virtual,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (!configuration.isSqlParallelFrameDispatchEnabled() || executionContext.getSharedQueryWorkerCount() < 1) {
+            return;
+        }
+        RecordCursorFactory base = virtual.getBaseFactory();
+        IntList crossIndex = null;
+        if (base instanceof SelectedRecordCursorFactory selected) {
+            crossIndex = selected.getColumnCrossIndex();
+            base = selected.getBaseFactory();
+        }
+        if (!(base instanceof AsyncJitFilteredRecordCursorFactory) && !(base instanceof AsyncFilteredRecordCursorFactory)) {
+            return;
+        }
+        final ObjList<Function> functions = virtual.getFunctions();
+        final PriorityMetadata priorityMetadata = virtual.getPriorityMetadata();
+        final int reserved = priorityMetadata.getVirtualColumnReservedSlots();
+        final ObjList<QueryColumn> columns = model.getColumns();
+        if (functions.size() != columns.size()) {
+            // a conditional timestamp column the copies would not have
+            return;
+        }
+        final IntList projected = new IntList();
+        final IntList projectedTypes = new IntList();
+        for (int i = 0, n = functions.size(); i < n; i++) {
+            final Function function = functions.getQuick(i);
+            if (function == null || function instanceof MemoizerFunction) {
+                return;
+            }
+            final int type = function.getType();
+            if (ColumnType.tagOf(type) == ColumnType.SYMBOL && ColumnFunction.unwrap(function) == null) {
+                // a computed symbol needs symbol tables the copies do not get
+                return;
+            }
+            if (ColumnFunction.unwrap(function) != null || function.isConstant() || function.isRuntimeConstant() || !FrameProjection.isSupportedType(type)) {
+                continue;
+            }
+            projected.add(i);
+            projectedTypes.add(type);
+        }
+        if (projected.size() == 0) {
+            return;
+        }
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            if (readsOwnSymbolColumn(columns.getQuick(i).getAst(), priorityMetadata, reserved)) {
+                return;
+            }
+        }
+        final int slotCount = executionContext.getSharedQueryWorkerCount() + 1;
+        final ObjList<ObjList<Function>> copies = new ObjList<>(slotCount);
+        try {
+            for (int i = 0; i < slotCount; i++) {
+                final ObjList<Function> copy = compileProjectionCopy(model, virtual, virtual.getBaseFactory().getMetadata(), executionContext);
+                if (copy == null) {
+                    for (int k = 0, m = copies.size(); k < m; k++) {
+                        Misc.freeObjList(copies.getQuick(k));
+                    }
+                    return;
+                }
+                copies.add(copy);
+            }
+        } catch (Throwable th) {
+            for (int k = 0, m = copies.size(); k < m; k++) {
+                Misc.freeObjList(copies.getQuick(k));
+            }
+            throw th;
+        }
+        final FrameProjection projection = new FrameProjection(configuration, copies, projected, projectedTypes, reserved, crossIndex);
+        if (base instanceof AsyncJitFilteredRecordCursorFactory jit) {
+            jit.setFrameProjection(projection);
+        } else {
+            ((AsyncFilteredRecordCursorFactory) base).setFrameProjection(projection);
+        }
+        for (int j = 0, n = projected.size(); j < n; j++) {
+            final int i = projected.getQuick(j);
+            functions.setQuick(i, new ProjectedColumnFunction(functions.getQuick(i), projection, j));
+        }
+        virtual.setFrameProjection(projection);
+    }
+
+    // Whether the expression reads one of the projection's own symbol columns, whose symbol table
+    // the projection's copies on the workers would not get.
+    private static boolean readsOwnSymbolColumn(ExpressionNode node, PriorityMetadata metadata, int reserved) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == LITERAL) {
+            final int index = metadata.getColumnIndexQuiet(node.token);
+            return index > -1 && index < reserved && ColumnType.tagOf(metadata.getColumnType(index)) == ColumnType.SYMBOL;
+        }
+        if (readsOwnSymbolColumn(node.lhs, metadata, reserved) || readsOwnSymbolColumn(node.rhs, metadata, reserved)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (readsOwnSymbolColumn(node.args.getQuick(i), metadata, reserved)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private @Nullable ObjList<Function> compileProjectionCopy(
             IQueryModel virtualModel,
             VirtualRecordCursorFactory owner,

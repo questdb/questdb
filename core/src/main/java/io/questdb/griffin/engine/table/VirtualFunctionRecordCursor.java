@@ -74,6 +74,9 @@ public final class VirtualFunctionRecordCursor implements RecordCursor {
     private GroupByBatchKernels kernels;
     // the query's, which the kernels' buffers are charged to
     private MemoryTracker memoryTracker;
+    // per column, the column whose values the frames serve, see ProjectedColumnFunction, or null;
+    // null until first asked
+    private ProjectedColumnFunction[] projected;
 
     public VirtualFunctionRecordCursor(
             @NotNull PriorityMetadata priorityMetadata,
@@ -136,6 +139,14 @@ public final class VirtualFunctionRecordCursor implements RecordCursor {
             return priorityMetadata.getBaseColumnIndex(virtualColumnIndex);
         }
         return -1;
+    }
+
+    /**
+     * The record the functions of the cursor's own record read, see
+     * {@link VirtualFunctionRecord#getFunctionInput()}.
+     */
+    public Record getFunctionInput() {
+        return recordA.getFunctionInput();
     }
 
     @Override
@@ -217,6 +228,16 @@ public final class VirtualFunctionRecordCursor implements RecordCursor {
         if (kernels != null) {
             kernels.ofBlock(baseBlock, baseBlock.getRowCount());
             for (int i = 0, n = kernelAddresses.length; i < n; i++) {
+                final ProjectedColumnFunction p = projected[i];
+                if (p != null) {
+                    // the filtering threads computed the column for the block's frame, or the
+                    // kernel or the row path computes it
+                    final long address = p.getBlockAddress();
+                    kernelAddresses[i] = address;
+                    if (address != 0) {
+                        continue;
+                    }
+                }
                 if (kernels.isKernel(i)) {
                     // null: a column it reads is not in the block's memory, so the row path
                     final GroupByBatchKernels.Args args = kernels.prepare(i);
@@ -304,6 +325,18 @@ public final class VirtualFunctionRecordCursor implements RecordCursor {
         final int n = functions.size();
         final IntList baseColumns = new IntList(n);
         boolean allowed = true;
+        projected = new ProjectedColumnFunction[n];
+        // the kernels are compiled from the projection's own functions
+        ObjList<Function> kernelFunctions = functions;
+        for (int i = 0; i < n; i++) {
+            if (functions.getQuick(i) instanceof ProjectedColumnFunction p) {
+                if (kernelFunctions == functions) {
+                    kernelFunctions = new ObjList<>(functions);
+                }
+                kernelFunctions.setQuick(i, p.getFunction());
+                projected[i] = p;
+            }
+        }
         for (int i = 0; i < n; i++) {
             final Function function = functions.getQuick(i);
             final ColumnFunction columnFunction = ColumnFunction.unwrap(function);
@@ -323,7 +356,7 @@ public final class VirtualFunctionRecordCursor implements RecordCursor {
         blocksAllowed = allowed;
         blockBaseColumns = baseColumns;
         if (allowed) {
-            kernels = GroupByBatchKernels.compileProjection(functions, virtualColumnReservedSlots, KERNEL_BLOCK_ROWS);
+            kernels = GroupByBatchKernels.compileProjection(kernelFunctions, virtualColumnReservedSlots, KERNEL_BLOCK_ROWS);
             if (kernels != null) {
                 kernels.setMemoryTracker(memoryTracker);
                 kernelAddresses = new long[n];
@@ -342,7 +375,11 @@ public final class VirtualFunctionRecordCursor implements RecordCursor {
             if (baseColumn != -1) {
                 return base.getColumnAddress(baseColumn);
             }
-            return kernels != null ? kernelAddresses[columnIndex] : 0;
+            if (kernels != null) {
+                return kernelAddresses[columnIndex];
+            }
+            final ProjectedColumnFunction p = projected[columnIndex];
+            return p != null ? p.getBlockAddress() : 0;
         }
 
         @Override

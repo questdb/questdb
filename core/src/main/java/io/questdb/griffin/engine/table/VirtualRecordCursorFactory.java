@@ -47,6 +47,7 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
     private RecordCursorFactory base;
     private VirtualFunctionRecordCursor cursor;
     private ObjList<Function> functions;
+    private FrameProjection frameProjection;
     private final VirtualRecordCursorFactorySymbolTableSource internalSymbolTableSource;
     private final PriorityMetadata priorityMetadata;
     private final boolean supportsRandomAccess;
@@ -132,6 +133,10 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
             internalSymbolTableSource.of(cursor);
             Function.init(functions, internalSymbolTableSource, executionContext, null);
             this.cursor.of(cursor, executionContext.getMemoryTracker());
+            if (frameProjection != null) {
+                // the reads of the cursor's own record are served from the frames
+                frameProjection.bind(this.cursor.getFunctionInput());
+            }
             return this.cursor;
         } catch (Throwable th) {
             cursor.close();
@@ -141,6 +146,19 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
 
     public ObjList<Function> getFunctions() {
         return functions;
+    }
+
+    /**
+     * The projection whose columns the filtering threads compute, see
+     * {@link FrameProjection}; the filter's atom owns it.
+     */
+    @org.jetbrains.annotations.TestOnly
+    public FrameProjection getFrameProjection() {
+        return frameProjection;
+    }
+
+    public void setFrameProjection(FrameProjection frameProjection) {
+        this.frameProjection = frameProjection;
     }
 
     /**

@@ -55,6 +55,10 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private final DirectLongList dataAddresses;
     private final StringSink errorMsg = new StringSink();
     private final DirectLongList filteredRows; // Used for TYPE_FILTER and TYPE_WINDOW_JOIN.
+    // TYPE_FILTER with a projection over it: the projected columns' values of the filtered rows,
+    // see io.questdb.griffin.engine.table.FrameProjection; valid when isProjected
+    private final DirectLongList projectedValues;
+    private boolean isProjected;
     private final PageFrameMemoryPool frameMemoryPool;
     private final long frameQueueCapacity;
     // the tasks of the group's frames after this task's own, which the frame sequence lends the group;
@@ -85,6 +89,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         try {
             this.frameQueueCapacity = configuration.getPageFrameReduceQueueCapacity();
             this.filteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), memoryTag);
+            this.projectedValues = new DirectLongList(16, memoryTag);
             this.dataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.auxAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), memoryTag);
             this.frameMemoryPool = new PageFrameMemoryPool(configuration, 0L);
@@ -146,6 +151,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         filteredRowCount = 0;
         isCountOnly = false;
         filteredRows.resetCapacity();
+        projectedValues.resetCapacity();
+        isProjected = false;
         dataAddresses.resetCapacity();
         auxAddresses.resetCapacity();
         frameMemoryPool.clear();
@@ -156,6 +163,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         filteredRowCount = 0;
         isCountOnly = false;
         Misc.free(filteredRows);
+        Misc.free(projectedValues);
+        isProjected = false;
         Misc.free(dataAddresses);
         Misc.free(auxAddresses);
         Misc.free(frameMemoryPool);
@@ -183,6 +192,24 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     public DirectLongList getFilteredRows() {
         return filteredRows;
+    }
+
+    /**
+     * The projected columns' values of the filtered rows, see {@link #isProjected()}.
+     */
+    public DirectLongList getProjectedValues() {
+        return projectedValues;
+    }
+
+    /**
+     * Whether the filtering thread computed the projection's columns for this frame's rows.
+     */
+    public boolean isProjected() {
+        return isProjected;
+    }
+
+    public void setProjected(boolean projected) {
+        isProjected = projected;
     }
 
     public int getFrameIndex() {
@@ -324,6 +351,7 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
         }
         frameMemory = null;
         filteredRows.clear();
+        isProjected = false;
         filteredRowCount = 0;
         errorMsg.clear();
         errorMessagePosition = 0;

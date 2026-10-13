@@ -314,6 +314,15 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         return base.supportsUpdateRowId(tableToken);
     }
 
+    /**
+     * Takes a projection over this filter whose columns the filtering threads compute, see
+     * {@link FrameProjection}; the atom frees it.
+     */
+    public void setFrameProjection(@NotNull FrameProjection projection) {
+        frameSequence.getAtom().setProjection(projection);
+        cursor.setProjection(projection);
+    }
+
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("Async Filter");
@@ -424,6 +433,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                     record.init(frameMemory);
                 }
                 task.setFilteredRowCount(rows.size());
+                atom.project(workerId, owner, task, record, circuitBreaker);
 
                 // Pre-touch native columns, if asked.
                 if (frameMemory.getFrameFormat() == PartitionFormat.NATIVE) {
