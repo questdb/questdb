@@ -539,33 +539,31 @@ public class RandomizedAdaptiveCrashFuzzTest extends AbstractAdaptiveCrashSweepT
         final Rnd redraw = randomized ? TestUtils.generateRandom(LOG) : null;
         long[] seed = drawSeed(redraw);
         SweepResult r = null;
-        for (int attempt = 0; attempt < SEED_DRAW_ATTEMPTS && r == null; attempt++) {
-            if (attempt > 0) {
-                Assert.assertNotNull("pinned seed exceeded the N<=" + SWEEP_CAP_HARD_LIMIT + " hard limit and "
-                        + "cannot be redrawn — raise the limit or shrink the workload", redraw);
-                seed = drawSeed(redraw);
+        try {
+            for (int attempt = 0; attempt < SEED_DRAW_ATTEMPTS && r == null; attempt++) {
+                if (attempt > 0) {
+                    Assert.assertNotNull("pinned seed exceeded the N<=" + SWEEP_CAP_HARD_LIMIT + " hard limit and "
+                            + "cannot be redrawn — raise the limit or shrink the workload", redraw);
+                    seed = drawSeed(redraw);
+                }
+                try {
+                    r = body.run(seed[0], seed[1]);
+                } catch (WorkloadNotCrashTestableException notTestable) {
+                    // Reject workloads that already suspend without a fault, such as unsupported replace-range
+                    // over Parquet. A pinned workload never redraws: report its seed and the original failure.
+                    final String reason = notTestable.getMessage();
+                    LOG.info().$("[seed] REJECTED seed ").$(seed[0]).$("L, ").$(seed[1]).$("L: ").$(reason).I$();
+                    if (redraw == null) {
+                        throw notTestable;
+                    }
+                }
             }
-            try {
-                r = body.run(seed[0], seed[1]);
-            } catch (WorkloadNotCrashTestableException notTestable) {
-                // The drawn workload suspends with no fault injected, a property of the generator (such as a
-                // replace-range insert over a Parquet partition, which is unsupported), not a durability defect.
-                // Redraw rather than sweep it: every crash point would fail on that condition. Logged, so a generator
-                // that starts producing these constantly is visible.
-                final String reason = notTestable.getMessage();
-                LOG.info().$("[seed] REJECTED seed ").$(seed[0]).$("L, ").$(seed[1]).$("L: ").$(reason).I$();
-                Assert.assertNotNull("a PINNED seed produced a workload that cannot be crash-tested; fix the "
-                                + "seed or the fuzz probabilities rather than redrawing: " + notTestable.getMessage(),
-                        redraw);
-                r = null;
-                continue;
-            } catch (AssertionError e) {
-                throw new AssertionError("seed " + seed[0] + "L, " + seed[1] + "L (replay with -D" + SEED_PROP
-                        + "=" + seed[0] + "," + seed[1] + "): " + e.getMessage(), e);
-            }
+            Assert.assertNotNull("no seed under the N<=" + SWEEP_CAP_HARD_LIMIT + " hard limit after "
+                    + SEED_DRAW_ATTEMPTS + " draws — the op library got much heavier; re-check the limit", r);
+        } catch (Throwable e) {
+            throw new AssertionError("seed " + seed[0] + "L, " + seed[1] + "L (replay with -D" + SEED_PROP
+                    + "=" + seed[0] + "," + seed[1] + "): " + e.getMessage(), e);
         }
-        Assert.assertNotNull("no seed under the N<=" + SWEEP_CAP_HARD_LIMIT + " hard limit after "
-                + SEED_DRAW_ATTEMPTS + " draws — the op library got much heavier; re-check the limit", r);
         LOG.info().$("[seed] PASSED with seeds ").$(seed[0]).$("L, ").$(seed[1]).$("L (N=").$(r.n)
                 .$(", swept=").$(r.sweptPoints).I$();
     }
