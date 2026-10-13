@@ -812,9 +812,11 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             assertFalse(configuration.disableColumnPurgeJob());
             TableToken token = createPostingTable("bounded_retries");
+            FilesFacade ff = configuration.getFilesFacade();
             try (Path path = partitionPathFor(token);
                  PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
                  TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
+                int partitionPathLen = path.size();
                 long firstSeal = writeAndSeal(path, "first");
                 long secondSeal = writeAndSeal(path, "second");
                 assertTrue(scoreboard.acquireTxn(0, 3L));
@@ -829,11 +831,19 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     }
                     assertTrue("one run must not keep retrying pinned tasks: " + clockReads.get(), clockReads.get() < 20);
                     assertEquals("both pinned tasks must remain queued", 2, job.getOutstandingPurgeTasks());
+                    assertTrue("first sealed .pv must survive while pinned", ff.exists(PostingIndexUtils.valueFileName(
+                            path.trimTo(partitionPathLen), "first", COLUMN_NAME_TXN_NONE, firstSeal)));
+                    assertTrue("second sealed .pv must survive while pinned", ff.exists(PostingIndexUtils.valueFileName(
+                            path.trimTo(partitionPathLen), "second", COLUMN_NAME_TXN_NONE, secondSeal)));
                 } finally {
                     scoreboard.releaseTxn(0, 3L);
                 }
                 setCurrentMicros(20_000L);
                 job.run();
+                assertFalse("first sealed .pv must be purged after readers release it", ff.exists(PostingIndexUtils.valueFileName(
+                        path.trimTo(partitionPathLen), "first", COLUMN_NAME_TXN_NONE, firstSeal)));
+                assertFalse("second sealed .pv must be purged after readers release it", ff.exists(PostingIndexUtils.valueFileName(
+                        path.trimTo(partitionPathLen), "second", COLUMN_NAME_TXN_NONE, secondSeal)));
                 assertEquals("both tasks must purge after readers release them", 0, job.getOutstandingPurgeTasks());
             }
         });
