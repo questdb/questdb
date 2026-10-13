@@ -176,6 +176,8 @@ public class IndexKeyPageFrameCursor implements PageFrameCursor {
             return false;
         }
         assert TEST_INDEX_FRAMES.incrementAndGet() > 0;
+        // frozen before dispatch, see freeze(): a reload would change what other threads read
+        assert reader.isFrozen();
         if (indexKey < 0) {
             return true;
         }
