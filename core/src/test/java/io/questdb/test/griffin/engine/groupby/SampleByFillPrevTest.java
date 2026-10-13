@@ -138,6 +138,29 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevBucketRenameKeepsUserFloorKey() throws Exception {
+        // FILL(PREV) variant of the 2h user floor shape. PREV carries the last real value
+        // forward per key: the 04:00 key repeats 4.0 at 02:00 and 03:00, the 02:00 key
+        // has nothing before 03:00 and stays null.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            assertQuery("SELECT avg(val) * 2 AS v, ts AS avg, timestamp_floor_utc('2h', ets, null, '00:00', null) AS avg1 FROM t SAMPLE BY 1h FILL(PREV) ORDER BY v")
+                    .noLeakCheck()
+                    .returns("""
+                            v\tavg1\tavg11
+                            2.0\t2024-01-01T00:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            4.0\t2024-01-01T01:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            4.0\t2024-01-01T02:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            4.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T04:00:00.000000Z
+                            7.0\t2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T00:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T01:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            null\t2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testFillPrevBucketWhenLastTimestampAliasedAsTimestamp() throws Exception {
         // last(ts) AS ts takes the timestamp's name, so generateFill must fill by the recorded
         // bucket and not by the TIMESTAMP column that merely carries the name ts (#7838).
