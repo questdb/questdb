@@ -92,16 +92,10 @@ public final class DurabilityTier {
         return NONE;
     }
 
-    /**
-     * True when the tier set includes the {@link #LOCAL} stream.
-     */
     public static boolean hasLocal(int tiers) {
         return (tiers & LOCAL) != 0;
     }
 
-    /**
-     * True when the tier set includes the {@link #REPLICATED} stream.
-     */
     public static boolean hasReplicated(int tiers) {
         return (tiers & REPLICATED) != 0;
     }

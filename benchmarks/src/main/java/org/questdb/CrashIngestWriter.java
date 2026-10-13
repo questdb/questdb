@@ -341,7 +341,7 @@ public class CrashIngestWriter {
      * existing path); the pkill harness parses this bare number.
      */
     private static void runBypassWal(CairoConfiguration cfg, String dbRoot, long maxRows) throws Exception {
-        // Step 1: create the NON-WAL table via DDL engine (same pattern as SyncCostProfiler)
+        // Step 1: create the NON-WAL table via DDL engine
         createTable(cfg, false);
 
         // Step 2: open a direct TableWriter (bypasses WAL overhead, exercises the commit
