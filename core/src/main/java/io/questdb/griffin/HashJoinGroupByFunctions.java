@@ -36,9 +36,15 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.griffin.engine.functions.BinaryFunction;
 import io.questdb.griffin.engine.functions.GroupByFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
 import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
+import io.questdb.griffin.engine.functions.QuaternaryFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
@@ -69,6 +75,9 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
     private final ObjList<GroupByFunctionsUpdater> updaters = new ObjList<>();
     private final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     private final int workerCount;
+    // True when every grouping key reads only build-side columns (or constants): a probe row's group then
+    // follows from which build row it joined, so the aggregation loops can reuse that group's map value.
+    private boolean keysReadBuildOnly;
     private Function filter;
     private ObjList<Function> outputOnlyFunctions;
     private ObjList<Function> workerFilters;
@@ -115,6 +124,7 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
                 }
             }
             outputOnlyFunctions = GroupByUtils.extractNonGroupByFunctions(outputFunctions);
+            keysReadBuildOnly = isKeyed() && keysReadBuildOnly(columnFilter, keyFunctions, metadata.getProbeColumnCount());
             SqlCodeGenerator.WorkerFunctionLists workers = generator.compilePerWorkerInnerProjectionFunctions(
                     executionContext, metadata.getColumns(), innerFunctions, workerCount, joined, flags);
             if (workers != null) {
@@ -234,6 +244,10 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
         return workerCount;
     }
 
+    public boolean isKeysReadBuildOnly() {
+        return keysReadBuildOnly;
+    }
+
     public boolean isKeyed() {
         return keyTypes.getColumnCount() > 0;
     }
@@ -320,4 +334,65 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
         return failure;
     }
 
+
+    private static boolean keysReadBuildOnly(ListColumnFilter columnFilter, ObjList<Function> keyFunctions, int probeColumnCount) {
+        for (int i = 0, n = columnFilter.getColumnCount(); i < n; i++) {
+            final int factored = columnFilter.getColumnIndex(i);
+            if ((factored > 0 ? factored : -factored) - 1 < probeColumnCount) {
+                return false;
+            }
+        }
+        final IntList columns = new IntList();
+        for (int i = 0, n = keyFunctions.size(); i < n; i++) {
+            columns.clear();
+            if (!collectColumns(keyFunctions.getQuick(i), columns)) {
+                return false;
+            }
+            for (int c = 0, m = columns.size(); c < m; c++) {
+                if (columns.getQuick(c) < probeColumnCount) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    // Adds the columns a function reads to the list, when all it is made of is known to read only its column
+    // references; returns false for anything else (the caller then keeps the per-row key path).
+    private static boolean collectColumns(Function function, IntList columns) {
+        if (function instanceof ColumnFunction cf) {
+            columns.add(cf.getColumnIndex());
+            return true;
+        }
+        if (function.isConstant() || function.isRuntimeConstant()) {
+            return true;
+        }
+        if (function.hasPerCallState() || function.isRandom() || function.isNonDeterministic()) {
+            return false;
+        }
+        if (function instanceof UnaryFunction f) {
+            return collectColumns(f.getArg(), columns);
+        }
+        if (function instanceof BinaryFunction f) {
+            return collectColumns(f.getLeft(), columns) && collectColumns(f.getRight(), columns);
+        }
+        if (function instanceof TernaryFunction f) {
+            return collectColumns(f.getLeft(), columns) && collectColumns(f.getCenter(), columns)
+                    && collectColumns(f.getRight(), columns);
+        }
+        if (function instanceof QuaternaryFunction f) {
+            return collectColumns(f.getFunc0(), columns) && collectColumns(f.getFunc1(), columns)
+                    && collectColumns(f.getFunc2(), columns) && collectColumns(f.getFunc3(), columns);
+        }
+        if (function instanceof MultiArgFunction f) {
+            final ObjList<Function> args = f.args();
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (!collectColumns(args.getQuick(i), columns)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return false;
+    }
 }

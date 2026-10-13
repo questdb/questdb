@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.RecordSink;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -1027,6 +1028,15 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         FrozenHashJoinBuild.RecordProbe partitionedRecordProbe;
         FrozenHashJoinBuild.RecordProbe recordProbe;
         SimpleMapValue value;
+        // The map value of each build key's group when the grouping keys read only build columns
+        // (HashJoinGroupByFunctions.isKeysReadBuildOnly()): index 0 is the outer join's no-match group, index
+        // k + 1 is translated build key k. A value's address, valid until the map adds a group (which may move
+        // its heap, so adding one clears the cache) or the slot aggregates into another map.
+        long[] groupValueByBuildKey;
+        Map groupValueMap;
+        // The map's size when the cache was last valid: a cleared or reused map has another size, so a stale
+        // address is never read.
+        long groupValueMapSize = -1;
 
         Slot(
                 HashJoinGroupByRecord joinedRecord,
@@ -1080,6 +1090,8 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
                 updater.updateEmpty(value);
                 value.setNew(true);
             }
+            groupValueMap = null;
+            groupValueMapSize = -1;
             joinedRecord.clear();
             probeRecord.of(null);
             buildRecord.of(null);

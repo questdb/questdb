@@ -30,6 +30,8 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapKey;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
@@ -58,6 +60,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
+
+import java.util.Arrays;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -1136,14 +1140,24 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
         final boolean outer = atom.isOuter();
+        final boolean byBuildKey = functions.isKeysReadBuildOnly() && fragment.isNotSharded() && slot.value == null;
         for (long p = 0, n = rows.size(); p < n; p++) {
             probeRecord.setRowIndex(rows.get(p));
-            if (probe.findSingleUnchecked(translator.translate(probeRecord.getInt(probeKeyColumn)))) {
+            final int buildKey = translator.translate(probeRecord.getInt(probeKeyColumn));
+            if (probe.findSingleUnchecked(buildKey)) {
                 record.setHasMatch(true);
-                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                if (byBuildKey && buildKey >= 0) {
+                    updateByBuildKey(slot, buildKey + 1, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                } else {
+                    rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                }
             } else if (outer) {
                 record.setHasMatch(false);
-                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                if (byBuildKey) {
+                    updateByBuildKey(slot, 0, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                } else {
+                    rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                }
             }
         }
     }
@@ -1274,14 +1288,24 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
         final boolean outer = atom.isOuter();
+        final boolean byBuildKey = functions.isKeysReadBuildOnly() && fragment.isNotSharded() && slot.value == null;
         for (long p = 0, n = rows.size(); p < n; p++) {
             probeRecord.setRowIndex(rows.get(p));
-            if (probe.findSingleUnchecked(translator.translate(probeRecord.getInt(probeKeyColumn)))) {
+            final int buildKey = translator.translate(probeRecord.getInt(probeKeyColumn));
+            if (probe.findSingleUnchecked(buildKey)) {
                 record.setHasMatch(true);
-                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                if (byBuildKey && buildKey >= 0) {
+                    updateByBuildKey(slot, buildKey + 1, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                } else {
+                    rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                }
             } else if (outer) {
                 record.setHasMatch(false);
-                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                if (byBuildKey) {
+                    updateByBuildKey(slot, 0, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                } else {
+                    rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                }
             }
         }
     }
@@ -1308,14 +1332,24 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
         final boolean outer = atom.isOuter();
+        final boolean byBuildKey = functions.isKeysReadBuildOnly() && fragment.isNotSharded() && slot.value == null;
         for (long r = 0; r < rowCount; r++) {
             probeRecord.setRowIndex(r);
-            if (probe.findSingleUnchecked(translator.translate(probeRecord.getInt(probeKeyColumn)))) {
+            final int buildKey = translator.translate(probeRecord.getInt(probeKeyColumn));
+            if (probe.findSingleUnchecked(buildKey)) {
                 record.setHasMatch(true);
-                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                if (byBuildKey && buildKey >= 0) {
+                    updateByBuildKey(slot, buildKey + 1, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                } else {
+                    rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                }
             } else if (outer) {
                 record.setHasMatch(false);
-                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                if (byBuildKey) {
+                    updateByBuildKey(slot, 0, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                } else {
+                    rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                }
             }
         }
     }
@@ -1339,14 +1373,24 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final HashJoinGroupByRowUpdater rowUpdater = atom.getRowUpdater();
         final int probeKeyColumn = atom.getProbeKeyColumn();
         final boolean outer = atom.isOuter();
+        final boolean byBuildKey = functions.isKeysReadBuildOnly() && fragment.isNotSharded() && slot.value == null;
         for (long r = 0; r < rowCount; r++) {
             probeRecord.setRowIndex(r);
-            if (probe.findSingleUnchecked(translator.translate(probeRecord.getInt(probeKeyColumn)))) {
+            final int buildKey = translator.translate(probeRecord.getInt(probeKeyColumn));
+            if (probe.findSingleUnchecked(buildKey)) {
                 record.setHasMatch(true);
-                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                if (byBuildKey && buildKey >= 0) {
+                    updateByBuildKey(slot, buildKey + 1, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                } else {
+                    rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                }
             } else if (outer) {
                 record.setHasMatch(false);
-                rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                if (byBuildKey) {
+                    updateByBuildKey(slot, 0, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                } else {
+                    rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                }
             }
         }
     }
@@ -1496,5 +1540,55 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         failure = Misc.freeBestEffort(failure, buildFactory);
         buildFactory = null;
         CairoException.rethrowCleanupFailure(failure);
+    }
+
+    /**
+     * One probe row's update when the grouping keys read only build columns and each probe key matches at most
+     * one build row: the row's group follows from its translated build key (or the no-match group), so the
+     * key's map value is looked up once per key and reused instead of being rebuilt and hashed per row.
+     * Adding a group may move the map's heap, so it clears every cached address.
+     */
+    private static void updateByBuildKey(
+            AsyncHashJoinGroupByAtom.Slot slot,
+            int cacheIndex,
+            Map map,
+            RecordSink sink,
+            GroupByFunctionsUpdater updater,
+            HashJoinGroupByRecord record,
+            Function filter,
+            long rowId
+    ) {
+        if (filter != null && !filter.getBool(record)) {
+            return;
+        }
+        long[] cache = slot.groupValueByBuildKey;
+        if (cache == null || cacheIndex >= cache.length) {
+            final long[] grown = new long[Math.max(cacheIndex + 1, cache == null ? 64 : cache.length * 2)];
+            if (cache != null && slot.groupValueMap == map) {
+                System.arraycopy(cache, 0, grown, 0, cache.length);
+            }
+            slot.groupValueByBuildKey = cache = grown;
+        }
+        if (slot.groupValueMap != map || slot.groupValueMapSize != map.size()) {
+            Arrays.fill(cache, 0L);
+            slot.groupValueMap = map;
+            slot.groupValueMapSize = map.size();
+        }
+        final long address = cache[cacheIndex];
+        if (address != 0) {
+            updater.updateExisting(map.valueAt(address), record, rowId);
+            return;
+        }
+        final MapKey key = map.withKey();
+        sink.copy(record, key);
+        final MapValue value = key.createValue();
+        if (value.isNew()) {
+            Arrays.fill(cache, 0L);
+            slot.groupValueMapSize = map.size();
+            updater.updateNew(value, record, rowId);
+        } else {
+            updater.updateExisting(value, record, rowId);
+        }
+        cache[cacheIndex] = value.getStartAddress();
     }
 }
