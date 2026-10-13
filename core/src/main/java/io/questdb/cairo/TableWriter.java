@@ -3508,6 +3508,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         if (engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
             publishAnchorForTableWithoutOne();
+            // A replica-open writer can survive promotion. Its durable baseline now permits partition purge;
+            // the two save point pins still protect versions needed by either generation.
+            engine.markPartitionPurgeSafe(tableToken);
             adaptiveAnchorPolicyVersion = policyVersion;
         } else if (removeSavePointForReplica()) {
             adaptiveAnchorPolicyVersion = policyVersion;

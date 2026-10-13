@@ -3190,8 +3190,9 @@ public class CairoEngine implements Closeable, WriterSource {
      * Whether the partition purge job may remove a table's superseded partition versions under SYNC or ADAPTIVE.
      * After a failed flush and a restart, the page cache may hold a {@code _txn} (SYNC) or a save point header
      * (ADAPTIVE) the device never got, so a version it no longer names may be the one the device still names. A
-     * writer open makes that state durable before it removes such versions, so the job waits until a writer has
-     * opened the table in this process, and stops after a failed data sync.
+     * writer open makes that state durable before it removes such versions. A writer surviving promotion can
+     * also establish that state by reconciling its durable baseline. The job waits for either boundary in this
+     * process, and stops after a failed data sync.
      */
     public boolean isPartitionPurgeSafe(TableToken tableToken) {
         return !isDurabilityFailed() && partitionPurgeSafeTables.containsKey(tableToken.getDirName());
