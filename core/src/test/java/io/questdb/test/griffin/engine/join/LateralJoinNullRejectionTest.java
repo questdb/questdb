@@ -24,10 +24,11 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
-import io.questdb.std.Chars;
+import io.questdb.griffin.engine.table.LateralNullCheckRecordCursorFactory;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -115,6 +116,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             "{C} = -2_147_483_648", "{C} <= -2_147_483_648", "{C} < -2_147_483_648", "{C} > -2_147_483_648"
     };
     private static final String NULL_VALUE_SUFFIX = "is not supported in a correlated lateral sub-query when this value is NULL";
+    // the error of the rewriter for a filter that may keep the rows that a RIGHT or FULL join NULL-extends
+    private static final String OUTER_COLUMN_ERROR = "outer column reference in an ON clause at or before a RIGHT or FULL join " + ERROR_SUFFIX;
     private static final String[] OUTER_KEYS = {"1", "2", "3"};
     // = <= and >= against a bind variable or now(), whose value the plan checks for NULL once per execution
     private static final Pattern RUNTIME_CHECKED = Pattern.compile("^\\{C} (=|<=|>=) (\\$1|.*now\\(\\).*)$|^\\$1 (=|<=|>=) \\{C}$");
@@ -238,6 +241,96 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         });
     }
 
+    // checkReference() takes the failure of a reference for the failure of its filter only when the
+    // filter fails with the same error on the table alone
+    @Test
+    public void testCheckOfFailedReference() {
+        final String typeError = "there is no matching operator `between` with the argument type: FLOAT";
+        final Outcome reference = new Outcome(null, typeError, 124);
+        final List<String> failures = new ArrayList<>();
+        checkReference("H", "S", reference, new Outcome(null, typeError, 35), failures);
+        Assert.assertEquals(List.of(), failures);
+        checkReference("H", "S", reference, new Outcome(List.of("10"), null, -1), failures);
+        checkReference("H", "S", reference, new Outcome(null, "Invalid column: t.fl", 30), failures);
+        Assert.assertEquals(
+                List.of(
+                        "H: the reference failed with [124] " + typeError + ", and the filter on the table alone returned 1 rows [10]\n    S",
+                        "H: the reference failed with [124] " + typeError + ", and the filter on the table alone failed with [30] Invalid column: t.fl\n    S"
+                ),
+                failures
+        );
+    }
+
+    // When the filter does not compile, a query fails with the error of the filter, or, while the
+    // outer-ref join stays, with the rewriter's error at the RIGHT or FULL keyword. Mode.ANY takes
+    // any error, but never rows.
+    @Test
+    public void testCheckOfQueryAfterFailedReference() {
+        final Column column = column("FLOAT");
+        final String template = "{C} BETWEEN 5.5 AND 15.5";
+        final String typeError = "there is no matching operator `between` with the argument type: FLOAT";
+        final Outcome reference = new Outcome(null, typeError, 124);
+        for (Shape shape : Shape.values()) {
+            final String sql = lateralSql(shape, Form.TABLE, column, template);
+            final int keyword = sql.indexOf(shape.joinKeyword);
+            final boolean isAnyErrorAccepted = shape.mode == Mode.ANY;
+            assertCheck(shape, column, template, sql, reference, new Outcome(List.of(), null, -1), false);
+            assertCheck(shape, column, template, sql, reference, new Outcome(null, typeError, 150), true);
+            assertCheck(shape, column, template, sql, reference, new Outcome(null, OUTER_COLUMN_ERROR, keyword), shape.mode != Mode.WHERE_KEY);
+            assertCheck(shape, column, template, sql, reference, new Outcome(null, OUTER_COLUMN_ERROR, keyword + 1), isAnyErrorAccepted);
+            assertCheck(shape, column, template, sql, reference, new Outcome(null, "Invalid column: t.x", 117), isAnyErrorAccepted);
+        }
+    }
+
+    // When the reference returns rows, a query returns the same rows, or fails with the rewriter's
+    // error at the RIGHT keyword when the filter keeps the rows that the join NULL-extends, or with the
+    // error that the plan raises at a bind variable that is NULL. Mode.ANY takes any error.
+    @Test
+    public void testCheckOfQueryAfterReferenceRows() {
+        final Column column = column("INT");
+        final Outcome matchedRows = new Outcome(List.of("1\t10\t100"), null, -1);
+        final Outcome nullExtendedRows = new Outcome(List.of("1\tnull\t101"), null, -1);
+        String sql = lateralSql(Shape.RIGHT_ON, Form.TABLE, column, "{C} = 10");
+        final int keyword = sql.indexOf(Shape.RIGHT_ON.joinKeyword);
+        final Outcome rewriterError = new Outcome(null, OUTER_COLUMN_ERROR, keyword);
+        // a filter that drops the NULL-extended rows
+        assertCheck(Shape.RIGHT_ON, column, "{C} = 10", sql, matchedRows, matchedRows, true);
+        assertCheck(Shape.RIGHT_ON, column, "{C} = 10", sql, matchedRows, nullExtendedRows, false);
+        assertCheck(Shape.RIGHT_ON, column, "{C} = 10", sql, matchedRows, rewriterError, false);
+        // a filter that keeps them
+        sql = lateralSql(Shape.RIGHT_ON, Form.TABLE, column, "{C} IS NULL");
+        assertCheck(Shape.RIGHT_ON, column, "{C} IS NULL", sql, nullExtendedRows, nullExtendedRows, false);
+        assertCheck(Shape.RIGHT_ON, column, "{C} IS NULL", sql, nullExtendedRows, rewriterError, true);
+        assertCheck(Shape.RIGHT_ON, column, "{C} IS NULL", sql, nullExtendedRows, new Outcome(null, rewriterError.error, keyword + 1), false);
+        // a bind variable value that is NULL
+        sql = lateralSql(Shape.RIGHT_ON, Form.TABLE, column, "{C} >= $1");
+        final String nullValueError = LateralNullCheckRecordCursorFactory.NULL_VALUE_ERROR;
+        assertCheck(Shape.RIGHT_ON, column, "{C} >= $1", sql, nullExtendedRows, new Outcome(null, nullValueError, sql.indexOf("$1")), true);
+        assertCheck(Shape.RIGHT_ON, column, "{C} >= $1", sql, nullExtendedRows, new Outcome(null, nullValueError, sql.indexOf("$1") + 1), false);
+        // Mode.ANY
+        sql = lateralSql(Shape.FULL_ON, Form.TABLE, column, "{C} = 10");
+        assertCheck(Shape.FULL_ON, column, "{C} = 10", sql, matchedRows, new Outcome(null, "Invalid column: t.x", 117), true);
+        assertCheck(Shape.FULL_ON, column, "{C} = 10", sql, matchedRows, nullExtendedRows, false);
+    }
+
+    // The engine throws only a SqlException for a query that it rejects. run() fails the test at once
+    // on any other exception, instead of taking it for the error that a case expects.
+    @Test
+    public void testCrashFailsTheTest() throws Exception {
+        // enables the npe() test function, which throws a NullPointerException
+        node1.setProperty(PropertyKey.DEV_MODE_ENABLED, true);
+        assertMemoryLeak(() -> {
+            createTables();
+            final AssertionError error = Assert.assertThrows(
+                    AssertionError.class,
+                    () -> assertTemplate(Shape.RIGHT_ON, column("INT"), "npe() AND {C} = 10", null, new ArrayList<>())
+            );
+            TestUtils.assertContains(error.getMessage(), "RIGHT_ON INT [npe() AND {C} = 10]: failed with java.lang.NullPointerException");
+            TestUtils.assertContains(error.getMessage(), referenceSql(Shape.RIGHT_ON, "npe() AND t.i = 10"));
+            Assert.assertTrue(error.getCause() instanceof NullPointerException);
+        });
+    }
+
     @Test
     public void testFullJoinAfterCorrelatedInnerJoin() throws Exception {
         assertShape(Shape.INNER_ON_FULL);
@@ -248,6 +341,26 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     @Test
     public void testFullJoinWithCorrelatedOn() throws Exception {
         assertShape(Shape.FULL_ON);
+    }
+
+    // A filter that runs on the table alone fails the reference, because the join finds id in both of
+    // its tables. assertTemplate() reports it, instead of taking it for a filter that does not compile.
+    @Test
+    public void testReferenceThatTheJoinRejects() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final List<String> failures = new ArrayList<>();
+            assertTemplate(Shape.RIGHT_ON, column("INT"), "id = 10", null, failures);
+            final String sql = referenceSql(Shape.RIGHT_ON, "id = 10");
+            // every query fails with the error of the reference, which the cases take for that of the filter
+            Assert.assertEquals(
+                    List.of(
+                            "RIGHT_ON INT [id = 10]: the reference failed with [" + sql.indexOf("id = 10") + "] Ambiguous column [name=id], "
+                                    + "and the filter on the table alone returned 1 rows [10]\n    " + sql
+                    ),
+                    failures
+            );
+        });
     }
 
     @Test
@@ -266,10 +379,96 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         assertShape(Shape.WHERE_KEY_RIGHT);
     }
 
+    private static void assertCheck(
+            Shape shape,
+            Column column,
+            String template,
+            String sql,
+            Outcome reference,
+            Outcome actual,
+            boolean isAccepted
+    ) {
+        final List<String> failures = new ArrayList<>();
+        checkCase(shape, Form.TABLE, column, template, "H", sql, reference, actual, failures);
+        Assert.assertEquals(shape + " " + template + ", reference " + summary(reference) + ", query " + summary(actual) + ": " + failures, isAccepted ? 0 : 1, failures.size());
+    }
+
     private static String[] cat(String[] a, String[] b) {
         final String[] r = Arrays.copyOf(a, a.length + b.length);
         System.arraycopy(b, 0, r, a.length, b.length);
         return r;
+    }
+
+    // When the filter does not compile, see checkReference(), the query fails with its error, or, while
+    // the outer-ref join stays, with the rewriter's error, which the rewriter raises before the code
+    // generator compiles the filter; Mode.ANY takes any error. Otherwise the query returns the rows of
+    // the reference, or fails as expected() decides.
+    private static void checkCase(
+            Shape shape,
+            Form form,
+            Column column,
+            String template,
+            String header,
+            String sql,
+            Outcome reference,
+            Outcome actual,
+            List<String> failures
+    ) {
+        final int position = sql.indexOf(shape.joinKeyword);
+        if (reference.error != null) {
+            if (actual.error == null) {
+                failures.add(header + ": returned " + summary(actual) + ", the reference failed with " + summary(reference) + "\n    " + sql);
+            } else if (shape.mode != Mode.ANY
+                    && !hasSameMessage(actual, reference)
+                    && (shape.mode == Mode.WHERE_KEY || !isRewriterError(actual, position))) {
+                failures.add(header + ": failed with " + summary(actual) + ", expected the error of the filter, " + summary(reference)
+                        + (shape.mode == Mode.PINNED ? ", or [" + position + "] ... " + ERROR_SUFFIX : "") + "\n    " + sql);
+            }
+            return;
+        }
+        if (actual.error == null && !actual.rows.equals(reference.rows)) {
+            failures.add(header + ": WRONG ROWS " + summary(actual) + ", expected " + summary(reference) + "\n    " + sql);
+            return;
+        }
+        boolean keepsNullExtendedRows = false;
+        for (int i = 0, n = reference.rows.size(); i < n; i++) {
+            keepsNullExtendedRows |= reference.rows.get(i).split("\t")[1].equals("null");
+        }
+        // ROWS_OR_ERROR takes any SqlException, see Mode.ANY
+        final Expected expected = expected(shape, form, column, template, keepsNullExtendedRows);
+        switch (expected) {
+            case ROWS -> {
+                if (actual.error != null) {
+                    failures.add(header + ": failed with " + summary(actual) + ", expected " + summary(reference) + "\n    " + sql);
+                }
+            }
+            case ERROR -> {
+                if (actual.error == null) {
+                    failures.add(header + ": returned " + summary(actual) + ", expected the rewriter to reject the filter\n    " + sql);
+                } else if (!isRewriterError(actual, position) && !isNullValueError(actual, sql, template, column)) {
+                    failures.add(header + ": failed with " + summary(actual) + ", expected [" + position + "] ... " + ERROR_SUFFIX + "\n    " + sql);
+                }
+            }
+        }
+    }
+
+    // A reference fails only because its filter does not compile for the column type, so the filter
+    // fails on the table alone with the same error. If it runs there, the join rejected a valid filter,
+    // which checkCase() would take for the error of the filter.
+    private static void checkReference(String header, String sql, Outcome reference, Outcome alone, List<String> failures) {
+        if (alone.error == null || !hasSameMessage(alone, reference)) {
+            failures.add(header + ": the reference failed with " + summary(reference) + ", and the filter on the table alone "
+                    + (alone.error == null ? "returned " : "failed with ") + summary(alone) + "\n    " + sql);
+        }
+    }
+
+    private static Column column(String type) {
+        for (Column column : COLUMNS) {
+            if (column.type.equals(type)) {
+                return column;
+            }
+        }
+        throw new AssertionError("no column of type " + type);
     }
 
     private static void createTables() throws SqlException {
@@ -312,8 +511,8 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     }
 
     // the messages only, as the positions differ between the queries that share the filter
-    private static boolean hasSameMessage(SqlException a, SqlException b) {
-        return Chars.equals(a.getFlyweightMessage(), b.getFlyweightMessage());
+    private static boolean hasSameMessage(Outcome a, Outcome b) {
+        return a.error.equals(b.error);
     }
 
     private static String instantiate(String template, String columnRef) {
@@ -325,16 +524,16 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     }
 
     // the error of a plan that checks, when the query runs, that a bind variable is not NULL
-    private static boolean isNullValueError(SqlException error, String sql, String template, Column column) {
+    private static boolean isNullValueError(Outcome outcome, String sql, String template, Column column) {
         return column.hasNull()
                 && template.contains("$1")
                 && RUNTIME_CHECKED.matcher(template).matches()
-                && Chars.contains(error.getFlyweightMessage(), NULL_VALUE_SUFFIX)
-                && error.getPosition() == sql.indexOf("$1");
+                && outcome.error.contains(NULL_VALUE_SUFFIX)
+                && outcome.position == sql.indexOf("$1");
     }
 
-    private static boolean isRewriterError(SqlException error, int position) {
-        return Chars.contains(error.getFlyweightMessage(), ERROR_SUFFIX) && error.getPosition() == position;
+    private static boolean isRewriterError(Outcome outcome, int position) {
+        return outcome.error.contains(ERROR_SUFFIX) && outcome.position == position;
     }
 
     // the rewriter only proves comparisons, IN and BETWEEN
@@ -371,16 +570,17 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         return sb.toString();
     }
 
-    // Returns the rows of the query, or the SqlException that rejects it. Any other exception, such as
-    // a NullPointerException or an AssertionError of the engine, fails the test at once: no case
-    // expects one, and a case that expects an error would take it for one.
+    // Returns the rows of the query, or the message and the position of the SqlException that rejects
+    // it, copied, as SqlException reuses one instance per thread unless assertions are on. Any other
+    // exception, such as a NullPointerException or an AssertionError of the engine, fails the test at
+    // once: no case expects one, and a case that expects an error would take it for one.
     private static Outcome run(String sql, String header) {
         try {
             sink.clear();
             printSql(sql);
-            return new Outcome(sortedRows(sink), null);
+            return new Outcome(sortedRows(sink), null, -1);
         } catch (SqlException e) {
-            return new Outcome(null, e);
+            return new Outcome(null, e.getFlyweightMessage().toString(), e.getPosition());
         } catch (Throwable e) {
             throw new AssertionError(header + ": failed with " + e + "\n    " + sql, e);
         }
@@ -421,7 +621,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         if (outcome.error == null) {
             return outcome.rows.size() + " rows " + outcome.rows;
         }
-        return "[" + outcome.error.getPosition() + "] " + outcome.error.getFlyweightMessage();
+        return "[" + outcome.position + "] " + outcome.error;
     }
 
     private void assertCase(
@@ -435,46 +635,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
     ) {
         final String sql = lateralSql(shape, form, column, template);
         final String header = shape + " " + form + " " + column.type + " [" + template + "]" + (bindValues != null ? " " + bindValues : "");
-        final Outcome actual = run(sql, header);
-        final int position = sql.indexOf(shape.joinKeyword);
-        if (reference.error != null) {
-            // The filter does not compile, see assertTemplate(), so the query fails with its error, or,
-            // while the outer-ref join stays, with the rewriter's error, which the rewriter raises before
-            // the code generator compiles the filter. Mode.ANY takes any SqlException.
-            if (actual.error == null) {
-                failures.add(header + ": returned " + summary(actual) + ", the reference failed with " + summary(reference) + "\n    " + sql);
-            } else if (shape.mode != Mode.ANY
-                    && !hasSameMessage(actual.error, reference.error)
-                    && (shape.mode == Mode.WHERE_KEY || !isRewriterError(actual.error, position))) {
-                failures.add(header + ": failed with " + summary(actual) + ", expected the error of the filter, " + summary(reference)
-                        + (shape.mode == Mode.PINNED ? ", or [" + position + "] ... " + ERROR_SUFFIX : "") + "\n    " + sql);
-            }
-            return;
-        }
-        if (actual.error == null && !actual.rows.equals(reference.rows)) {
-            failures.add(header + ": WRONG ROWS " + summary(actual) + ", expected " + summary(reference) + "\n    " + sql);
-            return;
-        }
-        boolean keepsNullExtendedRows = false;
-        for (int i = 0, n = reference.rows.size(); i < n; i++) {
-            keepsNullExtendedRows |= reference.rows.get(i).split("\t")[1].equals("null");
-        }
-        // ROWS_OR_ERROR takes any SqlException, see Mode.ANY
-        final Expected expected = expected(shape, form, column, template, keepsNullExtendedRows);
-        switch (expected) {
-            case ROWS -> {
-                if (actual.error != null) {
-                    failures.add(header + ": failed with " + summary(actual) + ", expected " + summary(reference) + "\n    " + sql);
-                }
-            }
-            case ERROR -> {
-                if (actual.error == null) {
-                    failures.add(header + ": returned " + summary(actual) + ", expected the rewriter to reject the filter\n    " + sql);
-                } else if (!isRewriterError(actual.error, position) && !isNullValueError(actual.error, sql, template, column)) {
-                    failures.add(header + ": failed with " + summary(actual) + ", expected [" + position + "] ... " + ERROR_SUFFIX + "\n    " + sql);
-                }
-            }
-        }
+        checkCase(shape, form, column, template, header, sql, reference, run(sql, header), failures);
     }
 
     private void assertShape(Shape shape) throws Exception {
@@ -520,14 +681,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         final String header = shape + " " + column.type + " [" + template + "]" + (bindValues != null ? " " + bindValues : "");
         final Outcome reference = run(sql, header);
         if (reference.error != null) {
-            // The reference fails only because its filter does not compile for the column type, so the
-            // filter fails on the table alone with the same error. If it runs there, the join rejected a
-            // valid filter, which the cases below would take for the error of the filter.
-            final Outcome alone = run("SELECT id FROM trades t WHERE " + filter, header);
-            if (alone.error == null || !hasSameMessage(alone.error, reference.error)) {
-                failures.add(header + ": the reference failed with " + summary(reference) + ", and the filter on the table alone "
-                        + (alone.error == null ? "returned " : "failed with ") + summary(alone) + "\n    " + sql);
-            }
+            checkReference(header, sql, reference, run("SELECT id FROM trades t WHERE " + filter, header), failures);
         }
         // every form accepts every column type, so a form that stops accepting one fails its cases
         final Form[] forms = Form.values();
@@ -610,6 +764,7 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         }
     }
 
-    private record Outcome(List<String> rows, SqlException error) {
+    // the rows of a query, or the message and the position of the error that rejects it
+    private record Outcome(List<String> rows, String error, int position) {
     }
 }
