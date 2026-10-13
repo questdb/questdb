@@ -402,6 +402,7 @@ import io.questdb.griffin.model.JoinContext;
 import io.questdb.griffin.model.QueryColumn;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.griffin.model.QueryModelGenerationState;
+import io.questdb.griffin.model.QueryModelSnapshots;
 import io.questdb.griffin.model.QueryModelWrapper;
 import io.questdb.griffin.model.RuntimeIntervalModel;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
@@ -475,7 +476,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final int MAX_RETAINED_WHERE_CLAUSE_PARSERS = 8;
     // no own columns' bounds: a window's argument reads its input's columns only
     private static final long[] NO_BOUNDS = new long[0];
-    private static final ModelOperator RESTORE_WHERE_CLAUSE = IQueryModel::restoreWhereClause;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_ALL_CONSTRUCTOR = ExceptAllRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_EXCEPT_CONSTRUCTOR = ExceptRecordCursorFactory::new;
     private static final SetRecordCursorFactoryConstructor SET_INTERSECT_ALL_CONSTRUCTOR = IntersectAllRecordCursorFactory::new;
@@ -536,7 +536,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     };
     // @formatter:on
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> avgConstructors = new IntObjHashMap<>();
-    private static final ModelOperator backupWhereClauseRef = IQueryModel::backupWhereClause;
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> countConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> ksumConstructors = new IntObjHashMap<>();
     private static final IntHashSet limitTypes = new IntHashSet();
@@ -623,10 +622,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private IQueryModel forcedScanModel;
     // {selected, scanned} of the last covering-index selection estimate, see estimateSelection()
     private final long[] coveringEstimate = new long[2];
-    // the models whose where clauses a second generation of the same model restores, and the
-    // clauses as they were before the first one consumed them, see snapshotWhereClauses()
-    private final ObjList<IQueryModel> whereSnapshotModels = new ObjList<>();
-    private final ObjList<ExpressionNode> whereSnapshotClauses = new ObjList<>();
+    // the state of the models a generation consumes, for the sites that generate a model, or
+    // compile an expression, more than once, see QueryModelSnapshots
+    private final QueryModelSnapshots modelSnapshots = new QueryModelSnapshots();
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
     // Tracks the last model with non-empty ORDER BY as we descend through nested models
     // the PARTITION BY of a worker's copy compiled without it, see compileStreamingWindowCopy()
@@ -817,8 +815,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         markoutHorizonContext.clear();
         sharedFactoryCache.clear();
         generationState.clear();
-        whereSnapshotModels.clear();
-        whereSnapshotClauses.clear();
+        modelSnapshots.clear();
     }
 
     @Override
@@ -826,6 +823,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         generationState.setPreparationHook(null);
         generationState.clear();
         sharedFactoryCache.clear();
+        modelSnapshots.clear();
         Throwable failure = null;
         for (int i = 0, n = whereClauseParsers.size(); i < n; i++) {
             try {
@@ -998,6 +996,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // identities, so neither borrowed factories nor snapshots may survive an attempt.
                 generationState.clear();
                 sharedFactoryCache.clear();
+                modelSnapshots.clear();
             }
         }
     }
@@ -2158,8 +2157,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return true;
     }
 
+    /**
+     * Saves the state of the sub-query models an expression reaches, before its first compile, for
+     * the compiles of it that may follow ({@link #restoreWhereClause(ExpressionNode)}).
+     */
     private void backupWhereClause(ExpressionNode node) {
-        processNodeQueryModels(node, backupWhereClauseRef);
+        if (node != null) {
+            modelSnapshots.save(node);
+        }
     }
 
     // Builds AsyncTopKRecordCursorFactory on pageFrameLeaf. When filterFactory
@@ -6180,12 +6185,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         ObjList<Function> buildBindVarFunctions = null;
         Function buildOnFilter = null;
         ObjList<Function> workerBuildOnFilters = null;
-        ObjList<IQueryModel> inputModels = new ObjList<>();
-        ObjList<ExpressionNode> whereClauses = new ObjList<>();
-        ObjList<ExpressionNode> backups = new ObjList<>();
-        // Child compilation can overwrite the models' usual backup fields. Preserve
-        // separate snapshots so a rejected candidate leaves the ordinary plan intact.
-        snapshotHashJoinFilters(model, inputModels, whereClauses, backups);
+        // Child compilation consumes the models, their sub-queries included, and can overwrite
+        // their usual backup fields. A separate snapshot leaves a rejected candidate's models
+        // intact for the ordinary plan.
+        final int modelSnapshot = saveModels(model);
+        boolean isFused = false;
         executionContext.pushTimestampRequiredFlag(false);
         // A join input compiled while hasInterval() is 0 publishes its interval to the enclosing
         // join level, and a WINDOW JOIN slave of that level narrows its scan to it. The fused inputs
@@ -6290,6 +6294,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 workerBuildOnFilters = null;
                 functions = null;
                 filterContext = null;
+                isFused = true;
                 return new AsyncHashJoinGroupByRecordCursorFactory(executionContext.getCairoEngine(),
                         probeOwned, buildOwned, buildFiltersOwned, buildOnFilterOwned, workerBuildOnFiltersOwned,
                         metadata, functionsOwned, filtersOwned,
@@ -6299,10 +6304,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } finally {
             executionContext.popHasInterval();
             executionContext.popTimestampRequiredFlag();
-            for (int i = 0; i < inputModels.size(); i++) {
-                inputModels.getQuick(i).setWhereClause(whereClauses.getQuick(i));
-                inputModels.getQuick(i).setBackupWhereClause(backups.getQuick(i));
+            if (isFused) {
+                // the fused factory keeps the shared factories it built
+                modelSnapshots.restore(modelSnapshot, expressionNodePool);
+            } else {
+                restoreModels(modelSnapshot);
             }
+            releaseModels(modelSnapshot);
             Throwable failure = Misc.freeBestEffort(null, filterContext);
             failure = Misc.freeBestEffort(failure, filter);
             failure = Misc.freeObjListBestEffort(failure, workerFilters);
@@ -12221,9 +12229,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             releaseIndexGatherFilterExpr(plan);
             return plan;
         }
-        // the where clauses as they are before the index plan consumes them, those of the
-        // sub-queries in them included, for the scan plan
-        final int whereSnapshot = snapshotWhereClauses(model);
+        // the models as they are before the index plan consumes them, their sub-queries included,
+        // for the scan plan
+        final int modelSnapshot = saveModels(model);
         try {
             final RecordCursorFactory indexPlan = generateSelectGroupBy0(model, executionContext);
             releaseIndexGatherFilterExpr(indexPlan);
@@ -12232,7 +12240,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             RecordCursorFactory scanPlan = null;
             try {
-                restoreWhereClauses(whereSnapshot);
+                restoreModels(modelSnapshot);
                 forcedScanModel = nested;
                 try {
                     scanPlan = generateSelectGroupBy0(model, executionContext);
@@ -12251,7 +12259,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw th;
             }
         } finally {
-            dropWhereClauseSnapshot(whereSnapshot);
+            releaseModels(modelSnapshot);
         }
     }
 
@@ -12290,6 +12298,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         }
 
         RecordCursorFactory factory = null;
+        // the models as they were before the GROUP BY's base consumed them, for a second
+        // generation of the base (hour()) and the compiles that follow it, see saveModels()
+        int groupBySnapshot = -1;
         try {
             ObjList<QueryColumn> columns;
             ExpressionNode columnExpr;
@@ -12438,7 +12449,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             boolean pageFramingSupported = false;
 
-            IQueryModel.backupWhereClause(expressionNodePool, model);
+            groupBySnapshot = saveModels(model);
 
             final IQueryModel nested = model.getNestedModel();
             assert nested != null;
@@ -12493,7 +12504,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (factory == null) {
                 // we generated subquery for "hour" intrinsic, but that did not work out
                 if (hourIndex != -1) {
-                    IQueryModel.restoreWhereClause(expressionNodePool, model);
+                    restoreModels(groupBySnapshot);
                 }
                 factory = generateGroupByBase(model, executionContext, true);
                 pageFramingSupported = factory.supportsPageFrameCursor();
@@ -12644,7 +12655,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // release factory we created unnecessarily
                 factory = Misc.free(factory);
                 // create factory on top level model
-                IQueryModel.restoreWhereClause(expressionNodePool, model);
+                restoreModels(groupBySnapshot);
                 factory = generateGroupByBase(model, executionContext, true);
                 // and reset baseMetadata
                 baseMetadata = factory.getMetadata();
@@ -12784,7 +12795,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
 
                 if (supportsParallelism) {
-                    IQueryModel.restoreWhereClause(expressionNodePool, model);
+                    // the models the base consumed, the sub-queries of the filter compiled below
+                    // and per worker included; the base keeps the shared factories it built
+                    modelSnapshots.restore(groupBySnapshot, expressionNodePool);
 
                     // back up required lists as generateSubQuery or compileWorkerFilterConditionally may overwrite them
                     ArrayColumnTypes keyTypesCopy = new ArrayColumnTypes().addAll(keyTypes);
@@ -13077,6 +13090,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.freeObjList(perWorkerFilters, e);
             Misc.free(factory, e);
             throw e;
+        } finally {
+            releaseModels(groupBySnapshot);
         }
     }
 
@@ -16457,14 +16472,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // has to be fully up-to-date due to WAL apply execution order.
             try (TableReader reader = executionContext.getReader(tableToken, model.getMetadataVersion())) {
                 if (isCoveringScanChoiceCandidate(model, latestBy, reader, executionContext)) {
-                    // the where clauses as they are before generation consumes them, those of the
-                    // sub-queries in them included, should a scan replace the covering plan
-                    final int whereSnapshot = snapshotWhereClauses(model);
+                    // the models as they are before generation consumes them, their sub-queries
+                    // included, should a scan replace the covering plan
+                    final int modelSnapshot = saveModels(model);
                     try {
                         result = generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
-                        result = scanInPlaceOfFrequentCovering(model, executionContext, latestBy, supportsRandomAccess, reader, result, whereSnapshot);
+                        result = scanInPlaceOfFrequentCovering(model, executionContext, latestBy, supportsRandomAccess, reader, result, modelSnapshot);
                     } finally {
-                        dropWhereClauseSnapshot(whereSnapshot);
+                        releaseModels(modelSnapshot);
                     }
                 } else {
                     result = generateTableQuery0(model, executionContext, latestBy, supportsRandomAccess, reader, reader.getMetadata());
@@ -19476,122 +19491,49 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
-    private void processNodeQueryModels(ExpressionNode node, ModelOperator operator) {
-        sqlNodeStack.clear();
-        while (node != null) {
-            if (node.queryModel != null) {
-                operator.operate(expressionNodePool, node.queryModel);
-            }
-
-            if (node.lhs != null) {
-                sqlNodeStack.push(node.lhs);
-            }
-
-            if (node.rhs != null) {
-                node = node.rhs;
-            } else {
-                if (!sqlNodeStack.isEmpty()) {
-                    node = sqlNodeStack.poll();
-                } else {
-                    node = null;
-                }
-            }
-        }
-    }
-
+    /**
+     * Puts the sub-query models an expression reaches back as they were before its first compile,
+     * every part of their state a compile consumes (LATEST BY too, not only the where clause), for
+     * another compile of the same expression, see {@link #backupWhereClause(ExpressionNode)}.
+     */
     private void restoreWhereClause(ExpressionNode node) {
-        processNodeQueryModels(node, RESTORE_WHERE_CLAUSE);
+        modelSnapshots.restoreReachable(node, expressionNodePool);
     }
 
     /**
-     * Puts back the where clauses {@link #snapshotWhereClauses} recorded, for a second generation
-     * of the same model. Each is cloned, so the snapshot holds until it is dropped.
+     * Drops a snapshot {@link #saveModels} took.
      */
-    private void restoreWhereClauses(int mark) {
-        for (int i = mark, n = whereSnapshotModels.size(); i < n; i++) {
-            whereSnapshotModels.getQuick(i).setWhereClause(ExpressionNode.deepClone(expressionNodePool, whereSnapshotClauses.getQuick(i)));
+    private void releaseModels(int snapshot) {
+        modelSnapshots.release(snapshot);
+    }
+
+    /**
+     * Puts the models a snapshot saved ({@link #saveModels}) back as they were, for another
+     * generation of the same model. The factories the last generation left in
+     * {@link #sharedFactoryCache} for shared models among them belong to that generation's plan,
+     * which may be freed or kept beside the next one, so the next generation builds its own.
+     */
+    private void restoreModels(int snapshot) {
+        modelSnapshots.restore(snapshot, expressionNodePool);
+        for (int i = 0, n = modelSnapshots.getModelCount(snapshot); i < n; i++) {
+            if (modelSnapshots.getModel(snapshot, i) instanceof QueryModel qm) {
+                sharedFactoryCache.remove(qm);
+            }
         }
     }
 
     /**
-     * Records, before a model is generated a first time, the where clause of every model that
-     * generation can consume, so that a second generation of the same model starts from them
-     * ({@link #restoreWhereClauses}): the models of the model's chain (nested, union, join and
-     * UPDATE models), and, recursively, those of the sub-queries in their where clauses, columns
-     * and join criteria. A generation consumes a where clause, keeping only the residual filter,
-     * and a cloned expression shares its sub-query models with the original, so restoring only the
-     * outer where clauses would generate a sub-query without its own predicates. Returns the mark
-     * that {@link #restoreWhereClauses} and {@link #dropWhereClauseSnapshot} take; snapshots nest.
+     * Saves, before a model is generated a first time, the state that generation consumes in
+     * every model it can reach: its own, that of its nested, union, join and UPDATE models, and
+     * that of the sub-queries of every expression they hold, at any depth (where clauses, LATEST
+     * BY, LIMIT markers and the rest, see {@link QueryModelSnapshots}). A cloned expression shares
+     * its sub-query models with the original, so a second generation that got back only the
+     * outer where clauses would generate the sub-queries the first one consumed: without their
+     * own predicates, or without their LATEST BY. Returns the snapshot that
+     * {@link #restoreModels} and {@link #releaseModels} take.
      */
-    private int snapshotWhereClauses(IQueryModel model) {
-        final int mark = whereSnapshotModels.size();
-        snapshotWhereClauses0(model, mark);
-        return mark;
-    }
-
-    private void snapshotWhereClauses0(IQueryModel model, int mark) {
-        IQueryModel current = model;
-        while (current != null && current.isOptimisable()) {
-            for (int i = mark, n = whereSnapshotModels.size(); i < n; i++) {
-                if (whereSnapshotModels.getQuick(i) == current) {
-                    return;
-                }
-            }
-            whereSnapshotModels.add(current);
-            whereSnapshotClauses.add(ExpressionNode.deepClone(expressionNodePool, current.getWhereClause()));
-            snapshotSubQueryWhereClauses(current.getWhereClause(), mark);
-            final ObjList<QueryColumn> columns = current.getColumns();
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                snapshotSubQueryWhereClauses(columns.getQuick(i).getAst(), mark);
-            }
-            if (current.getUnionModel() != null) {
-                snapshotWhereClauses0(current.getUnionModel(), mark);
-            }
-            if (current.getUpdateTableModel() != null) {
-                snapshotWhereClauses0(current.getUpdateTableModel(), mark);
-            }
-            final ObjList<IQueryModel> joinModels = current.getJoinModels();
-            for (int i = 1, n = joinModels.size(); i < n; i++) {
-                final IQueryModel m = joinModels.getQuick(i);
-                if (m != null && m != current) {
-                    snapshotSubQueryWhereClauses(m.getJoinCriteria(), mark);
-                    snapshotWhereClauses0(m, mark);
-                }
-            }
-            current = current.getNestedModel();
-        }
-    }
-
-    private void snapshotSubQueryWhereClauses(@Nullable ExpressionNode node, int mark) {
-        if (node == null) {
-            return;
-        }
-        if (node.queryModel != null) {
-            snapshotWhereClauses0(node.queryModel, mark);
-        }
-        for (int i = 0, n = node.args.size(); i < n; i++) {
-            snapshotSubQueryWhereClauses(node.args.getQuick(i), mark);
-        }
-        snapshotSubQueryWhereClauses(node.lhs, mark);
-        snapshotSubQueryWhereClauses(node.rhs, mark);
-    }
-
-    private void dropWhereClauseSnapshot(int mark) {
-        whereSnapshotModels.setPos(mark);
-        whereSnapshotClauses.setPos(mark);
-    }
-
-    private void snapshotHashJoinFilters(IQueryModel model, ObjList<IQueryModel> models,
-                                         ObjList<ExpressionNode> whereClauses, ObjList<ExpressionNode> backups) {
-        while (model != null) {
-            models.add(model);
-            whereClauses.add(deepClone(expressionNodePool, model.getWhereClause()));
-            backups.add(deepClone(expressionNodePool, model.getBackupWhereClause()));
-            for (int i = 1; i < model.getJoinModels().size(); i++) {
-                snapshotHashJoinFilters(model.getJoinModels().getQuick(i), models, whereClauses, backups);
-            }
-            model = model.getNestedModel();
-        }
+    private int saveModels(IQueryModel model) {
+        return modelSnapshots.save(model);
     }
 
     private Function toLimitFunction(
@@ -19881,7 +19823,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             boolean supportsRandomAccess,
             TableReader reader,
             RecordCursorFactory coveringPlan,
-            int whereSnapshot
+            int modelSnapshot
     ) throws SqlException {
         final CoveringIndexRecordCursorFactory covering = coveringBaseOf(coveringPlan);
         try {
@@ -19901,7 +19843,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 .$(", plan=scan")
                 .I$();
         Misc.free(coveringPlan);
-        restoreWhereClauses(whereSnapshot);
+        restoreModels(modelSnapshot);
         final IQueryModel prevForcedScanModel = forcedScanModel;
         forcedScanModel = model;
         try {
@@ -20102,11 +20044,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         public ObjList<ObjList<Function>> getKeyFunctions() {
             return keyFunctions;
         }
-    }
-
-    @FunctionalInterface
-    interface ModelOperator {
-        void operate(ObjectPool<ExpressionNode> pool, IQueryModel model);
     }
 
     /**

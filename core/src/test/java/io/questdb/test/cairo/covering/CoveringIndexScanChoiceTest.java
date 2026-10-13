@@ -152,6 +152,119 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
     }
 
     @Test
+    public void testFrequentKeyScanKeepsSubQueryLatestOn() throws Exception {
+        // A frequent key generates the table query a second time, as a scan. A LATEST ON
+        // sub-query of the residual filter is a model whose LATEST BY the first generation
+        // consumed: the scan must still read one row per partition of the sub-query, not all of
+        // its rows. The expected results are literal: no_index shares the plans that generate a
+        // model twice, so it is no reference here.
+        assertMemoryLeak(() -> {
+            createTable();
+            execute("create table t3 as (select * from t) timestamp(ts) partition by day");
+            // the latest R is row 29,751 of the rows written after the index; 100 symbols
+            final String latestR = "(select v from t3 where sym = 'R' latest on ts partition by sym)";
+            final String[][] cases = {
+                    {
+                            "select count(), sum(v) from t where sym = 'F' and v < " + latestR,
+                            "count\tsum\n11900\t177042250\n"
+                    },
+                    {
+                            "select count(), sum(v) from t where sym = 'F' and v < (select count() from (select * from t3 latest on ts partition by sym))",
+                            "count\tsum\n38\t1900\n"
+                    },
+                    {
+                            "select ts, v from t where sym = 'F' and v < " + latestR + " limit -3",
+                            """
+                                    ts\tv
+                                    1970-01-04T01:47:03.840000Z\t29740
+                                    1970-01-04T01:47:04.920000Z\t29745
+                                    1970-01-04T01:47:06.000000Z\t29750
+                                    """
+                    },
+                    {
+                            "select count(), sum(v) from t where sym = 'F' and s2 in (select s2 from t3 where sym = 'R' latest on ts partition by sym)",
+                            "count\tsum\n82000\t48030615000\n"
+                    },
+                    {
+                            "select count(), sum(v) from t where sym = 'F' and v < (select v from t where sym = 'R' and ts in '1970-01-01' latest on ts partition by sym)",
+                            "count\tsum\n85950\t16070221125\n"
+                    },
+                    // the hour() GROUP BY generates its base again when it cannot vectorise it
+                    {
+                            "select hour(ts) h, count() c from t3 where v < (select max(v) from (select v from t3 where ts in '1970-01-01' latest on ts partition by sym)) order by h",
+                            """
+                                    h\tc
+                                    0\t33332
+                                    1\t30001
+                                    2\t16666
+                                    3\t16667
+                                    4\t16667
+                                    5\t16666
+                                    6\t16667
+                                    7\t16667
+                                    8\t16666
+                                    9\t16667
+                                    10\t16667
+                                    11\t16666
+                                    12\t16667
+                                    13\t16667
+                                    14\t16666
+                                    15\t16667
+                                    16\t16667
+                                    17\t16666
+                                    18\t16667
+                                    19\t16667
+                                    20\t16666
+                                    21\t16667
+                                    22\t16667
+                                    23\t16665
+                                    """
+                    },
+                    {
+                            "select hour(ts) h, count() c from t3 where v < (select v from t where sym = 'R' and ts in '1970-01-01' order by ts desc limit 1) order by h",
+                            """
+                                    h\tc
+                                    0\t33332
+                                    1\t30001
+                                    2\t16666
+                                    3\t16667
+                                    4\t16667
+                                    5\t16666
+                                    6\t16667
+                                    7\t16667
+                                    8\t16666
+                                    9\t16667
+                                    10\t16667
+                                    11\t16666
+                                    12\t16667
+                                    13\t16667
+                                    14\t16666
+                                    15\t16667
+                                    16\t16667
+                                    17\t16666
+                                    18\t16667
+                                    19\t16667
+                                    20\t16666
+                                    21\t16667
+                                    22\t16667
+                                    23\t16417
+                                    """
+                    },
+            };
+            assertPlanLacks("select count(), sum(v) from t where sym = 'F'", "CoveringIndex");
+            for (String[] c : cases) {
+                assertResult(c[1], c[0]);
+            }
+            // and with the choice off, the covering plan
+            setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, "false");
+            assertPlanContains("select count(), sum(v) from t where sym = 'F'", "CoveringIndex");
+            for (String[] c : cases) {
+                assertResult(c[1], c[0]);
+            }
+        });
+    }
+
+    @Test
     public void testExplainCoveringScanInsideScalarSubQuery() throws Exception {
         // a covering scan in a scalar sub-query of a filter: EXPLAIN threw a NullPointerException
         assertMemoryLeak(() -> {
@@ -269,6 +382,12 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
         }
         final StringSink expected = new StringSink();
         printSql(query.replaceFirst("select ", "select /*+ no_index */ "), expected);
+        TestUtils.assertEquals(query, expected, actual);
+    }
+
+    private void assertResult(String expected, String query) throws Exception {
+        final StringSink actual = new StringSink();
+        printSql(query, actual);
         TestUtils.assertEquals(query, expected, actual);
     }
 

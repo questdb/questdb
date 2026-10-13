@@ -902,6 +902,62 @@ public class IndexGatherGroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScanPlanKeepsSubQueryLatestOn() throws Exception {
+        // The choice generates the GROUP BY twice, the second time as a scan, and the gather alone
+        // compiles the rest of its filter twice, the second time for its tasks. A LATEST ON
+        // sub-query in that filter is a model whose LATEST BY the first generation or compile
+        // consumed: the second must still read one row per partition of the sub-query. The
+        // expected results are literal: no_index is no reference for plans generated twice.
+        assertMemoryLeak(() -> {
+            execute("create table g (ts timestamp, sym symbol index type posting, s2 symbol, v long) timestamp(ts) partition by day");
+            // F is a fifth of the rows, G nearly as many, R one in 250; 100 symbols; the latest R
+            // is row 29,751, the latest R of the first day row 8,501
+            execute("insert into g select (x * 10_000_000L)::timestamp,"
+                    + " case when x % 5 = 0 then 'F' when x % 250 = 1 then 'R' when x % 5 = 1 then 'G' else 'k' || (x % 97) end,"
+                    + " 's' || (x % 3), x from long_sequence(30_000)");
+            final String[][] cases = {
+                    {
+                            "select sym, count() n, sum(v) s from g where sym in ('F', 'G') and v < (select v from g where sym = 'R' latest on ts partition by sym) order by sym",
+                            "sym\tn\ts\nF\t5950\t88521125\nG\t5831\t86741956\n"
+                    },
+                    {
+                            "select sym, count() n, sum(v) s from g where sym in ('F', 'G') and v < (select count() from (select * from g latest on ts partition by sym)) order by sym",
+                            "sym\tn\ts\nF\t19\t950\nG\t19\t969\n"
+                    },
+                    {
+                            "select sym, count() n, sum(v) s from g where sym in ('F', 'G') and s2 in (select s2 from g where sym = 'R' latest on ts partition by sym) order by sym",
+                            "sym\tn\ts\nF\t2000\t30015000\nG\t1960\t29391960\n"
+                    },
+                    {
+                            "select sym, count() n, sum(v) s from g where sym in ('F', 'G') and v < (select v from g where sym = 'R' and ts in '1970-01-01' latest on ts partition by sym) order by sym",
+                            "sym\tn\ts\nF\t1700\t7229250\nG\t1666\t7082166\n"
+                    },
+            };
+            for (String[] c : cases) {
+                final String sql = c[0];
+                setFeatures(true, true);
+                try (RecordCursorFactory factory = select(sql)) {
+                    final IndexScanChoiceRecordCursorFactory chooser = findChoice(factory);
+                    Assert.assertNotNull(sql, chooser);
+                    final long scanOpens = chooser.getScanPlanOpens();
+                    final String actual = print(factory, sqlExecutionContext);
+                    Assert.assertTrue(sql, chooser.getScanPlanOpens() > scanOpens);
+                    TestUtils.assertEquals(sql, c[1], actual);
+                }
+                // the gather alone
+                setFeatures(true, false);
+                final StringSink plan = new StringSink();
+                printSql("explain " + sql, plan);
+                Assert.assertTrue(sql + '\n' + plan, plan.toString().contains("Async Index Group By"));
+                TestUtils.assertEquals(sql, c[1], runToString(engine, sqlExecutionContext, sql));
+                // and the scan
+                setFeatures(false, false);
+                TestUtils.assertEquals(sql, c[1], runToString(engine, sqlExecutionContext, sql));
+            }
+        });
+    }
+
+    @Test
     public void testResidualFilters() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext, "t", ROWS, 43);

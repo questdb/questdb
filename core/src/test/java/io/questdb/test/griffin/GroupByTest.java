@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -2271,6 +2272,74 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHourGroupByFallbackKeepsIntervalAndSubQueries() throws Exception {
+        // The hour() GROUP BY generates its base once to try the vectorised plan, and again when
+        // it cannot use it: here a filter or a non-vector aggregate. The second generation must
+        // keep the interval and the predicates (and LATEST ON) of the sub-queries the first one
+        // consumed. Before the fix it scanned every day and lost the sub-queries' predicates.
+        assertMemoryLeak(() -> {
+            execute("create table h1 (ts timestamp, sym symbol, v long) timestamp(ts) partition by day");
+            // a row a second from 2024-01-01, every third K1; the last K1 of 2024-01-01 is row 86,397
+            execute("insert into h1 select ('2024-01-01'::timestamp + x * 1_000_000L)::timestamp,"
+                    + " case when x % 3 = 0 then 'K1' else 'z' end, x from long_sequence(300_000)");
+            final StringBuilder perHour = new StringBuilder("h\tc\n");
+            for (int h = 0; h < 24; h++) {
+                perHour.append(h).append("\t1200\n");
+            }
+            assertHourResult(perHour.toString(), "select hour(ts) h, count() c from h1 where sym = 'K1' and ts in '2024-01-02' order by h");
+            assertHourResult(perHour.toString(), "select /*+ no_index */ hour(ts) h, count() c from h1 where sym = 'K1' and ts in '2024-01-02' order by h");
+            final String belowLastK1 = """
+                    h\tc
+                    0\t3599
+                    1\t3600
+                    2\t3600
+                    3\t3600
+                    4\t3600
+                    5\t3600
+                    6\t3600
+                    7\t3600
+                    8\t3600
+                    9\t3600
+                    10\t3600
+                    11\t3600
+                    12\t3600
+                    13\t3600
+                    14\t3600
+                    15\t3600
+                    16\t3600
+                    17\t3600
+                    18\t3600
+                    19\t3600
+                    20\t3600
+                    21\t3600
+                    22\t3600
+                    23\t3597
+                    """;
+            final String[] subQueries = {
+                    "(select v from h1 where sym = 'K1' and ts in '2024-01-01' order by ts desc limit 1)",
+                    "(select v from h1 where sym = 'K1' and ts in '2024-01-01' latest on ts partition by sym)",
+                    "(select min(v) from (select v from h1 where ts in '2024-01-01' latest on ts partition by sym))",
+            };
+            for (String sub : subQueries) {
+                assertHourResult(belowLastK1, "select hour(ts) h, count() c from h1 where v < " + sub + " order by h");
+            }
+            // page frames, but first() does not vectorise: the second generation of the base
+            assertHourResult(
+                    """
+                            h\tf\tc
+                            0\t86400\t3600
+                            1\t90000\t3600
+                            2\t93600\t3600
+                            23\t86398\t2
+                            """,
+                    "select hour(ts) h, first(v) f, count() c from h1"
+                            + " where ts > (select ts from h1 where sym = 'K1' and ts in '2024-01-01' latest on ts partition by sym)"
+                            + " and ts < '2024-01-02T03' order by h"
+            );
+        });
+    }
+
+    @Test
     public void testLatestByImplicitGroupBy1() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -4051,5 +4120,11 @@ public class GroupByTest extends AbstractCairoTest {
         final int close = errorMessage.indexOf(']');
         final int position = Integer.parseInt(errorMessage.substring(1, close));
         assertQuery(query).fails(position, errorMessage.substring(close + 2));
+    }
+
+    private void assertHourResult(String expected, String query) throws Exception {
+        final StringSink actual = new StringSink();
+        printSql(query, actual);
+        TestUtils.assertEquals(query, expected, actual);
     }
 }
