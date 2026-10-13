@@ -36,6 +36,7 @@ import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectLongList;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
@@ -59,10 +60,15 @@ public class IndexKeyPageFrameCursor implements PageFrameCursor {
     public static final java.util.concurrent.atomic.AtomicLong TEST_INDEX_FRAMES = new java.util.concurrent.atomic.AtomicLong();
     private static final int[] NO_KEYS = new int[0];
     private final LongList frameHis = new LongList();
+    // per frame, 1 when its reader was taken without a reload, which the first thread to read the
+    // frame does, see prepare()
+    private final IntList frameLazy = new IntList();
     private final LongList frameLos = new LongList();
     // per frame, the posting reader of its partition, or null when it has none
     private final ObjList<AbstractPostingIndexReader> frameReaders = new ObjList<>();
     private final ObjList<AbstractPostingIndexReader> frozenReaders = new ObjList<>();
+    // the readers taken without a reload, each once; frozen by the thread that prepares them
+    private final ObjList<AbstractPostingIndexReader> lazyReaders = new ObjList<>();
     private final int keyColumnIndex;
     private PageFrameCursor base;
     // the symbol's index key, or -1 when the table does not have the symbol
@@ -138,10 +144,26 @@ public class IndexKeyPageFrameCursor implements PageFrameCursor {
         if (frame != null) {
             frameLos.add(frame.getPartitionLo());
             frameHis.add(frame.getPartitionHi());
-            final IndexReader reader = frame.getFormat() == PartitionFormat.NATIVE
-                    ? frame.getIndexReader(keyColumnIndex, IndexReader.DIR_FORWARD)
-                    : null;
-            frameReaders.add(reader instanceof PostingIndexFwdReader posting ? posting : null);
+            IndexReader reader = null;
+            boolean isLazy = false;
+            if (frame.getFormat() == PartitionFormat.NATIVE) {
+                // an open reader is taken as it is: its reload (a read of its chain header, a cache
+                // miss per partition) and its warm-up are left to the thread that reads the frame
+                reader = frame.getIndexReaderWithoutReload(keyColumnIndex, IndexReader.DIR_FORWARD);
+                isLazy = reader instanceof PostingIndexFwdReader;
+                if (reader == null) {
+                    reader = frame.getIndexReader(keyColumnIndex, IndexReader.DIR_FORWARD);
+                }
+            }
+            final AbstractPostingIndexReader posting = reader instanceof PostingIndexFwdReader p ? p : null;
+            frameReaders.add(posting);
+            frameLazy.add(isLazy ? 1 : 0);
+            if (isLazy) {
+                final int n = lazyReaders.size();
+                if (n == 0 || lazyReaders.getQuick(n - 1) != posting) {
+                    lazyReaders.add(posting);
+                }
+            }
             return frame;
         }
         isExhausted = true;
@@ -176,7 +198,11 @@ public class IndexKeyPageFrameCursor implements PageFrameCursor {
             return false;
         }
         assert TEST_INDEX_FRAMES.incrementAndGet() > 0;
-        // frozen before dispatch, see freeze(): a reload would change what other threads read
+        if (frameLazy.getQuick(frameIndex) == 1) {
+            prepare(reader);
+        }
+        // frozen before it is read, see freeze() and prepare(): a reload would change what other
+        // threads read
         assert reader.isFrozen();
         if (indexKey < 0) {
             return true;
@@ -233,17 +259,32 @@ public class IndexKeyPageFrameCursor implements PageFrameCursor {
         base.toTop();
     }
 
+    // Brings a reader taken without a reload to this query's snapshot, warmed and frozen, once: the
+    // first thread to read one of its frames does it, the others wait on the reader's monitor, which
+    // also publishes the reader's state to them. Readers of distinct partitions are distinct objects,
+    // and no other thread uses them until the cursor closes, after every task.
+    private static void prepare(AbstractPostingIndexReader reader) {
+        synchronized (reader) {
+            if (!reader.isFrozen()) {
+                // reloads to the reader's pinned txn, then maps the value memory in full
+                reader.warmForKeys(NO_KEYS, null);
+                reader.setFrozen(true);
+            }
+        }
+    }
+
     private void clearFrames() {
         frameLos.clear();
         frameHis.clear();
         frameReaders.clear();
+        frameLazy.clear();
         isExhausted = false;
     }
 
     private void freeze() {
         for (int i = 0, n = frameReaders.size(); i < n; i++) {
             final AbstractPostingIndexReader reader = frameReaders.getQuick(i);
-            if (reader != null && !reader.isFrozen()) {
+            if (reader != null && frameLazy.getQuick(i) == 0 && !reader.isFrozen()) {
                 // positioned at this query's index snapshot, with its value memory mapped in full,
                 // so the workers' detached cursors read it without changing it
                 reader.warmForKeys(NO_KEYS, null);
@@ -258,5 +299,13 @@ public class IndexKeyPageFrameCursor implements PageFrameCursor {
             frozenReaders.getQuick(i).setFrozen(false);
         }
         frozenReaders.clear();
+        // the lazily prepared readers; the sequence has waited for every task by now
+        for (int i = 0, n = lazyReaders.size(); i < n; i++) {
+            final AbstractPostingIndexReader reader = lazyReaders.getQuick(i);
+            synchronized (reader) {
+                reader.setFrozen(false);
+            }
+        }
+        lazyReaders.clear();
     }
 }

@@ -118,6 +118,8 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
     private static final int[] NO_KEYS = new int[0];
     private final ByteList frameFormats = new ByteList();
     private final IntList framePartitions = new IntList();
+    // per frame, 1 when its reader was taken without a reload, see next()
+    private final IntList frameLazy = new IntList();
     private final ObjList<IndexReader> frameReaders = new ObjList<>();
     private final LongList frameRowHis = new LongList();
     private final LongList frameRowLos = new LongList();
@@ -130,6 +132,9 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
     private final boolean unitsEnabled;
     private final int workerCount;
     private final ObjList<AbstractPostingIndexReader> frozenReaders = new ObjList<>();
+    // the readers of units, taken without a reload, which the slot that first takes one of their
+    // units reloads, warms and freezes, see prepare(); each once
+    private final ObjList<AbstractPostingIndexReader> lazyReaders = new ObjList<>();
     private final FwdTableReaderPageFrameCursor inner;
     private final int keyColumnIndex;
     // whether a key with more than taskRows rows in a partition run is split by row range
@@ -363,7 +368,19 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
             frameRowLos.add(frame.getPartitionLo());
             frameRowHis.add(frame.getPartitionHi());
             frameFormats.add(format);
-            frameReaders.add(format == PartitionFormat.NATIVE ? frame.getIndexReader(keyColumnIndex, IndexReader.DIR_FORWARD) : null);
+            IndexReader reader = null;
+            boolean isLazy = false;
+            if (format == PartitionFormat.NATIVE) {
+                // an open reader is taken as it is; buildTasks() reloads it here or leaves its
+                // reload to the slot of its first unit
+                reader = frame.getIndexReaderWithoutReload(keyColumnIndex, IndexReader.DIR_FORWARD);
+                isLazy = reader instanceof PostingIndexFwdReader;
+                if (reader == null) {
+                    reader = frame.getIndexReader(keyColumnIndex, IndexReader.DIR_FORWARD);
+                }
+            }
+            frameReaders.add(reader);
+            frameLazy.add(isLazy ? 1 : 0);
             return frame;
         }
         isExhausted = true;
@@ -559,6 +576,21 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
         }
         final int runCount = runReaders.size();
         isUnitMode = unitsEnabled && keys.size() > 0 && (long) runCount * keys.size() >= unitModeMinProbes;
+        // The readers taken without a reload: counted tasks count from them here, so they reload
+        // now; units leave it to their slots, see prepare().
+        for (int f = 0, n = framePartitions.size(); f < n; f++) {
+            if (frameLazy.getQuick(f) == 1) {
+                final AbstractPostingIndexReader posting = (AbstractPostingIndexReader) frameReaders.getQuick(f);
+                if (isUnitMode) {
+                    final int m = lazyReaders.size();
+                    if (m == 0 || lazyReaders.getQuick(m - 1) != posting) {
+                        lazyReaders.add(posting);
+                    }
+                } else if (f == 0 || frameReaders.getQuick(f - 1) != posting) {
+                    posting.reloadConditionally();
+                }
+            }
+        }
         // tasks follow the frames: a run's tasks where its first frame is, scan tasks in between
         int run = 0;
         for (int f = 0, n = framePartitions.size(); f < n; ) {
@@ -611,7 +643,24 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
         freeze(reader);
     }
 
+    // Brings a unit's reader taken without a reload to this query's snapshot, warmed and frozen, once:
+    // the first slot to take one of its units does it, the others wait on the reader's monitor, which
+    // also publishes the reader's state to them. A reader the query's thread froze is left as it is.
+    private static void prepare(IndexReader reader) {
+        final AbstractPostingIndexReader posting = (AbstractPostingIndexReader) reader;
+        synchronized (posting) {
+            if (!posting.isFrozen()) {
+                posting.warmForKeys(NO_KEYS, null);
+                posting.setFrozen(true);
+            }
+        }
+    }
+
     private void freeze(AbstractPostingIndexReader reader) {
+        if (isUnitMode && lazyReaders.size() > 0 && lazyReaders.getQuick(lazyReaders.size() - 1) == reader) {
+            // frozen by the slot of its first unit, see prepare()
+            return;
+        }
         if (!reader.isFrozen()) {
             // positioned at this query's index snapshot, with its value memory mapped in full, so
             // the workers' detached cursors read it without changing it; an interval scan meets a
@@ -628,6 +677,7 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
         frameRowHis.clear();
         frameFormats.clear();
         frameReaders.clear();
+        frameLazy.clear();
         taskKinds.clear();
         taskFrameLos.clear();
         taskFrameHis.clear();
@@ -667,6 +717,14 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
             frozenReaders.getQuick(i).setFrozen(false);
         }
         frozenReaders.clear();
+        // the units' readers; the sequence has waited for every task by now
+        for (int i = 0, n = lazyReaders.size(); i < n; i++) {
+            final AbstractPostingIndexReader reader = lazyReaders.getQuick(i);
+            synchronized (reader) {
+                reader.setFrozen(false);
+            }
+        }
+        lazyReaders.clear();
     }
 
     /**
@@ -783,6 +841,11 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
             currentRuns.clear();
             runPos = 0;
             final byte kind = taskKinds.getQuick(task);
+            if (kind == TASK_UNIT) {
+                prepare(taskReaders.getQuick(task));
+            }
+            // a reload under the workers' detached cursors would change what the other slots read
+            assert kind == TASK_SCAN || !(taskReaders.getQuick(task) instanceof AbstractPostingIndexReader) || taskReaders.getQuick(task).isFrozen();
             (kind == TASK_SCAN ? testScanTasks : kind == TASK_UNIT ? testUnitTasks : testIndexTasks).incrementAndGet();
             if (slotId > -1) {
                 testWorkerTasks.incrementAndGet();

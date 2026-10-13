@@ -641,6 +641,11 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor, Page
         }
 
         @Override
+        public IndexReader getIndexReaderWithoutReload(int columnIndex, int direction) {
+            return reader.getOpenIndexReaderWithoutReload(partitionIndex, columnIndexes.getQuick(columnIndex), direction);
+        }
+
+        @Override
         public long getPageAddress(int columnIndex) {
             checkNotDeferred();
             return columnPageAddresses.getQuick(2 * columnIndex);

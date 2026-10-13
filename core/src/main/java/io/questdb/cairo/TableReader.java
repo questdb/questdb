@@ -441,6 +441,33 @@ public class TableReader implements Closeable, SymbolTableSource {
         return createIndexReaderAt(index, columnBase, columnIndex, columnNameTxn, direction, partitionTxn);
     }
 
+    /**
+     * {@link #getIndexReader} without the reload: the cached reader of the partition's column when
+     * it is open at the partition's txns, pinned at this reader's txn, but not reloaded; null when
+     * {@link #getIndexReader} would build, reopen or replace it. A caller that takes it must call
+     * {@link IndexReader#reloadConditionally()} once before reading it, which another thread may
+     * do: the reload touches the index reader's own state only. Readers of distinct partitions are
+     * distinct objects.
+     */
+    @Nullable
+    public IndexReader getOpenIndexReaderWithoutReload(int partitionIndex, int columnIndex, int direction) {
+        final int columnBase = getColumnBase(partitionIndex);
+        final int index = getPrimaryColumnIndex(columnBase, columnIndex);
+        final IndexReader indexReader = getIndexReaderIfExists(partitionIndex, columnIndex, direction);
+        if (indexReader == null
+                || !indexReader.isOpen()
+                || isStandInNullReader(indexReader) != (columns.getQuick(index) instanceof NullMemoryCMR)) {
+            return null;
+        }
+        final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
+        if (indexReader.getColumnTxn() != columnVersionReader.getColumnNameTxn(partitionTimestamp, metadata.getWriterIndex(columnIndex))
+                || indexReader.getPartitionTxn() != txFile.getPartitionNameTxn(partitionIndex)) {
+            return null;
+        }
+        indexReader.setPinnedTableTxn(txn);
+        return indexReader;
+    }
+
     public IndexReader getIndexReaderIfExists(int partitionIndex, int columnIndex, int direction) {
         final int columnBase = getColumnBase(partitionIndex);
         final int index = getPrimaryColumnIndex(columnBase, columnIndex);
