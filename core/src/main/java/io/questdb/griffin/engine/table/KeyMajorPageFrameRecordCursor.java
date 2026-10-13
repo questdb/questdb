@@ -114,6 +114,8 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     // in one tight loop (see PageFrameRowToucher), which must fit L1 with room to spare: measured
     // best at 32-64 on a 50M-row table, and worse from 128 up.
     private static final int PREFETCH_ROWS = 32;
+    // the rank up to which readKeyRows() checks a rank seek by reading the index, see there
+    private static final long RANK_CHECK_MAX_ROWS = 4096;
     private final Function filter;
     // posting readers frozen for a planned walk, see enablePlannedWalk()
     private final ObjList<AbstractPostingIndexReader> frozenReaders = new ObjList<>();
@@ -829,7 +831,15 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                     ? reader.selectKthMatch(indexKey, lo, hi, entryMax >= 0 ? Math.min(hi, entryMax) : hi, rankLo)
                     : Numbers.LONG_NULL;
             if (row != Numbers.LONG_NULL) {
-                assert row == rankRowByReading(reader, indexKey, lo, hi, rankLo) : "rank seek found another row [keyIndex=" + keyIndex + ", frameIndex=" + frameIndex + ", rankLo=" + rankLo + ']';
+                // Reading the index up to the rank costs rankLo reads per task, quadratic in the
+                // key's rows over the walk, and servers run with -ea (TAQ idx 72: 22% of the
+                // workers' window CPU). Up to RANK_CHECK_MAX_ROWS the rank is checked by reading;
+                // past it by counting the key's rows before the found one, which the index answers
+                // per generation without reading them (countMatchesClamped()), and checking the
+                // found row is the key's: the same claim, at a bounded cost.
+                assert rankLo > RANK_CHECK_MAX_ROWS
+                        ? isRankRow(reader, indexKey, lo, hi, entryMax, row, rankLo)
+                        : row == rankRowByReading(reader, indexKey, lo, hi, rankLo) : "rank seek found another row [keyIndex=" + keyIndex + ", frameIndex=" + frameIndex + ", rankLo=" + rankLo + ']';
                 rowLo = row;
                 skip = 0;
             }
@@ -860,6 +870,24 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                     Unsafe.putLong(a, Unsafe.getLong(a) + shift);
                 }
             }
+        } finally {
+            Misc.free(cursor);
+        }
+    }
+
+    // Whether the row is the key's, in [lo, hi], with rankLo of the key's rows before it from lo.
+    // A count the index cannot give exactly (a legacy unranked blob) checks only the former.
+    private static boolean isRankRow(AbstractPostingIndexReader reader, int indexKey, long lo, long hi, long entryMax, long row, long rankLo) {
+        if (row < lo || row > hi) {
+            return false;
+        }
+        final long before = reader.countMatchesClamped(indexKey, lo, row - 1, entryMax >= 0 ? Math.min(row - 1, entryMax) : row - 1);
+        if (before != Numbers.LONG_NULL && before != rankLo) {
+            return false;
+        }
+        final RowCursor cursor = reader.getDetachedCursor(indexKey, row, hi, null);
+        try {
+            return cursor.hasNext() && cursor.next() == 0;
         } finally {
             Misc.free(cursor);
         }

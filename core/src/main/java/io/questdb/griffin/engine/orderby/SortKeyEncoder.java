@@ -75,6 +75,8 @@ import java.util.Arrays;
 public class SortKeyEncoder implements QuietCloseable {
     public static final int KEY_PREFIX_BYTES = 16;
     public static final long MAX_ENTRY_HEAP_BYTES = (Integer.toUnsignedLong(-1) - 1) << 3;
+    // the keys spreadKeyWords() samples for the core range: its sample array's length
+    public static final int SPREAD_SAMPLE_SIZE = 4096;
     private final int[] columnByteWidths;
     private final int[] columnIndices;
     private final int[] columnTypes;
@@ -261,15 +263,6 @@ public class SortKeyEncoder implements QuietCloseable {
         return true;
     }
 
-    /**
-     * Returns how many encoded entries fit the two sort budgets. The settings size
-     * the tree chain's separate key and value heaps; the encoded layout splits each
-     * entry the same way - key bytes against the key budget, the rowId word against
-     * the light value budget - so each setting keeps binding on its own even when
-     * the other is left at its effectively unbounded default.
-     */
-    // the keys spreadKeyWords() samples for the core range: its sample array's length
-    public static final int SPREAD_SAMPLE_SIZE = 4096;
 
     /**
      * Rewrites the key words of {@code count} entries of one key word and a row id (16 bytes
@@ -357,6 +350,13 @@ public class SortKeyEncoder implements QuietCloseable {
         }
     }
 
+    /**
+     * Returns how many encoded entries fit the two sort budgets. The settings size
+     * the tree chain's separate key and value heaps; the encoded layout splits each
+     * entry the same way - key bytes against the key budget, the rowId word against
+     * the light value budget - so each setting keeps binding on its own even when
+     * the other is left at its effectively unbounded default.
+     */
     public static long maxEntries(long keyCapBytes, long valueCapBytes, SortKeyType keyType) {
         final long keyCap = Math.min(keyCapBytes, MAX_ENTRY_HEAP_BYTES);
         final long valueCap = Math.min(valueCapBytes, MAX_ENTRY_HEAP_BYTES);

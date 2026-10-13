@@ -65,6 +65,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.window.WholePartitionMinMax;
 import io.questdb.griffin.engine.join.JoinRecord;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
@@ -1549,6 +1550,26 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
 
         void releaseView() {
             lookupRecord.view.close();
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(inner);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(inner);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(inner);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(inner);
         }
     }
 

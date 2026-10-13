@@ -51,6 +51,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.jit.CompiledFilter;
@@ -1142,6 +1143,25 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
             }
         }
 
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(providerFunction, residualFilter);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(providerFunction, residualFilter);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(providerFunction, residualFilter);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(providerFunction, residualFilter);
+        }
     }
 
     private static final class SymbolTableSourceMapper implements SymbolTableSource {

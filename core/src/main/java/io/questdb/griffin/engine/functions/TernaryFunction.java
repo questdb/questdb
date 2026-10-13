@@ -91,6 +91,11 @@ public interface TernaryFunction extends Function {
     }
 
     @Override
+    default boolean hasPerCallState() {
+        return getLeft().hasPerCallState() || getCenter().hasPerCallState() || getRight().hasPerCallState();
+    }
+
+    @Override
     default boolean isRandom() {
         return getLeft().isRandom() || getCenter().isRandom() || getRight().isRandom();
     }

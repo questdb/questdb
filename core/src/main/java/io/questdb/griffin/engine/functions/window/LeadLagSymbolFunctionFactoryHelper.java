@@ -41,6 +41,7 @@ import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.cast.CastToSymbolTable;
 import io.questdb.griffin.engine.window.WindowFunction;
@@ -239,6 +240,26 @@ class LeadLagSymbolFunctionFactoryHelper {
             if (ignoreNulls) {
                 sink.val(" ignore nulls");
             }
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(arg, defaultValue);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(arg, defaultValue);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(arg, defaultValue);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(arg, defaultValue);
         }
     }
 
