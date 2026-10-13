@@ -52,11 +52,13 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.DoubleSort;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -298,6 +300,12 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
         }
 
         @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            listMemory.setMemoryTracker(tracker);
+        }
+
+        @Override
         public void toPlan(PlanSink sink) {
             sink.val(getName());
             sink.val('(').val(arg).val(", ").val(percentileFunc).val(')');
@@ -406,6 +414,11 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
             Misc.free(listMemory);
             size = 0;
             result = Double.NaN;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            listMemory.setMemoryTracker(tracker);
         }
 
         @Override
