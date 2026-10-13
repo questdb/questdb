@@ -397,6 +397,64 @@ public class AsyncWindowPlannedWalkTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPrefixCapOnWorkerPool() throws Exception {
+        // The 2,048-row prefix cap with warm-up, fold and carry, on 4 workers: running DOUBLE sums
+        // and averages, bounded frames wider than the cap, a lag past it, a running count beside a
+        // row number, a carry beside a lag, and idx 50's mid. Every shape returns the serial
+        // window's rows with the switch on (prefix capped) and off, twice per factory.
+        final String[] shapes = {
+                "sym, x, sum(d) over (partition by sym rows between unbounded preceding and current row) s",
+                "sym, x, avg(d) over (partition by sym rows between unbounded preceding and current row) a",
+                "sym, x, avg(d) over (partition by sym rows between 3000 preceding and current row) a3k",
+                "sym, x, sum(d) over (partition by sym rows between 2500 preceding and current row) s2k",
+                "sym, x, lag(d, 2500) over (partition by sym) l",
+                "sym, x, max(d) over (partition by sym rows between 4000 preceding and current row) mx",
+                "sym, x, first_value(d) over (partition by sym rows between 2500 preceding and current row) fv",
+                "sym, x, row_number() over (partition by sym) rn, count(d) over (partition by sym rows between unbounded preceding and current row) c",
+                "sym, x, sum(x) over (partition by sym rows between unbounded preceding and current row) sx, x - lag(x) over (partition by sym) dx",
+                "sym, ts, avg((bsize * bid + asize * ask) / (bsize + asize)) over (partition by sym rows between 4 preceding and current row) mid",
+        };
+        setSizes(1_000, 1_000_000, 20_000, 8_000);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WINDOW_PREFIX_ROWS, 16_384);
+        assertMemoryLeak(() -> inPool(4, (engine, ctx) -> {
+            engine.execute("create table q (sym symbol index type posting, bid float, bsize int, ask float, asize int, x long, d double, ts timestamp)"
+                    + " timestamp(ts) partition by DAY", ctx);
+            engine.execute("insert into q select case when x % 2 = 0 then 'BIG' when x % 11 = 0 then null else 'S' || (x / 2 % 10) end,"
+                    + " case when x % 7 = 3 then null else rnd_float() end, rnd_int(1, 1000, 0), rnd_float(), rnd_int(1, 1000, 0), x,"
+                    + " case when x % 13 = 0 then null else rnd_double() * 1000 end, (x * 2_000_000_000L)::timestamp from long_sequence(120000)", ctx);
+            long cappedOpens = 0;
+            for (String shape : shapes) {
+                final String query = "select " + shape + " from q where sym in ('S1', 'S2', 'BIG', 'S3', null) order by sym";
+                final String expected = serial(engine, ctx, query);
+                // the prefix with the switch on, then off: a prefix that keeps keys whole ends with
+                // its key, past the cap, but is never longer with the switch on
+                final long[] prefixes = new long[2];
+                for (boolean on : new boolean[]{true, false}) {
+                    setFrameDispatch(on);
+                    ctx.setParallelWindowEnabled(true);
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        final AsyncWindowRecordCursor asyncCursor = findAsyncCursor(factory);
+                        asyncPlans++;
+                        for (int open = 0; open < 2; open++) {
+                            try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                TestUtils.assertEquals(query + " [dispatch=" + on + ", open " + open + ']', expected, print(cursor, factory));
+                            }
+                            final long prefix = asyncCursor.getPrefixRowCount();
+                            prefixes[on ? 0 : 1] = prefix;
+                            if (on && asyncCursor.getParallelTaskCount() > 0 && prefix <= 2048 + 1_000) {
+                                cappedOpens++;
+                            }
+                        }
+                        assertSlotsReleased(factory);
+                    }
+                }
+                Assert.assertTrue(query + " prefixes " + java.util.Arrays.toString(prefixes), prefixes[0] <= prefixes[1]);
+            }
+            Assert.assertTrue("no capped open with tasks", cappedOpens > 0);
+        }));
+    }
+
+    @Test
     public void testSwitchedOffCollectsOnTheQueryThread() throws Exception {
         assertMemoryLeak(() -> {
             createQuote(engine, sqlExecutionContext, "DAY", 3_000, "posting");
