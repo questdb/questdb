@@ -167,8 +167,17 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testAsyncConvertToParquetWalFailedSquashFsyncIsNotFailStop() throws Exception {
-        // the squash fsyncs the column data it copies under ASYNC; NOSYNC and ADAPTIVE take no sync there
+        // The fd-copy path fsyncs under ASYNC. Never force mixed I/O on a filesystem that cannot support it.
+        Assume.assumeTrue(configuration.getFilesFacade().allowMixedIO(root));
+        node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, true);
         assertConvertToParquetSquashSyncFailure("async", new FsyncFailureFacade("squashPartitionForce", 0, false));
+    }
+
+    @Test
+    public void testAsyncConvertToParquetWalFailedSquashMsyncIsNotFailStop() throws Exception {
+        // ZFS and other non-mixed-I/O filesystems copy through mappings and use MS_ASYNC, not fsync.
+        node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, false);
+        assertConvertToParquetSquashSyncFailure("async", new FsyncFailureFacade("squashPartitionForce", 0, true, true));
     }
 
     @Test
@@ -1355,15 +1364,21 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
      */
     private static final class FsyncFailureFacade extends TestFilesFacadeImpl {
         private final String caller;
+        private final boolean isAsyncMsync;
         private final boolean isMsync;
         int failureCount;
         boolean isArmed;
         private int skipCount;
 
         FsyncFailureFacade(String caller, int skipCount, boolean isMsync) {
+            this(caller, skipCount, isMsync, false);
+        }
+
+        FsyncFailureFacade(String caller, int skipCount, boolean isMsync, boolean isAsyncMsync) {
             this.caller = caller;
             this.skipCount = skipCount;
             this.isMsync = isMsync;
+            this.isAsyncMsync = isAsyncMsync;
         }
 
         @Override
@@ -1386,7 +1401,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
         @Override
         public void msync(long addr, long len, boolean async) {
-            if (isMsync && !async && isFailureDue()) {
+            if (isMsync && async == isAsyncMsync && isFailureDue()) {
                 throw CairoException.dataSyncFailure(this, 5, "msync", "injected msync failure");
             }
             super.msync(addr, len, async);

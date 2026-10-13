@@ -105,7 +105,19 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testApplyPassMappedIO() throws Exception {
+        node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, false);
+        assertCalls(false, false);
+    }
+
+    @Test
     public void testApplyPassVarSize() throws Exception {
+        assertCalls(false, true);
+    }
+
+    @Test
+    public void testApplyPassVarSizeMappedIO() throws Exception {
+        node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, false);
         assertCalls(false, true);
     }
 
@@ -342,7 +354,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         return n;
     }
 
-    private static String expected(String commitMode, boolean isV2, boolean isCommit, boolean isVarSize) {
+    private static String expected(String commitMode, boolean isV2, boolean isCommit, boolean isVarSize, boolean isMixedIO) {
         if (isCommit) {
             // A V2 commit in SYNC msyncs the open part file ahead of the header: one more than base, which
             // syncs the header alone and leaves the record it publishes to writeback.
@@ -359,9 +371,12 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             case "sync" -> " msyncSync=" + (3 + files);
             default -> "";
         };
+        // Without mixed I/O, copying a WAL column maps its destination instead of writing through its fd.
+        // The timestamp destination is already mapped; v.d and the three variable-size columns need more maps.
+        final int maps = 3 + files / 2 + (isMixedIO ? 0 : 1 + files / 2);
         // A V2 apply pass also opens the sequencer part file "0".
-        return "calls: close=" + ((isV2 ? 11 : 10) + 2 * files) + " madvise=3 mmap=" + (3 + files / 2)
-                + " mmapNoCache=1 mremap=1" + msyncs + " munmap=" + (4 + files / 2) + " openRO=" + ((isV2 ? 6 : 5) + files)
+        return "calls: close=" + ((isV2 ? 11 : 10) + 2 * files) + " madvise=3 mmap=" + maps
+                + " mmapNoCache=1 mremap=1" + msyncs + " munmap=" + (maps + 1) + " openRO=" + ((isV2 ? 6 : 5) + files)
                 + " readNonNegativeLong=3; opened: " + (isV2 ? "0=1 " : "") + "_event=1 _event.i=1 _txnlog=1 "
                 + (isVarSize ? "a.d=1 a.i=1 s.d=1 s.i=1 ts.d=1 v.d=1 vc.d=1 vc.i=1" : "ts.d=1 v.d=1");
     }
@@ -413,7 +428,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             Assert.assertEquals(
                     (isCommit ? "commit" : "apply pass") + " calls differ from base [mode=" + commitMode + ", v2=" + isV2
                             + ", varSize=" + isVarSize + ']',
-                    expected(commitMode, isV2, isCommit, isVarSize),
+                    expected(commitMode, isV2, isCommit, isVarSize, configuration.isWriterMixedIOEnabled()),
                     actual
             );
         });

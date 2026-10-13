@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
@@ -39,6 +40,7 @@ import io.questdb.std.DirectIntList;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.str.LPSZ;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -51,6 +53,8 @@ import java.io.File;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -5330,6 +5334,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
             TableToken tableToken = engine.verifyTableName("x");
             File tableDir = new File(root, tableToken.getDirName());
 
+            final List<String> partitionDirsBefore = partitionDirs(tableDir);
             // Arm the failure injection before the rewrite-triggering O3.
             armed.set(true);
 
@@ -5348,13 +5353,8 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Table should be suspended due to O3 error.
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
 
-            // The inner catch should have cleaned up the new directory.
-            int partDirsAfterFailure = countPartitionDirs(tableDir);
-            Assert.assertEquals(
-                    "orphaned rewrite directory left on disk",
-                    1,
-                    partDirsAfterFailure
-            );
+            // Preserve all pre-existing versions (including adaptive recovery pins), but no failed rewrite.
+            Assert.assertEquals("orphaned rewrite directory left on disk", partitionDirsBefore, partitionDirs(tableDir));
 
             // Disarm, resume, and retry.
             armed.set(false);
@@ -5415,9 +5415,10 @@ public class ParquetWriteTest extends AbstractCairoTest {
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
             drainWalQueue();
 
-            // Count 2020-01-01.* partition directories before O3.
+            // Retained adaptive recovery versions are not orphaned rewrite directories.
             TableToken tableToken = engine.verifyTableName("x");
             File tableDir = new File(root, tableToken.getDirName());
+            final List<String> partitionDirsBefore = partitionDirs(tableDir);
 
             // Arm the failure injection.
             armed.set(true);
@@ -5435,12 +5436,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // Table should be suspended due to O3 error.
             Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
 
-            int partDirsAfterFailure = countPartitionDirs(tableDir);
-            Assert.assertEquals(
-                    "orphaned rewrite directory left on disk",
-                    1,
-                    partDirsAfterFailure
-            );
+            Assert.assertEquals("orphaned rewrite directory left on disk", partitionDirsBefore, partitionDirs(tableDir));
 
             // Disarm, resume, and retry.
             armed.set(false);
@@ -6070,6 +6066,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
             TableToken tableToken = engine.verifyTableName("x");
             File tableDir = new File(root, tableToken.getDirName());
+            final List<String> partitionDirsBefore = partitionDirs(tableDir);
             final long parquetMetaSizeBefore = parquetMetaLength(tableDir);
             Assert.assertTrue(parquetMetaSizeBefore > 0);
             Assert.assertEquals(
@@ -6096,7 +6093,7 @@ public class ParquetWriteTest extends AbstractCairoTest {
             // In-place mode left no new partition directory, and the rollback
             // left _pm GROWN (the orphaned dead tail) rather than truncated back
             // to the committed size -- the old code truncated here.
-            Assert.assertEquals("in-place update must not create a new dir", 1, countPartitionDirs(tableDir));
+            Assert.assertEquals("in-place update must not create a new dir", partitionDirsBefore, partitionDirs(tableDir));
             final long parquetMetaSizeAfterFailure = parquetMetaLength(tableDir);
             Assert.assertTrue(
                     "_pm must not be truncated on rollback [before=" + parquetMetaSizeBefore + ", after=" + parquetMetaSizeAfterFailure + "]",
@@ -6141,11 +6138,6 @@ public class ParquetWriteTest extends AbstractCairoTest {
                             100\t2020-01-02T00:00:00.000000Z
                             """);
         });
-    }
-
-    private static int countPartitionDirs(File tableDir) {
-        String[] dirs = tableDir.list((_, name) -> name.startsWith("2020-01-01"));
-        return dirs != null ? dirs.length : 0;
     }
 
     /**
@@ -6200,12 +6192,20 @@ public class ParquetWriteTest extends AbstractCairoTest {
     }
 
     private static File parquetMetaFile(File tableDir) {
-        String[] dirs = tableDir.list((_, name) -> name.startsWith("2020-01-01"));
-        Assert.assertNotNull("no 2020-01-01 partition dir found", dirs);
-        Assert.assertEquals("expected exactly one 2020-01-01 partition dir", 1, dirs.length);
-        File pm = new File(new File(tableDir, dirs[0]), "_pm");
-        Assert.assertTrue("_pm must exist: " + pm, pm.exists());
-        return pm;
+        // The older adaptive save point may retain another version. Corrupt/check only the committed one.
+        try (TableReader reader = getReader(engine.getTableTokenByDirName(tableDir.getName())); Path path = new Path()) {
+            path.of(tableDir.getPath());
+            TableUtils.setPathForNativePartition(
+                    path,
+                    reader.getMetadata().getTimestampType(),
+                    reader.getPartitionedBy(),
+                    reader.getPartitionTimestampByIndex(0),
+                    reader.getPartitionNameTxnByIndex(0)
+            );
+            File pm = new File(path.concat(TableUtils.PARQUET_METADATA_FILE_NAME).toString());
+            Assert.assertTrue("_pm must exist: " + pm, pm.exists());
+            return pm;
+        }
     }
 
     private static long parquetMetaHeaderSize(File tableDir) throws IOException {
@@ -6215,6 +6215,13 @@ public class ParquetWriteTest extends AbstractCairoTest {
 
     private static long parquetMetaLength(File tableDir) {
         return parquetMetaFile(tableDir).length();
+    }
+
+    private static List<String> partitionDirs(File tableDir) {
+        String[] dirs = tableDir.list((_, name) -> name.startsWith("2020-01-01"));
+        Assert.assertNotNull("partition directory listing must succeed", dirs);
+        Arrays.sort(dirs);
+        return Arrays.asList(dirs);
     }
 
     private static @NotNull FilesFacade getFilesFacade(AtomicBoolean armed) {

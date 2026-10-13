@@ -59,6 +59,8 @@ import io.questdb.test.tools.LogCapture;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 import static io.questdb.cairo.TableUtils.COLUMN_NAME_TXN_NONE;
 import static org.junit.Assert.*;
 
@@ -796,6 +798,43 @@ public class PostingSealPurgeTest extends AbstractCairoTest {
                     path.trimTo(plen);
                     assertEquals("nothing left for the purge job", 0, writer.getPendingPurgesSizeForTesting());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testRetryPassIsBoundedWhenPurgeTakesLongerThanBackoff() throws Exception {
+        final AtomicInteger clockReads = new AtomicInteger();
+        final boolean[] isMeasuring = {false};
+        // Each attempt outlasts the retry delay, as on a slow or instrumented filesystem. Freeze after 100
+        // reads so the broken loop terminates too: the regression fails by work count, not by a timeout.
+        testMicrosClock = () -> isMeasuring[0] ? Math.min(clockReads.incrementAndGet(), 100) * 100L : currentMicros;
+        assertMemoryLeak(() -> {
+            assertFalse(configuration.disableColumnPurgeJob());
+            TableToken token = createPostingTable("bounded_retries");
+            try (Path path = partitionPathFor(token);
+                 PostingSealPurgeJob job = new PostingSealPurgeJob(engine);
+                 TxnScoreboard scoreboard = engine.getTxnScoreboard(token)) {
+                long firstSeal = writeAndSeal(path, "first");
+                long secondSeal = writeAndSeal(path, "second");
+                assertTrue(scoreboard.acquireTxn(0, 3L));
+                try {
+                    publishPurgeTask(token, "first", firstSeal, 10L);
+                    publishPurgeTask(token, "second", secondSeal, 10L);
+                    isMeasuring[0] = true;
+                    try {
+                        job.run();
+                    } finally {
+                        isMeasuring[0] = false;
+                    }
+                    assertTrue("one run must not keep retrying pinned tasks: " + clockReads.get(), clockReads.get() < 20);
+                    assertEquals("both pinned tasks must remain queued", 2, job.getOutstandingPurgeTasks());
+                } finally {
+                    scoreboard.releaseTxn(0, 3L);
+                }
+                setCurrentMicros(20_000L);
+                job.run();
+                assertEquals("both tasks must purge after readers release them", 0, job.getOutstandingPurgeTasks());
             }
         });
     }

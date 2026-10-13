@@ -16211,7 +16211,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * The commit mode for an apply-path column-data sync: the writer's mode when
-     * {@link #CommitMode.appliesColumnSync(int)} is true, otherwise {@link CommitMode#NOSYNC}. The partition split
+     * {@link CommitMode#appliesColumnSync(int)} is true, otherwise {@link CommitMode#NOSYNC}. The partition split
      * and squash sites pass it to {@link io.questdb.cairo.frm.FrameAlgebra#append}, so those column writes
      * skip their msync and fsync under ADAPTIVE (lazy apply), as the O3 path does, while the structural
      * effects of the split or squash, recorded in {@code _txn} and {@code _cv}, stay as durable as the
@@ -16670,7 +16670,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * the commit pointers: the durable cut an adaptive durable epoch records for recovery to land on.
      * <p>
      * Under {@link CommitMode#ADAPTIVE} the apply path skips the per-column flush (see
-     * {@link #appliesColumnSync}), so partition columns can be non-durable while {@code _txn} and {@code _cv}
+     * {@link CommitMode#appliesColumnSync(int)}), so partition columns can be non-durable while {@code _txn} and {@code _cv}
      * are only msynced. This method flushes in data-before-pointer order:
      * <ol>
      *   <li>the columns, with the kick, drain and {@code syncfs} passes of {@link #syncColumnsBatchedSync()}
@@ -16683,7 +16683,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * </ol>
      * The cut's identity is the writer's {@link #getSeqTxn()} and {@link #getTxn()}, which do not move while
      * the caller holds the writer. The indexers and pending posting-seal purges are published first, as
-     * {@link #syncColumns()} does, so the cut is consistent for the index state too.
+     * {@link #syncColumns(int)} does, so the cut is consistent for the index state too.
      */
     public void fsyncMaterializedState() {
         // Publish buffered index writes (PostingIndexWriter / BitmapIndexWriter) just like

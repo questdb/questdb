@@ -167,9 +167,10 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
      * mismatch, is removed once the older generation is restored and checked. A kill after the replay moved the
      * live files past the older cut, but not past the rejected one, then cannot read as a wrong-lineage state:
      * the next start lands on the older generation again and the replay brings back every row. A read fault
-     * inside the content check (in each place it can happen) also falls back, but must leave the file in place,
-     * also when that file sits exactly at the sequencer frontier. When the older generation fails too, on content
-     * or on its checksums, no generation is selected: every start refuses, and both files stay on disk.
+     * of a restored live file also falls back, but must leave the save point in place, also when it sits exactly
+     * at the sequencer frontier. A read fault of the save point itself must fail startup without deleting either
+     * generation; a later start without the fault can reject its content and fall back. When the older generation
+     * fails too, on content or on its checksums, no generation is selected: every start refuses, and both files stay on disk.
      */
     @Test
     public void testFallbackRemovesOnlyGenerationRejectedOnContent() throws Exception {
@@ -219,13 +220,28 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
                         engine.releaseAllReaders();
                         continue;
                     }
+                    final boolean isManifestReadFault = manifestFault.equals(row.readFault);
                     faultFf.arm(row.readFault);
                     try {
-                        new RecoveryCoordinator(engine).recover();
+                        if (isManifestReadFault) {
+                            try {
+                                new RecoveryCoordinator(engine).recover();
+                                Assert.fail(context + ": an unreadable save point must fail startup");
+                            } catch (CairoException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), manifestFault);
+                            }
+                            Assert.assertTrue(context + ": a read fault must preserve the newest generation", savePointFileExists(tt, 0));
+                            Assert.assertTrue(context + ": a read fault must preserve the older generation", savePointFileExists(tt, 1));
+                        } else {
+                            new RecoveryCoordinator(engine).recover();
+                        }
                     } finally {
                         faultFf.disarm();
                     }
-                    Assert.assertEquals(context + ": the first start must fall back to the older generation", K, readTxnSeqTxn(tt));
+                    if (isManifestReadFault) {
+                        new RecoveryCoordinator(engine).recover();
+                    }
+                    Assert.assertEquals(context + ": recovery must fall back to the older generation", K, readTxnSeqTxn(tt));
                     Assert.assertTrue(context + ": the read fault never fired", row.readFault == null || faultFf.fired);
                     final boolean rejectedFileKept = savePointFileExists(tt, 0);
                     if (row.readFault == null) {
@@ -236,7 +252,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
                     }
                     engine.getTxnScoreboardPool().remove(tt);
                     assertRestartAfterFallbackConverges(tt, context, row.atFrontier ? K + M : K + M + 1);
-                    Assert.assertEquals(context + ": only a definite mismatch removes the rejected generation", row.readFault != null, rejectedFileKept);
+                    Assert.assertEquals(context + ": only a definite mismatch removes the rejected generation", row.readFault != null && !isManifestReadFault, rejectedFileKept);
                     dropSweepTable(tt);
                     engine.releaseAllWriters();
                     engine.releaseAllReaders();

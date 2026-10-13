@@ -26,6 +26,7 @@ package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -332,6 +333,8 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     @Test
     public void testShowPartitionsDetachedPartitionPlusAttachable() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // no links in windows
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, Long.MAX_VALUE);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);
         String tableName = testTableName(testName.getMethodName());
         assertMemoryLeak(() -> {
             TableToken tableToken = createTable(tableName);
@@ -368,6 +371,16 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             execute("ALTER TABLE " + tableName + " ATTACH PARTITION LIST '2023-02', '2023-03'", sqlExecutionContext);
             if (isWal) {
                 drainWalQueue();
+                if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+                    // The older save point still needs the sources to replay ATTACH after a fallback.
+                    assertQuery("SELECT name FROM table_partitions('" + tableName + "') WHERE attachable ORDER BY name")
+                            .noLeakCheck()
+                            .sizeMayVary()
+                            .returns("name\n2023-02.attachable\n2023-03.attachable\n2023-04.attachable\n");
+                    try (TableWriter writer = getWriter(tableToken)) {
+                        writer.completeDurableEpochAfter("test attach cleanup");
+                    }
+                }
             }
             assertShowPartitions(
                     """

@@ -35,7 +35,8 @@ public class AdaptiveEpochTriggerTest extends AbstractCairoTest {
     @Test
     public void testAdaptiveEpochConfigDefaults() throws Exception {
         assertMemoryLeak(() -> {
-            Assert.assertEquals(60000L, engine.getConfiguration().getAdaptiveEpochIntervalMs());
+            // Embedded/test cadence differs from the server default, covered by PropServerConfigurationTest.
+            Assert.assertEquals(1000L, engine.getConfiguration().getAdaptiveEpochIntervalMs());
             Assert.assertEquals(5_000_000L, engine.getConfiguration().getAdaptiveEpochMaxRows());
         });
     }

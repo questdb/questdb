@@ -120,6 +120,8 @@ public class PropServerConfigurationTest {
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
         FilesFacade ff = configuration.getCairoConfiguration().getFilesFacade();
 
+        Assert.assertEquals(60_000L, configuration.getCairoConfiguration().getAdaptiveEpochIntervalMs());
+        Assert.assertEquals(5_000_000L, configuration.getCairoConfiguration().getAdaptiveEpochMaxRows());
         Assert.assertFalse(configuration.getCairoConfiguration().getLogLevelVerbose());
         Assert.assertEquals("Z", configuration.getCairoConfiguration().getLogTimestampTimezone());
         Assert.assertEquals(500, configuration.getHttpServerConfiguration().getAcceptLoopTimeout());

@@ -447,7 +447,9 @@ public class PostingSealPurgeJob extends SynchronizedJob implements Closeable {
     private boolean processRetryQueue() {
         boolean useful = false;
         long now = clock.getTicks();
-        while (!retryQueue.isEmpty()) {
+        // A purge attempt can outlast another task's backoff. Bound this pass to the initial queue size,
+        // otherwise pinned tasks can rotate through the queue forever and monopolize the worker.
+        for (int remaining = retryQueue.size(); remaining > 0 && !retryQueue.isEmpty(); remaining--) {
             RetryEntry head = retryQueue.peek();
             if (head.nextRunTime > now) {
                 return useful;

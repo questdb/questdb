@@ -120,6 +120,7 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
         // pool shutdown".
         engine.releaseCrashOrphanedWalWriters();
         engine.releaseAllWalWriters();
+        engine.releaseAllViewWalWriters();
         engine.releaseInactiveTableSequencers();
         // Table writers are released last. The WAL-writer and sequencer releases above re-enter the engine (draining
         // WAL work opens a TableWriter), so a writer released earlier can exist again here. The caller's next step,
@@ -153,6 +154,8 @@ public abstract class AbstractAdaptiveCrashTest extends AbstractCrashConsistency
         // pool slot owned. releaseAllWalWriters() cannot reclaim an owned slot. No-op under W=0.
         engine.releaseCrashOrphanedWalWriters();
         engine.releaseAllWalWriters();
+        // Views own a separate WAL-writer pool. Its mappings must also close before durable files are restored.
+        engine.releaseAllViewWalWriters();
         crashFf.crash(engine.getConfiguration().getDbRoot());
 
         // A fresh process starts with un-suspended trackers: clear the suspend the apply job's catch set when it
