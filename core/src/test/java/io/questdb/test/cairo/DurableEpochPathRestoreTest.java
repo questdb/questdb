@@ -25,14 +25,21 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.junit.runners.Parameterized;
+
+import java.util.Arrays;
+import java.util.Collection;
 
 /**
  * {@code DurableEpochManifest.write} and {@code DurableEpochManifest.fsyncDirectory} must give back the table
@@ -42,7 +49,18 @@ import org.junit.Test;
  * contract directly on every platform. The class also covers the rejection branches of
  * {@code DurableEpochManifest.validate()}.
  */
+@RunWith(Parameterized.class)
 public class DurableEpochPathRestoreTest extends AbstractCairoTest {
+    private final int identityIndex;
+
+    public DurableEpochPathRestoreTest(int identityIndex, String identity) {
+        this.identityIndex = identityIndex;
+    }
+
+    @Parameterized.Parameters(name = "{1}")
+    public static Collection<Object[]> data() {
+        return Arrays.asList(new Object[][]{{0, "seqTxn"}, {1, "txn"}, {2, "columnVersion"}, {3, "metadataVersion"}});
+    }
 
     @Test
     public void testFsyncDirectoryRestoresTheCallersPath() throws Exception {
@@ -67,14 +85,38 @@ public class DurableEpochPathRestoreTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWriteRejectsDisagreeingIdentity() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = enrolledAdaptiveTable("identity");
+            try (TableWriter writer = engine.getWriter(token, "test"); Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(token);
+                final int rootLen = path.size();
+                final long[] cut = {writer.getSeqTxn(), writer.getTxn(), writer.getTxWriter().getColumnVersion(), writer.getMetadataVersion()};
+                DurableEpochManifest.write(configuration, token, path, rootLen, 0, cut[0], cut[1], cut[2], cut[3]);
+                final long[] wrong = cut.clone();
+                wrong[identityIndex]++;
+                CairoException error = Assert.assertThrows(CairoException.class,
+                        () -> DurableEpochManifest.write(configuration, token, path, rootLen, 1, wrong[0], wrong[1], wrong[2], wrong[3]));
+                TestUtils.assertContains(error.getFlyweightMessage(), "adaptive epoch identity mismatch");
+                Assert.assertEquals(rootLen, path.size());
+                Assert.assertTrue(DurableEpochManifest.validate(configuration, token, path, rootLen, 0, cut[0], cut[1], cut[2], cut[3]));
+                for (DurableEpochManifest.Candidate candidate : DurableEpochManifest.loadCandidates(configuration.getFilesFacade(), path, rootLen, token.getTableId())) {
+                    Assert.assertEquals("the rejected generation must not be published", 0, candidate.generation);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testWriteRestoresTheCallersPath() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken token = enrolledAdaptiveTable("write_restore");
-            try (Path path = new Path()) {
+            try (TableWriter writer = engine.getWriter(token, "test"); Path path = new Path()) {
                 path.of(configuration.getDbRoot()).concat(token);
                 final int rootLen = path.size();
 
-                DurableEpochManifest.write(configuration, token, path, rootLen, 0, 1, 1, 0, 0);
+                DurableEpochManifest.write(configuration, token, path, rootLen, 0, writer.getSeqTxn(), writer.getTxn(),
+                        writer.getTxWriter().getColumnVersion(), writer.getMetadataVersion());
 
                 Assert.assertEquals(
                         "write must hand the caller's path back at rootLen, got: " + path,

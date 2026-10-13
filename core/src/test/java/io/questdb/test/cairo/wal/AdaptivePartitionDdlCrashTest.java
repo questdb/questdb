@@ -110,6 +110,15 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         }
 
         @Override
+        public void fsyncDurable(long fd) {
+            super.fsyncDurable(fd);
+            if (isSavePointKillArmed && fd == savePointFd) {
+                isSavePointKillArmed = false;
+                takeKillImage(savePointFile.getParent());
+            }
+        }
+
+        @Override
         public int hardLinkDirRecursive(Path src, Path dst, int dirMode) {
             // A link out of a partition directory or an .attachable one crosses to another device; a link between
             // two detached names stays on the device that holds them.
@@ -142,7 +151,12 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     return -1;
                 }
             }
-            return super.openRW(name, opts);
+            final long fd = super.openRW(name, opts);
+            if (isSavePointKillArmed && Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME)) {
+                savePointFd = fd;
+                savePointFile = java.nio.file.Path.of(Utf8s.stringFromUtf8Bytes(name));
+            }
+            return fd;
         }
 
         @Override
@@ -168,8 +182,11 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     private static volatile boolean crossDevice;
     // The number of save points after which a save point fails with an I/O error; -1 never fails.
     private static volatile int failSavePointsAfter = -1;
+    private static volatile boolean isSavePointKillArmed;
     // The process is killed right after the operation moves a partition directory.
     private static volatile boolean killAfterMove;
+    private static long savePointFd;
+    private static java.nio.file.Path savePointFile;
     // The process is killed in the middle of the link that gives a detached partition its final name.
     private static volatile boolean killInFinalLink;
     // What a process kill leaves of the table directory; the next restart puts it back.
@@ -194,6 +211,20 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         final List<Object[]> params = new ArrayList<>();
         for (History history : History.values()) {
             for (Operation operation : Operation.values()) {
+                if (history == History.KILLED_AFTER_SAVE_POINT) {
+                    if (operation.isConversion()) {
+                        params.add(new Object[]{history, operation, OperationPath.WAL});
+                        params.add(new Object[]{history, operation, OperationPath.SUSPENDED});
+                    }
+                    continue;
+                }
+                if (operation.isNoOpConversion() || operation == Operation.CONVERT_NATIVE_LIST_SECOND_FAILS) {
+                    if (history == History.ENROLLED_AT_CREATE || history == History.NOSYNC || history.cleanRestart()) {
+                        params.add(new Object[]{history, operation, OperationPath.WAL});
+                        params.add(new Object[]{history, operation, OperationPath.SUSPENDED});
+                    }
+                    continue;
+                }
                 if (history == History.COPY_SECOND_SAVE_POINT_FAILS) {
                     if (operation == Operation.COPY_INTO_EXISTING_TABLE) {
                         params.add(new Object[]{history, operation, OperationPath.OWN});
@@ -295,11 +326,14 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 if (operation == Operation.RESUME_WAL_FROM_TXN) {
                     Assert.assertFalse("the transaction must be skipped", snapshot(e).contains("skipped"));
                 }
-                if (!history.cleanRestart() && !history.killed()) {
+                if (!history.cleanRestart() && !history.killed() && !(operation.isNoOpConversionFailure() && path == OperationPath.WAL)) {
                     insertDay(e, "2024-01-05", 40);
                 }
                 if (history.killed()) {
                     Assert.assertNotNull("the kill must happen", killImageRoot);
+                    if (history == History.KILLED_AFTER_SAVE_POINT) {
+                        assertFrozenEpochIdentity();
+                    }
                 }
                 if (history.cleanRestart()) {
                     // The writer's close takes the save point the operation owes, and with it the moves that wait for
@@ -318,10 +352,14 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     corruptNewestGeneration(e);
                 }
                 e = restart(e);
-                if (e.getTableSequencerAPI().isSuspended(e.verifyTableName("t"))) {
+                if (e.getTableSequencerAPI().isSuspended(e.verifyTableName("t")) && !(operation.isNoOpConversionFailure() && path == OperationPath.WAL)) {
                     e.execute("ALTER TABLE t RESUME WAL");
                 }
                 TestUtils.drainWalQueue(e);
+                if (operation.isNoOpConversionFailure() && path == OperationPath.WAL) {
+                    // The deliberately missing second partition still fails apply; recovery must not refuse the table.
+                    Assert.assertTrue("the invalid command must remain suspended", e.getTableSequencerAPI().isSuspended(e.verifyTableName("t")));
+                }
                 if (history.killed()) {
                     // Writer open finishes what the kill interrupted, also when no WAL is left to apply.
                     e.getWriter(e.verifyTableName("t"), "test").close();
@@ -347,6 +385,17 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         e.execute(sql);
         TestUtils.drainWalQueue(e);
         Assert.assertFalse(sql, e.getTableSequencerAPI().isSuspended(e.verifyTableName("t")));
+    }
+
+    private static void assertFrozenEpochIdentity() {
+        final java.nio.ByteBuffer image = java.nio.ByteBuffer.wrap(killImageFiles.get(savePointFile)).order(java.nio.ByteOrder.LITTLE_ENDIAN);
+        final int section = (int) DurableEpochManifest.FILE_SIZE;
+        final long version = image.getLong(section + (int) TableUtils.TX_BASE_OFFSET_VERSION_64);
+        final int base = section + image.getInt(section + (int) ((version & 1) == 0 ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32));
+        Assert.assertEquals("saved seqTxn", image.getLong(base + (int) TableUtils.TX_OFFSET_SEQ_TXN_64), image.getLong(24));
+        Assert.assertEquals("saved txn", image.getLong(base + (int) TableUtils.TX_OFFSET_TXN_64), image.getLong(32));
+        Assert.assertEquals("saved column version", image.getLong(base + (int) TableUtils.TX_OFFSET_COLUMN_VERSION_64), image.getLong(40));
+        Assert.assertEquals("saved metadata version", image.getInt(base + (int) TableUtils.TX_OFFSET_STRUCT_VERSION_64), image.getLong(96));
     }
 
     private static void assertResumeFails(CairoEngine e, String resume) throws SqlException {
@@ -582,7 +631,11 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             }
             default -> applySql(e, sql(e));
         }
-        Assert.assertNotEquals("the operation must change the partitions", before, partitions(e));
+        if (operation.isNoOpConversion()) {
+            Assert.assertEquals("the no-op must leave the partitions unchanged", before, partitions(e));
+        } else {
+            Assert.assertNotEquals("the operation must change the partitions", before, partitions(e));
+        }
         if (operation == Operation.ATTACH_LIST_SECOND_FAILS) {
             final String rows = snapshot(e);
             Assert.assertTrue("the first partition must attach", rows.contains("\ts11\t"));
@@ -608,7 +661,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                         Assert.assertTrue("failed required publication must suspend apply",
                                 e.getTableSequencerAPI().isSuspended(e.verifyTableName("t")));
                     }
-                } else if (operation == Operation.CONVERT_LIST_SECOND_FAILS) {
+                } else if (operation.isConversionFailure()) {
                     // A convert that fails in the apply job suspends the table.
                     e.execute(sql);
                     TestUtils.drainWalQueue(e);
@@ -635,7 +688,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             } else if (history == History.SAVE_POINT_FAILS_THEN_KILLED) {
                 takeSavePoint(e);
             }
-            if (operation == Operation.CONVERT_LIST_SECOND_FAILS) {
+            if (operation.isConversionFailure() && !operation.isNoOpConversionFailure()) {
                 alter(e, "ALTER TABLE t RESUME WAL");
             }
             return;
@@ -704,7 +757,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     // its save point. In ADAPTIVE the older save point, which recovery falls back to, may still name them, so the
     // purge the statement schedules removes them once the next save point moves past them.
     private void assertSupersededDirsRemoved(CairoEngine e, long supersededBefore) throws Exception {
-        if (history == History.NEWEST_GENERATION_DAMAGED) {
+        if (history == History.NEWEST_GENERATION_DAMAGED || history == History.KILLED_AFTER_SAVE_POINT) {
             // Do not hide operation-completion bugs with a helper-only covering publication.
             return;
         }
@@ -752,6 +805,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         failSavePointsAfter = -1;
         crossDevice = false;
         killAfterMove = false;
+        isSavePointKillArmed = false;
         killInFinalLink = false;
     }
 
@@ -820,7 +874,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     alter(e, "ALTER TABLE t DETACH PARTITION LIST '2024-01-01'");
                 }
             }
-            case CONVERT_TO_NATIVE -> alter(e, "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST " + THREE_PARTITIONS);
+            case CONVERT_TO_NATIVE, CONVERT_NATIVE_LIST_SECOND_FAILS, CONVERT_PARQUET_NO_OP,
+                 CONVERT_PARQUET_NO_OP_SECOND_FAILS ->
+                    alter(e, "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST " + THREE_PARTITIONS);
             default -> {
             }
         }
@@ -840,8 +896,12 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK, ATTACH_WITH_COPY_SETTING ->
                     "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "'";
             case ATTACH_LIST_SECOND_FAILS -> "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "', '2024-01-01'";
-            case CONVERT_LIST_SECOND_FAILS ->
+            case CONVERT_LIST_SECOND_FAILS, CONVERT_PARQUET_NO_OP_SECOND_FAILS ->
                     "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-09'";
+            case CONVERT_NATIVE_LIST_SECOND_FAILS, CONVERT_NATIVE_NO_OP_SECOND_FAILS ->
+                    "ALTER TABLE t CONVERT PARTITION TO NATIVE LIST '2024-01-01', '2024-01-09'";
+            case CONVERT_NATIVE_NO_OP -> "ALTER TABLE t CONVERT PARTITION TO NATIVE LIST " + THREE_PARTITIONS;
+            case CONVERT_PARQUET_NO_OP -> "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST " + THREE_PARTITIONS;
             // The WHERE form picks its partitions when the WAL applies it; applied directly to a WAL table it
             // matches none.
             case CONVERT_TO_NATIVE -> path == OperationPath.WAL
@@ -882,6 +942,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         crossDevice = operation == Operation.ATTACH_CROSS_DEVICE || operation == Operation.DETACH_CROSS_DEVICE;
         killAfterMove = history == History.KILLED_BEFORE_TXN || history == History.KILLED_BEFORE_TXN_NOSYNC;
         killInFinalLink = history == History.KILLED_IN_DETACH_FINAL_LINK;
+        isSavePointKillArmed = history == History.KILLED_AFTER_SAVE_POINT;
+        savePointFd = -1;
+        savePointFile = null;
     }
 
     public enum History {
@@ -914,6 +977,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         SAVE_POINT_FAILS_THEN_KILLED,
         // The process is killed while a DETACH that its save point covers takes its final .detached name.
         KILLED_IN_DETACH_FINAL_LINK,
+        // Freeze after header durability, before a no-op's outer apply commits its seqTxn.
+        KILLED_AFTER_SAVE_POINT,
         // As KILLED_BEFORE_TXN on a NOSYNC instance.
         KILLED_BEFORE_TXN_NOSYNC,
         // The newest save point, the one after the operation, is damaged on the disk before the restart: the start
@@ -933,7 +998,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         }
 
         boolean killed() {
-            return killedBeforeSavePoint() || this == KILLED_IN_DETACH_FINAL_LINK;
+            return killedBeforeSavePoint() || this == KILLED_IN_DETACH_FINAL_LINK || this == KILLED_AFTER_SAVE_POINT;
         }
 
         boolean killedBeforeSavePoint() {
@@ -970,6 +1035,11 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         ATTACH_WITH_COPY_SETTING,
         // CONVERT of two partitions whose second does not exist: the statement fails after converting the first.
         CONVERT_LIST_SECOND_FAILS,
+        CONVERT_NATIVE_LIST_SECOND_FAILS,
+        CONVERT_NATIVE_NO_OP,
+        CONVERT_NATIVE_NO_OP_SECOND_FAILS,
+        CONVERT_PARQUET_NO_OP,
+        CONVERT_PARQUET_NO_OP_SECOND_FAILS,
         CONVERT_TO_NATIVE,
         CONVERT_TO_PARQUET,
         // COPY into an empty WAL table, which attaches each imported partition outside the WAL.
@@ -1011,7 +1081,23 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
         // The statement fails after it changed the table.
         boolean failsPartWay() {
-            return this == ATTACH_LIST_SECOND_FAILS || this == CONVERT_LIST_SECOND_FAILS || this == DETACH_LIST_SECOND_FAILS;
+            return this == ATTACH_LIST_SECOND_FAILS || isConversionFailure() || this == DETACH_LIST_SECOND_FAILS;
+        }
+
+        boolean isConversion() {
+            return this == CONVERT_TO_NATIVE || this == CONVERT_TO_PARQUET || isConversionFailure() || isNoOpConversion();
+        }
+
+        boolean isConversionFailure() {
+            return this == CONVERT_LIST_SECOND_FAILS || this == CONVERT_NATIVE_LIST_SECOND_FAILS || isNoOpConversionFailure();
+        }
+
+        boolean isNoOpConversion() {
+            return this == CONVERT_NATIVE_NO_OP || this == CONVERT_PARQUET_NO_OP || isNoOpConversionFailure();
+        }
+
+        boolean isNoOpConversionFailure() {
+            return this == CONVERT_NATIVE_NO_OP_SECOND_FAILS || this == CONVERT_PARQUET_NO_OP_SECOND_FAILS;
         }
 
         // The operation moves a partition directory to or from a name the WAL replay needs to find as it was.

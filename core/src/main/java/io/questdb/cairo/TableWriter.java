@@ -7725,7 +7725,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
                 if (tracker.isDurableEpochOwed()
                         || (configuration.getAdaptiveEpochIntervalMs() >= 0
-                        && (getSeqTxn() > tracker.getDurableEpochSeqTxn() || getTxn() != tracker.getPinnedEpochTxn()))) {
+                        && (txWriter.getCommittedSeqTxn() > tracker.getDurableEpochSeqTxn() || getTxn() != tracker.getPinnedEpochTxn()))) {
                     advanceDurableEpoch(configuration.getMicrosecondClock().getTicks() / 1000L);
                 }
             } catch (Throwable e) {
@@ -16469,23 +16469,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private boolean advanceDurableEpoch(long nowMs, boolean forceBaseline) {
-        // Returns before writing anything if an Enterprise replica demote disabled local durability after the
-        // caller's gate. An enrolment baseline is exempt: the table's first anchor must be published before
-        // the table applies as adaptive.
+        // Recheck demotion after the caller's gate. Enrolment must publish its baseline before adaptive apply.
         if (!forceBaseline && !engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled()) {
             LOG.info().$("adaptive durable epoch skipped: local durability disabled [table=").$(tableToken).I$();
             return false;
         }
 
-        // An epoch is a usable recovery cut only if its saved _meta and _txn describe the same table shape.
-        // _txn's symbol area is written from denseSymbolMapWriters and _meta carries the live symbol columns,
-        // so the two counts must agree. A structural change breaks that for a while: changeColumnType()
-        // creates the map writer of a destination symbol column before the conversion and publishes the
-        // column to _meta after it. No caller takes an epoch in that window (changeColumnType() takes its own
-        // after the final commit); this check is the backstop. A cut there would pair a _txn that counts the
-        // new symbol column with a _meta without it, at the same metadataVersion, so every identity check
-        // passes, and the rewound table could not open: rollbackSymbolTables() fails in the constructor, and
-        // WAL apply suspends the table. Declining to publish keeps the prior epoch; the next batch retries.
+        // A column-type conversion temporarily adds a symbol writer before publishing its column in _meta.
+        // Matching identity fields alone cannot certify that cut: the saved symbol counts must also agree.
         if (!symbolStateMatchesMetadata()) {
             LOG.info().$("adaptive durable epoch skipped: structural change in flight [table=").$(tableToken)
                     .$(", denseSymbolWriters=").$(denseSymbolMapWriters.size())
@@ -16501,15 +16492,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
 
-        // Write the generation that is not current, chosen before anything is written: a failed write can damage
-        // only that one. Current is the generation the table stands on, which the tracker records with the pin: the
-        // generation recovery selected, or the one this writer last published. A txn cannot name it: the idle save
-        // point leaves both generations at one txn, and after a fallback from a newer generation that kept a valid
-        // header the pin is what keeps this from overwriting the only good one. A writer without a pin (enrolment,
-        // a baseline published outside a writer), or whose pinned generation a restore removed from the disk,
-        // stands on the valid generation with the higher (seqTxn, txn), the one recovery would select. Build from
-        // this writer's own root, not configuration.getDbRoot(): a writer can be opened against a different root
-        // (CopyImportTask builds one under the COPY work directory). `path` is already root + tableToken.
+        // Preserve the selected generation, not merely its txn: both generations may have the same cut.
+        // Without a surviving pinned generation, use recovery's disk ordering. This writer's root also covers
+        // private COPY staging tables, which need not be under configuration.getDbRoot().
         final DurableEpochManifest.Candidate[] saved = DurableEpochManifest.loadCandidates(ff, path.trimTo(pathSize), pathSize, tableToken.getTableId());
         int currentGeneration = saved.length > 0 ? saved[0].generation : -1;
         final int pinnedGeneration = tracker.getPinnedEpochTxn() >= 0 ? tracker.getPinnedEpochGeneration() : -1;
@@ -16521,35 +16506,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         final int epochGeneration = currentGeneration < 0 ? 0 : 1 - currentGeneration;
 
-        // Step 1: make the materialized state fully durable. Capture the applied cut before flushing it; the
-        // writer is held, so this frontier cannot move.
-        final long epochSeqTxn = getSeqTxn();
+        // A no-op or failed command can leave a pending seqTxn. Flush and publish only the committed record.
+        final long epochSeqTxn = txWriter.getCommittedSeqTxn();
         fsyncMaterializedState();
 
         if (epochSeqTxn > 0) {
-            // An epoch must never name a cut past the durable sequencer. On macOS and Windows the materialized
-            // state flush fsyncs table files one by one instead of a Linux syncfs, so apply can reach a
-            // transaction whose shared sequencer barrier is still pending: make the sequencer prefix through this
-            // cut durable before the save point and the purge floor publish it. On Linux the syncfs in
-            // fsyncMaterializedState() covers it. Private adaptive WAL files are durable before sequencing, so the
-            // shared barrier suffices; an enrolment baseline also needs it for older NOSYNC sequencer records.
+            // Linux syncfs already covers the sequencer; elsewhere flush its prefix before publishing the cut.
+            // This also covers older NOSYNC sequencer records at enrolment.
             if (!ff.isSyncfsFileSystemWide()) {
                 engine.getTableSequencerAPI().fdatasyncTxnLog(tableToken);
             }
             tracker.setLocalDurableSeqTxn(epochSeqTxn);
         }
 
-        // Step 2: reserve the new epoch pin before the save point is published. A busy target slot must leave the
-        // current save point authoritative; publishing first could make recovery select a save point whose
-        // partition versions no pin protected from a concurrent purge.
+        // Reserve the pin before publication so a concurrent purge cannot remove this cut's partition versions.
         final long epochTxn = getTxn();
         final long priorEpochTxn = tracker.getPinnedEpochTxn();
         final boolean priorSlotA = tracker.isPinnedEpochSlotA();
         // First epoch uses slot A; thereafter alternate to the other slot.
         final boolean newSlotA = priorEpochTxn < 0 || !priorSlotA;
         final int newSlotId = newSlotA ? TxnScoreboard.EPOCH_ID_A : TxnScoreboard.EPOCH_ID_B;
-        // The other slot holds the pin of the generation this save point overwrites, which stops being a fallback
-        // once the write below truncates its file.
+        // The overwritten generation stops being a fallback once its file is truncated.
         final long otherEpochTxn = tracker.getOtherPinnedEpochTxn();
         if (otherEpochTxn >= 0) {
             txnScoreboard.releaseTxn(newSlotId, otherEpochTxn);
@@ -16563,9 +16540,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return false;
         }
 
-        // Step 3: save the live _txn, _cv and _meta into the target generation; its header fsync publishes it. A
-        // failure before that leaves the target without a valid header, so undo only the newly reserved pin; a
-        // failed fsync of the header poisons the engine, which stops every rewrite the pin would guard.
+        // The manifest validates the cut and publishes its header last. Preserve fallback protection on failure;
+        // a failed header flush fences the engine.
         try {
             checkDistressed();
             DurableEpochManifest.write(
@@ -16585,9 +16561,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             throw th;
         }
 
-        // Step 4: the prior save point becomes the other generation, which recovery falls back to when this one is
-        // damaged, so it keeps its pin until the next save point overwrites it. A prior pin no generation on disk
-        // names any more (a restore removed the save point) protects nothing and goes.
+        // Keep the prior generation's fallback pin unless no on-disk generation names it.
         boolean priorOnDisk = false;
         for (int i = 0; i < saved.length; i++) {
             priorOnDisk |= saved[i].generation == currentGeneration && saved[i].epochTxn == priorEpochTxn;
@@ -16606,17 +16580,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        // Step 5: publish the durable frontier and the cadence timestamp, last. The WAL purge also keeps the WAL from
-        // the other generation (WalPurgeJob reads the lowest save point).
+        // Publish the frontier last; WAL purge also respects the older generation.
         tracker.setDurableEpochSeqTxn(epochSeqTxn);
         engine.getMetrics().walMetrics().incrementEpochAdvances();
         tracker.setLastEpochTs(nowMs);
         tracker.setDurableEpochOwed(false);
         // Restart the backlog count once the epoch is published (success path only).
         tracker.resetRowsSinceEpoch();
-        // Success path only: everything the write set named is durable, so the next epoch owes only what is
-        // written from here on. Clearing earlier would drop partitions a failed epoch did not flush, and nothing
-        // would revisit them. Clearing the incomplete flag narrows every later epoch of this writer to the write set.
+        // Clear the write set only after successful publication; failed epochs must revisit dirty partitions.
         txWriter.clearDirtyPartitions();
         columnVersionWriter.clearDirtyPartitions();
         epochWriteSetIncomplete = false;
@@ -16627,9 +16598,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return true;
     }
 
-    // A failed open can leave the overwritten generation entirely intact. Restore its protection before a
-    // reopen can purge its partitions. Retaining a pin for a partially overwritten image is conservative and
-    // the next successful publication releases it; a missing pin is not evidence that its image disappeared.
+    // A failed open can leave the overwritten generation intact. Restore its pin conservatively until replacement.
     private void restoreEpochPinAfterFailedPublication(SeqTxnTracker tracker, int slotId, long txn) {
         if (txn >= 0) {
             if (!txnScoreboard.incrementTxn(slotId, txn)) {
@@ -16681,9 +16650,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *   <li>{@code _txn} last: {@code txWriter.fsync()} (msync and fsync), so the pointer becomes durable
      *       only after everything it exposes.</li>
      * </ol>
-     * The cut's identity is the writer's {@link #getSeqTxn()} and {@link #getTxn()}, which do not move while
-     * the caller holds the writer. The indexers and pending posting-seal purges are published first, as
-     * {@link #syncColumns(int)} does, so the cut is consistent for the index state too.
+     * The caller holds the writer. Flushing does not commit pending transaction fields: the cut's identity
+     * comes from the committed record. Indexers and pending posting-seal purges are published first, as in
+     * {@link #syncColumns(int)}.
      */
     public void fsyncMaterializedState() {
         // Publish buffered index writes (PostingIndexWriter / BitmapIndexWriter) just like

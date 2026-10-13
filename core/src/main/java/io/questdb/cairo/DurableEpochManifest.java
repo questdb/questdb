@@ -20,6 +20,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -442,6 +443,10 @@ public final class DurableEpochManifest {
             tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
             final boolean nameDurable = readHeader(ff, tablePath, tableToken.getTableId(), generation, header) == HEADER_VALID;
             Vect.memset(header, FILE_SIZE, 0);
+            Unsafe.getUnsafe().putLong(header + OFFSET_SEQ_TXN, seqTxn);
+            Unsafe.getUnsafe().putLong(header + OFFSET_TXN, txn);
+            Unsafe.getUnsafe().putLong(header + 40, columnVersion);
+            Unsafe.getUnsafe().putLong(header + 96, metadataVersion);
             fd = TableUtils.openRW(ff, tablePath.$(), LOG, CairoConfiguration.O_NONE);
             if (fd == -1) {
                 throw CairoException.critical(ff.errno()).put("could not open adaptive epoch manifest [path=").put(tablePath).put(']');
@@ -450,9 +455,9 @@ public final class DurableEpochManifest {
                 throw CairoException.critical(ff.errno()).put("could not truncate adaptive epoch manifest [path=").put(tablePath).put(']');
             }
             long offset = FILE_SIZE;
-            offset = writeSection(ff, tablePath, rootLen, TableUtils.TXN_FILE_NAME, fd, offset, header + OFFSET_TXN_SIZE);
-            offset = writeSection(ff, tablePath, rootLen, TableUtils.COLUMN_VERSION_FILE_NAME, fd, offset, header + OFFSET_CV_SIZE);
-            writeSection(ff, tablePath, rootLen, TableUtils.META_FILE_NAME, fd, offset, header + OFFSET_META_SIZE);
+            offset = writeSection(ff, tablePath, rootLen, TableUtils.TXN_FILE_NAME, fd, offset, header, OFFSET_TXN_SIZE);
+            offset = writeSection(ff, tablePath, rootLen, TableUtils.COLUMN_VERSION_FILE_NAME, fd, offset, header, OFFSET_CV_SIZE);
+            writeSection(ff, tablePath, rootLen, TableUtils.META_FILE_NAME, fd, offset, header, OFFSET_META_SIZE);
             ff.fsync(fd);
             if (!nameDurable) {
                 fsyncDirectory(configuration, tablePath, rootLen);
@@ -462,10 +467,6 @@ public final class DurableEpochManifest {
             Unsafe.getUnsafe().putInt(header + 8, FORMAT_VERSION);
             Unsafe.getUnsafe().putInt(header + 12, generation);
             Unsafe.getUnsafe().putInt(header + 16, tableToken.getTableId());
-            Unsafe.getUnsafe().putLong(header + OFFSET_SEQ_TXN, seqTxn);
-            Unsafe.getUnsafe().putLong(header + OFFSET_TXN, txn);
-            Unsafe.getUnsafe().putLong(header + 40, columnVersion);
-            Unsafe.getUnsafe().putLong(header + 96, metadataVersion);
             Unsafe.getUnsafe().putLong(header + BODY_SIZE, TableUtils.SNAPSHOT_CHECKSUM_MAGIC);
             Unsafe.getUnsafe().putLong(header + BODY_SIZE + 8, TableUtils.calculateCvAreaChecksum(header, BODY_SIZE));
             tablePath.trimTo(rootLen).concat(FILE_NAME).put('.').put(generation);
@@ -835,20 +836,46 @@ public final class DurableEpochManifest {
 
     /**
      * Appends the live file {@code name} to the save point file at {@code offset}, records its size and
-     * checksum at {@code sizeAddr} (the checksum in the next long), and returns the offset after it.
+     * checksum in the header at {@code sizeOffset}, and returns the offset after it.
      */
-    private static long writeSection(FilesFacade ff, Path tablePath, int rootLen, String name, long fd, long offset, long sizeAddr) {
+    private static long writeSection(FilesFacade ff, Path tablePath, int rootLen, String name, long fd, long offset, long header, int sizeOffset) {
         tablePath.trimTo(rootLen).concat(name);
         final long size = ff.length(tablePath.$());
         if (size <= 0) {
             throw CairoException.critical(ff.errno()).put("invalid adaptive epoch section size [path=").put(tablePath).put(", size=").put(size).put(']');
         }
         try (MemoryCMR mem = Vm.getCMRInstance(ff, tablePath.$(), size, MemoryTag.MMAP_TABLE_READER)) {
+            if (sizeOffset == OFFSET_TXN_SIZE) {
+                if (size < TableUtils.TX_BASE_HEADER_SIZE) {
+                    throw CairoException.critical(0).put("invalid adaptive epoch transaction header [path=").put(tablePath).put(']');
+                }
+                final long version = mem.getLong(TableUtils.TX_BASE_OFFSET_VERSION_64);
+                final int base = mem.getInt((version & 1) == 0 ? TableUtils.TX_BASE_OFFSET_A_32 : TableUtils.TX_BASE_OFFSET_B_32);
+                if (base < TableUtils.TX_BASE_HEADER_SIZE || base > size - TableUtils.TX_OFFSET_SEQ_TXN_64 - Long.BYTES) {
+                    throw CairoException.critical(0).put("invalid adaptive epoch transaction record [path=").put(tablePath).put(']');
+                }
+                final long expectedSeqTxn = Unsafe.getUnsafe().getLong(header + OFFSET_SEQ_TXN);
+                final long expectedTxn = Unsafe.getUnsafe().getLong(header + OFFSET_TXN);
+                final long expectedColumnVersion = Unsafe.getUnsafe().getLong(header + 40);
+                final long expectedMetadataVersion = Unsafe.getUnsafe().getLong(header + 96);
+                final long seqTxn = mem.getLong(base + TableUtils.TX_OFFSET_SEQ_TXN_64);
+                final long txn = mem.getLong(base + TableUtils.TX_OFFSET_TXN_64);
+                final long columnVersion = mem.getLong(base + TableUtils.TX_OFFSET_COLUMN_VERSION_64);
+                final int metadataVersion = Numbers.decodeLowInt(mem.getLong(base + TableUtils.TX_OFFSET_STRUCT_VERSION_64));
+                if (expectedSeqTxn != seqTxn || expectedTxn != txn || expectedColumnVersion != columnVersion || expectedMetadataVersion != metadataVersion) {
+                    LOG.critical().$("adaptive epoch identity mismatch [path=").$(tablePath)
+                            .$(", expectedSeqTxn=").$(expectedSeqTxn).$(", foundSeqTxn=").$(seqTxn)
+                            .$(", expectedTxn=").$(expectedTxn).$(", foundTxn=").$(txn)
+                            .$(", expectedColumnVersion=").$(expectedColumnVersion).$(", foundColumnVersion=").$(columnVersion)
+                            .$(", expectedMetadataVersion=").$(expectedMetadataVersion).$(", foundMetadataVersion=").$(metadataVersion).$(']').$();
+                    throw CairoException.critical(0).put("adaptive epoch identity mismatch [path=").put(tablePath).put(']');
+                }
+            }
             if (ff.write(fd, mem.addressOf(0), size, offset) != size) {
                 throw CairoException.critical(ff.errno()).put("could not write adaptive epoch section [path=").put(tablePath).put(", size=").put(size).put(']');
             }
-            Unsafe.getUnsafe().putLong(sizeAddr, size);
-            Unsafe.getUnsafe().putLong(sizeAddr + 8, TableUtils.calculateCvAreaChecksum(mem.addressOf(0), size));
+            Unsafe.getUnsafe().putLong(header + sizeOffset, size);
+            Unsafe.getUnsafe().putLong(header + sizeOffset + 8, TableUtils.calculateCvAreaChecksum(mem.addressOf(0), size));
         } finally {
             tablePath.trimTo(rootLen);
         }

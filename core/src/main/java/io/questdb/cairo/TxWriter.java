@@ -300,6 +300,10 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
         ff.fsync(txMemBase.getFd());
     }
 
+    public long getCommittedSeqTxn() {
+        return getLong(TX_OFFSET_SEQ_TXN_64);
+    }
+
     /**
      * The fd of the backing {@code _txn} file, or {@code -1} if it is not mapped. The file lives in the table
      * directory and stays mapped for the writer's lifetime, so a save point

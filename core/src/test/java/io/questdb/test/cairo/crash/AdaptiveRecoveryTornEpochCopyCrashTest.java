@@ -845,8 +845,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
                     mem.putInt(TableUtils.META_OFFSET_TABLE_ID, mem.getInt(TableUtils.META_OFFSET_TABLE_ID) + 1000);
                 }
             }
-            DurableEpochManifest.write(
-                    engine.getConfiguration(),
+            writeRejectedGeneration(
                     tt,
                     forge.trimTo(forgeLen),
                     forgeLen,
@@ -865,8 +864,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
                     tx.ofRO(forgeOlder.trimTo(forgeOlderLen).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
                     Assert.assertTrue(tx.unsafeLoadAll());
                     Assert.assertEquals(K, tx.getSeqTxn());
-                    DurableEpochManifest.write(
-                            engine.getConfiguration(),
+                    writeRejectedGeneration(
                             tt,
                             forgeOlder.trimTo(forgeOlderLen),
                             forgeOlderLen,
@@ -1025,7 +1023,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
             final int rootLen = p.size();
             tx.ofRO(p.concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
             Assert.assertTrue(tx.unsafeLoadAll());
-            DurableEpochManifest.write(engine.getConfiguration(), tt, p.trimTo(rootLen), rootLen, 0, tx.getSeqTxn(), tx.getTxn(), tx.getColumnVersion() + 1, tx.getMetadataVersion());
+            writeRejectedGeneration(tt, p.trimTo(rootLen), rootLen, 0, tx.getSeqTxn(), tx.getTxn(), tx.getColumnVersion() + 1, tx.getMetadataVersion());
         }
     }
 
@@ -1154,6 +1152,35 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
         try (Path p = new Path()) {
             p.of(engine.getConfiguration().getDbRoot()).concat(tt).concat(WalUtils.WAL_NAME_BASE).put(walId);
             return engine.getConfiguration().getFilesFacade().exists(p.$());
+        }
+    }
+
+    private void writeRejectedGeneration(TableToken token, Path path, int rootLen, int generation, long seqTxn, long txn, long columnVersion, long metadataVersion) {
+        final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+        final long header = Unsafe.malloc(DurableEpochManifest.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+        long fd = -1;
+        try (TxReader tx = new TxReader(ff)) {
+            tx.ofRO(path.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME).$(), ColumnType.TIMESTAMP_MICRO, PartitionBy.DAY);
+            Assert.assertTrue(tx.unsafeLoadAll());
+            DurableEpochManifest.write(engine.getConfiguration(), token, path.trimTo(rootLen), rootLen, generation,
+                    tx.getSeqTxn(), tx.getTxn(), tx.getColumnVersion(), tx.getMetadataVersion());
+            // Corrupt only the header, without a writable mapping's page-rounded file resize.
+            fd = ff.openRW(path.trimTo(rootLen).concat(DurableEpochManifest.FILE_NAME).put('.').put(generation).$(), 0);
+            Assert.assertTrue(fd >= 0);
+            Assert.assertEquals(DurableEpochManifest.FILE_SIZE, ff.read(fd, header, DurableEpochManifest.FILE_SIZE, 0));
+            Unsafe.getUnsafe().putLong(header + 24, seqTxn);
+            Unsafe.getUnsafe().putLong(header + 32, txn);
+            Unsafe.getUnsafe().putLong(header + 40, columnVersion);
+            Unsafe.getUnsafe().putLong(header + 96, metadataVersion);
+            Unsafe.getUnsafe().putLong(header + 112, TableUtils.calculateCvAreaChecksum(header, 104));
+            Assert.assertEquals(DurableEpochManifest.FILE_SIZE, ff.write(fd, header, DurableEpochManifest.FILE_SIZE, 0));
+            ff.fsyncDurable(fd);
+        } finally {
+            if (fd >= 0) {
+                ff.close(fd);
+            }
+            Unsafe.free(header, DurableEpochManifest.FILE_SIZE, MemoryTag.NATIVE_DEFAULT);
+            path.trimTo(rootLen);
         }
     }
 
