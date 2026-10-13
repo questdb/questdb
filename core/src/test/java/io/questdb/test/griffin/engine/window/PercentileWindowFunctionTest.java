@@ -24,10 +24,127 @@
 
 package io.questdb.test.griffin.engine.window;
 
+import io.questdb.PropertyKey;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class PercentileWindowFunctionTest extends AbstractCairoTest {
+
+    @Test
+    public void testMultiPercentileBeforeVarSizeColumns() throws Exception {
+        // An array window output takes a slot in the record chain's var-size header next to
+        // the VARCHAR, STRING and DOUBLE[] columns the chain copies after it. Every one of
+        // them must still read its own value, including a PARTITION BY key that the SELECT
+        // list does not name, under each of the three RecordSink implementations.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x DOUBLE, a VARCHAR, s STRING, arr DOUBLE[], b VARCHAR)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'g1', 's1', ARRAY[1.0], 'h1'),
+                    (2.0, 'g1', 's2', ARRAY[2.0, 2.5], 'h2'),
+                    (10.0, 'g2', null, null, 'h1'),
+                    (20.0, 'g2', 's4', ARRAY[4.0], null)
+                    """);
+            // 0 picks the sink by schema size; 1, 2 and 3 force single-method, chunked and looping
+            for (int copierType = 0; copierType < 4; copierType++) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertQuery("SELECT percentile_disc(x, ARRAY[0.5]) OVER () p, * FROM t")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p\tx\ta\ts\tarr\tb
+                                [2.0]\t1.0\tg1\ts1\t[1.0]\th1
+                                [2.0]\t2.0\tg1\ts2\t[2.0,2.5]\th2
+                                [2.0]\t10.0\tg2\t\tnull\th1
+                                [2.0]\t20.0\tg2\ts4\t[4.0]\t
+                                """);
+                assertQuery("SELECT x, percentile_disc(x, ARRAY[0.5]) OVER (PARTITION BY a) p FROM t")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                x\tp
+                                1.0\t[1.0]
+                                2.0\t[1.0]
+                                10.0\t[10.0]
+                                20.0\t[10.0]
+                                """);
+                assertQuery("SELECT percentile_disc(x, ARRAY[0.5]) OVER (PARTITION BY s) p, a FROM t")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p\ta
+                                [1.0]\tg1
+                                [2.0]\tg1
+                                [10.0]\tg2
+                                [20.0]\tg2
+                                """);
+                assertQuery("""
+                        SELECT percentile_cont(x, ARRAY[0.5]) OVER (PARTITION BY a) pc,
+                        quantile_disc(x, ARRAY[0.5, 1.0]) OVER (PARTITION BY b) qd,
+                        x, s, arr, b
+                        FROM t
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                pc\tqd\tx\ts\tarr\tb
+                                [1.5]\t[1.0,10.0]\t1.0\ts1\t[1.0]\th1
+                                [1.5]\t[2.0,2.0]\t2.0\ts2\t[2.0,2.5]\th2
+                                [15.0]\t[1.0,10.0]\t10.0\t\tnull\th1
+                                [15.0]\t[20.0,20.0]\t20.0\ts4\t[4.0]\t
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testMultiPercentileBeforeVarSizeColumnsWideTable() throws Exception {
+        // Over 600 columns the chain's RecordSink no longer fits one method, so the default
+        // configuration generates it in chunks. The array output must take its var-size slot
+        // whichever chunk it lands in: first, ahead of VARCHARs in a later chunk, or last,
+        // where the window path's skew index has no entry for it.
+        assertMemoryLeak(() -> {
+            final int doubleCount = 600;
+            final StringBuilder ddl = new StringBuilder("CREATE TABLE wide AS (SELECT x::DOUBLE x, ('a' || x)::VARCHAR a");
+            final StringSink header = new StringSink();
+            header.put("x\ta");
+            for (int i = 1; i <= doubleCount; i++) {
+                ddl.append(", (x * ").append(i).append(")::DOUBLE d").append(i);
+                header.put("\td").put(i);
+            }
+            ddl.append(", ('b' || x)::VARCHAR b FROM long_sequence(3))");
+            header.put("\tb");
+            execute(ddl);
+
+            final StringSink windowFirst = new StringSink();
+            final StringSink windowLast = new StringSink();
+            windowFirst.put("p\t").put(header).put('\n');
+            windowLast.put(header).put("\tp\n");
+            for (int x = 1; x <= 3; x++) {
+                final StringSink row = new StringSink();
+                row.put(x).put(".0\ta").put(x);
+                for (int i = 1; i <= doubleCount; i++) {
+                    row.put('\t').put(x * i).put(".0");
+                }
+                row.put("\tb").put(x);
+                windowFirst.put("[2.0]\t").put(row).put('\n');
+                windowLast.put(row).put("\t[2.0]\n");
+            }
+
+            for (int copierType = 0; copierType < 4; copierType++) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertQuery("SELECT percentile_disc(x, ARRAY[0.5]) OVER () p, * FROM wide")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(windowFirst);
+                assertQuery("SELECT *, percentile_disc(x, ARRAY[0.5]) OVER () p FROM wide")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(windowLast);
+            }
+        });
+    }
 
     @Test
     public void testMultiPercentileContInterpolationBetweenExtremes() throws Exception {

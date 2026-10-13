@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
@@ -35,6 +37,7 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordMetadata;
@@ -49,6 +52,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
 import io.questdb.test.tools.TestUtils;
@@ -265,6 +269,103 @@ public class RecordArrayTest extends AbstractCairoTest {
                         """;
 
                 TestUtils.assertEquals(expectedBack, AbstractCairoTest.sink);
+            }
+        });
+    }
+
+    @Test
+    public void testSkipAndRefillVarSize() throws Exception {
+        // The var-size counterpart of testSkipAndRefill. A skipped var-size column must take
+        // its own slot in the record header, or each var-size column after it reads the slot
+        // of the one before. A skipped slot reads NULL until it is refilled, which is what an
+        // array window function's pass 2 does through putArray().
+        TestUtils.assertMemoryLeak(() -> {
+            final int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("a", ColumnType.VARCHAR));
+            metadata.add(new TableColumnMetadata("w", arrayType));
+            metadata.add(new TableColumnMetadata("b", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("v", ColumnType.VARCHAR));
+            metadata.add(new TableColumnMetadata("c", ColumnType.VARCHAR));
+
+            ListColumnFilter filter = new ListColumnFilter();
+            filter.add(1);
+            filter.add(-2);
+            filter.add(3);
+            filter.add(-4);
+            filter.add(5);
+
+            // values of columns a, b and c, at record indexes 0, 2 and 4
+            final String[] values = new String[3];
+            final Record rec = new Record() {
+                @Override
+                public CharSequence getStrA(int col) {
+                    return values[col / 2];
+                }
+
+                @Override
+                public Utf8Sequence getVarcharA(int col) {
+                    final String value = values[col / 2];
+                    return value != null ? new Utf8String(value) : null;
+                }
+            };
+
+            for (int copierType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+                final CairoConfiguration copierConfiguration = new CairoConfigurationWrapper(configuration) {
+                    @Override
+                    public int getCopierType() {
+                        return copierType;
+                    }
+                };
+                RecordSink sink = RecordSinkFactory.getInstance(copierConfiguration, asm, metadata, filter);
+                try (
+                        RecordArray chain = new RecordArray(metadata, sink, SIZE_4M, Integer.MAX_VALUE);
+                        DirectArray array = new DirectArray(configuration)
+                ) {
+                    values[0] = "a0";
+                    values[1] = "b0";
+                    values[2] = "c0";
+                    final long row0 = chain.put(rec);
+                    values[0] = "a1";
+                    values[1] = null;
+                    values[2] = "c1";
+                    final long row1 = chain.put(rec);
+
+                    array.setType(arrayType);
+                    array.setDimLen(0, 1);
+                    array.applyShape();
+                    array.putDouble(0, 1.5);
+                    chain.putArray(row0, 1, array);
+                    array.putDouble(0, 2.5);
+                    chain.putArray(row1, 1, array);
+
+                    AbstractCairoTest.sink.clear();
+                    chain.toTop();
+                    final Record r = chain.getRecord();
+                    while (chain.hasNext()) {
+                        TestUtils.println(r, metadata, AbstractCairoTest.sink);
+                    }
+                    TestUtils.assertEquals(
+                            """
+                                    a0\t[1.5]\tb0\t\tc0
+                                    a1\t[2.5]\t\t\tc1
+                                    """,
+                            AbstractCairoTest.sink
+                    );
+
+                    AbstractCairoTest.sink.clear();
+                    chain.toBottom();
+                    while (chain.hasPrev()) {
+                        TestUtils.println(r, metadata, AbstractCairoTest.sink);
+                    }
+                    TestUtils.assertEquals(
+                            """
+                                    a1\t[2.5]\t\t\tc1
+                                    a0\t[1.5]\tb0\t\tc0
+                                    """,
+                            AbstractCairoTest.sink
+                    );
+                }
             }
         });
     }
