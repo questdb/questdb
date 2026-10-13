@@ -36,16 +36,19 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.cairo.wal.DefaultWalListener;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SequencerMetadata;
+import io.questdb.cairo.wal.seq.TableSequencerImpl;
 import io.questdb.cairo.wal.seq.TableTransactionLog;
 import io.questdb.cairo.wal.seq.TableTransactionLogFile;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
@@ -57,7 +60,9 @@ import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -78,6 +83,50 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         Rnd rnd = TestUtils.generateRandom(LOG);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, rnd.nextInt(20) + 10);
         testTableTransactionLogCanReadStructureVersion();
+    }
+
+    @Test
+    public void testCloseDroppedSequencerOutsideWriteLock() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE close_dropped (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("close_dropped");
+            final var api = engine.getTableSequencerAPI();
+            final var field = api.getClass().getDeclaredField("seqRegistry");
+            field.setAccessible(true);
+            @SuppressWarnings("unchecked") final var registry = (ConcurrentHashMap<TableSequencerImpl>) field.get(api);
+            final TableSequencerImpl entry = registry.get(token.getDirName());
+            // Leave a dropped entry in the pool: close() now takes its conditional checkClose path.
+            // There is no other thread; production dropTable normally closes the entry itself.
+            entry.dropTable();
+            Assert.assertFalse(entry.isClosed());
+            api.closeSequencer(token);
+            Assert.assertTrue(entry.isClosed());
+            Assert.assertTrue(TableSequencerImpl.assertNoWriteLocksHeld());
+        });
+    }
+
+    @Test
+    public void testConstructorWriteLockOwnershipBeforePublication() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicBoolean observed = new AtomicBoolean();
+            final var listener = engine.getWalListener();
+            engine.setWalListener(new DefaultWalListener() {
+                @Override
+                public void tableCreated(TableToken token, long timestamp) {
+                    observed.set(true);
+                    Assert.assertThrows(AssertionError.class, () -> engine.getTableSequencerAPI().fdatasyncTxnLog(token));
+                    // The table token is not registered until the constructor returns.
+                    Assert.assertThrows(AssertionError.class, () -> engine.getWriterUnsafe(token, "constructor callback"));
+                }
+            });
+            try {
+                execute("CREATE TABLE ownership (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                Assert.assertTrue(observed.get());
+                Assert.assertTrue(TableSequencerImpl.assertNoWriteLocksHeld());
+            } finally {
+                engine.setWalListener(listener);
+            }
+        });
     }
 
     @Test
@@ -465,6 +514,62 @@ public class TableSequencerImplTest extends AbstractCairoTest {
                     }
                 }
         );
+    }
+
+    @Test
+    public void testWriteLockOwnershipIsThreadLocal() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE contested (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("contested");
+            final CountDownLatch locked = new CountDownLatch(1);
+            final CountDownLatch release = new CountDownLatch(1);
+            final CountDownLatch flushing = new CountDownLatch(1);
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final var listener = engine.getWalListener();
+            engine.setWalListener(new DefaultWalListener() {
+                @Override
+                public void dataTxnCommitted(TableToken table, long txn, long timestamp, int walId, int segmentId, int segmentTxn) {
+                    locked.countDown();
+                    TestUtils.await(release);
+                }
+            });
+            final Thread commit = new Thread(() -> {
+                try {
+                    engine.execute("INSERT INTO contested VALUES (1, '2024-01-01')");
+                } catch (Throwable th) {
+                    failure.set(th);
+                } finally {
+                    locked.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+            final Thread flush = new Thread(() -> {
+                try {
+                    Assert.assertTrue(TableSequencerImpl.assertNoWriteLocksHeld());
+                    flushing.countDown();
+                    engine.getTableSequencerAPI().fdatasyncTxnLog(token);
+                } catch (Throwable th) {
+                    failure.set(th);
+                } finally {
+                    flushing.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+            try {
+                commit.start();
+                TestUtils.await(locked);
+                Assert.assertNull(failure.get());
+                flush.start();
+                TestUtils.await(flushing);
+                Assert.assertTrue(TableSequencerImpl.assertNoWriteLocksHeld());
+            } finally {
+                release.countDown();
+                commit.join();
+                flush.join();
+                engine.setWalListener(listener);
+            }
+            Assert.assertNull(failure.get());
+        });
     }
 
     private void addIntColumn(TableToken tableToken, String columnName) {

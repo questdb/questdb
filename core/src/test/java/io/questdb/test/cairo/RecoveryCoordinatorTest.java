@@ -48,6 +48,7 @@ import io.questdb.cairo.TxnScoreboard;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
@@ -79,6 +80,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
@@ -3077,6 +3079,15 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
     @Test
     public void testDetachFinalizationFailureRetriesAfterReopen() throws Exception {
+        assertDetachFinalizationFailureRetries(false);
+    }
+
+    @Test
+    public void testDetachFinalizationFailureRetriesAfterRestart() throws Exception {
+        assertDetachFinalizationFailureRetries(true);
+    }
+
+    private void assertDetachFinalizationFailureRetries(boolean restart) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
@@ -3109,6 +3120,13 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 Assert.assertEquals(2, cuts.length);
                 Assert.assertEquals(cuts[0].epochTxn, cuts[1].epochTxn);
                 engine.releaseAllWriters();
+                if (restart) {
+                    engine.releaseAllReaders();
+                    engine.getTxnScoreboardPool().remove(token);
+                    engine.getTableSequencerAPI().resetForReboot(token);
+                    new RecoveryCoordinator(engine).recover();
+                    Assert.assertFalse("suspension is not persisted", engine.getTableSequencerAPI().isSuspended(token));
+                }
                 Assert.assertThrows(CairoException.class, () -> execute("ALTER TABLE detach_retry RESUME WAL"));
                 Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
             } finally {
@@ -3143,15 +3161,117 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testPlainResumeOutsideAdaptiveDoesNotAcquireWriter() throws Exception {
-        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+    public void testPlainResumeDoesNotAcquireWriter() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE resume_nosync (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            final TableToken token = engine.verifyTableName("resume_nosync");
-            execute("ALTER TABLE resume_nosync SUSPEND WAL");
-            try (TableWriter ignored = getWriter(token)) {
-                execute("ALTER TABLE resume_nosync RESUME WAL");
+            execute("CREATE TABLE resume_busy (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO resume_busy VALUES ('2024-01-01', 1)");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("resume_busy");
+            final CountDownLatch acquired = new CountDownLatch(1);
+            final CountDownLatch release = new CountDownLatch(1);
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final PoolListener listener = engine.getPoolListener();
+            engine.setPoolListener((source, thread, table, event, segment, position) -> {
+                if (source == PoolListener.SRC_WRITER
+                        && event == PoolListener.EV_GET && token.equals(table)) {
+                    acquired.countDown();
+                    TestUtils.await(release);
+                }
+            });
+            final Thread apply = new Thread(() -> {
+                try {
+                    TestUtils.drainWalQueue(engine);
+                } catch (Throwable th) {
+                    failure.set(th);
+                } finally {
+                    acquired.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+            try {
+                execute("INSERT INTO resume_busy VALUES ('2024-01-02', 2)");
+                apply.start();
+                TestUtils.await(acquired);
+                Assert.assertNull(failure.get());
+                Assert.assertEquals(1, engine.getBusyWriterCount());
+                execute("ALTER TABLE resume_busy SUSPEND WAL");
+                execute("ALTER TABLE resume_busy RESUME WAL");
                 Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            } finally {
+                release.countDown();
+                apply.join();
+                engine.setPoolListener(listener);
+            }
+            Assert.assertNull(failure.get());
+            drainWalQueue();
+            assertQuery("SELECT id FROM resume_busy ORDER BY id").expectSize().returns("id\n1\n2\n");
+        });
+    }
+
+    @Test
+    public void testPlainResumeOfUnenrolledTable() throws Exception {
+        assertResumeOfUnenrolledTable(false, false);
+    }
+
+    @Test
+    public void testResumeFromTxnOfUnenrolledTable() throws Exception {
+        assertResumeOfUnenrolledTable(true, false);
+    }
+
+    @Test
+    public void testResumeAfterFailedEnrolment() throws Exception {
+        assertResumeOfUnenrolledTable(false, true);
+    }
+
+    private void assertResumeOfUnenrolledTable(boolean fromTxn, boolean failEnrolment) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        final AtomicBoolean isFailing = new AtomicBoolean();
+        final FilesFacade facade = new TestFilesFacadeImpl() {
+            @Override
+            public boolean isSyncfsFileSystemWide() {
+                // Exercise the per-file sequencer barrier used on non-Linux systems.
+                return false;
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isFailing.get() && Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(facade, () -> {
+            execute("CREATE TABLE resume_enrol (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO resume_enrol VALUES ('2024-01-01', 1)");
+            drainWalQueue();
+            engine.clear();
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            try (CairoEngine restarted = new CairoEngine(configuration)) {
+                final TableToken token = restarted.verifyTableName("resume_enrol");
+                final var context = TestUtils.createSqlExecutionCtx(restarted);
+                final java.nio.file.Path tableDir = Paths.get(configuration.getDbRoot().toString(), token.getDirName());
+                Assert.assertFalse(Files.exists(tableDir.resolve(DurableEpochManifest.FILE_NAME + ".0")));
+                Assert.assertFalse(Files.exists(tableDir.resolve(DurableEpochManifest.FILE_NAME + ".1")));
+                Assert.assertEquals(0, restarted.getBusyWriterCount());
+                if (failEnrolment) {
+                    restarted.execute("INSERT INTO resume_enrol VALUES ('2024-01-02', 2)");
+                    isFailing.set(true);
+                    TestUtils.drainWalQueue(restarted);
+                    isFailing.set(false);
+                    Assert.assertTrue(restarted.getTableSequencerAPI().isSuspended(token));
+                } else {
+                    restarted.execute("ALTER TABLE resume_enrol SUSPEND WAL");
+                }
+                final long nextTxn = restarted.getTableSequencerAPI().lastTxn(token) + 1;
+                restarted.execute("ALTER TABLE resume_enrol RESUME WAL" + (fromTxn ? " FROM TXN " + nextTxn : ""));
+                Assert.assertFalse(restarted.getTableSequencerAPI().isSuspended(token));
+                TestUtils.drainWalQueue(restarted);
+                assertQuery("SELECT id FROM resume_enrol ORDER BY id")
+                        .withEngine(restarted).withContext(context).noLeakCheck().expectSize()
+                        .returns(failEnrolment ? "id\n1\n2\n" : "id\n1\n");
+                Assert.assertTrue(Files.exists(tableDir.resolve(DurableEpochManifest.FILE_NAME + ".0"))
+                        || Files.exists(tableDir.resolve(DurableEpochManifest.FILE_NAME + ".1")));
             }
         });
     }
@@ -3185,15 +3305,25 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
     @Test
     public void testResumeSecondCoverFailureAndPlainRetry() throws Exception {
-        assertResumeCompletionRetry(true);
+        assertResumeCompletionRetry(true, false, false);
     }
 
     @Test
     public void testResumeSecondCoverFailureAndRepeatedFromRetry() throws Exception {
-        assertResumeCompletionRetry(false);
+        assertResumeCompletionRetry(false, false, false);
     }
 
-    private void assertResumeCompletionRetry(boolean plainRetry) throws Exception {
+    @Test
+    public void testResumeSecondCoverFailureAndPlainRetryAfterRestart() throws Exception {
+        assertResumeCompletionRetry(true, true, false);
+    }
+
+    @Test
+    public void testResumeSecondCoverFailureAndApplyAfterRestart() throws Exception {
+        assertResumeCompletionRetry(true, true, true);
+    }
+
+    private void assertResumeCompletionRetry(boolean plainRetry, boolean restart, boolean applyBeforeResume) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");
@@ -3246,6 +3376,26 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
             } finally {
                 isFailing.set(false);
+            }
+            if (restart) {
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                engine.getTxnScoreboardPool().remove(token);
+                engine.getTableSequencerAPI().resetForReboot(token);
+                new RecoveryCoordinator(engine).recover();
+                Assert.assertFalse("suspension is not persisted", engine.getTableSequencerAPI().isSuspended(token));
+                final var recoveredCuts = operationCompletionCuts(token);
+                Assert.assertTrue(recoveredCuts[0].epochSeqTxn > recoveredCuts[1].epochSeqTxn);
+                if (applyBeforeResume) {
+                    isFailing.set(true);
+                    try {
+                        TestUtils.drainWalQueue(engine);
+                        Assert.assertTrue("required completion must fail before replay", engine.getTableSequencerAPI().isSuspended(token));
+                        Assert.assertEquals(skippedThrough, readTxnSeqTxn(token));
+                    } finally {
+                        isFailing.set(false);
+                    }
+                }
             }
             execute("ALTER TABLE resume_cover RESUME WAL" + (plainRetry ? "" : " FROM TXN " + (skippedThrough + 1)));
             final io.questdb.cairo.DurableEpochManifest.Candidate[] cuts = operationCompletionCuts(token);

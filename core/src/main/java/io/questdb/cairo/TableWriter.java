@@ -70,6 +70,7 @@ import io.questdb.cairo.wal.WalTxnDetails;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WriterRowUtils;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableSequencerImpl;
 import io.questdb.cairo.wal.seq.TransactionLogCursor;
 import io.questdb.griffin.ConvertOperatorImpl;
 import io.questdb.griffin.DropIndexOperator;
@@ -734,6 +735,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     && metadata.isWalEnabled()
                     && effectiveCommitMode == CommitMode.ADAPTIVE;
             setDirtyPartitionTracking(enrolledAdaptive && getFlushCommitMode() == CommitMode.ADAPTIVE);
+            if (enrolledAdaptive && engine.getTableSequencerAPI().getTxnTracker(tableToken).isDurableEpochCompletionRequired()) {
+                completeDurableEpochAfter("writer open");
+            }
 
             // Replay any posting seal-purge intents a prior close spilled to a
             // table-local file because it could not reach the purge queue or the
@@ -1110,6 +1114,14 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * active one, where no WAL lag sits.
      */
     public long applyOutsideWal(AsyncWriterCommand command, boolean contextAllowsAnyStructureChanges) throws AlterTableContextException {
+        final boolean isRequiredCompletion = enrolledAdaptive && command instanceof AlterOperation alter && switch (alter.getCommand()) {
+            case AlterOperation.ATTACH_PARTITION, AlterOperation.DETACH_PARTITION,
+                 AlterOperation.DROP_PARTITION, AlterOperation.FORCE_DROP_PARTITION, AlterOperation.SET_TTL -> true;
+            default -> false;
+        };
+        if (isRequiredCompletion && defersPartitionMoves()) {
+            engine.getTableSequencerAPI().getTxnTracker(tableToken).setDurableEpochCompletionRequired(true);
+        }
         if (discardWalLag("change outside the WAL")) {
             closeActivePartition(false);
             configureAppendPosition();
@@ -1127,12 +1139,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             // Also after a failure: a list command may have changed some partitions before it failed.
             if (enrolledAdaptive && !distressed) {
-                if (command instanceof AlterOperation alter && switch (alter.getCommand()) {
-                    case AlterOperation.ATTACH_PARTITION, AlterOperation.DETACH_PARTITION,
-                         AlterOperation.DROP_PARTITION, AlterOperation.FORCE_DROP_PARTITION, AlterOperation.SET_TTL ->
-                            true;
-                    default -> false;
-                }) {
+                if (isRequiredCompletion) {
                     // A no-op retry can follow a committed change whose first publication succeeded but whose
                     // second failed. Certify disk coverage even when close or another epoch cleared the owed bit.
                     completeDurableEpochAfter("direct partition change");
@@ -2385,6 +2392,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     nextMinTimestamp = readMinTimestamp();
                 }
 
+                // Arm before the live cut changes, including a failure after _txn commits.
+                if (defersPartitionMoves()) {
+                    engine.getTableSequencerAPI().getTxnTracker(tableToken).setDurableEpochCompletionRequired(true);
+                }
                 // all good, commit
                 txWriter.beginPartitionSizeUpdate();
                 txWriter.removeAttachedPartitions(timestamp);
@@ -3959,6 +3970,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void enrollTableInAdaptiveMode() {
+        assert TableSequencerImpl.assertNoWriteLocksHeld();
         // Version before policy, as CairoEngine.getLocalDurabilityPolicyVersion() requires: a policy change
         // after this read shows up as a newer version on the next apply batch, which then reconciles again.
         final long policyVersion = engine.getLocalDurabilityPolicyVersion();

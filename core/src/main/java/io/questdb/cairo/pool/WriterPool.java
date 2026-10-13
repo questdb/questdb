@@ -36,6 +36,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.pool.ex.PoolClosedException;
+import io.questdb.cairo.wal.seq.TableSequencerImpl;
 import io.questdb.cairo.sql.AsyncWriterCommand;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
@@ -182,6 +183,7 @@ public class WriterPool extends AbstractPool {
      * @return cached TableWriter instance.
      */
     public TableWriter get(TableToken tableToken, @NotNull String lockReason) {
+        assert TableSequencerImpl.assertNoWriteLocksHeld();
         // writer cannot be null because our async command is null
         TableWriter w = getWriterEntry(tableToken, lockReason, null);
         assert w != null;

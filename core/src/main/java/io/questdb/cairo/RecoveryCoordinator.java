@@ -605,6 +605,9 @@ public class RecoveryCoordinator {
         // recover() returns. Where syncfs is filesystem-wide, recover() flushes every rewritten header at once.
         // Boot runs before a role is installed; recovery needs the configured grade.
         if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+            // Suspension and required-completion debt are not persisted. Before any replay, the first writer
+            // must cover the recovered cut in every candidate and finish any recovered DETACH artifact.
+            engine.getTableSequencerAPI().getTxnTracker(token).setDurableEpochCompletionRequired(true);
             tablePath(dir, token);
             final boolean isFlushedByRecover = ff.isSyncfsFileSystemWide();
             DurableEpochManifest.rewriteHeader(ff, dir, dir.size(), selected.generation, !isFlushedByRecover);

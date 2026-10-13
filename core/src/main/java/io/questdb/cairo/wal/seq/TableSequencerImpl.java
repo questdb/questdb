@@ -42,6 +42,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.SimpleReadWriteLock;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.Path;
@@ -57,6 +58,7 @@ import static io.questdb.cairo.wal.seq.TableTransactionLogFile.STRUCTURAL_CHANGE
 
 public class TableSequencerImpl implements TableSequencer {
     private static final Log LOG = LogFactory.getLog(TableSequencerImpl.class);
+    private static final ThreadLocal<ObjHashSet<TableSequencerImpl>> WRITE_LOCKS = ThreadLocal.withInitial(ObjHashSet::new);
     private final static BinaryAlterSerializer alterCommandWalFormatter = new BinaryAlterSerializer();
     private final CairoEngine engine;
     private final SequencerMetadata metadata;
@@ -111,13 +113,13 @@ public class TableSequencerImpl implements TableSequencer {
             );
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {
-                schemaLock.writeLock().lock();
+                writeLock();
                 try {
                     final long timestamp = microClock.getTicks();
                     createSequencerFiles(ff, configuration.getMkDirMode(), walDirectoryPolicy, metadata, tableTransactionLog, path, rootLen, tableStruct, tableToken, tableId, timestamp);
                     engine.getWalListener().tableCreated(tableToken, timestamp);
                 } finally {
-                    schemaLock.writeLock().unlock();
+                    unlockWrite();
                 }
             }
         } catch (Throwable th) {
@@ -162,6 +164,11 @@ public class TableSequencerImpl implements TableSequencer {
         }
     }
 
+    public static boolean assertNoWriteLocksHeld() {
+        assert WRITE_LOCKS.get().size() == 0 : "writer lifecycle or sequencer flush under sequencer write lock";
+        return true;
+    }
+
     /**
      * Creates the on-disk sequencer files - the {@code txn_seq} directory, the initial sequencer metadata
      * and the transaction log - for a brand-new table directly under {@code path}
@@ -203,11 +210,11 @@ public class TableSequencerImpl implements TableSequencer {
         if (closed) {
             return false;
         }
-        schemaLock.writeLock().lock();
+        writeLock();
         try {
             return closeLocked();
         } finally {
-            schemaLock.writeLock().unlock();
+            unlockWrite();
         }
     }
 
@@ -750,6 +757,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     void readLock() {
+        assert !WRITE_LOCKS.get().contains(this) : "sequencer write lock re-entry";
         schemaLock.readLock().lock();
     }
 
@@ -758,10 +766,13 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     void unlockWrite() {
+        assert WRITE_LOCKS.get().remove(this) : "sequencer write lock not owned";
         schemaLock.writeLock().unlock();
     }
 
     void writeLock() {
+        assert !WRITE_LOCKS.get().contains(this) : "sequencer write lock re-entry";
         schemaLock.writeLock().lock();
+        assert WRITE_LOCKS.get().add(this);
     }
 }

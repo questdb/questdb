@@ -96,11 +96,7 @@ public class TableSequencerAPI implements QuietCloseable {
     @TestOnly
     public void closeSequencer(TableToken tableToken) {
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
-            try {
-                sequencer.close();
-            } finally {
-                sequencer.unlockWrite();
-            }
+            sequencer.unlockWrite();
         }
     }
 
@@ -412,6 +408,7 @@ public class TableSequencerAPI implements QuietCloseable {
      * left; see {@link TableTransactionLogFile#fdatasyncTxnLog(long)}.
      */
     public long fdatasyncTxnLog(final TableToken tableToken, long fromTxn) {
+        assert TableSequencerImpl.assertNoWriteLocksHeld();
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
                 return tableSequencer.fdatasyncTxnLog(fromTxn);
@@ -552,77 +549,38 @@ public class TableSequencerAPI implements QuietCloseable {
     }
 
     public void resumeTable(TableToken tableToken, long resumeFromTxn) {
-        // Holds the writer of an adaptive table whose skip, or an earlier change outside the WAL, still needs a
-        // durable epoch.
-        TableWriter skipWriter = null;
-        try {
+        final SeqTxnTracker tracker = getTxnTracker(tableToken);
+        try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
+            try {
+                // Re-notify an already resumed table too. Ordinary RESUME must not contend with its apply writer.
+                if (!tracker.isDurableEpochCompletionRequired() && (!isSuspended(tableToken) || resumeFromTxn <= 0)) {
+                    sequencer.resumeTable();
+                    return;
+                }
+                final long nextTxn = sequencer.lastTxn() + 1;
+                if (resumeFromTxn > nextTxn) {
+                    throw CairoException.nonCritical().put("resume txn is higher than next available transaction [resumeFromTxn=").put(resumeFromTxn).put(", nextTxn=").put(nextTxn).put(']');
+                }
+            } finally {
+                sequencer.unlockWrite();
+            }
+        }
+        // Constructor enrolment, required publication and pooled return may all take the sequencer lock.
+        try (TableWriter writer = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON)) {
             try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
                 try {
-                    if (!isSuspended(tableToken)) {
-                        // Even if the table already unsuspended, send ApplyWal2TableJob notification anyway
-                        // as a way to resume table which is not moving even if it's marked as not suspended.
-                        sequencer.resumeTable();
-                        return;
-                    }
-                    final long nextTxn = sequencer.lastTxn() + 1;
-                    if (resumeFromTxn > nextTxn) {
-                        throw CairoException.nonCritical().put("resume txn is higher than next available transaction [resumeFromTxn=").put(resumeFromTxn).put(", nextTxn=").put(nextTxn).put(']');
-                    }
-                    // resume from the latest on negative value
-                    if (resumeFromTxn > 0) {
-                        final TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON);
-                        try {
-                            long seqTxn = tableWriter.getAppliedSeqTxn();
-                            if (resumeFromTxn - 1 > seqTxn) {
-                                // including resumeFromTxn
-                                tableWriter.commitSeqTxn(resumeFromTxn - 1);
-                                if (tableWriter.isEnrolledAdaptive()) {
-                                    skipWriter = tableWriter;
-                                }
-                            } else if (tableWriter.isEnrolledAdaptive()) {
-                                // A repeat must verify disk coverage, not just the owed bit: another publication or
-                                // writer close may have cleared it while an older selectable cut still precedes the skip.
-                                skipWriter = tableWriter;
-                            }
-                        } finally {
-                            if (skipWriter == null) {
-                                tableWriter.close();
-                            }
+                    if (resumeFromTxn > 0 && isSuspended(tableToken) && resumeFromTxn - 1 > writer.getAppliedSeqTxn()) {
+                        if (writer.isEnrolledAdaptive() && engine.getResolvedCommitMode() == CommitMode.ADAPTIVE) {
+                            tracker.setDurableEpochCompletionRequired(true);
                         }
-                    } else if (engine.getResolvedCommitMode() == CommitMode.ADAPTIVE || getTxnTracker(tableToken).isDurableEpochOwed()) {
-                        // Outside local adaptive durability preserve plain RESUME's no-writer fast path.
-                        // A plain RESUME also certifies the current cut, including a previous skip or a partial
-                        // direct change whose required publication failed. Missing bookkeeping is not coverage.
-                        final TableWriter tableWriter = engine.getWriter(tableToken, WAL_2_TABLE_RESUME_REASON);
-                        if (tableWriter.isEnrolledAdaptive()) {
-                            skipWriter = tableWriter;
-                        } else {
-                            tableWriter.close();
-                        }
-                    }
-                    if (skipWriter == null) {
-                        sequencer.resumeTable();
-                        return;
+                        // This _txn-only commit is serialized with other RESUMEs; it does not publish an epoch.
+                        writer.commitSeqTxn(resumeFromTxn - 1);
                     }
                 } finally {
                     sequencer.unlockWrite();
                 }
             }
-            // The skip is not in the WAL, so the table needs a durable epoch before it resumes, or a crash would
-            // replay the skipped transactions; so does an epoch still owed. The epoch may take the sequencer lock
-            // itself, so it is taken with the lock released; the table stays suspended meanwhile, and stays
-            // suspended if the epoch fails.
-            try {
-                skipWriter.completeDurableEpochAfter("resume wal");
-            } catch (CairoException e) {
-                if (engine.isDataSyncFailureFatal(e)) {
-                    engine.handleDataSyncFailure(e);
-                }
-                throw CairoException.nonCritical()
-                        .put("could not take the durable epoch the table owes, the table stays suspended; retry RESUME WAL [table=")
-                        .put(tableToken.getTableName()).put(", reason=").put(e.getFlyweightMessage()).put(']');
-            }
-            skipWriter = Misc.free(skipWriter);
+            writer.completeDurableEpochAfter("resume wal");
             try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
                 try {
                     sequencer.resumeTable();
@@ -630,8 +588,15 @@ public class TableSequencerAPI implements QuietCloseable {
                     sequencer.unlockWrite();
                 }
             }
-        } finally {
-            Misc.free(skipWriter);
+        } catch (CairoException e) {
+            if (engine.isDataSyncFailureFatal(e)) {
+                engine.handleDataSyncFailure(e);
+            }
+            final String reason = e.getFlyweightMessage().toString();
+            suspendTable(tableToken, ErrorTag.NONE, reason);
+            throw CairoException.nonCritical()
+                    .put("could not complete the durable epoch; the table stays suspended; retry RESUME WAL [table=")
+                    .put(tableToken.getTableName()).put(", reason=").put(reason).put(']');
         }
     }
 
