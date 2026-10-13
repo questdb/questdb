@@ -231,10 +231,14 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             if (negativeLimitRows == null) {
                 negativeLimitRows = new DirectLongList(maxNegativeLimit, MemoryTag.NATIVE_OFFLOAD);
             }
+            // the negative LIMIT's cursor reads its rows back through its own records, never the
+            // frames' projected values
+            frameSequence.getAtom().setProjecting(false);
             negativeLimitCursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining, negativeLimitRows);
             return negativeLimitCursor;
         }
 
+        frameSequence.getAtom().setProjecting(true);
         cursor.of(execute(executionContext, collectSubSeq, order), rowsRemaining);
         return cursor;
     }

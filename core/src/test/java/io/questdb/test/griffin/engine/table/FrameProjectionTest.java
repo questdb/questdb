@@ -109,6 +109,37 @@ public class FrameProjectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeLimitIsNotProjected() throws Exception {
+        // A negative LIMIT's cursor reads its rows back through its own records, so the filtering
+        // threads project nothing for it; a positive LIMIT's are projected.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                createTable(engine, ctx);
+                for (String query : new String[]{
+                        "select ts, (bid + ask) / 2 mid from q where sym = 'B' limit -333",
+                        "select ts, (bid + ask) / 2 mid from q where sym like '%B' limit -333",
+                        "select ts, (bid + ask) / 2 mid from q where sym = 'B' limit 777",
+                }) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "false");
+                    final String expected;
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        expected = read(factory, ctx, null);
+                    }
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+                    try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                        final FrameProjection projection = findProjection(factory);
+                        Assert.assertNotNull(query, projection);
+                        projection.resetTestCounter();
+                        TestUtils.assertEquals(query, expected, read(factory, ctx, null));
+                        Assert.assertEquals(query, !query.contains("limit -"), projection.getProjectedFrameCount() > 0);
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testOnTestContext() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext);

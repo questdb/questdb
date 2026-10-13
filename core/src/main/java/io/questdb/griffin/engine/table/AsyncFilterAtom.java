@@ -70,6 +70,9 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     private final boolean preTouchEnabled;
     private final double preTouchThreshold;
+    // false for an execution whose cursor never reads the frames' projected values: a negative LIMIT's,
+    // which reads its rows back through its own records
+    private boolean isProjecting = true;
     private IntHashSet lateMatSkipColumnIndexes;
     // Per-query native memory tracker captured from SqlExecutionContext on init.
     // Null when no per-query limit applies. Workers and operator code feed it to
@@ -191,10 +194,18 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
             SqlExecutionCircuitBreaker circuitBreaker
     ) {
         final FrameProjection projection = this.projection;
-        if (projection != null && !task.isCountOnly() && task.getFilteredRows().size() > 0
+        if (projection != null && isProjecting && !task.isCountOnly() && task.getFilteredRows().size() > 0
                 && task.getFrameMemory().getFrameFormat() == PartitionFormat.NATIVE) {
             task.setProjected(projection.project(workerId, owner, record, task.getFilteredRows(), task.getProjectedValues(), task.getMemoryTracker(), circuitBreaker));
         }
+    }
+
+    /**
+     * Whether the filtering threads compute the projection's columns for this execution; set before
+     * its frames are dispatched.
+     */
+    public void setProjecting(boolean isProjecting) {
+        this.isProjecting = isProjecting;
     }
 
     /**
