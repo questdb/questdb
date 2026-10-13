@@ -183,271 +183,161 @@ stages:
     displayName: "Hosted Running tests"
 
     jobs:
-      - job: RunContinuousSoak
-        # An explicit exclusion list, not a single ne(). This job selects itself negatively
-        # -- "whatever schedule is not the nightly" -- which silently means "and every
-        # schedule added to this file in future". Name every schedule it must NOT run on,
-        # and add to this list whenever a schedule is added above.
-        # The last clause covers a manual queue with forceDurability=true: that is a
-        # dedicated durability run, and a soak running first would eat its window.
-        condition: and(ne(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly'), ne(variables['Build.CronSchedule.DisplayName'], 'Run durability sweep'), ne('${{ parameters.forceDurability }}', 'true'))
-        workspace:
-          clean: all
-        displayName: "continuous soak"
-        strategy:
-          matrix:
+      - template: templates/adaptive-fuzz-job.yml
+        parameters:
+          jobName: RunContinuousSoak
+          displayName: "continuous soak"
+          # Exclude every dedicated schedule and manual durability run from the soak.
+          condition: and(ne(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly'), ne(variables['Build.CronSchedule.DisplayName'], 'Run durability sweep'), ne('${{ parameters.forceDurability }}', 'true'))
+          timeoutInMinutes: 90
+          testSets:
             hetzner:
-              os: Linux
-              jdk: "1.25"
-              testset: "all"
-              # Iteration 1 runs through the shared template (which also builds). Scope it to the fuzz
-              # class (~10m on the CI agent) rather than the whole crash package (~26m measured on build
-              # 20260805.21) -- the loop below covers the rest, and an oversized first pass ate the entire
-              # job before the loop could run.
+              # Keep the first pass narrow so the loop has time for another workload.
               includeTests: "**/cairo/crash/RandomizedAdaptiveCrashFuzzTest.java"
-              javadoc_step: ""
-              javadoc_profile: ""
-        pool:
-          # The soak fuzzes on its own pool so it never takes agents away from PR builds.
-          name: hetzner-adaptive-commit-fuzz
-        # Headroom, NOT the target. The run is budgeted to TOTAL_RUN_MINUTES below (~50m inside an hourly
-        # cadence); this only stops a pathological iteration hanging the agent. Build 20260805.21 hit the
-        # old 45m ceiling and was CANCELLED because the budget ignored time already spent by the template's
-        # own pass -- on this single-agent pool that also made the next run queue 16 minutes late.
-        timeoutInMinutes: 90
-        variables:
-          SOURCE_CODE_CHANGED: true
-          # Enables the nightly-gated crash sweeps. Without it every class under cairo/crash that extends
-          # AbstractAdaptiveCrashSweepTest is assumption-skipped and the soak silently fuzzes nothing.
-          MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dquestdb.fuzz.nightly=true -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
-          # Budget for the WHOLE RUN, measured from job start -- not for the loop step alone. The previous
-          # version budgeted only the loop, so the template's own pass was spent "for free" and the job blew
-          # its ceiling. 50m fits ~2m setup + the template's own pass + ONE iteration -- the
-          # pass measures ~20m on the agent, not the ~10m originally assumed, which is why a second
-          # iteration never starts and the phase is chosen per RUN rather than per iteration. MIN_ITERATION_MINUTES is the conservative length of the LONGEST iteration measured
-          # on the CI agent (crash package ~26m; ordinary fuzz ~12m) so the loop never starts one it cannot
-          # finish inside the budget.
-          # 65, not 50. At 50 the crash-sweep iteration NEVER COMPLETED: the template's own test pass
-          # eats 16-23m, leaving ~29m against a crash package that now needs more than that (this branch
-          # added crash classes such as ChecksumArtifacts and MetaChecksum), so
-          # every phase-1 soak ended "hit the run budget and was stopped cleanly" -- green, and never a
-          # finished sweep. Worse, build 263283 used 23m on the pass and then started NO iteration at
-          # all (27m needed, ~27m left), fuzzing nothing while reporting success.
-          # 65 leaves 42m+ for the iteration. Utilisation stays ~54% of the 2h slot.
-          TOTAL_RUN_MINUTES: 65
-          MIN_ITERATION_MINUTES: 27
-          ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
-        steps:
-          - template: templates/checkout-source.yml
-          - template: templates/use-hetzner-apt-mirrors.yml
-          - bash: |
-              sudo apt-get update && sudo apt-get install -y openjdk-25-jdk maven build-essential zip
-              JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
-              echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
-              echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
-              echo "JAVA_HOME will be set to: $JAVA_PATH"
-              # Stamp job start so the soak loop can budget the WHOLE RUN. The loop step's own SECONDS
-              # starts at zero AFTER the template's test pass, so budgeting from there spends that pass
-              # for free -- which is what pushed build 20260805.21 past its ceiling and got it cancelled.
-              date +%s > "$(Agent.TempDirectory)/soak_start_epoch"
-          - template: templates/steps.yml
-            parameters:
-              isCheckoutEnabled: false
-              isHetznerAptMirrorEnabled: false
-          - bash: |
-              set -uo pipefail
-              # Iteration 1 was the template's own test pass. Keep going until the budget is spent, so the
-              # agent fuzzes continuously instead of idling until the next cron. Each mvn invocation draws a
-              # fresh seed (RandomizedAdaptiveCrashFuzzTest#drawSeed under -Dquestdb.fuzz.nightly), so every
-              # iteration is a new workload. No `clean`: the build from the template is reused.
-              # Budget the WHOLE RUN from the stamp taken before the template pass, not this step's own
-              # SECONDS -- the template pass is ~10m and was previously unbudgeted.
-              start=$(cat "$(Agent.TempDirectory)/soak_start_epoch" 2>/dev/null || echo 0)
-              now=$(date +%s)
-              if [ "$start" -eq 0 ]; then
-                echo "##vso[task.logissue type=warning]soak start stamp missing; budgeting from this step only"
-                start=$now
-              fi
-              budget=$(( TOTAL_RUN_MINUTES * 60 ))
-              elapsed=$(( now - start ))
-              echo "run already used $(( elapsed / 60 ))m of its ${TOTAL_RUN_MINUTES}m budget before the loop"
-              # Only START an iteration if a whole one can still finish. Checking just "budget left > 0"
-              # lets an iteration begin with a second to spare and run to the job timeout -- which reports
-              # as a hard-killed red that looks like a test failure.
-              min_iter=$(( MIN_ITERATION_MINUTES * 60 ))
-              # Which family this RUN fuzzes. Alternating per ITERATION does not work: a run only ever
-              # fits ONE iteration (the template's own pass takes ~20m of the 50m budget, leaving ~28m
-              # against a 27m minimum), and that iteration is always number 2 -- even -- so the loop
-              # picked ordinary-fuzz every single time and the adaptive crash sweeps were NEVER soaked.
-              # They ran only in the 01:00 nightly, which is precisely the coverage this branch needs
-              # most. Measured on build 262546: "soak iteration 2 (ordinary-fuzz), 28m budget left".
-              #
-              # Alternate on the scheduled hour instead: the cron fires at 02,04,...,22, so (hour/2)%2
-              # flips every run. A badly delayed start can repeat a phase; that is acceptable because
-              # both phases now run many times a day, and it degrades to "some extra ordinary-fuzz",
-              # never to "no crash sweeps".
-              # 10# forces base 10. date +%H emits a LEADING ZERO, and bash reads 08/09 as octal, where
-              # 8 and 9 are not valid digits: "value too great for base (error token is 08)". With set -u
-              # that left phase unbound and failed the whole run (build 262642, the 08:00 soak).
-              phase=$(( ( 10#$(date -u +%H) / 2 ) % 2 ))
-              echo "run phase=$phase ($([ $phase -eq 0 ] && echo ordinary-fuzz || echo adaptive-crash-sweeps) first)"
-              iter=1
-              rc=0
-              while [ $(( budget - ( $(date +%s) - start ) )) -ge "$min_iter" ]; do
-                iter=$((iter + 1))
-                if [ $(( (iter + phase) % 2 )) -eq 0 ]; then
-                  inc='%regex[.*Fuzz.*class]'; what='ordinary-fuzz'
-                else
-                  inc='**/cairo/crash/*.java'; what='adaptive-crash-sweeps'
+          variables:
+            # Enable the nightly-gated crash sweeps in both the first pass and the loop.
+            MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dquestdb.fuzz.nightly=true -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
+            # Budget includes setup and the first pass; the job timeout is only headroom.
+            TOTAL_RUN_MINUTES: 65
+            MIN_ITERATION_MINUTES: 27
+            ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk).log"
+          setupScript: |
+            sudo apt-get update && sudo apt-get install -y openjdk-25-jdk maven build-essential zip
+            JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
+            echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
+            echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
+            echo "JAVA_HOME will be set to: $JAVA_PATH"
+            # Stamp job start so the soak loop can budget the WHOLE RUN. The loop step's own SECONDS
+            # starts at zero AFTER the template's test pass, so budgeting from there spends that pass
+            # for free -- which is what pushed build 20260805.21 past its ceiling and got it cancelled.
+            date +%s > "$(Agent.TempDirectory)/soak_start_epoch"
+          postTestSteps:
+            - bash: |
+                set -uo pipefail
+                # Iteration 1 was the template's own test pass. Keep going until the budget is spent, so the
+                # agent fuzzes continuously instead of idling until the next cron. Each mvn invocation draws a
+                # fresh seed (RandomizedAdaptiveCrashFuzzTest#drawSeed under -Dquestdb.fuzz.nightly), so every
+                # iteration is a new workload. No `clean`: the build from the template is reused.
+                # Budget the WHOLE RUN from the stamp taken before the template pass, not this step's own
+                # SECONDS -- the template pass is ~10m and was previously unbudgeted.
+                start=$(cat "$(Agent.TempDirectory)/soak_start_epoch" 2>/dev/null || echo 0)
+                now=$(date +%s)
+                if [ "$start" -eq 0 ]; then
+                  echo "##vso[task.logissue type=warning]soak start stamp missing; budgeting from this step only"
+                  start=$now
                 fi
-                echo "=== soak iteration $iter ($what), $(( (budget - ( $(date +%s) - start )) / 60 ))m budget left ==="
-                # Bound the ITERATION, not just the decision to start one. min_iter is an estimate; an
-                # iteration that runs long would otherwise be killed by the step timeout, which reports
-                # as a hard red indistinguishable from a real fuzz failure. A clean cut here is reported
-                # as budget exhaustion instead.
-                remaining=$(( budget - ( $(date +%s) - start ) ))
-                timeout --signal=TERM --kill-after=60s "${remaining}s" \
-                  mvn -f pom.xml -s "${MAVEN_SETTINGS_FILE:-ci/maven-settings-hetzner.xml}" \
-                  --batch-mode --quiet \
-                  -Dtest.include="$inc" -Dtest.exclude= \
-                  -Dout="$(Build.SourcesDirectory)/ci/qlog.conf" \
-                  -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false \
-                  -P local-client $(MAVEN_RUN_OPTS) test
-                rc=$?
-                if [ $rc -eq 124 ] || [ $rc -eq 137 ]; then
-                  echo "soak iteration $iter ($what) hit the run budget and was stopped cleanly; not a failure"
-                  rc=0
-                  break
+                budget=$(( TOTAL_RUN_MINUTES * 60 ))
+                elapsed=$(( now - start ))
+                echo "run already used $(( elapsed / 60 ))m of its ${TOTAL_RUN_MINUTES}m budget before the loop"
+                # Only START an iteration if a whole one can still finish. Checking just "budget left > 0"
+                # lets an iteration begin with a second to spare and run to the job timeout -- which reports
+                # as a hard-killed red that looks like a test failure.
+                min_iter=$(( MIN_ITERATION_MINUTES * 60 ))
+                # Which family this RUN fuzzes. Alternating per ITERATION does not work: a run only ever
+                # fits ONE iteration (the template's own pass takes ~20m of the 50m budget, leaving ~28m
+                # against a 27m minimum), and that iteration is always number 2 -- even -- so the loop
+                # picked ordinary-fuzz every single time and the adaptive crash sweeps were NEVER soaked.
+                # They ran only in the 01:00 nightly, which is precisely the coverage this branch needs
+                # most. Measured on build 262546: "soak iteration 2 (ordinary-fuzz), 28m budget left".
+                #
+                # Alternate on the scheduled hour instead: the cron fires at 02,04,...,22, so (hour/2)%2
+                # flips every run. A badly delayed start can repeat a phase; that is acceptable because
+                # both phases now run many times a day, and it degrades to "some extra ordinary-fuzz",
+                # never to "no crash sweeps".
+                # 10# forces base 10. date +%H emits a LEADING ZERO, and bash reads 08/09 as octal, where
+                # 8 and 9 are not valid digits: "value too great for base (error token is 08)". With set -u
+                # that left phase unbound and failed the whole run (build 262642, the 08:00 soak).
+                phase=$(( ( 10#$(date -u +%H) / 2 ) % 2 ))
+                echo "run phase=$phase ($([ $phase -eq 0 ] && echo ordinary-fuzz || echo adaptive-crash-sweeps) first)"
+                iter=1
+                rc=0
+                while [ $(( budget - ( $(date +%s) - start ) )) -ge "$min_iter" ]; do
+                  iter=$((iter + 1))
+                  if [ $(( (iter + phase) % 2 )) -eq 0 ]; then
+                    inc='%regex[.*Fuzz.*class]'; what='ordinary-fuzz'
+                  else
+                    inc='**/cairo/crash/*.java'; what='adaptive-crash-sweeps'
+                  fi
+                  echo "=== soak iteration $iter ($what), $(( (budget - ( $(date +%s) - start )) / 60 ))m budget left ==="
+                  # Bound the ITERATION, not just the decision to start one. min_iter is an estimate; an
+                  # iteration that runs long would otherwise be killed by the step timeout, which reports
+                  # as a hard red indistinguishable from a real fuzz failure. A clean cut here is reported
+                  # as budget exhaustion instead.
+                  remaining=$(( budget - ( $(date +%s) - start ) ))
+                  timeout --signal=TERM --kill-after=60s "${remaining}s" \
+                    mvn -f pom.xml -s "${MAVEN_SETTINGS_FILE:-ci/maven-settings-hetzner.xml}" \
+                    --batch-mode --quiet \
+                    -Dtest.include="$inc" -Dtest.exclude= \
+                    -Dout="$(Build.SourcesDirectory)/ci/qlog.conf" \
+                    -DfailIfNoTests=false -Dsurefire.failIfNoSpecifiedTests=false \
+                    -P local-client $(MAVEN_RUN_OPTS) test
+                  rc=$?
+                  if [ $rc -eq 124 ] || [ $rc -eq 137 ]; then
+                    echo "soak iteration $iter ($what) hit the run budget and was stopped cleanly; not a failure"
+                    rc=0
+                    break
+                  fi
+                  if [ $rc -ne 0 ]; then
+                    echo "##vso[task.logissue type=error]soak iteration $iter ($what) FAILED - stopping. Replay the seed printed above with -Dquestdb.fuzz.seed=<s0>,<s1>"
+                    break
+                  fi
+                done
+                # Say what was NOT run: a soak that stops early because the budget could not fit another
+                # iteration must not read as "the whole budget was fuzzed".
+                if [ $rc -eq 0 ]; then
+                  echo "soak ran $iter iteration(s); stopped with $(( (budget - ( $(date +%s) - start )) / 60 ))m left" \
+                       "(less than the ${MIN_ITERATION_MINUTES}m an iteration needs)"
                 fi
-                if [ $rc -ne 0 ]; then
-                  echo "##vso[task.logissue type=error]soak iteration $iter ($what) FAILED - stopping. Replay the seed printed above with -Dquestdb.fuzz.seed=<s0>,<s1>"
-                  break
-                fi
-              done
-              # Say what was NOT run: a soak that stops early because the budget could not fit another
-              # iteration must not read as "the whole budget was fuzzed".
-              if [ $rc -eq 0 ]; then
-                echo "soak ran $iter iteration(s); stopped with $(( (budget - ( $(date +%s) - start )) / 60 ))m left" \
-                     "(less than the ${MIN_ITERATION_MINUTES}m an iteration needs)"
-              fi
-              exit $rc
-            displayName: "Continuous soak loop"
-            # MUST exceed TOTAL_RUN_MINUTES, or the loop is hard-killed mid-iteration and Slack reports
-            # "Adaptive Commit Fuzz Failed" for a run in which nothing failed. It was 30 while the loop
-            # budgeted against 50, so any iteration started with the permitted 27m of budget left ran
-            # past the cap: builds 260301/260319/260329/260424 all died as "The task has timed out"
-            # after sweeping thousands of seeds with zero test failures.
-            timeoutInMinutes: 60
+                exit $rc
+              displayName: "Continuous soak loop"
+              timeoutInMinutes: 60
 
-      - job: RunAdaptiveCrashNightly
-        displayName: "adaptive crash nightly"
-        condition: eq(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly')
-        workspace:
-          clean: all
-        strategy:
-          matrix:
+      - template: templates/adaptive-fuzz-job.yml
+        parameters:
+          jobName: RunAdaptiveCrashNightly
+          displayName: "adaptive crash nightly"
+          condition: eq(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly')
+          timeoutInMinutes: 180
+          testTimeoutInMinutes: 165
+          artifactNameSuffix: "-$(System.JobName)"
+          testSets:
             randomized:
-              os: Linux
-              jdk: "1.25"
-              testset: "all"
               includeTests: "**/cairo/crash/RandomizedAdaptiveCrashFuzzTest.java"
               excludeTests: ""
-              javadoc_step: ""
-              javadoc_profile: ""
             crash_sweeps:
-              os: Linux
-              jdk: "1.25"
-              testset: "all"
               includeTests: "**/cairo/crash/AdaptiveIndexedSymbolLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMatViewLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiPartitionLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveMultiTableLazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveO3CrashSweepTest.java,**/cairo/crash/AdaptiveO3LazyGapCrashSweepTest.java,**/cairo/crash/AdaptiveRebootOrphanReclaimCrashTest.java"
               excludeTests: ""
-              javadoc_step: ""
-              javadoc_profile: ""
             soak_self_check:
-              os: Linux
-              jdk: "1.25"
-              testset: "all"
               includeTests: "**/cairo/crash/AdaptiveCrashSweepSelfCheckTest.java,**/cairo/crash/AdaptiveSoakCrashTest.java"
               excludeTests: ""
-              javadoc_step: ""
-              javadoc_profile: ""
             durability_fuzz:
-              os: Linux
-              jdk: "1.25"
-              testset: "all"
               includeTests: "**/cairo/crash/AdaptiveMultiWriterDurableAckCrashFuzzTest.java,**/cairo/crash/AdaptiveQwpDurableAckNoLossCrashTest.java,**/cairo/crash/VarcharPowerLossFuzzTest.java,**/cairo/crash/AdaptiveParallelCopyPowerLossTest.java"
               excludeTests: ""
-              javadoc_step: ""
-              javadoc_profile: ""
-        pool:
-          name: hetzner-adaptive-commit-fuzz
-        timeoutInMinutes: 180
-        variables:
-          SOURCE_CODE_CHANGED: true
-          MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx6144m -XX:+UseParallelGC"
-          MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dquestdb.fuzz.nightly=true -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
-          ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).zip"
-          ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).log"
-        steps:
-          - template: templates/checkout-source.yml
-          - template: templates/use-hetzner-apt-mirrors.yml
-          - bash: |
-              sudo apt-get update && sudo apt-get install -y openjdk-25-jdk maven build-essential zip
-              JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
-              echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
-              echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
-              echo "JAVA_HOME will be set to: $JAVA_PATH"
-          - template: templates/steps.yml
-            parameters:
-              isCheckoutEnabled: false
-              isHetznerAptMirrorEnabled: false
-              testTimeoutInMinutes: 165
-              artifactNameSuffix: "-$(System.JobName)"
+          variables:
+            MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx6144m -XX:+UseParallelGC"
+            MAVEN_RUN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Dquestdb.fuzz.nightly=true -Dmaven.resolver.transport=wagon -Dmaven.wagon.httpconnectionManager.ttlSeconds=30 -Dmaven.wagon.http.retryHandler.count=3 -Dmaven.wagon.http.retryHandler.nonRetryableClasses=java.io.NotSerializableException"
+            ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).zip"
+            ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).log"
 
-      - job: RunFullSuiteNightly
-        displayName: "full suite nightly"
-        condition: eq(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly')
-        workspace:
-          clean: all
-        strategy:
-          matrix:
+      - template: templates/adaptive-fuzz-job.yml
+        parameters:
+          jobName: RunFullSuiteNightly
+          displayName: "full suite nightly"
+          condition: eq(variables['Build.CronSchedule.DisplayName'], 'Run adaptive crash nightly')
+          timeoutInMinutes: 330
+          testTimeoutInMinutes: 315
+          artifactNameSuffix: "-$(System.JobName)"
+          testSets:
             full:
-              os: Linux
-              jdk: "1.25"
-              testset: "all"
-              # PR CI splits this across five parallel stages; here it is one JVM on one agent,
-              # so budget hours, not minutes. The crash package is excluded because the sharded
-              # jobs above already own it -- and they own it with the nightly flag set, which
-              # this job deliberately does not set.
+              # The crash shards own the excluded package with the nightly flag enabled.
               includeTests: "%regex[.*[^o].class]"
               excludeTests: "**/cairo/crash/**"
-              javadoc_step: ""
-              javadoc_profile: ""
-        pool:
-          name: hetzner-adaptive-commit-fuzz
-        timeoutInMinutes: 330
-        variables:
-          SOURCE_CODE_CHANGED: true
-          MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx6144m -XX:+UseParallelGC"
-          # A full pass reaches the http/web-console tests that the fuzz-only default skips, so
-          # unlike the other jobs here it has to build the console assets.
-          WEB_CONSOLE_PROFILE: "-P build-web-console"
-          ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).zip"
-          ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).log"
-        steps:
-          - template: templates/checkout-source.yml
-          - template: templates/use-hetzner-apt-mirrors.yml
-          - bash: |
-              sudo apt-get update && sudo apt-get install -y openjdk-25-jdk maven build-essential zip
-              JAVA_PATH="/usr/lib/jvm/java-25-openjdk-amd64"
-              echo "##vso[task.setvariable variable=JAVA_HOME]$JAVA_PATH"
-              echo "##vso[task.setvariable variable=JAVA_HOME_25_X64]$JAVA_PATH"
-              echo "JAVA_HOME will be set to: $JAVA_PATH"
-          - template: templates/steps.yml
-            parameters:
-              isCheckoutEnabled: false
-              isHetznerAptMirrorEnabled: false
-              testTimeoutInMinutes: 315
-              artifactNameSuffix: "-$(System.JobName)"
+          variables:
+            MAVEN_OPTS: "-Dmaven.repo.local=$(MAVEN_CACHE_FOLDER) -Xmx6144m -XX:+UseParallelGC"
+            # The full suite needs web-console assets, but not the nightly crash flag.
+            WEB_CONSOLE_PROFILE: "-P build-web-console"
+            ARCHIVED_LOGS: "$(Build.ArtifactStagingDirectory)/questdb-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).zip"
+            ARCHIVED_CRASH_LOG: "$(Build.ArtifactStagingDirectory)/questdb-crash-$(Build.SourceBranchName)-$(Build.SourceVersion)-$(System.StageAttempt)-$(Agent.OS)-$(jdk)-$(System.JobName).log"
 
       # ===================================================================================
       # THE DURABILITY BATTERY. QEMU-guest crash harness, tools/durability/vm: one workload
