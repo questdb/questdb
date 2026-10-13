@@ -1593,6 +1593,35 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // s holds b row 20, which matches no a row. Per outer row, the first two queries return 1 null 20,
+    // and the third, whose filter drops that row, returns 1 10 null and 1 11 null. The rewriter keeps
+    // the outer-ref join ahead of a RIGHT or FULL join to a correlated sub-query, but checks neither that
+    // the join keeps its unmatched rows nor the ON clause from which it removes the clone of the
+    // sub-query: with the second outer column o.k, it drops a.k = s.x. Run with a ahead of the join, each
+    // rewritten query returns 1 10 20 and 1 11 20, so the optimiser leaves the order free and the
+    // queries fail instead.
+    @Test
+    public void testLateralCorrelatedOuterJoinToCorrelatedSubQueryFails() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT, x INT)");
+            execute("CREATE TABLE a (id INT, k INT, x INT)");
+            execute("CREATE TABLE b (id INT, k INT, x INT)");
+            execute("INSERT INTO o VALUES (1, 5, 1)");
+            execute("INSERT INTO a VALUES (10, 9, 9), (11, 8, 8)");
+            execute("INSERT INTO b VALUES (20, 2, 1)");
+            final String[] bodies = {
+                    "a FULL JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.k = s.x WHERE s.k < o.k",
+                    "a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.k = s.x WHERE s.k < o.k",
+                    // the ON clause reads o.k, and WHERE drops the rows that the join NULL-extends on a
+                    "a FULL JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.k = s.x AND s.k < o.k WHERE a.id > 0",
+            };
+            for (String body : bodies) {
+                final String sql = "SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid FROM " + body + ") l";
+                assertQuery(sql).fails(sql.indexOf(") s ON") + 2, "could not determine join order for this table");
+            }
+        });
+    }
+
     // Per outer row, count(*) counts both refunds: 2 for each order.
     @Test
     public void testLateralCorrelatedRightJoinOnCountFails() throws Exception {
@@ -9659,17 +9688,27 @@ public class LateralJoinTest extends AbstractCairoTest {
         wrapper.setDelegate(model);
 
         Assert.assertFalse(model.isLateralCountCoalesceRequired());
+        Assert.assertFalse(model.isOuterRefJoinChecked());
         Assert.assertFalse(model.isOuterRefWildcardExcluded());
         Assert.assertFalse(wrapper.isLateralCountCoalesceRequired());
+        Assert.assertFalse(wrapper.isOuterRefJoinChecked());
         Assert.assertFalse(wrapper.isOuterRefWildcardExcluded());
         model.setLateralCountCoalesceRequired(true);
+        model.setOuterRefJoinChecked(true);
         model.setOuterRefWildcardExcluded(true);
         Assert.assertTrue(model.isLateralCountCoalesceRequired());
+        Assert.assertTrue(model.isOuterRefJoinChecked());
         Assert.assertTrue(model.isOuterRefWildcardExcluded());
         Assert.assertTrue(wrapper.isLateralCountCoalesceRequired());
+        Assert.assertTrue(wrapper.isOuterRefJoinChecked());
         Assert.assertTrue(wrapper.isOuterRefWildcardExcluded());
         try {
             wrapper.setLateralCountCoalesceRequired(false);
+            Assert.fail("QueryModelWrapper must remain read-only");
+        } catch (UnsupportedOperationException ignored) {
+        }
+        try {
+            wrapper.setOuterRefJoinChecked(false);
             Assert.fail("QueryModelWrapper must remain read-only");
         } catch (UnsupportedOperationException ignored) {
         }
@@ -9691,8 +9730,10 @@ public class LateralJoinTest extends AbstractCairoTest {
 
         model.clear();
         Assert.assertFalse(model.isLateralCountCoalesceRequired());
+        Assert.assertFalse(model.isOuterRefJoinChecked());
         Assert.assertFalse(model.isOuterRefWildcardExcluded());
         Assert.assertFalse(wrapper.isLateralCountCoalesceRequired());
+        Assert.assertFalse(wrapper.isOuterRefJoinChecked());
         Assert.assertFalse(wrapper.isOuterRefWildcardExcluded());
         Assert.assertEquals(0, wrapper.getLateralCountTemplates().size());
     }

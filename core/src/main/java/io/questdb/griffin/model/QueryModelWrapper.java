@@ -908,6 +908,11 @@ public class QueryModelWrapper implements IQueryModel {
     }
 
     @Override
+    public boolean isOuterRefJoinChecked() {
+        return delegate.isOuterRefJoinChecked();
+    }
+
+    @Override
     public boolean isOuterRefWildcardExcluded() {
         return delegate.isOuterRefWildcardExcluded();
     }
@@ -1264,6 +1269,11 @@ public class QueryModelWrapper implements IQueryModel {
 
     @Override
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
+        throw new UnsupportedOperationException();
+    }
+
+    @Override
+    public void setOuterRefJoinChecked(boolean isOuterRefJoinChecked) {
         throw new UnsupportedOperationException();
     }
 

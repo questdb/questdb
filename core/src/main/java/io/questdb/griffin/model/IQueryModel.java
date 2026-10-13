@@ -526,6 +526,13 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
 
     boolean isOrderDescendingByDesignatedTimestampOnly();
 
+    // True for the join that LateralJoinRewriter inserts for the outer references of a LATERAL sub-query
+    // when it keeps that join ahead of a RIGHT/FULL join because an ON clause reads the outer row, and the
+    // level joins no correlated sub-query. The rewriter then checks that a filter drops the rows that each
+    // RIGHT/FULL join after it NULL-extends, so the order as written is exact, see
+    // SqlOptimiser.hasUncheckedLateralOuterRefBeforeRightOrFullJoin().
+    boolean isOuterRefJoinChecked();
+
     boolean isOuterRefWildcardExcluded();
 
     boolean isOwnCorrelatedAtDepth(int depth, int flag);
@@ -665,6 +672,8 @@ public interface IQueryModel extends Mutable, ExecutionModel, AliasTranslator, S
     void setOriginatingViewNameExpr(ExpressionNode originatingViewNameExpr);
 
     void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause);
+
+    void setOuterRefJoinChecked(boolean isOuterRefJoinChecked);
 
     void setOuterRefWildcardExcluded(boolean isOuterRefWildcardExcluded);
 

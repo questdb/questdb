@@ -3758,6 +3758,9 @@ class LateralJoinRewriter implements Mutable {
             final ExpressionNode joinCriteria = joinModels.getQuick(i).getJoinCriteria();
             if (joinCriteria != null && hasCorrelatedExprAtDepth(joinCriteria, depth)) {
                 pinnedOuterRefJoins.add(outerRefJoinModel);
+                // Pass 4 checks the RIGHT/FULL joins after the outer-ref join, but Pass 3 may remove the
+                // clone of a correlated sub-query from an ON clause unchecked
+                outerRefJoinModel.setOuterRefJoinChecked(!hasCorrelatedBranch);
                 return 1;
             }
         }

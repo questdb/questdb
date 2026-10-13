@@ -148,6 +148,8 @@ public class QueryModel implements IQueryModel {
     private boolean isCteModel;
     private ExpressionNode lateralCountCoalesceGuard;
     private boolean isLateralCountCoalesceRequired;
+    // see IQueryModel.isOuterRefJoinChecked()
+    private boolean isOuterRefJoinChecked;
     // LateralJoinRewriter marks the final lateral output so SqlOptimiser can hide
     // synthesized alignment columns after wildcard expansion assigns final aliases.
     private boolean isOuterRefWildcardExcluded;
@@ -480,6 +482,7 @@ public class QueryModel implements IQueryModel {
         isCteModel = false;
         isLateralCountCoalesceRequired = false;
         lateralCountCoalesceGuard = null;
+        isOuterRefJoinChecked = false;
         isOuterRefWildcardExcluded = false;
         lateralCountTemplates.clear();
         modelType = ExecutionModel.QUERY;
@@ -1399,6 +1402,11 @@ public class QueryModel implements IQueryModel {
     }
 
     @Override
+    public boolean isOuterRefJoinChecked() {
+        return isOuterRefJoinChecked;
+    }
+
+    @Override
     public boolean isOuterRefWildcardExcluded() {
         return isOuterRefWildcardExcluded;
     }
@@ -1917,6 +1925,11 @@ public class QueryModel implements IQueryModel {
     @Override
     public void setOuterJoinExpressionClause(ExpressionNode outerJoinExpressionClause) {
         this.outerJoinExpressionClause = outerJoinExpressionClause;
+    }
+
+    @Override
+    public void setOuterRefJoinChecked(boolean isOuterRefJoinChecked) {
+        this.isOuterRefJoinChecked = isOuterRefJoinChecked;
     }
 
     @Override
