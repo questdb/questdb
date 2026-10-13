@@ -76,10 +76,17 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // many small partitions has, then cost the queue and the ordered collect once per group.
     private static final long GROUP_ROWS = 65_536;
     static final int MAX_GROUP_FRAMES = 16;
-    // Group tasks a sequence keeps, cleared, from one execution to the next, so that a query that runs
-    // again does not allocate them again; the others are freed at reset. A cleared task holds its
-    // lists' initial capacities, about 2.3 KiB at the defaults. In-flight frames are capped by the
-    // filter dispatch limit, min(query workers, 32) by default, so 8 cover a pool of up to 9 workers.
+    // Group tasks a sequence keeps, cleared, from one execution to the next; the others are freed at
+    // reset. A cleared task holds its lists' initial capacities, 2,304 bytes at the defaults, and a
+    // closed cursor may keep little native memory (the factory tests allow 64 KiB), so few are kept.
+    // The filter dispatch limit does not bound the tasks in flight: it applies to limited iteration
+    // only, which with the default limit sends no groups at all, see groupLimit(). An unlimited filter
+    // may hold (reduce queue capacity + 1) x (MAX_GROUP_FRAMES - 1) of them, the one being a group's
+    // reserved before its slot is claimed: 255 on a 4-worker pool. It allocates the ones not kept on
+    // every execution, and that churn is accepted. Measured on 8,000 partitions of 2,500 rows at 4
+    // workers: 247 tasks per run at 1.4-2.0 us each, about 0.4 ms of a 6 ms scan that matches nothing,
+    // and within noise once the filter does work; the run stays no slower than without groups.
+    // Keeping them all would keep about 570 KiB per closed cursor.
     private static final int RETAINED_GROUP_TASKS = 8;
     // tests: runs before a group task is allocated, see reserveGroupTasks()
     private static volatile Runnable groupTaskAllocationHook;
