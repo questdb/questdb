@@ -20143,7 +20143,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * a row at a time on the query's thread for a single key; past a few percent of the table the
      * parallel scan of the columns is faster, as for the index gather (see
      * {@link IndexScanChoiceRecordCursorFactory}). The posting index's per-key counts decide, with
-     * the threshold of that choice, {@code cairo.sql.index.scan.choice.max.selectivity}.
+     * the threshold {@code cairo.sql.covering.scan.choice.max.selectivity}.
      * <p>
      * The choice is made once, when the query compiles, from the keys the SQL names: a key that is
      * a bind variable, symbol patterns and LATEST BY keep the covering plan. A cached plan keeps its
@@ -20164,7 +20164,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // the one estimate of this compilation, bounded, see estimateSelection()
             if (covering == null
                     || !covering.estimateSelection(executionContext, COVERING_CHOICE_MIN_SCANNED_ROWS, coveringEstimate)
-                    || coveringEstimate[0] <= configuration.getSqlIndexScanChoiceMaxSelectivity() * coveringEstimate[1]) {
+                    || coveringEstimate[0] <= configuration.getSqlCoveringScanChoiceMaxSelectivity() * coveringEstimate[1]) {
                 return coveringPlan;
             }
         } catch (Throwable th) {

@@ -141,6 +141,9 @@ public class OrderedMap implements Map, Reopenable {
     private final long[] batchKeyCache = new long[BATCH_KEY_CACHE_SIZE];
     private long batchEmptyValueStart;
     private int batchKeyCacheHits;
+    // the value offset of the key the batch key cache gave last, -1 when none: rows of one group
+    // often come one after another, and a repeat of the last key needs no hash
+    private long batchKeyCacheLast = -1;
     private int free;
     // The map owns the heap range [heapAddr, heapLimit) and derives the heap size from that pair
     // rather than caching it in a field of its own. No ordering of assignments can then commit a
@@ -982,10 +985,16 @@ public class OrderedMap implements Map, Reopenable {
      */
     private long probeCached(Key k, long[] cache, long rowIndex) {
         final long keyAddr = kPos;
+        final long last = batchKeyCacheLast;
+        if (last != -1 && keyEquals(keyAddr, heapAddr + last - keySize, keySize)) {
+            batchKeyCacheHits++;
+            return Map.encodeBatchEntry(rowIndex, last, false);
+        }
         final int slot = batchKeyCacheSlot(keyAddr, keySize);
         final long cached = cache[slot];
         if (cached != -1 && keyEquals(keyAddr, heapAddr + cached - keySize, keySize)) {
             batchKeyCacheHits++;
+            batchKeyCacheLast = cached;
             return Map.encodeBatchEntry(rowIndex, cached, false);
         }
         final FlyweightPackedMapValue v = (FlyweightPackedMapValue) k.createValue();
@@ -994,12 +1003,14 @@ public class OrderedMap implements Map, Reopenable {
         }
         final long offset = v.getValueAddress() - heapAddr;
         cache[slot] = offset;
+        batchKeyCacheLast = offset;
         return Map.encodeBatchEntry(rowIndex, offset, v.isNew());
     }
 
     private long[] resetBatchKeyCache() {
         final long[] cache = batchKeyCache;
         java.util.Arrays.fill(cache, -1L);
+        batchKeyCacheLast = -1;
         return cache;
     }
 

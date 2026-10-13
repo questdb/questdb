@@ -1555,6 +1555,15 @@ public interface CairoConfiguration {
     double getSqlIndexScanChoiceMaxSelectivity();
 
     /**
+     * The share of the scanned rows, between 0 and 1, that the symbol keys of a covering-index
+     * scan may select for the query to keep the covering plan rather than scan the table. A
+     * covering scan reads only the selected rows' covered values, laid out by key, so it pays
+     * off up to a larger share than the plain index's gather, see
+     * {@link #getSqlIndexScanChoiceMaxSelectivity()}.
+     */
+    double getSqlCoveringScanChoiceMaxSelectivity();
+
+    /**
      * Rows of a covering-index scan's page frames, up to the page frame row cap: each frame holds
      * the rows of one key in one partition, which a worker of a parallel GROUP BY or filter reads
      * from the index, row ids and covered values, so a key's rows of a partition spread over the

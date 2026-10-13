@@ -1936,6 +1936,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public double getSqlCoveringScanChoiceMaxSelectivity() {
+        return 0.3;
+    }
+
+    @Override
     public int getSqlParallelIndexGroupByFrameRows() {
         return Map.BATCH_ROW_INDEX_MASK + 1;
     }

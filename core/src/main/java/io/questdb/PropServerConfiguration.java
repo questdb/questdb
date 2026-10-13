@@ -191,6 +191,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final boolean cairoGroupByBatchKernelsEnabled;
     private final double cairoIndexScanChoiceMaxSelectivity;
+    private final double cairoCoveringScanChoiceMaxSelectivity;
     private final long cairoParallelCoveringFrameRows;
     private final long cairoParallelCoveringLocalMaxRows;
     private final boolean cairoIndexScanChoiceEnabled;
@@ -2476,6 +2477,10 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoIndexScanChoiceMaxSelectivity = getDouble(properties, env, PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY, "0.05");
             if (!(cairoIndexScanChoiceMaxSelectivity >= 0 && cairoIndexScanChoiceMaxSelectivity <= 1)) {
                 throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY.getPropertyPath() + " must be between 0 and 1");
+            }
+            this.cairoCoveringScanChoiceMaxSelectivity = getDouble(properties, env, PropertyKey.CAIRO_SQL_COVERING_SCAN_CHOICE_MAX_SELECTIVITY, "0.3");
+            if (!(cairoCoveringScanChoiceMaxSelectivity >= 0 && cairoCoveringScanChoiceMaxSelectivity <= 1)) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_COVERING_SCAN_CHOICE_MAX_SELECTIVITY.getPropertyPath() + " must be between 0 and 1");
             }
             this.cairoParallelCoveringFrameRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_COVERING_FRAME_ROWS, 65_536);
             if (cairoParallelCoveringFrameRows < 1) {
@@ -6105,6 +6110,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public double getSqlIndexScanChoiceMaxSelectivity() {
             return cairoIndexScanChoiceMaxSelectivity;
+        }
+
+        @Override
+        public double getSqlCoveringScanChoiceMaxSelectivity() {
+            return cairoCoveringScanChoiceMaxSelectivity;
         }
 
         @Override
