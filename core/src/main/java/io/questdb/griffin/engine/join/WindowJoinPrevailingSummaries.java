@@ -241,7 +241,7 @@ public class WindowJoinPrevailingSummaries implements QuietCloseable {
     private void allocate() {
         assert slaveSymbolLookupMap != null;
         rowIds.setMemoryTracker(memoryTracker);
-        rowIds.setCapacity((long) blockCount * joinableKeyCount);
+        rowIds.setCapacity((long) blockCount * stride());
         int maxSlaveMapKey = 0;
         int maxMasterMapKey = 0;
         final long capacity = slaveSymbolLookupMap.capacity();
@@ -253,7 +253,8 @@ public class WindowJoinPrevailingSummaries implements QuietCloseable {
             }
         }
         masterSlotCount = maxMasterMapKey + 1;
-        slaveSlotCount = maxSlaveMapKey + 1;
+        // one past the largest joinable slave key: the spare, which every larger key reads too
+        slaveSlotCount = maxSlaveMapKey + 2;
         final long slotBytes = 4L * (masterSlotCount + slaveSlotCount);
         slotArrays.setMemoryTracker(memoryTracker);
         slotArrays.setCapacity((slotBytes + 7) >>> 3);
@@ -261,6 +262,11 @@ public class WindowJoinPrevailingSummaries implements QuietCloseable {
         slaveSlotsAddress = masterSlotsAddress + 4L * masterSlotCount;
         // all bits set: -1 in every slot
         Vect.memset(masterSlotsAddress, slotBytes, -1);
+        // a slave key that cannot join reads the spare slot, whose entry is never Long.MIN_VALUE, so
+        // that the scan has no branch on whether the key joins
+        for (int i = 0; i < slaveSlotCount; i++) {
+            Unsafe.putInt(slaveSlotsAddress + ((long) i << 2), joinableKeyCount);
+        }
         int slot = 0;
         for (long index = 0; index < capacity; index++) {
             final int slaveMapKey = slaveSymbolLookupMap.keyAt(index);
@@ -302,7 +308,12 @@ public class WindowJoinPrevailingSummaries implements QuietCloseable {
     }
 
     private long entryAddress(int block, int slot) {
-        return rowIds.getAddress() + (((long) block * joinableKeyCount + slot) << 3);
+        return rowIds.getAddress() + (((long) block * stride() + slot) << 3);
+    }
+
+    // the block's entries: one per joinable key and the spare (see allocate())
+    private long stride() {
+        return joinableKeyCount + 1L;
     }
 
     // Under the block's lock: returns the key's last row in the block, scanning further back from
@@ -324,6 +335,7 @@ public class WindowJoinPrevailingSummaries implements QuietCloseable {
                 for (int i = 0; i < joinableKeyCount; i++) {
                     Unsafe.putLong(base + ((long) i << 3), Long.MIN_VALUE);
                 }
+                Unsafe.putLong(base + ((long) joinableKeyCount << 3), 0);
                 foundCounts[block] = 0;
                 frontierFrames[block] = Math.min(frameLo + framesPerBlock, frameCount) - 1;
                 frontierRows[block] = Long.MAX_VALUE;
@@ -337,7 +349,7 @@ public class WindowJoinPrevailingSummaries implements QuietCloseable {
         }
 
         final long slaveSlotsAddress = this.slaveSlotsAddress;
-        final int slaveSlotCount = this.slaveSlotCount;
+        final int maxSlaveSlot = this.slaveSlotCount - 1;
         int found = foundCounts[block];
         int frameIndex = frontierFrames[block];
         long r = frontierRows[block];
@@ -364,21 +376,20 @@ public class WindowJoinPrevailingSummaries implements QuietCloseable {
                         slaveKey = slaveRecord.getInt(slaveSymbolIndex);
                     }
                     final int slaveMapKey = AsyncWindowJoinFastAtom.toSymbolMapKey(slaveKey);
-                    final int s = slaveMapKey < slaveSlotCount ? Unsafe.getInt(slaveSlotsAddress + ((long) slaveMapKey << 2)) : -1;
-                    if (s >= 0) {
-                        final long address = base + ((long) s << 3);
-                        if (Unsafe.getLong(address) == Long.MIN_VALUE) {
-                            final long rowId = Rows.toRowID(frameIndex, r);
-                            Unsafe.putLong(address, rowId);
-                            if (++found == joinableKeyCount) {
-                                // every joinable key has its row: the rest of the block adds nothing
-                                states.set(block, STATE_COMPLETE);
-                                return Unsafe.getLong(base + ((long) slot << 3));
-                            }
-                            if (s == slot) {
-                                r--;
-                                return rowId;
-                            }
+                    // the spare slot for a key that cannot join: its entry is never Long.MIN_VALUE
+                    final int s = Unsafe.getInt(slaveSlotsAddress + ((long) Math.min(slaveMapKey, maxSlaveSlot) << 2));
+                    final long address = base + ((long) s << 3);
+                    if (Unsafe.getLong(address) == Long.MIN_VALUE) {
+                        final long rowId = Rows.toRowID(frameIndex, r);
+                        Unsafe.putLong(address, rowId);
+                        if (++found == joinableKeyCount) {
+                            // every joinable key has its row: the rest of the block adds nothing
+                            states.set(block, STATE_COMPLETE);
+                            return Unsafe.getLong(base + ((long) slot << 3));
+                        }
+                        if (s == slot) {
+                            r--;
+                            return rowId;
                         }
                     }
                 }

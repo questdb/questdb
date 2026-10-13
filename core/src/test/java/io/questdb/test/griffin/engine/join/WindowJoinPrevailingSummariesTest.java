@@ -66,6 +66,13 @@ public class WindowJoinPrevailingSummariesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBlocksWithInterleavedNonJoinableKeysMatchOracle() throws Exception {
+        // only the even keys can join: the scan meets non-joinable keys below, between and above
+        // the joinable ones, which all read the spare slot
+        assertMemoryLeak(() -> assertSingleThreadMatchesOracle(30, 0, true));
+    }
+
+    @Test
     public void testBlocksOfSeveralFramesMatchOracle() throws Exception {
         // 60k joinable keys most of which never occur: more keys than the entry budget allows one
         // frame per block for, and blocks the scan can never complete early
@@ -286,8 +293,13 @@ public class WindowJoinPrevailingSummariesTest extends AbstractCairoTest {
     }
 
     private static void assertSingleThreadMatchesOracle(int keyCount, int extraKeys) {
+        assertSingleThreadMatchesOracle(keyCount, extraKeys, false);
+    }
+
+    private static void assertSingleThreadMatchesOracle(int keyCount, int extraKeys, boolean evenKeysOnly) {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         final Slave slave = Slave.create(rnd, 40, 200, keyCount);
+        slave.evenKeysOnly = evenKeysOnly;
         try (DirectIntIntHashMap lookup = slave.newLookupMap(extraKeys); WindowJoinPrevailingSummaries summaries = new WindowJoinPrevailingSummaries()) {
             summaries.of(slave.frameCount(), lookup, null);
             Assert.assertTrue(summaries.getBlockCount() > 1);
@@ -332,6 +344,8 @@ public class WindowJoinPrevailingSummariesTest extends AbstractCairoTest {
         static final int TWO_FRAMES_RARE_KEY = 15;
         private final int keyCount;
         private final int[][] keys;
+        // only the even keys are in the lookup map
+        boolean evenKeysOnly;
 
         Slave(int[][] keys, int keyCount) {
             this.keys = keys;
@@ -379,7 +393,7 @@ public class WindowJoinPrevailingSummariesTest extends AbstractCairoTest {
         }
 
         long lastRowIdInBlock(WindowJoinPrevailingSummaries summaries, int block, int slaveKey) {
-            if (slaveKey >= keyCount) {
+            if (slaveKey >= keyCount || (evenKeysOnly && slaveKey != StaticSymbolTable.VALUE_IS_NULL && (slaveKey & 1) != 0)) {
                 // not in the lookup map: cannot join
                 return Long.MIN_VALUE;
             }
@@ -412,7 +426,9 @@ public class WindowJoinPrevailingSummariesTest extends AbstractCairoTest {
         DirectIntIntHashMap newLookupMap(int extraKeys) {
             final DirectIntIntHashMap map = new DirectIntIntHashMap(16, 0.7, 0, StaticSymbolTable.VALUE_NOT_FOUND, MemoryTag.NATIVE_UNORDERED_MAP);
             for (int k = 0; k < keyCount; k++) {
-                map.put(k + KEY_SHIFT, masterKeyOf(k));
+                if (!evenKeysOnly || (k & 1) == 0) {
+                    map.put(k + KEY_SHIFT, masterKeyOf(k));
+                }
             }
             for (int k = 0; k < extraKeys; k++) {
                 final int slaveKey = keyCount + 1000 + k;
