@@ -170,7 +170,11 @@ public class AsyncFilterContext implements Closeable {
         // see PageFrameMemoryPool.releaseCoveringBuffers(); close() frees them
         ownerMemoryPool.clear();
         for (int i = 0, n = perWorkerMemoryPools.size(); i < n; i++) {
-            perWorkerMemoryPools.getQuick(i).clear();
+            // null once close() has freed the list
+            final PageFrameMemoryPool pool = perWorkerMemoryPools.getQuick(i);
+            if (pool != null) {
+                pool.clear();
+            }
         }
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
