@@ -70,20 +70,11 @@ public interface DurableAckRegistry {
      * local-fsync guarantee has been established (e.g. NOSYNC tables, or a registry that does not
      * track local durability).
      *
-     * <p>The local-durable frontier is a weaker tier than the replicated frontier:
-     * {@code applied >= localDurable >= replicated} in the durability ordering.
-     *
-     * <p>Default implementation returns -1 (no local-fsync tracking). Override in
-     * {@code LocalDurableAckRegistry} (OSS default) which reads from the table's
-     * {@link io.questdb.cairo.wal.seq.SeqTxnTracker#getLocalDurableSeqTxn()}.
-     *
      * @param tableDirName the directory name of the table (matches
      *                     {@code TableToken.getDirName()})
      * @return the highest locally-fdatasync'd seqTxn, {@link #TABLE_GONE}, or -1
      */
-    default long getLocalDurableSeqTxn(CharSequence tableDirName) {
-        return -1L;
-    }
+    long getLocalDurableSeqTxn(CharSequence tableDirName);
 
     /**
      * Returns true when this server can serve at least one durability tier. When false, QWP
@@ -99,25 +90,14 @@ public interface DurableAckRegistry {
      * that orphan is bounded by the uploader's in-flight queue depth at drop
      * time and is acceptable.
      */
-    default void onTableDropped(TableToken tableToken) {
-    }
-
-    /**
-     * Whether this server can offer the given {@link DurabilityTier}. Availability is server-level: a server
-     * grants only a tier whose acks will flow; LOCAL, for example, requires ADAPTIVE commit mode. The default
-     * offers no tier.
-     */
-    default boolean isTierAvailable(int tier) {
-        return false;
-    }
+    void onTableDropped(TableToken tableToken);
 
     /**
      * True when this registry can serve every tier in the requested set. The
      * QWP handshake grants all-or-nothing: a request naming a tier this
-     * server cannot serve is denied in full, never partially granted.
+     * server cannot serve is denied in full, never partially granted. The empty
+     * set is available; bits outside {@link DurabilityTier#TIERS_MASK} are ignored.
+     * This does not enable new handshakes when {@link #isEnabled()} is false.
      */
-    default boolean isTierSetAvailable(int tiers) {
-        return (!DurabilityTier.hasLocal(tiers) || isTierAvailable(DurabilityTier.LOCAL))
-                && (!DurabilityTier.hasReplicated(tiers) || isTierAvailable(DurabilityTier.REPLICATED));
-    }
+    boolean isTierSetAvailable(int tiers);
 }

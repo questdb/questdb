@@ -25,6 +25,7 @@
 package io.questdb.test.cutlass.websocket;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.DefaultDurableAckRegistry;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
@@ -1065,6 +1066,11 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
 
     private static final class FakeEnabledDurableAckRegistry implements DurableAckRegistry {
         @Override
+        public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+            return -1L;
+        }
+
+        @Override
         public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
             return -1L;
         }
@@ -1079,8 +1085,12 @@ public class QwpIngressUpgradeProcessorOnHeadersReadyTest extends AbstractCairoT
         // "true" request -- whose shipped meaning is the replicated tier --
         // is grantable here and echoes the historical "enabled" token.
         @Override
-        public boolean isTierAvailable(int tier) {
-            return tier == DurabilityTier.REPLICATED;
+        public boolean isTierSetAvailable(int tiers) {
+            return !DurabilityTier.hasLocal(tiers);
+        }
+
+        @Override
+        public void onTableDropped(TableToken tableToken) {
         }
     }
 

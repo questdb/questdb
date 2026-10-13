@@ -26,6 +26,7 @@ package io.questdb.test.cutlass.websocket;
 
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
@@ -4393,6 +4394,11 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
         return new CairoEngine(new DefaultTestCairoConfiguration(root)) {
             private final DurableAckRegistry testRegistry = new DurableAckRegistry() {
                 @Override
+                public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+                    return -1L;
+                }
+
+                @Override
                 public long getReplicatedDurableSeqTxn(CharSequence tableDirName) {
                     if (registryLookups != null) {
                         registryLookups.incrementAndGet();
@@ -4403,6 +4409,15 @@ public class QwpIngressDeferredCloseDurableAckTest extends AbstractCairoTest {
                 @Override
                 public boolean isEnabled() {
                     return true;
+                }
+
+                @Override
+                public boolean isTierSetAvailable(int tiers) {
+                    return !DurabilityTier.hasLocal(tiers);
+                }
+
+                @Override
+                public void onTableDropped(TableToken tableToken) {
                 }
             };
 

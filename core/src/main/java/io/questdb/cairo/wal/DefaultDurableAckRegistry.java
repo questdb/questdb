@@ -24,10 +24,17 @@
 
 package io.questdb.cairo.wal;
 
+import io.questdb.cairo.TableToken;
+
 public final class DefaultDurableAckRegistry implements DurableAckRegistry {
     public static final DefaultDurableAckRegistry INSTANCE = new DefaultDurableAckRegistry();
 
     private DefaultDurableAckRegistry() {
+    }
+
+    @Override
+    public long getLocalDurableSeqTxn(CharSequence tableDirName) {
+        return -1L;
     }
 
     @Override
@@ -38,5 +45,14 @@ public final class DefaultDurableAckRegistry implements DurableAckRegistry {
     @Override
     public boolean isEnabled() {
         return false;
+    }
+
+    @Override
+    public boolean isTierSetAvailable(int tiers) {
+        return (tiers & DurabilityTier.TIERS_MASK) == DurabilityTier.NONE;
+    }
+
+    @Override
+    public void onTableDropped(TableToken tableToken) {
     }
 }

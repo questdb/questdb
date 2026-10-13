@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.wal;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.wal.DefaultDurableAckRegistry;
 import io.questdb.cairo.wal.DurabilityTier;
 import io.questdb.cairo.wal.DurableAckRegistry;
@@ -45,6 +46,10 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
         final DurableAckRegistry noOp = DefaultDurableAckRegistry.INSTANCE;
         Assert.assertEquals(-1L, noOp.getLocalDurableSeqTxn("some~dir"));
         Assert.assertFalse(noOp.isEnabled());
+        for (int tiers = DurabilityTier.NONE; tiers <= DurabilityTier.TIERS_MASK; tiers++) {
+            Assert.assertEquals(tiers == DurabilityTier.NONE, noOp.isTierSetAvailable(tiers));
+            Assert.assertEquals(tiers == DurabilityTier.NONE, noOp.isTierSetAvailable(tiers | DurabilityTier.LEGACY_TRUE));
+        }
     }
 
     @Test
@@ -65,6 +70,15 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
                 @Override
                 public boolean isEnabled() {
                     return true;
+                }
+
+                @Override
+                public boolean isTierSetAvailable(int tiers) {
+                    return true;
+                }
+
+                @Override
+                public void onTableDropped(TableToken tableToken) {
                 }
             };
             engine.setDurableAckRegistry(fakeEnterprise);
@@ -125,17 +139,17 @@ public class LocalDurableAckRegistryTest extends AbstractCairoTest {
 
     @Test
     public void testTierAvailabilityByCommitMode() throws Exception {
-        // The local frontier advances only under ADAPTIVE, so outside it the LOCAL tier is denied at the
-        // handshake rather than granted as an ack stream that never flows. OSS never offers REPLICATED.
+        // LOCAL is offered only under ADAPTIVE. OSS never offers REPLICATED.
         for (String mode : new String[]{"adaptive", "nosync", "sync", "async"}) {
             node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, mode);
             final boolean adaptive = "adaptive".equals(mode);
             assertMemoryLeak(() -> {
                 for (DurableAckRegistry registry : new DurableAckRegistry[]{engine.getDurableAckRegistry(), new LocalDurableAckRegistry(engine)}) {
                     Assert.assertEquals(mode, adaptive, registry.isEnabled());
-                    Assert.assertEquals(mode, adaptive, registry.isTierAvailable(DurabilityTier.LOCAL));
+                    Assert.assertTrue(mode, registry.isTierSetAvailable(DurabilityTier.NONE));
+                    Assert.assertTrue(mode, registry.isTierSetAvailable(DurabilityTier.LEGACY_TRUE));
+                    Assert.assertEquals(mode, adaptive, registry.isTierSetAvailable(DurabilityTier.LOCAL | DurabilityTier.LEGACY_TRUE));
                     Assert.assertEquals(mode, adaptive, registry.isTierSetAvailable(DurabilityTier.LOCAL));
-                    Assert.assertFalse(mode, registry.isTierAvailable(DurabilityTier.REPLICATED));
                     Assert.assertFalse(mode, registry.isTierSetAvailable(DurabilityTier.REPLICATED));
                     Assert.assertFalse(mode, registry.isTierSetAvailable(DurabilityTier.LOCAL | DurabilityTier.REPLICATED));
                 }

@@ -36,8 +36,8 @@ import org.jetbrains.annotations.NotNull;
  * {@link #getReplicatedDurableSeqTxn(CharSequence)} always returns -1, since OSS has no upload pipeline;
  * Enterprise installs its own registry through {@link CairoEngine#setDurableAckRegistry(DurableAckRegistry)}.
  * <p>
- * {@link #isEnabled()} and {@link #isTierAvailable(int)} answer {@code true} only under ADAPTIVE commit
- * mode, so a server that does not offer the tier denies the {@code X-QWP-Request-Durable-Ack} opt-in at the
+ * LOCAL is available only under ADAPTIVE commit mode, so a server that does not offer the tier
+ * denies the {@code X-QWP-Request-Durable-Ack} opt-in at the
  * handshake instead of leaving the client waiting for frames that will not come.
  */
 public class LocalDurableAckRegistry implements DurableAckRegistry {
@@ -119,7 +119,12 @@ public class LocalDurableAckRegistry implements DurableAckRegistry {
     }
 
     @Override
-    public boolean isTierAvailable(int tier) {
-        return tier == DurabilityTier.LOCAL && canServeLocalTier(engine);
+    public boolean isTierSetAvailable(int tiers) {
+        return !DurabilityTier.hasReplicated(tiers)
+                && (!DurabilityTier.hasLocal(tiers) || canServeLocalTier(engine));
+    }
+
+    @Override
+    public void onTableDropped(TableToken tableToken) {
     }
 }

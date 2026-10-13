@@ -1014,6 +1014,15 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                     public boolean isEnabled() {
                         return true;
                     }
+
+                    @Override
+                    public boolean isTierSetAvailable(int tiers) {
+                        return !DurabilityTier.hasReplicated(tiers);
+                    }
+
+                    @Override
+                    public void onTableDropped(TableToken tableToken) {
+                    }
                 };
 
                 CharSequenceLongHashMap progress = state.collectDurableProgress(registry);
@@ -1184,6 +1193,15 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 public boolean isEnabled() {
                     return true;
                 }
+
+                @Override
+                public boolean isTierSetAvailable(int tiers) {
+                    return true;
+                }
+
+                @Override
+                public void onTableDropped(TableToken tableToken) {
+                }
             };
 
             // REPLICATED connection must not advance past the uploaded frontier. The pending seqTxn sits
@@ -1237,6 +1255,15 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 public boolean isEnabled() {
                     return true;
                 }
+
+                @Override
+                public boolean isTierSetAvailable(int tiers) {
+                    return !DurabilityTier.hasReplicated(tiers);
+                }
+
+                @Override
+                public void onTableDropped(TableToken tableToken) {
+                }
             };
 
             // A LOCAL-tier connection is fully covered: its ack will advance the client's replay watermark
@@ -1281,6 +1308,15 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
                 @Override
                 public boolean isEnabled() {
                     return true;
+                }
+
+                @Override
+                public boolean isTierSetAvailable(int tiers) {
+                    return true;
+                }
+
+                @Override
+                public void onTableDropped(TableToken tableToken) {
                 }
             };
             QwpIngressProcessorState caught = newStateWithPendingTable("t", "t~1");
@@ -6706,6 +6742,16 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
             return true;
         }
 
+        @Override
+        public boolean isTierSetAvailable(int tiers) {
+            return true;
+        }
+
+        @Override
+        public void onTableDropped(TableToken tableToken) {
+            watermarks.put(tableToken.getDirName(), TABLE_GONE);
+        }
+
         void set(String dirName, long seqTxn) {
             watermarks.put(dirName, seqTxn);
         }
@@ -6728,6 +6774,17 @@ public class QwpIngressProcessorStateTest extends AbstractCairoTest {
         @Override
         public boolean isEnabled() {
             return true;
+        }
+
+        @Override
+        public boolean isTierSetAvailable(int tiers) {
+            return true;
+        }
+
+        @Override
+        public void onTableDropped(TableToken tableToken) {
+            local.put(tableToken.getDirName(), TABLE_GONE);
+            replicated.put(tableToken.getDirName(), TABLE_GONE);
         }
 
         void setLocal(String dirName, long seqTxn) {

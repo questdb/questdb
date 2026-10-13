@@ -111,7 +111,6 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
                     // already holds a grant, so the parked ack for the never-synced commit is never sent.
                     final DurableAckRegistry registry = engine.getDurableAckRegistry();
                     Assert.assertFalse(registry.isEnabled());
-                    Assert.assertFalse(registry.isTierAvailable(DurabilityTier.LOCAL));
                     Assert.assertFalse(registry.isTierSetAvailable(DurabilityTier.LOCAL));
                     Assert.assertEquals(-1L, registry.getLocalDurableSeqTxn(tt.getDirName()));
 
