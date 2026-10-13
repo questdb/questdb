@@ -116,6 +116,8 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     private long forwardWatermark = Long.MIN_VALUE;
     private boolean isFilterAlwaysFalse;
     private boolean isForwardScanMode;
+    // Highest bound in keyMissMap. A scan above it cannot benefit from a miss lookup.
+    private long keyMissWatermark = Long.MIN_VALUE;
     private long prevAsOfRowId = Long.MIN_VALUE;
     private Record record;
     // ASOF position of the last drop of the key cache since toTop() that may have kept entries, or
@@ -188,7 +190,9 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             boolean isWindowSwitchEnabled
     ) {
         this.filter = filter;
-        this.keyMissMap = filter != null && asOfJoinKeyTypes != null
+        // Projection batches reset scan watermarks, but a key miss remains valid for the slave
+        // cursor. Keep its bound so later batches scan only rows above it, as filtered joins do.
+        this.keyMissMap = (filter != null || isWindowSwitchEnabled) && asOfJoinKeyTypes != null
                 ? MapFactory.createUnorderedMap(configuration, asOfJoinKeyTypes, new SingleColumnType(ColumnType.LONG), false, false)
                 : null;
         this.lookahead = lookahead;
@@ -290,11 +294,15 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             effectiveStart = startRowId;
         }
 
-        final MapValue missValue = findKeyMiss(masterRecord, masterAsOfJoinMapSink);
-        final long missRowId = missValue != null ? missValue.getLong(0) : Long.MIN_VALUE;
+        MapValue missValue = null;
+        long missRowId = keyMissWatermark;
         if (effectiveStart <= missRowId) {
-            recordKeyMiss(missValue, masterRecord, masterAsOfJoinMapSink, startRowId);
-            return Long.MIN_VALUE;
+            missValue = findKeyMiss(masterRecord, masterAsOfJoinMapSink);
+            missRowId = missValue != null ? missValue.getLong(0) : Long.MIN_VALUE;
+            if (effectiveStart <= missRowId) {
+                recordKeyMiss(missValue, masterRecord, masterAsOfJoinMapSink, startRowId);
+                return Long.MIN_VALUE;
+            }
         }
 
         int frameIndex = Rows.toPartitionIndex(effectiveStart);
@@ -321,7 +329,15 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             }
             final long currentRowId = Rows.toRowID(frameIndex, rowIndex);
             if (currentRowId <= missRowId) {
-                break;
+                // Defer copying and hashing the key until a miss bound can stop the scan.
+                // Successful scans above every known bound need no miss-map lookup.
+                if (missValue == null) {
+                    missValue = findKeyMiss(masterRecord, masterAsOfJoinMapSink);
+                    missRowId = missValue != null ? missValue.getLong(0) : Long.MIN_VALUE;
+                }
+                if (currentRowId <= missRowId) {
+                    break;
+                }
             }
             backwardScanRows++;
 
@@ -408,6 +424,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
     @Override
     public void close() {
         Misc.free(keyMissMap);
+        keyMissWatermark = Long.MIN_VALUE;
     }
 
     /**
@@ -913,6 +930,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
             keyMissMap.close();
             keyMissMap.setMemoryTracker(memoryTracker);
         }
+        keyMissWatermark = Long.MIN_VALUE;
         this.timeFrameCursor = timeFrameCursor;
         this.record = timeFrameCursor.getRecord();
         this.timeFrame = timeFrameCursor.getTimeFrame();
@@ -1280,6 +1298,7 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
         } else if (missValue.getLong(0) < rowId) {
             missValue.putLong(0, rowId);
         }
+        keyMissWatermark = Math.max(keyMissWatermark, rowId);
     }
 
     private long rowGapLowerBound(long fromRowId, long toRowId) {

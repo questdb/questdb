@@ -32,6 +32,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncMultiHorizonJoinRecordCursorFactory;
@@ -92,6 +93,59 @@ public class ParallelHorizonJoinMemoryTrackerTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1_000);
         super.setUp();
+    }
+
+    @Test
+    public void testProjectionKeyMissMapsBreachAndRecover() throws Exception {
+        // One-row frames force each distinct missing master key to populate its helper's miss
+        // map. The slave has one key, so the positive key maps cannot cause this growth.
+        setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 256 * 1024L);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, context) -> {
+                engine.execute("CREATE TABLE trades (k LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", context);
+                engine.execute("CREATE TABLE prices AS (SELECT 0::LONG k, 42::LONG price, 0::TIMESTAMP ts FROM long_sequence(1)) TIMESTAMP(ts)", context);
+                for (boolean isParallel : new boolean[]{false, true}) {
+                    context.setParallelHorizonJoinEnabled(isParallel);
+                    engine.execute("TRUNCATE TABLE trades", context);
+                    engine.execute("INSERT INTO trades SELECT x k, x::TIMESTAMP ts FROM long_sequence(50_000)", context);
+                    try (RecordCursorFactory factory = compiler.compile(
+                            "SELECT p.price FROM trades t HORIZON JOIN prices p ON (k) LIST (0s) AS h", context
+                    ).getRecordCursorFactory()) {
+                        TestUtils.assertFactoryInTree(factory, isParallel ? AsyncHorizonJoinProjectionRecordCursorFactory.class : HorizonJoinProjectionRecordCursorFactory.class);
+                        for (int attempt = 0; attempt < 2; attempt++) {
+                            try (RecordCursor cursor = factory.getCursor(context)) {
+                                while (cursor.hasNext()) {
+                                    Assert.assertEquals(Long.MIN_VALUE, cursor.getRecord().getLong(0));
+                                }
+                                Assert.fail("expected missing-key map to breach the query limit");
+                            } catch (CairoException e) {
+                                Assert.assertTrue(e.isOutOfMemory());
+                                TestUtils.assertContains(e.getFlyweightMessage(), "query memory limit exceeded");
+                                TestUtils.assertContains(e.getFlyweightMessage(), "memoryTag=" + MemoryTag.NATIVE_UNORDERED_MAP + ']');
+                            }
+                        }
+                        engine.execute("TRUNCATE TABLE trades", context);
+                        engine.execute("INSERT INTO trades SELECT x k, x::TIMESTAMP ts FROM long_sequence(16)", context);
+                        // Reopen the very same factory after the failed worker/owner allocations.
+                        for (int attempt = 0; attempt < 2; attempt++) {
+                            int rows = 0;
+                            try (RecordCursor cursor = factory.getCursor(context)) {
+                                while (cursor.hasNext()) {
+                                    Assert.assertEquals(Long.MIN_VALUE, cursor.getRecord().getLong(0));
+                                    rows++;
+                                }
+                            }
+                            Assert.assertEquals(16, rows);
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
     }
 
     @Test
