@@ -179,7 +179,15 @@ public final class HashJoinGroupByCandidate {
      * This check borrows the filter. Transfer follows all capability checks and worker compilation.
      */
     public static boolean supportsFramedInput(RecordCursorFactory factory) {
-        if (!supportsInputFactory(factory)) {
+        return supportsFramedInput(factory, false);
+    }
+
+    /**
+     * @param isProbe a probe may be a covering-index scan: it reads each frame through the frame
+     *                memory pool, which decodes a covered frame, and keeps no row ids across frames
+     */
+    public static boolean supportsFramedInput(RecordCursorFactory factory, boolean isProbe) {
+        if (!isProbe && !supportsInputFactory(factory)) {
             return false;
         }
         if (factory.supportsPageFrameCursor()) {

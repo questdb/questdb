@@ -6284,7 +6284,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Remap model-output -> base-table indexes into the eventual frame coordinates.
             final IntList probeColumns = hashJoinGroupByFrameColumns(probe, candidate, false);
             final RecordCursorFactory probeInput = hashJoinGroupByFrameInput(probe);
-            if (!HashJoinGroupByCandidate.supportsFramedInput(probeInput)) {
+            if (!HashJoinGroupByCandidate.supportsFramedInput(probeInput, true)) {
                 return null;
             }
             build = generateQuery(candidate.getBuildModel(), executionContext, false);

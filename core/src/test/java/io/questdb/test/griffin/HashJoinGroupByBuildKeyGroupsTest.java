@@ -25,7 +25,9 @@
 package io.questdb.test.griffin;
 
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 /**
@@ -36,6 +38,36 @@ import org.junit.Test;
  * must keep the per-row path).
  */
 public class HashJoinGroupByBuildKeyGroupsTest extends AbstractCairoTest {
+
+    @Test
+    public void testCoveringIndexProbe() throws Exception {
+        // the probe reads a covering-index scan's frames: the posting index's rows of a symbol, decoded
+        assertMemoryLeak(() -> {
+            execute("create table q (sym symbol, ex symbol, v double, w long, ts timestamp) timestamp(ts) partition by day");
+            execute("insert into q select case when x % 20 = 0 then 'B' when x % 20 = 1 then 'C' else 'A' end, rnd_symbol('N','P','T','Z','X', null), "
+                    + "(x % 97)::double, x % 13, timestamp_sequence('2024-01-01', 3_000_000L) from long_sequence(30_000)");
+            execute("alter table q alter column sym add index type posting include (ex, v, w)");
+            execute("insert into q select case when x % 20 = 0 then 'B' when x % 20 = 1 then 'C' else 'A' end, rnd_symbol('N','P','T'), "
+                    + "(x % 89)::double, x % 7, timestamp_sequence('2024-01-05', 3_000_000L) from long_sequence(5_000)");
+            execute("create table e (ex symbol, name symbol)");
+            execute("insert into e values ('N','nyse'),('P','arca'),('T','arca'),('Z',null)");
+            for (int workers : new int[]{1, 4}) {
+                try (SqlExecutionContextImpl context = HashJoinGroupByQualificationTest.context(engine, workers)) {
+                    context.changePageFrameSizes(1_000, 1_000);
+                    for (String join : new String[]{" join ", " left join "}) {
+                        for (String where : new String[]{" where q.sym = 'B'", " where q.sym in ('B', 'C')", " where q.sym = 'B' and q.v > 10"}) {
+                            final String sql = "select coalesce(e.name, '') k, sum(q.v), count(), max(q.v - q.w), min(q.w), "
+                                    + "stddev_pop(q.v), weighted_avg(q.v, q.w) from q" + join + "e on q.ex = e.ex" + where + " order by 1";
+                            final StringSink plan = new StringSink();
+                            TestUtils.printSql(engine, context, "explain " + sql, plan);
+                            TestUtils.assertContains(sql, plan, "CoveringIndex");
+                            HashJoinGroupByQualificationTest.assertDifferential(sql, context, true);
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testGroupsFromBuildColumnsOnly() throws Exception {
