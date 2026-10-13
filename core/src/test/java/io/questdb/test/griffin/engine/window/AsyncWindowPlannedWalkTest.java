@@ -26,12 +26,14 @@ package io.questdb.test.griffin.engine.window;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.PerWorkerLocks;
+import io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor;
 import io.questdb.griffin.engine.window.AsyncWindowRecordCursor;
 import io.questdb.griffin.engine.window.AsyncWindowRecordCursorFactory;
 import io.questdb.mp.WorkerPool;
@@ -139,6 +141,35 @@ public class AsyncWindowPlannedWalkTest extends AbstractCairoTest {
                                 + "from q where sym2 in (" + in + ") and ts >= '1970-01-02' order by sym2", true);
             }
         });
+    }
+
+    @Test
+    public void testCountAndIndexDisagreeFailsTheQuery() throws Exception {
+        // the plan counts one (key, frame) a row short, then a row long: the query must fail, not
+        // drop the surplus row or come up a row short
+        assertMemoryLeak(() -> inPool(4, (engine, ctx) -> {
+            createQuote(engine, ctx, "DAY", 3_000, "posting");
+            final String query = "select " + SHAPES[0] + " from q where sym in ('S1', 'BIG', 'S2') order by sym";
+            assertThreeWays(engine, ctx, query, true);
+            setFrameDispatch(true);
+            ctx.setParallelWindowEnabled(true);
+            for (long skew : new long[]{-1, 1}) {
+                try (RecordCursorFactory factory = engine.select(query, ctx)) {
+                    KeyMajorPageFrameRecordCursor.setCountSkew(skew);
+                    try (RecordCursor cursor = factory.getCursor(ctx)) {
+                        final String result = print(cursor, factory);
+                        Assert.fail("skew " + skew + ": no error, " + result.length() + " chars printed");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "other rows than it counted");
+                    } finally {
+                        KeyMajorPageFrameRecordCursor.setCountSkew(0);
+                    }
+                    assertSlotsReleased(factory);
+                }
+            }
+            // and the walk is sound again
+            assertThreeWays(engine, ctx, query, true);
+        }));
     }
 
     @Test

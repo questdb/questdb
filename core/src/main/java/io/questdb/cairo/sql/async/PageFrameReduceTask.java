@@ -57,8 +57,9 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private final DirectLongList filteredRows; // Used for TYPE_FILTER and TYPE_WINDOW_JOIN.
     private final PageFrameMemoryPool frameMemoryPool;
     private final long frameQueueCapacity;
-    // the tasks of the group's frames after this task's own, which the frame sequence lends the group
-    private final ObjList<PageFrameReduceTask> groupTasks = new ObjList<>();
+    // the tasks of the group's frames after this task's own, which the frame sequence lends the group;
+    // sized for the largest group, so that of() does not allocate between the slot's claim and publish
+    private final ObjList<PageFrameReduceTask> groupTasks = new ObjList<>(PageFrameSequence.MAX_GROUP_FRAMES - 1);
     private int errno = CairoException.NON_CRITICAL;
     private byte errorKind = AsyncQueryErrorKind.KIND_NONE;
     private int errorMessagePosition;
@@ -67,6 +68,8 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     private PageFrameMemory frameMemory;
     private PageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
+    // an Error in a later frame of the group, recorded on that frame's task, see isGroupFrameFailed()
+    private boolean groupFrameFailed;
     // frames this queue slot carries: this task's frame and the next groupSize - 1, see getGroupTask()
     private int groupSize = 1;
     private int interruptionReason = SqlExecutionCircuitBreaker.STATE_OK;
@@ -209,6 +212,19 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
     }
 
     /**
+     * Whether a later frame of this slot's group failed with an {@link Error} that its own task
+     * already carries. The reducer rethrows such an Error, and the catch that receives it must not
+     * record it on this task as well: the collector would raise it at the group's first frame.
+     */
+    public boolean isGroupFrameFailed() {
+        return groupFrameFailed;
+    }
+
+    void setGroupFrameFailed() {
+        groupFrameFailed = true;
+    }
+
+    /**
      * The number of frames this queue slot carries, see {@link #getGroupTask(int)}.
      */
     public int getGroupSize() {
@@ -263,13 +279,16 @@ public class PageFrameReduceTask implements QuietCloseable, Mutable {
 
     /**
      * Sets the slot up for {@code groupSize} consecutive frames from {@code frameIndex} on: this task
-     * for the first, a group task for each of the others, see {@link #getGroupTask(int)}.
+     * for the first, a group task for each of the others, see {@link #getGroupTask(int)}. The
+     * dispatcher calls it between claiming the queue slot and publishing it, so it must not throw:
+     * the group tasks were reserved before the claim, and nothing here allocates.
      */
     public void of(PageFrameSequence<?> frameSequence, int frameIndex, int groupSize, boolean countOnly) {
         assert groupSize > 0;
         ofFrame(frameSequence, frameIndex, countOnly);
         assert groupTasks.size() == 0;
         this.groupSize = groupSize;
+        this.groupFrameFailed = false;
         long rows = frameSequence.getFrameRowCount(frameIndex);
         for (int k = 1; k < groupSize; k++) {
             final PageFrameReduceTask groupTask = frameSequence.takeGroupTask();

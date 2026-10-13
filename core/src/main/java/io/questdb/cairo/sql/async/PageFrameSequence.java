@@ -73,7 +73,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     // their rows stay within GROUP_ROWS, at most MAX_GROUP_FRAMES of them: tiny frames, as a table of
     // many small partitions has, then cost the queue and the ordered collect once per group.
     private static final long GROUP_ROWS = 65_536;
-    private static final int MAX_GROUP_FRAMES = 16;
+    static final int MAX_GROUP_FRAMES = 16;
+    // Group tasks a sequence keeps, cleared, from one execution to the next, so that a query that runs
+    // again does not allocate them again; the others are freed at reset. A cleared task holds well
+    // under 1 KiB of native memory.
+    private static final int RETAINED_GROUP_TASKS = 32;
+    // tests: runs before a group task is allocated, see reserveGroupTasks()
+    private static volatile Runnable groupTaskAllocationHook;
     private static final Log LOG = LogFactory.getLog(PageFrameSequence.class);
     private final MillisecondClock clock;
     // native frames come without column addresses, which the threads processing them compute, see
@@ -383,19 +389,21 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
     /**
      * Lends a task for a later frame of a frame group, see {@link PageFrameReduceTask#getGroupTask(int)}.
      * The query's thread lends them as it dispatches groups and takes them back as it collects them,
-     * so the sequence holds as many as it has group frames in flight.
+     * so the sequence holds as many as it has group frames in flight. Allocates nothing: the
+     * dispatcher reserves the group's tasks before it claims the group's queue slot, see
+     * {@link #reserveGroupTasks(int)}, since nothing may throw between the claim and the publish.
      */
     PageFrameReduceTask takeGroupTask() {
         final int n = freeGroupTasks.size();
-        if (n > 0) {
-            final PageFrameReduceTask task = freeGroupTasks.getQuick(n - 1);
-            freeGroupTasks.setPos(n - 1);
-            return task;
-        }
-        final PageFrameReduceTask task = localTaskFactory.getInstance();
-        task.setTaskType(taskType);
-        groupTasks.add(task);
+        assert n > 0 : "group task not reserved";
+        final PageFrameReduceTask task = freeGroupTasks.getQuick(n - 1);
+        freeGroupTasks.setPos(n - 1);
         return task;
+    }
+
+    @TestOnly
+    public static void setGroupTaskAllocationHook(Runnable hook) {
+        groupTaskAllocationHook = hook;
     }
 
     void releaseGroupTask(PageFrameReduceTask task) {
@@ -672,14 +680,28 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 }
             }
         }
-        // Every group has been collected by now, which gave its tasks back: free them, so that a
-        // closed cursor keeps none of their memory. The next execution lends new ones.
+        // Every group has been collected by now, which gave its tasks back. A few stay for the next
+        // execution, cleared to their initial capacities as the local task is; the others are freed,
+        // so that a closed cursor keeps little of their memory. A closing sequence keeps none.
         assert freeGroupTasks.size() == groupTasks.size();
         freeGroupTasks.clear();
+        int kept = 0;
         for (int i = 0, n = groupTasks.size(); i < n; i++) {
-            cleanupFailure = Misc.freeBestEffort(cleanupFailure, groupTasks.getQuick(i));
+            final PageFrameReduceTask task = groupTasks.getQuick(i);
+            if (!isClosing && kept < RETAINED_GROUP_TASKS) {
+                try {
+                    task.clear();
+                    groupTasks.setQuick(kept++, task);
+                    freeGroupTasks.add(task);
+                    continue;
+                } catch (Throwable th) {
+                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
+                }
+            }
+            cleanupFailure = Misc.freeBestEffort(cleanupFailure, task);
+            groupTasks.setQuick(i, null);
         }
-        groupTasks.clear();
+        groupTasks.setPos(kept);
         CairoException.rethrowCleanupFailure(cleanupFailure);
     }
 
@@ -795,9 +817,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     if (totalDispatched >= dispatchLimit) {
                         cursor = -1;
                     } else {
+                        // The group's tasks are in hand before its slot is claimed: an allocation
+                        // failure between next() and done() would leave the slot claimed and never
+                        // published, and stall every consumer of the shard's queue.
+                        groupSize = groupSize(i, dispatchLimit - totalDispatched);
+                        reserveGroupTasks(groupSize - 1);
                         cursor = reducePubSeq.next();
                         if (cursor > -1) {
-                            groupSize = groupSize(i, dispatchLimit - totalDispatched);
                             assert groupSize == 1 || GROUPS_DISPATCHED.incrementAndGet() > 0;
                             reduceQueue.get(cursor).of(this, i, groupSize, countOnly);
                             reducePubSeq.done(cursor);
@@ -884,6 +910,26 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             if (dispatcher != null && hasPublication) {
                 dispatcher.releasePublication();
             }
+        }
+    }
+
+    // Makes sure that n group tasks are free to lend, allocating what is missing. The dispatcher calls it
+    // before it claims a queue slot, see dispatch0(); a task left over after a failure stays free.
+    private void reserveGroupTasks(int n) {
+        while (freeGroupTasks.size() < n) {
+            final Runnable hook = groupTaskAllocationHook;
+            if (hook != null) {
+                hook.run();
+            }
+            final PageFrameReduceTask task = localTaskFactory.getInstance();
+            try {
+                task.setTaskType(taskType);
+                groupTasks.add(task);
+            } catch (Throwable th) {
+                Misc.free(task);
+                throw th;
+            }
+            freeGroupTasks.add(task);
         }
     }
 

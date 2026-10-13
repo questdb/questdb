@@ -243,7 +243,7 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                         reduce(workerId, record, circuitBreaker, task, frameSequence, stealingFrameSequence);
                     }
                 } catch (Throwable th) {
-                    if (frameSequence.isReducerFailureReportable(th)) {
+                    if (!task.isGroupFrameFailed() && frameSequence.isReducerFailureReportable(th)) {
                         LOG.error()
                                 .$("reduce error [error=").$(th)
                                 .$(", id=").$(frameSequence.getId())
@@ -369,6 +369,9 @@ public class PageFrameReduceJob implements Job, QuietCloseable {
                         frameSequence.cancelOnReducerError(th);
                     }
                     if (th instanceof Error error) {
+                        // recorded on this frame's task: the caller's catch must not record it again
+                        // on the group's first frame, see PageFrameReduceTask.isGroupFrameFailed()
+                        task.setGroupFrameFailed();
                         throw error;
                     }
                     break;

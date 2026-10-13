@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.sql;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
@@ -45,6 +46,7 @@ import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.LongSupplier;
 
 /**
  * Deferred frame addresses ({@link PageFrameCursor#deferFrameAddresses()}): a table scan's native
@@ -58,6 +60,85 @@ import java.util.concurrent.atomic.AtomicReference;
  * whole partitions. Queries over the same data must also print the same with the switch on and off.
  */
 public class PageFrameDeferredAddressTest extends AbstractCairoTest {
+
+    @Test
+    public void testDeferredFrameAddressGettersFail() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            sqlExecutionContext.changePageFrameSizes(1, 500);
+            for (int order : new int[]{PartitionFrameCursorFactory.ORDER_ASC, PartitionFrameCursorFactory.ORDER_DESC}) {
+                try (RecordCursorFactory factory = select("select * from t"); PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, order)) {
+                    Assert.assertTrue(cursor.deferFrameAddresses());
+                    int deferred = 0;
+                    PageFrame frame;
+                    while ((frame = cursor.next()) != null) {
+                        if (frame.getDeferredAddressFiller() == null) {
+                            continue;
+                        }
+                        deferred++;
+                        final PageFrame f = frame;
+                        for (int c = 0; c < f.getColumnCount(); c++) {
+                            final int column = c;
+                            assertDeferredGetterFails(() -> f.getPageAddress(column));
+                            assertDeferredGetterFails(() -> f.getPageSize(column));
+                            assertDeferredGetterFails(() -> f.getAuxPageAddress(column));
+                            assertDeferredGetterFails(() -> f.getAuxPageSize(column));
+                        }
+                    }
+                    Assert.assertTrue(deferred > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testFramesOfTwoCursorsInOneCache() throws Exception {
+        // a wrapper that chains two cursors into one cache: each deferred frame is filled from its own reader
+        assertMemoryLeak(() -> {
+            createTable();
+            execute("create table t2 as (select * from t where ts > '1970-01-02T06:00') timestamp(ts) partition by HOUR");
+            sqlExecutionContext.changePageFrameSizes(1, 700);
+            try (
+                    RecordCursorFactory factoryA = select("select * from t");
+                    RecordCursorFactory factoryB = select("select * from t2");
+                    PageFrameAddressCache eagerA = new PageFrameAddressCache();
+                    PageFrameAddressCache eagerB = new PageFrameAddressCache();
+                    PageFrameAddressCache chained = new PageFrameAddressCache()
+            ) {
+                final int order = PartitionFrameCursorFactory.ORDER_ASC;
+                final int framesA;
+                final int framesB;
+                try (PageFrameCursor cursor = factoryA.getPageFrameCursor(sqlExecutionContext, order)) {
+                    framesA = fill(factoryA, cursor, eagerA);
+                }
+                try (PageFrameCursor cursor = factoryB.getPageFrameCursor(sqlExecutionContext, order)) {
+                    framesB = fill(factoryB, cursor, eagerB);
+                }
+                try (
+                        PageFrameCursor cursorA = factoryA.getPageFrameCursor(sqlExecutionContext, order);
+                        PageFrameCursor cursorB = factoryB.getPageFrameCursor(sqlExecutionContext, order)
+                ) {
+                    Assert.assertTrue(cursorA.deferFrameAddresses());
+                    Assert.assertTrue(cursorB.deferFrameAddresses());
+                    chained.of(factoryA.getMetadata(), cursorA.getColumnMapping(), cursorA.isExternal());
+                    int n = 0;
+                    PageFrame frame;
+                    while ((frame = cursorA.next()) != null) {
+                        chained.add(n++, frame);
+                    }
+                    while ((frame = cursorB.next()) != null) {
+                        chained.add(n++, frame);
+                    }
+                    Assert.assertEquals(framesA + framesB, n);
+                    for (int f = n - 1; f >= 0; f--) {
+                        chained.ensureFrameReady(f);
+                    }
+                    assertSameFrames("t", eagerA, 0, chained, 0, framesA);
+                    assertSameFrames("t2", eagerB, 0, chained, framesA, framesB);
+                }
+            }
+        });
+    }
 
     @Test
     public void testAddressesMatchEagerFrames() throws Exception {
@@ -216,6 +297,40 @@ public class PageFrameDeferredAddressTest extends AbstractCairoTest {
                 }
             }
             return deferredFrames;
+        }
+    }
+
+    private static void assertDeferredGetterFails(LongSupplier getter) {
+        try {
+            getter.getAsLong();
+            Assert.fail("a deferred frame's address getter returned a value");
+        } catch (CairoException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "deferred page frame");
+        }
+    }
+
+    private static void assertSameFrames(String what, PageFrameAddressCache eager, int eagerLo, PageFrameAddressCache other, int otherLo, int frameCount) {
+        final int columnCount = eager.getColumnCount();
+        Assert.assertEquals(columnCount, other.getColumnCount());
+        for (int i = 0; i < frameCount; i++) {
+            final int e = eagerLo + i;
+            final int o = otherLo + i;
+            final String at = what + " frame " + i;
+            Assert.assertTrue(at, other.isFrameReady(o));
+            Assert.assertEquals(at, eager.getFrameFormat(e), other.getFrameFormat(o));
+            Assert.assertEquals(at, eager.getFrameSize(e), other.getFrameSize(o));
+            if (eager.getFrameFormat(e) != PartitionFormat.NATIVE) {
+                continue;
+            }
+            final int eagerOffset = eager.toColumnOffset(e);
+            final int otherOffset = other.toColumnOffset(o);
+            for (int c = 0; c < columnCount; c++) {
+                final String col = at + " column " + c;
+                Assert.assertEquals(col + " page address", eager.getPageAddresses().get(eagerOffset + c), other.getPageAddresses().get(otherOffset + c));
+                Assert.assertEquals(col + " page size", eager.getPageSizes().get(eagerOffset + c), other.getPageSizes().get(otherOffset + c));
+                Assert.assertEquals(col + " aux address", eager.getAuxPageAddresses().get(eagerOffset + c), other.getAuxPageAddresses().get(otherOffset + c));
+                Assert.assertEquals(col + " aux size", eager.getAuxPageSizes().get(eagerOffset + c), other.getAuxPageSizes().get(otherOffset + c));
+            }
         }
     }
 

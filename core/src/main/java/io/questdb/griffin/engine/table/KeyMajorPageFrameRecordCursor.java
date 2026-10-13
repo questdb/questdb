@@ -98,10 +98,18 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
      * the segment's first row among the key's rows in the frame, and its row count.
      */
     public static final int PLAN_SEGMENT_LONGS = 3;
+    // set in a segment's key/frame word when the segment ends at the key's last row in the frame: the
+    // read then checks that the index holds no row after it, see readKeyRows()
+    private static final long SEGMENT_ENDS_FRAME = 1L << 31;
+    private static final long SEGMENT_FRAME_MASK = SEGMENT_ENDS_FRAME - 1;
     private static final int[] NO_KEYS = new int[0];
     // tests: false makes a planned walk count and seek by reading the index, as it does for a
     // legacy unranked encoding, whose counts and ranks the index cannot tell
     private static volatile boolean indexRanksEnabled = true;
+    // tests: added to the count of one (key, frame), the first with 2+ rows that is counted, so that the
+    // plan disagrees with the index; see setCountSkew()
+    private static volatile long countSkew;
+    private static volatile long countSkewKeyFrame = -1;
     // Row ids drained from the row cursor ahead of emission. Their column cache lines are loaded
     // in one tight loop (see PageFrameRowToucher), which must fit L1 with room to spare: measured
     // best at 32-64 on a 50M-row table, and worse from 128 up.
@@ -306,7 +314,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
             circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             if (isPlanned) {
                 final long count = countKeyRows(keyIndex, frameIndex);
-                readKeyRows(keyIndex, frameIndex, 0, count, sink);
+                readKeyRows(keyIndex, frameIndex, 0, count, true, sink);
                 collected += count;
                 if (collected >= rowLimit && pos < frameCount) {
                     return pos;
@@ -401,7 +409,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
             if (planOpen) {
                 final long take = Math.min(planCount - planRank, rowLimit - collected);
                 if (take > 0) {
-                    addSegment(plan, keyIndex, planFrameIndex, planRank, take);
+                    addSegment(plan, keyIndex, planFrameIndex, planRank, take, planRank + take == planCount);
                     planRank += take;
                     collected += take;
                 }
@@ -431,7 +439,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         if (planOpen && need > 0) {
             final long take = Math.min(planRank, need);
             if (take > 0) {
-                addSegment(plan, keyIndex, planFrameIndex, planRank - take, take);
+                addSegment(plan, keyIndex, planFrameIndex, planRank - take, take, planRank == planCount);
                 need -= take;
             }
         }
@@ -441,7 +449,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
             final long count = countKeyRows(keyIndex, frameIndex);
             final long take = Math.min(count, need);
             if (take > 0) {
-                addSegment(plan, keyIndex, frameIndex, count - take, take);
+                addSegment(plan, keyIndex, frameIndex, count - take, take, true);
                 need -= take;
             }
         }
@@ -481,7 +489,14 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     public void readPlan(LongList plan, DirectLongList sink) {
         for (int i = 0, n = plan.size(); i < n; i += PLAN_SEGMENT_LONGS) {
             final long keyFrame = plan.getQuick(i);
-            readKeyRows((int) (keyFrame >>> 32), (int) keyFrame, plan.getQuick(i + 1), plan.getQuick(i + 2), sink);
+            readKeyRows(
+                    (int) (keyFrame >>> 32),
+                    (int) (keyFrame & SEGMENT_FRAME_MASK),
+                    plan.getQuick(i + 1),
+                    plan.getQuick(i + 2),
+                    (keyFrame & SEGMENT_ENDS_FRAME) != 0,
+                    sink
+            );
         }
     }
 
@@ -636,8 +651,9 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
         super.toTop();
     }
 
-    private static void addSegment(LongList plan, int keyIndex, int frameIndex, long rankLo, long count) {
-        plan.add(((long) keyIndex << 32) | (frameIndex & 0xFFFF_FFFFL));
+    private static void addSegment(LongList plan, int keyIndex, int frameIndex, long rankLo, long count, boolean endsFrame) {
+        assert frameIndex >= 0;
+        plan.add(((long) keyIndex << 32) | (frameIndex & SEGMENT_FRAME_MASK) | (endsFrame ? SEGMENT_ENDS_FRAME : 0));
         plan.add(rankLo);
         plan.add(count);
     }
@@ -678,7 +694,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                 ? reader.countMatchesClamped(indexKey, lo, hi, entryMax >= 0 ? Math.min(hi, entryMax) : hi)
                 : Numbers.LONG_NULL;
         if (count != Numbers.LONG_NULL) {
-            return count;
+            return skewed(keyIndex, frameIndex, count);
         }
         final RowCursor cursor = reader.getDetachedCursor(indexKey, lo, hi, null);
         try {
@@ -687,9 +703,38 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                 cursor.next();
                 n++;
             }
-            return n;
+            return skewed(keyIndex, frameIndex, n);
         } finally {
             Misc.free(cursor);
+        }
+    }
+
+    // tests: see setCountSkew()
+    private static long skewed(int keyIndex, int frameIndex, long count) {
+        final long skew = countSkew;
+        if (skew == 0 || count < 2) {
+            return count;
+        }
+        final long keyFrame = ((long) keyIndex << 32) | frameIndex;
+        synchronized (KeyMajorPageFrameRecordCursor.class) {
+            if (countSkewKeyFrame == -1) {
+                countSkewKeyFrame = keyFrame;
+            }
+        }
+        return countSkewKeyFrame == keyFrame ? Math.max(0, count + skew) : count;
+    }
+
+    /**
+     * Tests: makes the planned walk count {@code skew} rows more (or fewer) than the index holds
+     * for one (key, frame), the first with two rows or more that is counted after the call; 0
+     * switches it off.
+     * The walk's reads must then fail the query rather than return other rows.
+     */
+    @TestOnly
+    public static void setCountSkew(long skew) {
+        synchronized (KeyMajorPageFrameRecordCursor.class) {
+            countSkew = skew;
+            countSkewKeyFrame = -1;
         }
     }
 
@@ -711,7 +756,8 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
     }
 
     // Appends count rows of the key in the frame, from its rankLo-th on, with a cursor of this thread's own.
-    private void readKeyRows(int keyIndex, int frameIndex, long rankLo, long count, DirectLongList sink) {
+    // endsFrame: the rows are the key's last in the frame, so the index must hold none after them.
+    private void readKeyRows(int keyIndex, int frameIndex, long rankLo, long count, boolean endsFrame, DirectLongList sink) {
         if (count <= 0) {
             return;
         }
@@ -727,6 +773,7 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                     ? reader.selectKthMatch(indexKey, lo, hi, entryMax >= 0 ? Math.min(hi, entryMax) : hi, rankLo)
                     : Numbers.LONG_NULL;
             if (row != Numbers.LONG_NULL) {
+                assert row == rankRowByReading(reader, indexKey, lo, hi, rankLo) : "rank seek found another row [keyIndex=" + keyIndex + ", frameIndex=" + frameIndex + ", rankLo=" + rankLo + ']';
                 rowLo = row;
                 skip = 0;
             }
@@ -744,6 +791,10 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
             if (n != count) {
                 throw planMismatch(keyIndex, frameIndex, rankLo, count, n);
             }
+            if (endsFrame && cursor.hasNext()) {
+                // more rows than counted: they would be dropped without a word
+                throw planMismatch(keyIndex, frameIndex, rankLo, count, count + 1);
+            }
             final long shift = rowLo - lo;
             if (shift > 0) {
                 // the cursor's rows are relative to its first row
@@ -753,6 +804,22 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                     Unsafe.putLong(a, Unsafe.getLong(a) + shift);
                 }
             }
+        } finally {
+            Misc.free(cursor);
+        }
+    }
+
+    // The rankLo-th row of the key in [lo, hi], by reading the index from lo: what selectKthMatch() must return.
+    private static long rankRowByReading(AbstractPostingIndexReader reader, int indexKey, long lo, long hi, long rankLo) {
+        final RowCursor cursor = reader.getDetachedCursor(indexKey, lo, hi, null);
+        try {
+            for (long i = 0; i < rankLo; i++) {
+                if (!cursor.hasNext()) {
+                    return Numbers.LONG_NULL;
+                }
+                cursor.next();
+            }
+            return cursor.hasNext() ? lo + cursor.next() : Numbers.LONG_NULL;
         } finally {
             Misc.free(cursor);
         }

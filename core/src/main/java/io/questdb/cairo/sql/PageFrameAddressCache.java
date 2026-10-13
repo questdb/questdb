@@ -87,6 +87,10 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     // Per frame: 1 once its column addresses are in the flat lists, 0 while a deferred frame waits
     // for its filler, see ensureFrameReady(). Written in order (release), read volatile (acquire).
     private final IntList frameReady = new IntList();
+    // Per frame: the filler that computes a deferred frame's column addresses, null for any other
+    // frame. Kept per frame, not per cache, so that frames of several cursors (a wrapper that chains
+    // two) are each filled from their own reader.
+    private final ObjList<PageFrameAddressFiller> frameFillers = new ObjList<>();
     private final LongList frameSizes = new LongList();
     private final DirectLongList pageAddresses;
     private final DirectLongList pageSizes;
@@ -97,8 +101,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     // Makes it possible to determine real row id, not the one relative to the page.
     private final LongList rowIdOffsets = new LongList();
     private int columnCount;
-    // computes the column addresses of the deferred frames, null when no frame is deferred
-    private PageFrameAddressFiller deferredFiller;
+    // whether any frame was added deferred, see ensureFrameReady()
+    private boolean hasDeferredFrames;
     // True in case of external parquet files, false in case of table partition files.
     private boolean external;
     private boolean hasCoveredFrames;
@@ -129,8 +133,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         if (filler != null) {
             // the frame's columns are computed later, by the thread that first needs them: zeros
             // hold their places, see ensureFrameReady()
-            assert deferredFiller == null || deferredFiller == filler;
-            deferredFiller = filler;
+            hasDeferredFrames = true;
             appendZeros(pageAddresses);
             appendZeros(pageSizes);
             appendZeros(auxPageAddresses);
@@ -180,6 +183,7 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         frameSizes.add(frame.getPartitionHi() - frame.getPartitionLo());
         frameFormats.add(format);
         frameReady.add(filler != null ? 0 : 1);
+        frameFillers.add(filler);
         ParquetDecoder decoder = frame.getParquetDecoder();
         parquetDecoders.add(decoder);
         assert (decoder != null && decoder.getFileSize() > 0) || format != PartitionFormat.PARQUET;
@@ -261,7 +265,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
     public void clear() {
         frameSizes.clear();
         frameReady.clear();
-        deferredFiller = null;
+        frameFillers.clear();
+        hasDeferredFrames = false;
         frameFormats.clear();
         parquetDecoders.clear();
         parquetRowGroups.clear();
@@ -301,8 +306,8 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
      * same values.
      */
     public void ensureFrameReady(int frameIndex) {
-        final PageFrameAddressFiller filler = deferredFiller;
-        if (filler != null && frameReady.getVolatile(frameIndex) == 0) { // acquire
+        if (hasDeferredFrames && frameReady.getVolatile(frameIndex) == 0) { // acquire
+            final PageFrameAddressFiller filler = frameFillers.getQuick(frameIndex);
             final long rowIdOffset = rowIdOffsets.getQuick(frameIndex);
             final long partitionLo = Rows.toLocalRowID(rowIdOffset);
             filler.fillFrameAddresses(

@@ -339,7 +339,7 @@ final class PageFrameFiberTask extends FiberTask implements QuietCloseable {
                 PageFrameReduceJob.reduce(workerId, record, circuitBreaker, reduceTask, frameSequence, null);
             }
         } catch (Throwable th) {
-            if (frameSequence.isReducerFailureReportable(th)) {
+            if (!reduceTask.isGroupFrameFailed() && frameSequence.isReducerFailureReportable(th)) {
                 LOG.error()
                         .$("reduce error [error=").$(th)
                         .$(", id=").$(frameSequence.getId())

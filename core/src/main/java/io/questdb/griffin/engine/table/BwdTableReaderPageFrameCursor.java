@@ -546,11 +546,13 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor, Page
 
         @Override
         public long getAuxPageAddress(int columnIndex) {
+            checkNotDeferred();
             return columnPageAddresses.getQuick(2 * columnIndex + 1);
         }
 
         @Override
         public long getAuxPageSize(int columnIndex) {
+            checkNotDeferred();
             return pageSizes.getQuick(2 * columnIndex + 1);
         }
 
@@ -562,6 +564,15 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor, Page
         @Override
         public @Nullable PageFrameAddressFiller getDeferredAddressFiller() {
             return deferred ? BwdTableReaderPageFrameCursor.this : null;
+        }
+
+        // A deferred frame's address getters would return another frame's values: its addresses are
+        // read through the address cache, which fills them, see PageFrameAddressCache.ensureFrameReady().
+        private void checkNotDeferred() {
+            if (deferred) {
+                throw CairoException.critical(0).put("column address read from a deferred page frame [partitionIndex=")
+                        .put(partitionIndex).put(", partitionLo=").put(partitionLo).put(']');
+            }
         }
 
         @Override
@@ -576,11 +587,13 @@ public class BwdTableReaderPageFrameCursor implements TablePageFrameCursor, Page
 
         @Override
         public long getPageAddress(int columnIndex) {
+            checkNotDeferred();
             return columnPageAddresses.getQuick(2 * columnIndex);
         }
 
         @Override
         public long getPageSize(int columnIndex) {
+            checkNotDeferred();
             return pageSizes.getQuick(2 * columnIndex);
         }
 

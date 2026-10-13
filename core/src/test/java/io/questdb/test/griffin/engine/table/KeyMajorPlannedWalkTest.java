@@ -25,6 +25,7 @@
 package io.questdb.test.griffin.engine.table;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor;
@@ -54,6 +55,44 @@ import java.util.concurrent.Future;
  */
 public class KeyMajorPlannedWalkTest extends AbstractCairoTest {
     private static final int[] WARMUPS = {1, 2, 4, 9};
+
+    @Test
+    public void testCountAndIndexDisagreeFailsBothWays() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table t (sym symbol index type posting, a int, ts timestamp) timestamp(ts) partition by DAY");
+            execute("insert into t select rnd_symbol('A','B','C'), x::int, (x * 60_000_000L)::timestamp from long_sequence(5000)");
+            final String query = "select * from t where sym in ('A', 'C') order by sym";
+            // fewer rows counted than the index holds: the surplus must fail the read, not vanish;
+            // more rows counted than it holds: the read comes up short
+            for (long skew : new long[]{-1, 1}) {
+                for (long rowLimit : new long[]{Long.MAX_VALUE, 7}) {
+                    try (
+                            RecordCursorFactory factory = select(query);
+                            RecordCursor cursor = keyMajorFactory(factory).getCursor(sqlExecutionContext);
+                            DirectLongList rows = new DirectLongList(64, MemoryTag.NATIVE_DEFAULT)
+                    ) {
+                        final KeyMajorPageFrameRecordCursor walk = keyMajor(cursor);
+                        Assert.assertTrue(walk.enablePlannedWalk());
+                        KeyMajorPageFrameRecordCursor.setCountSkew(skew);
+                        final LongList plan = new LongList();
+                        try {
+                            int status;
+                            do {
+                                plan.clear();
+                                status = walk.planKeyRows(plan, rowLimit);
+                                walk.readPlan(plan, rows);
+                            } while (status != KeyMajorPageFrameRecordCursor.COLLECT_EXHAUSTED);
+                            Assert.fail("skew " + skew + ", limit " + rowLimit + ": the walk read " + rows.size() + " rows without an error");
+                        } catch (CairoException e) {
+                            TestUtils.assertContains(e.getFlyweightMessage(), "index walk found other rows than it counted");
+                        } finally {
+                            KeyMajorPageFrameRecordCursor.setCountSkew(0);
+                        }
+                    }
+                }
+            }
+        });
+    }
 
     @Test
     public void testColumnTopNullPrefix() throws Exception {

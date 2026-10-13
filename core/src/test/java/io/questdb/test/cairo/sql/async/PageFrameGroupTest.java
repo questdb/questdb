@@ -26,19 +26,30 @@ package io.questdb.test.cairo.sql.async;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
+import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.async.PageFrameSequence;
+import io.questdb.griffin.DefaultSqlExecutionCircuitBreakerConfiguration;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.mp.WorkerPool;
+import io.questdb.mp.WorkerPoolMode;
+import io.questdb.std.Misc;
+import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Frame groups of the ordered page frame sequence: an Async Filter over many small partitions sends
@@ -47,9 +58,127 @@ import org.junit.Test;
  * per task) and must print the same; the on runs must have dispatched groups. Covers the JIT and the
  * Java filter, count-only sizing, LIMIT from both ends, ORDER BY designated timestamp DESC, interval
  * scans, Parquet partitions among native ones (no Parquet frame joins a group), a rewind and a close
- * in the middle of a group, an error in a group's later frame, and real workers.
+ * in the middle of a group, an error in a group's later frame, and real workers. Also: an allocation
+ * failure while a group's tasks are taken fails the query and leaves the shard's queue usable, the
+ * circuit breaker is polled before every frame of a group, and the group tasks are kept from one
+ * execution to the next.
  */
 public class PageFrameGroupTest extends AbstractCairoTest {
+
+    @Test
+    public void testAllocationFailureTakingGroupTasksLeavesQueueUsable() throws Exception {
+        // one shard, so that the later queries go through the queue the failed one used
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(2, WorkerPoolMode.LEGACY);
+            TestUtils.execute(pool, (engine, compiler, context) -> {
+                final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) context;
+                createTable(engine, ctx);
+                final String query = "select * from t where x % 3 = 0";
+                setSwitch(false);
+                final String expected = print(engine, ctx, query);
+                setSwitch(true);
+                final AtomicInteger allocations = new AtomicInteger();
+                // the 40th group task, a group or two into the query, finds the RSS limit reached
+                PageFrameSequence.setGroupTaskAllocationHook(() -> {
+                    if (allocations.incrementAndGet() == 40) {
+                        Unsafe.setRssMemLimit(Unsafe.getRssMemUsed());
+                    }
+                });
+                try (RecordCursorFactory factory = engine.select(query, ctx); RecordCursor cursor = factory.getCursor(ctx)) {
+                    try {
+                        //noinspection StatementWithEmptyBody
+                        while (cursor.hasNext()) {
+                        }
+                        Assert.fail("expected an out-of-memory error");
+                    } catch (CairoException e) {
+                        Unsafe.setRssMemLimit(0);
+                        Assert.assertTrue(e.getMessage(), e.isOutOfMemory());
+                        TestUtils.assertContains(e.getFlyweightMessage(), "RSS memory limit exceeded");
+                    }
+                } finally {
+                    PageFrameSequence.setGroupTaskAllocationHook(null);
+                    Unsafe.setRssMemLimit(0);
+                }
+                Assert.assertTrue(allocations.get() >= 40);
+                // the shard's queue serves the next queries: a slot claimed and never published would hang them
+                for (int run = 0; run < 3; run++) {
+                    TestUtils.assertEquals(expected, print(engine, ctx, query));
+                    assertQueries(engine, ctx);
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testCircuitBreakerPolledBeforeEveryGroupFrame() throws Exception {
+        // 16 frames of 100 rows: one group, which one thread reduces with one breaker
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
+        setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_SQL_PARALLEL_WORK_STEALING_THRESHOLD, 1_000_000);
+        assertMemoryLeak(() -> {
+            // A reducing breaker's clock (a worker's or the query thread's when it steals): 0 for its
+            // first two calls, the re-arm before the task and the poll before the group's first frame,
+            // then the end of time. The poll before the group's second frame must time the query out.
+            // Without it, the group runs to its end and the query succeeds.
+            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                @NotNull
+                public MillisecondClock getClock() {
+                    final AtomicLong calls = new AtomicLong();
+                    return () -> calls.incrementAndGet() <= 2 ? 0 : Long.MAX_VALUE;
+                }
+
+                @Override
+                public long getQueryTimeout() {
+                    return 1;
+                }
+            };
+            // the query's own breaker never trips
+            final DefaultSqlExecutionCircuitBreakerConfiguration queryBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
+                @Override
+                @NotNull
+                public MillisecondClock getClock() {
+                    return () -> 0;
+                }
+
+                @Override
+                public long getQueryTimeout() {
+                    return 1;
+                }
+            };
+            try {
+                final WorkerPool pool = new TestWorkerPool(1, WorkerPoolMode.LEGACY);
+                TestUtils.execute(pool, (engine, compiler, context) -> {
+                    final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) context;
+                    engine.execute("create table g (x long, ts timestamp) timestamp(ts) partition by HOUR", ctx);
+                    engine.execute("insert into g select x, ((x - 1) * 36_000_000L)::timestamp from long_sequence(1_600)", ctx);
+                    final NetworkSqlExecutionCircuitBreaker circuitBreaker = new NetworkSqlExecutionCircuitBreaker(engine, queryBreakerConfiguration);
+                    try {
+                        ctx.with(ctx.getSecurityContext(), ctx.getBindVariableService(), ctx.getRandom(), ctx.getRequestFd(), circuitBreaker);
+                        setSwitch(true);
+                        final long groupsBefore = PageFrameSequence.getGroupsDispatched();
+                        try (RecordCursorFactory factory = engine.select("select * from g where x > 0", ctx); RecordCursor cursor = factory.getCursor(ctx)) {
+                            long rows = 0;
+                            try {
+                                while (cursor.hasNext()) {
+                                    rows++;
+                                }
+                                Assert.fail("expected a timeout, rows: " + rows);
+                            } catch (CairoException e) {
+                                TestUtils.assertContains(e.getFlyweightMessage(), "timeout, query aborted");
+                            }
+                        }
+                        Assert.assertEquals(1, PageFrameSequence.getGroupsDispatched() - groupsBefore);
+                    } finally {
+                        Misc.free(circuitBreaker);
+                    }
+                }, configuration, LOG);
+            } finally {
+                circuitBreakerConfiguration = null;
+            }
+        });
+    }
 
     @Test
     public void testErrorInGroupFrameAfterRowsOfEarlierFrames() throws Exception {
@@ -79,6 +208,38 @@ public class PageFrameGroupTest extends AbstractCairoTest {
             final long groupsBefore = PageFrameSequence.getGroupsDispatched();
             assertQueries(engine, sqlExecutionContext);
             Assert.assertTrue(PageFrameSequence.getGroupsDispatched() > groupsBefore);
+        });
+    }
+
+    @Test
+    public void testGroupTasksKeptAcrossExecutions() throws Exception {
+        assertMemoryLeak(() -> {
+            // 32 hourly partitions of 21 rows: two groups, 30 group tasks
+            execute("create table k (x long, ts timestamp) timestamp(ts) partition by HOUR");
+            execute("insert into k select x, ((x - 1) * 3_600_000_000L / 21)::timestamp from long_sequence(672)");
+            setSwitch(false);
+            final String query = "select * from k where x % 2 = 0";
+            final String expected = print(engine, sqlExecutionContext, query);
+            setSwitch(true);
+            final AtomicInteger allocations = new AtomicInteger();
+            PageFrameSequence.setGroupTaskAllocationHook(allocations::incrementAndGet);
+            try (RecordCursorFactory factory = select(query)) {
+                final int[] perRun = new int[3];
+                for (int run = 0; run < perRun.length; run++) {
+                    final int before = allocations.get();
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final StringSink sink = new StringSink();
+                        CursorPrinter.println(cursor, factory.getMetadata(), sink, true, false);
+                        TestUtils.assertEquals(expected, sink);
+                    }
+                    perRun[run] = allocations.get() - before;
+                }
+                Assert.assertTrue("first run allocated " + perRun[0], perRun[0] > 0);
+                Assert.assertEquals("second run", 0, perRun[1]);
+                Assert.assertEquals("third run", 0, perRun[2]);
+            } finally {
+                PageFrameSequence.setGroupTaskAllocationHook(null);
+            }
         });
     }
 
