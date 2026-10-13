@@ -54,9 +54,9 @@ public final class WindowExpression extends QueryColumn {
     public static final char TIME_UNIT_MINUTE = 'm';
     public static final char TIME_UNIT_NANOSECOND = 'n';
     public static final char TIME_UNIT_SECOND = 's';
-    private final ObjList<ExpressionNode> orderBy = new ObjList<>(2);
-    private final IntList orderByDirection = new IntList(2);
-    private final ObjList<ExpressionNode> partitionBy = new ObjList<>(2);
+    private final ObjList<ExpressionNode> orderBy = new ObjList<>(0);
+    private final IntList orderByDirection = new IntList(0);
+    private final ObjList<ExpressionNode> partitionBy = new ObjList<>(0);
     // ANCHOR clause state. Set only for live-view WINDOW specs; null/zero
     // for everything else.
     private ExpressionNode anchorExpression;

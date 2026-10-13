@@ -522,6 +522,7 @@ final class SampleByFactoryGenerator {
                         groupByFunctions,
                         recordFunctions,
                         timestampSampler,
+                        samplingIntervalUnit,
                         frame.listColumnFilterA,
                         keyTypes,
                         valueTypes,
@@ -828,7 +829,7 @@ final class SampleByFactoryGenerator {
             to = plan.getTo() == null ? driver.getTimestampConstantNull()
                     : functionInstantiator.instantiate(plan.getTo(), input, baseMetadata, executionContext);
             assignUndefinedType(to, timestampType, executionContext);
-            if (plan.getTimezone() != null && CommonUtils.isSubDayUnit(plan.getPeriodUnit())) {
+            if (plan.getFillMode() != SampleByPlan.FILL_LINEAR && plan.getTimezone() != null && CommonUtils.isSubDayUnit(plan.getPeriodUnit())) {
                 final CharSequence zone = timezone.getStrA(null);
                 if (zone != null) {
                     final TimeZoneRules rules = driver.getTimezoneRules(DateLocaleFactory.EN_LOCALE, zone);

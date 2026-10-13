@@ -363,13 +363,12 @@ public final class BindContext implements Mutable {
         }
         final CharSequence alias = SqlUtil.createColumnAlias(characterStore, requestedName, -1, aliases, aliasSequences, false);
         aliases.add(alias);
-        final CharacterStoreEntry name = characterStore.newEntry();
         if (SqlUtil.isQuoteProtectedAlias(alias)) {
+            final CharacterStoreEntry name = characterStore.newEntry();
             name.put(alias, 1, alias.length() - 1);
-        } else {
-            name.put(alias);
+            return name.toImmutable();
         }
-        return name.toImmutable();
+        return alias;
     }
 
     boolean hasAggregate(ExpressionNode expression) {
@@ -434,10 +433,10 @@ public final class BindContext implements Mutable {
 
     void inheritTimestampBinding(int inputId, int outputId) {
         final BindScope scope = scopes.current();
-        if (scope.intrinsicTimestampColumnIds.contains(inputId)) {
+        if (scope.intrinsicTimestampColumnIds.size() > 0 && scope.intrinsicTimestampColumnIds.contains(inputId)) {
             scope.intrinsicTimestampColumnIds.add(outputId);
         }
-        if (scope.ambiguousTimestampColumnIds.contains(inputId)) {
+        if (scope.ambiguousTimestampColumnIds.size() > 0 && scope.ambiguousTimestampColumnIds.contains(inputId)) {
             scope.ambiguousTimestampColumnIds.add(outputId);
         }
     }
@@ -512,6 +511,9 @@ public final class BindContext implements Mutable {
 
     void stopTimestampIntrinsics(OutputSchema output) {
         final BindScope scope = scopes.current();
+        if (scope.intrinsicTimestampColumnIds.size() == 0 && scope.ambiguousTimestampColumnIds.size() == 0) {
+            return;
+        }
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             scope.intrinsicTimestampColumnIds.remove(output.getColumnId(i));
             scope.ambiguousTimestampColumnIds.remove(output.getColumnId(i));

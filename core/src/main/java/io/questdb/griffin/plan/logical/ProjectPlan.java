@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.plan.logical;
 
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjectFactory;
 import io.questdb.std.ObjList;
@@ -33,6 +34,8 @@ public final class ProjectPlan extends UnaryPlan {
     private final ObjList<BoundExpression> expressions = new ObjList<>();
     private final SortKeys requestedOrder = new SortKeys();
     private final IntList updateTargetTypes = new IntList();
+    private int distinctColumnCount = -1;
+    private int distinctWindowColumnCount = -1;
     private boolean hasPrunedComputedColumns;
     private boolean hasTimestampDeclaration;
     private boolean isImplied;
@@ -45,11 +48,42 @@ public final class ProjectPlan extends UnaryPlan {
         expressions.clear();
         requestedOrder.clear();
         updateTargetTypes.clear();
+        clearColumnReferenceCounts();
         hasPrunedComputedColumns = false;
         hasTimestampDeclaration = false;
         isImplied = false;
         isTimestampDropped = false;
         requestedOrderColumnId = -1;
+    }
+
+    public void clearColumnReferenceCounts() {
+        distinctColumnCount = -1;
+        distinctWindowColumnCount = -1;
+    }
+
+    public void deriveColumnReferenceCounts(IntHashSet columnIds) {
+        columnIds.clear();
+        distinctColumnCount = 0;
+        distinctWindowColumnCount = 0;
+        final WindowPlan window = getChild() instanceof WindowPlan w ? w : null;
+        final int firstWindowColumn = window == null ? -1 : window.getOutput().getColumnCount() - window.getFunctionColumnIds().size();
+        for (int i = 0, n = expressions.size(); i < n; i++) {
+            if (expressions.getQuick(i) instanceof ColumnExpression column && columnIds.add(column.getColumnId())) {
+                distinctColumnCount++;
+                if (window != null && window.getOutput().getColumnIndexById(column.getColumnId()) >= firstWindowColumn) {
+                    distinctWindowColumnCount++;
+                }
+            }
+        }
+        columnIds.clear();
+    }
+
+    public int getDistinctColumnCount() {
+        return distinctColumnCount;
+    }
+
+    public int getDistinctWindowColumnCount() {
+        return distinctWindowColumnCount;
     }
 
     public ObjList<BoundExpression> getExpressions() {

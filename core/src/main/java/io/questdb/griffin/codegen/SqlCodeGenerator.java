@@ -79,6 +79,7 @@ import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
+import io.questdb.griffin.plan.logical.UniqueColumnNames;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.BytecodeAssembler;
@@ -129,6 +130,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final IntList tmpValues;
     private final WindowFactoryGenerator windowGenerator;
     private int generationDepth;
+    private int usedFrameCount;
 
     public SqlCodeGenerator(
             CairoConfiguration configuration,
@@ -147,7 +149,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IntList tmpIndexes,
             IntList tmpValues,
             IntList tmpMasterKeys,
-            IntList tmpSlaveKeys
+            IntList tmpSlaveKeys,
+            UniqueColumnNames tmpUniqueNames
     ) {
         try {
             this.configuration = configuration;
@@ -184,7 +187,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     entityColumnFilter, sortGenerator, tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys);
             this.setOperationGenerator = new SetOperationFactoryGenerator(configuration, this, sortGenerator, asm, entityColumnFilter);
             this.windowGenerator = new WindowFactoryGenerator(configuration, this, functionInstantiator, asm, entityColumnFilter,
-                    recordComparatorCompiler, tmpSink);
+                    recordComparatorCompiler, characterStore, tmpUniqueNames);
         } catch (Throwable th) {
             close();
             throw th;
@@ -202,19 +205,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     @Override
     public void clear() {
-        for (int i = 0, n = generationFrames.size(); i < n; i++) {
+        for (int i = 0, n = usedFrameCount; i < n; i++) {
             generationFrames.getQuick(i).clear();
         }
         if (generationFrames.size() > MAX_RETAINED_FRAMES) {
             generationFrames.remove(MAX_RETAINED_FRAMES, generationFrames.size() - 1);
         }
         generationDepth = 0;
+        usedFrameCount = 0;
     }
 
     @Override
     public void close() {
         final Throwable failure = Misc.freeObjListBestEffort(null, generationFrames);
         generationFrames.clear();
+        usedFrameCount = 0;
         Misc.free(jitIRMem);
         CairoException.rethrowCleanupFailure(failure);
     }
@@ -227,6 +232,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             generationFrames.add(new GenerationFrame(configuration, tmpSink, tmpLongs, tmpIndexes, tmpValues, tmpMasterKeys));
         }
         final GenerationFrame frame = generationFrames.getQuick(generationDepth++);
+        usedFrameCount = Math.max(usedFrameCount, generationDepth);
         try {
             frame.clear();
             projectionGenerator.setReferenceCounts(frame, root.getOutput(), 1);

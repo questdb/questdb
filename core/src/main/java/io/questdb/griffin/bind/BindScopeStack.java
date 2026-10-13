@@ -40,6 +40,7 @@ public final class BindScopeStack implements Mutable {
     private final ObjList<BindScope> scopes = new ObjList<>();
     private BindScope current;
     private int depth;
+    private int usedScopeCount;
 
     public BindScopeStack() {
         current = scopeAt(0);
@@ -48,13 +49,14 @@ public final class BindScopeStack implements Mutable {
     @Override
     public void clear() {
         depth = 0;
-        for (int i = 0, n = scopes.size(); i < n; i++) {
+        for (int i = 0, n = usedScopeCount; i < n; i++) {
             scopes.getQuick(i).clear();
         }
         if (scopes.size() > MAX_RETAINED_DEPTH) {
             scopes.remove(MAX_RETAINED_DEPTH, scopes.size() - 1);
         }
         current = scopes.getQuick(0);
+        usedScopeCount = 1;
     }
 
     public int depth() {
@@ -93,6 +95,7 @@ public final class BindScopeStack implements Mutable {
         while (scopes.size() <= depth) {
             scopes.add(new BindScope());
         }
+        usedScopeCount = Math.max(usedScopeCount, depth + 1);
         return scopes.getQuick(depth);
     }
 

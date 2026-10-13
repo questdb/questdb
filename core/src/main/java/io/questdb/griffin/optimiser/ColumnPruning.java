@@ -395,16 +395,30 @@ final class ColumnPruning implements OptimiserPass {
             case WindowPlan window -> {
                 final LogicalPlan input = window.getChild();
                 final IntList functionColumnIds = window.getFunctionColumnIds();
+                final ObjList<FunctionExpression> functions = window.getFunctions();
+                final ObjList<WindowSpec> specs = window.getSpecs();
+                retainedColumnIndexes.clear();
                 for (int i = functionColumnIds.size() - 1; i >= 0; i--) {
                     if (requiredColumnIds.contains(functionColumnIds.getQuick(i))) {
                         collectWindowRequiredColumns(window, i);
-                    } else {
-                        window.getFunctions().remove(i);
-                        window.getSpecs().remove(i);
-                        functionColumnIds.removeIndex(i);
+                        retainedColumnIndexes.add(i);
                     }
                 }
-                if (functionColumnIds.size() == 0) {
+                final int keptCount = retainedColumnIndexes.size();
+                for (int k = 0; k < keptCount; k++) {
+                    final int i = retainedColumnIndexes.getQuick(keptCount - 1 - k);
+                    if (i != k) {
+                        functions.setQuick(k, functions.getQuick(i));
+                        specs.setQuick(k, specs.getQuick(i));
+                        functionColumnIds.setQuick(k, functionColumnIds.getQuick(i));
+                    }
+                }
+                functions.set(keptCount, functions.size(), null);
+                specs.set(keptCount, specs.size(), null);
+                functions.setPos(keptCount);
+                specs.setPos(keptCount);
+                functionColumnIds.setPos(keptCount);
+                if (keptCount == 0) {
                     removeWindow(window);
                     return;
                 }

@@ -49,7 +49,7 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final ArrayDeque<Function> functionStack = new ArrayDeque<>();
     private final IntList mutableArgPositions;
     private final ObjList<Function> mutableArgs;
-    private final IntStack positionStack = new IntStack();
+    private final IntStack positionStack;
     private final FunctionResolver resolver;
     private final PostOrderTreeTraversalAlgo traverseAlgo;
     private RecordMetadata metadata;
@@ -75,11 +75,23 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
             ObjList<Function> args,
             IntList argPositions
     ) {
+        this(configuration, resolver, traverseAlgo, args, argPositions, new IntStack());
+    }
+
+    FunctionParser(
+            CairoConfiguration configuration,
+            FunctionResolver resolver,
+            PostOrderTreeTraversalAlgo traverseAlgo,
+            ObjList<Function> args,
+            IntList argPositions,
+            IntStack positionStack
+    ) {
         this.configuration = configuration;
         this.resolver = resolver;
         this.traverseAlgo = traverseAlgo;
         this.mutableArgs = args;
         this.mutableArgPositions = argPositions;
+        this.positionStack = positionStack;
     }
 
     @Override

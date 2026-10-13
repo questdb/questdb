@@ -53,6 +53,7 @@ import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.griffin.plan.logical.UnaryPlan;
 import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -229,6 +230,18 @@ public final class LogicalPlans {
         return predicate instanceof ConstantExpression constant ? constant.getLongValue() != 0 ? 1 : 0 : -1;
     }
 
+    public static void deriveColumnReferenceCounts(LogicalPlan plan, IntHashSet columnIds) {
+        for (int i = 0, n = plan.inputCount(); i < n; i++) {
+            final LogicalPlan input = plan.inputAt(i);
+            if (input != null) {
+                deriveColumnReferenceCounts(input, columnIds);
+            }
+        }
+        if (plan instanceof ProjectPlan project) {
+            project.deriveColumnReferenceCounts(columnIds);
+        }
+    }
+
     /**
      * Lays out a chain of LIMITs again, bottom-up, after the input beneath the chain changed.
      */
@@ -278,15 +291,12 @@ public final class LogicalPlans {
         return !expression.walk(OUTER_COLUMN_READS);
     }
 
-    public static boolean hasRepeatedColumn(ProjectPlan project) {
+    public static boolean hasRepeatedColumn(ProjectPlan project, IntHashSet columnIds) {
+        columnIds.clear();
         final ObjList<BoundExpression> expressions = project.getExpressions();
-        for (int i = 1, n = expressions.size(); i < n; i++) {
-            if (expressions.getQuick(i) instanceof ColumnExpression column) {
-                for (int k = 0; k < i; k++) {
-                    if (expressions.getQuick(k) instanceof ColumnExpression other && other.getColumnId() == column.getColumnId()) {
-                        return true;
-                    }
-                }
+        for (int i = 0, n = expressions.size(); i < n; i++) {
+            if (expressions.getQuick(i) instanceof ColumnExpression column && !columnIds.add(column.getColumnId())) {
+                return true;
             }
         }
         return false;
@@ -320,6 +330,9 @@ public final class LogicalPlans {
      * True when the projection selects each of its columns as a distinct plain column reference.
      */
     public static boolean isColumnOnlyProjection(ProjectPlan project) {
+        if (project.getDistinctColumnCount() >= 0) {
+            return project.getDistinctColumnCount() == project.getExpressions().size();
+        }
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             if (!(project.getExpressions().getQuick(i) instanceof ColumnExpression column)
                     || isColumnSelectedBefore(project, i, column.getColumnId())) {

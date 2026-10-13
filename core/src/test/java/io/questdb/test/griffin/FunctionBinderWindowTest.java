@@ -145,48 +145,8 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
 
     @Test
     public void testIndependentFinalLayoutsSurviveCompilerReset() throws Exception {
-        assertMemoryLeak(() -> {
-            final ObjList<Function> constructions = new ObjList<>();
-            final FunctionParser parser = parser(engine, constructions);
-            final OutputSchema full = schema(true);
-            final OutputSchema pruned = schema(false);
-            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
-                configure(null, false, WindowExpression.FRAMING_ROWS, Long.MIN_VALUE, 0);
-                try {
-                    final ExpressionNode ast = call("sum", literal("v"));
-                    ast.windowExpression = WindowExpression.FACTORY.newInstance();
-                    final FunctionExpression expression = binder.bindWindow(ast, full, null, sqlExecutionContext);
-                    Assert.assertTrue(expression.isWindow());
-                    Assert.assertFalse(expression.isAggregate());
-                    Assert.assertEquals(1, constructions.size());
-                    try (WindowFunction owner = binder.instantiateWindow(expression, pruned, metadata(false), sqlExecutionContext);
-                         WindowFunction worker = binder.instantiateWindow(expression, full, metadata(true), sqlExecutionContext)) {
-                        Assert.assertEquals(3, constructions.size());
-                        Assert.assertNotSame(constructions.getQuick(0), owner);
-                        Assert.assertNotSame(owner, worker);
-                        binder.clear();
-                        parser.clear();
-                        full.clear();
-                        pruned.clear();
-                        for (int pass = 0; pass < 2; pass++) {
-                            owner.init(null, sqlExecutionContext);
-                            worker.init(null, sqlExecutionContext);
-                            owner.toTop();
-                            worker.toTop();
-                            owner.computeNext(record(0, 2));
-                            owner.computeNext(record(0, 3));
-                            worker.computeNext(record(1, 7));
-                            Assert.assertEquals(5, owner.getDouble(null), 0);
-                            Assert.assertEquals(7, worker.getDouble(null), 0);
-                            owner.cursorClosed();
-                            worker.cursorClosed();
-                        }
-                    }
-                } finally {
-                    sqlExecutionContext.clearWindowContext();
-                }
-            }
-        });
+        assertIndependentFinalLayoutsSurviveCompilerReset(false);
+        assertIndependentFinalLayoutsSurviveCompilerReset(true);
     }
 
     @Test
@@ -263,6 +223,52 @@ public class FunctionBinderWindowTest extends AbstractCairoTest {
                     }
                     Assert.assertEquals(1, unused.closeCount);
                     Assert.assertEquals(1, value.closeCount);
+                } finally {
+                    sqlExecutionContext.clearWindowContext();
+                }
+            }
+        });
+    }
+
+    private void assertIndependentFinalLayoutsSurviveCompilerReset(boolean isComputedArgument) throws Exception {
+        assertMemoryLeak(() -> {
+            final ObjList<Function> constructions = new ObjList<>();
+            final FunctionParser parser = parser(engine, constructions);
+            final OutputSchema full = schema(true);
+            final OutputSchema pruned = schema(false);
+            try (FunctionBindingHarness binder = new FunctionBindingHarness(engine, parser)) {
+                configure(null, false, WindowExpression.FRAMING_ROWS, Long.MIN_VALUE, 0);
+                try {
+                    final ExpressionNode ast = call("sum", isComputedArgument ? call("+", literal("v"), constant("1")) : literal("v"));
+                    ast.windowExpression = WindowExpression.FACTORY.newInstance();
+                    final FunctionExpression expression = binder.bindWindow(ast, full, null, sqlExecutionContext);
+                    Assert.assertTrue(expression.isWindow());
+                    Assert.assertFalse(expression.isAggregate());
+                    final int constructionCount = isComputedArgument ? 2 : 1;
+                    Assert.assertEquals(constructionCount, constructions.size());
+                    try (WindowFunction owner = binder.instantiateWindow(expression, pruned, metadata(false), sqlExecutionContext);
+                         WindowFunction worker = binder.instantiateWindow(expression, full, metadata(true), sqlExecutionContext)) {
+                        Assert.assertEquals(3 * constructionCount, constructions.size());
+                        Assert.assertNotSame(constructions.getQuick(constructionCount - 1), owner);
+                        Assert.assertNotSame(owner, worker);
+                        binder.clear();
+                        parser.clear();
+                        full.clear();
+                        pruned.clear();
+                        for (int pass = 0; pass < 2; pass++) {
+                            owner.init(null, sqlExecutionContext);
+                            worker.init(null, sqlExecutionContext);
+                            owner.toTop();
+                            worker.toTop();
+                            owner.computeNext(record(0, 2));
+                            owner.computeNext(record(0, 3));
+                            worker.computeNext(record(1, 7));
+                            Assert.assertEquals(isComputedArgument ? 7 : 5, owner.getDouble(null), 0);
+                            Assert.assertEquals(isComputedArgument ? 8 : 7, worker.getDouble(null), 0);
+                            owner.cursorClosed();
+                            worker.cursorClosed();
+                        }
+                    }
                 } finally {
                     sqlExecutionContext.clearWindowContext();
                 }

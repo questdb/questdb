@@ -56,6 +56,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
+import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.TimeZoneRules;
 import org.jetbrains.annotations.NotNull;
 
@@ -79,6 +80,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
     private final RecordSink mapSink2;
     private ObjList<Function> recordFunctions;
     private final TimestampSampler sampler;
+    private final char samplingIntervalUnit;
     private ObjList<InterpolationUtil.StoreYFunction> storeYFunctions;
     private final int timestampIndex;
     private final int yDataSize;
@@ -92,6 +94,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             ObjList<GroupByFunction> groupByFunctions,
             ObjList<Function> recordFunctions,
             @NotNull TimestampSampler timestampSampler,
+            char samplingIntervalUnit,
             @Transient @NotNull ListColumnFilter listColumnFilter,
             @Transient @NotNull ArrayColumnTypes keyTypes,
             @Transient @NotNull ArrayColumnTypes valueTypes,
@@ -112,6 +115,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             this.groupByFunctions = groupByFunctions;
             this.recordFunctions = recordFunctions;
             this.sampler = timestampSampler;
+            this.samplingIntervalUnit = samplingIntervalUnit;
             // adopt the temporal parameter functions first, so close() reaches them if the
             // remainder of the construction throws
             this.timezoneNameFunc = timezoneNameFunc;
@@ -327,6 +331,8 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
         private Record managedRecord;
         private long prevSample = -1;
         private long rowId;
+        private long timezoneOffset;
+        private TimeZoneRules timezoneRules;
 
         public SampleByInterpolateRecordCursor(
                 CairoConfiguration configuration,
@@ -477,7 +483,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                         long x2 = x1;
                         while (true) {
                             // to timestamp after 'sample' to begin with
-                            x2 = sampler.nextTimestamp(x2);
+                            x2 = nextTimestamp(x2);
                             if (x2 < hiSample) {
                                 value = findDataMapValue(mapRecord, x2);
                                 if (value.getByte(0) == 0) {
@@ -495,7 +501,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             // find gaps by checking each of the unique keys against every sample
             long sample;
             long prevSample;
-            for (sample = prevSample = loSample; sample < hiSample; prevSample = sample, sample = sampler.nextTimestamp(sample)) {
+            for (sample = prevSample = loSample; sample < hiSample; prevSample = sample, sample = nextTimestamp(sample)) {
                 final RecordCursor mapCursor = recordKeyMap.getCursor();
                 final Record mapRecord = mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
@@ -510,7 +516,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
                         while (true) {
                             // to timestamp after 'sample' to begin with
-                            long x2 = sampler.nextTimestamp(current);
+                            long x2 = nextTimestamp(current);
                             // is this timestamp within range?
                             if (x2 < hiSample) {
                                 value = findDataMapValue(mapRecord, x2);
@@ -527,7 +533,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                                         // find first valid value from 'x2+1' onwards
                                         long x1 = x2;
                                         while (true) {
-                                            x2 = sampler.nextTimestamp(x2);
+                                            x2 = nextTimestamp(x2);
                                             if (x2 < hiSample) {
                                                 final MapValue x2value = findDataMapValue(mapRecord, x2);
                                                 if (x2value.getByte(0) == 0) { // non-gap
@@ -547,7 +553,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                                                 // we only have a single value at 'x1' - cannot interpolate
                                                 // make all values before and after 'x1' NULL
                                                 nullifyRange(loSample, x1, mapRecord);
-                                                nullifyRange(sampler.nextTimestamp(x1), hiSample, mapRecord);
+                                                nullifyRange(nextTimestamp(x1), hiSample, mapRecord);
                                                 break;
                                             }
                                         }
@@ -556,7 +562,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                                         // yep, that's right, and go all the way back down
                                         // to 'sample' calculating interpolated values
                                         MapValue x1Value = findDataMapValue2(mapRecord, prevSample);
-                                        interpolate(sampler.nextTimestamp(prevSample), x2, mapRecord, prevSample, x2, x1Value, value);
+                                        interpolate(nextTimestamp(prevSample), x2, mapRecord, prevSample, x2, x1Value, value);
                                     }
                                     break;
                                 }
@@ -566,7 +572,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                                 // it will become Y-value and X is at 'prevSample-1'
                                 // and calculate interpolated value all the way to 'hiSample'
 
-                                long x1 = sampler.previousTimestamp(prevSample);
+                                long x1 = previousTimestamp(prevSample);
 
                                 if (x1 < loSample) {
                                     // not enough data points
@@ -575,7 +581,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                                 } else {
                                     MapValue x1Value = findDataMapValue2(mapRecord, x1);
                                     MapValue x2value = findDataMapValue(mapRecord, prevSample);
-                                    interpolate(sampler.nextTimestamp(prevSample), hiSample, mapRecord, x1, prevSample, x1Value, x2value);
+                                    interpolate(nextTimestamp(prevSample), hiSample, mapRecord, x1, prevSample, x1Value, x2value);
                                 }
                                 break;
                             }
@@ -619,7 +625,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                         value.putByte(0, (byte) 1); // this is a gap
                     }
                 }
-                timestamp = sampler.nextTimestamp(timestamp);
+                timestamp = nextTimestamp(timestamp);
                 keyCursor.toTop();
             }
         }
@@ -637,7 +643,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
                 // this seems inefficient, but we only double-sample
                 // very first record and nothing else
-                long sample = sampler.round(managedRecord.getTimestamp(timestampIndex));
+                long sample = round(managedRecord.getTimestamp(timestampIndex));
                 if (sample != prevSample) {
                     // before we continue with next interval
                     // we need to fill gaps in current interval
@@ -667,7 +673,7 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 }
             } while (managedCursor.hasNext());
 
-            hiSample = sampler.nextTimestamp(prevSample);
+            hiSample = nextTimestamp(prevSample);
             // fill gaps if any at the end of base cursor
             fillGaps(prevSample, hiSample);
         }
@@ -723,18 +729,20 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
         private void interpolate(long lo, long hi, Record mapRecord, long x1, long x2, MapValue x1Value, MapValue x2value) {
             computeYPoints(x1Value, x2value);
-            for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
+            for (long x = lo; x < hi; ) {
+                final long next = nextTimestamp(x);
                 final MapValue result = findDataMapValue3(mapRecord, x);
                 assert result != null && result.getByte(0) == 1;
                 for (int i = 0; i < groupByTwoPointFunctionCount; i++) {
                     GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
-                    InterpolationUtil.interpolateGap(function, result, sampler.getBucketSize(), x1Value, x2value);
+                    InterpolationUtil.interpolateGap(function, result, next - x, x1Value, x2value);
                 }
                 for (int i = 0; i < groupByScalarFunctionCount; i++) {
                     GroupByFunction function = groupByScalarFunctions.getQuick(i);
                     interpolatorFunctions.getQuick(i).interpolateAndStore(function, result, x, x1, x2, yData + i * 16L, yData + i * 16L + 8);
                 }
                 result.putByte(0, (byte) 0); // fill the value, change flag from 'gap' to 'fill'
+                x = next;
             }
         }
 
@@ -744,13 +752,36 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 GroupByFunction function = groupByTwoPointFunctions.getQuick(i);
                 MapValue startValue = findDataMapValue2(record, x1);
                 MapValue endValue = findDataMapValue3(record, x2);
-                InterpolationUtil.interpolateBoundary(function, sampler.nextTimestamp(x1), startValue, endValue, true);
+                InterpolationUtil.interpolateBoundary(function, nextTimestamp(x1), startValue, endValue, true);
                 InterpolationUtil.interpolateBoundary(function, x2, startValue, endValue, false);
             }
         }
 
+        private long nextTimestamp(long timestamp) {
+            if (timezoneRules == null) {
+                final long nextLocal = sampler.nextTimestamp(timestamp + timezoneOffset);
+                if (nextLocal == Long.MAX_VALUE) {
+                    return Long.MAX_VALUE;
+                }
+                final long next = nextLocal - timezoneOffset;
+                return next > timestamp ? next : Long.MAX_VALUE;
+            }
+            long local = roundToLocal(timestamp);
+            while (true) {
+                final long nextLocal = sampler.nextTimestamp(local);
+                if (nextLocal == Long.MAX_VALUE || nextLocal <= local) {
+                    return Long.MAX_VALUE;
+                }
+                local = nextLocal;
+                final long next = local - timezoneRules.getLocalOffset(local);
+                if (next > timestamp) {
+                    return next;
+                }
+            }
+        }
+
         private void nullifyRange(long lo, long hi, Record record) {
-            for (long x = lo; x < hi; x = sampler.nextTimestamp(x)) {
+            for (long x = lo; x < hi; x = nextTimestamp(x)) {
                 final MapKey key = dataMap.withKey();
                 mapSink2.copy(record, key);
                 key.putLong(x);
@@ -760,6 +791,57 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
                 for (int i = 0; i < groupByFunctionCount; i++) {
                     groupByFunctions.getQuick(i).setNull(value);
                 }
+            }
+        }
+
+        private long previousTimestamp(long timestamp) {
+            if (timezoneRules == null) {
+                return sampler.previousTimestamp(timestamp + timezoneOffset) - timezoneOffset;
+            }
+            long local = roundToLocal(timestamp);
+            while (true) {
+                final long previousLocal = sampler.previousTimestamp(local);
+                if (previousLocal >= local) {
+                    return Long.MIN_VALUE;
+                }
+                local = previousLocal;
+                final long previous = local - timezoneRules.getLocalOffset(local);
+                if (previous < timestamp) {
+                    return previous;
+                }
+            }
+        }
+
+        private long round(long timestamp) {
+            if (timezoneRules == null) {
+                return sampler.round(timestamp + timezoneOffset) - timezoneOffset;
+            }
+            final long local = roundToLocal(timestamp);
+            return local - timezoneRules.getLocalOffset(local);
+        }
+
+        private long roundToLocal(long timestamp) {
+            long local = sampler.round(timestamp + timezoneRules.getOffset(timestamp));
+            long utc = local - timezoneRules.getLocalOffset(local);
+            while (utc > timestamp) {
+                final long previousLocal = sampler.previousTimestamp(local);
+                if (previousLocal >= local) {
+                    return local;
+                }
+                local = previousLocal;
+                utc = local - timezoneRules.getLocalOffset(local);
+            }
+            while (true) {
+                final long nextLocal = sampler.nextTimestamp(local);
+                if (nextLocal == Long.MAX_VALUE || nextLocal <= local) {
+                    return local;
+                }
+                final long nextUtc = nextLocal - timezoneRules.getLocalOffset(nextLocal);
+                if (nextUtc < utc || nextUtc > timestamp) {
+                    return local;
+                }
+                local = nextLocal;
+                utc = nextUtc;
             }
         }
 
@@ -773,22 +855,30 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
 
             final long timestamp = managedRecord.getTimestamp(timestampIndex);
             final TimeZoneRules rules = timezone.getRules();
-            final long tzOffset = rules != null ? rules.getOffset(timestamp) : timezone.getTzOffset();
+            final long tzOffset = timezone.getTzOffset();
             final long fixedOffset = timezone.getFixedOffset();
+            final long offset = fixedOffset == Long.MIN_VALUE ? 0 : fixedOffset;
+            long from = timestampDriver.from(sampleFromFunc.getTimestamp(null), sampleFromFuncType);
+            timezoneRules = rules;
+            timezoneOffset = tzOffset;
+            if (from != Long.MIN_VALUE && CommonUtils.isSubDayUnit(samplingIntervalUnit)) {
+                from = rules == null ? from - tzOffset : timestampDriver.toUTC(from, rules);
+                timezoneRules = null;
+                timezoneOffset = 0;
+            } else if (rules != null && (CommonUtils.isSubDayUnit(samplingIntervalUnit) || rules.hasFixedOffset())) {
+                timezoneOffset = rules.getStandardOffset();
+                timezoneRules = null;
+            }
 
-            if (tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
+            if (rules == null && tzOffset == 0 && fixedOffset == Long.MIN_VALUE) {
                 // this is the default path, we align time intervals to the first observation
                 sampler.setStart(timestamp);
+            } else if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
+                sampler.setStart(from != Long.MIN_VALUE ? from : 0);
             } else {
-                // FROM-TO may apply to align to calendar queries, fixing the lower bound.
-                if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
-                    long from = sampleFromFunc.getTimestamp(null);
-                    sampler.setStart(from != Long.MIN_VALUE ? timestampDriver.from(from, sampleFromFuncType) : 0);
-                } else {
-                    sampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0L);
-                }
+                sampler.setOffset(offset);
             }
-            prevSample = sampler.round(timestamp);
+            prevSample = round(timestamp);
             loSample = prevSample; // the lowest timestamp value
         }
     }

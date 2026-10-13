@@ -88,6 +88,53 @@ public class GenericLexerTest {
     }
 
     @Test
+    public void testFetchNextSingleCharacterTokens() throws SqlException {
+        final GenericLexer lexer = new GenericLexer(64);
+        for (String symbol : new String[]{"(", ")", ",", "+", "-", "*", "/", "/*", "/*+", "*/", "--"}) {
+            lexer.defineSymbol(symbol);
+        }
+        for (boolean isIncludeHints : new boolean[]{false, true}) {
+            lexer.of(" \t\r\n ( x + 1 ) , * / - \f \u2003 '' \"\" \"x\" ");
+            for (String expected : new String[]{"(", "x", "+", "1", ")", ",", "*", "/", "-", "\f", "\u2003", "''", "\"\"", "\"x\""}) {
+                TestUtils.assertEquals(expected, SqlUtil.fetchNext(lexer, isIncludeHints));
+                lexer.unparseLast();
+                TestUtils.assertEquals(expected, SqlUtil.fetchNext(lexer, isIncludeHints));
+            }
+            Assert.assertNull(SqlUtil.fetchNext(lexer, isIncludeHints));
+        }
+    }
+
+    @Test
+    public void testFetchNextSingleCharacterTokensInComments() throws SqlException {
+        final GenericLexer lexer = new GenericLexer(64);
+        for (String symbol : new String[]{"(", ")", ",", "+", "*", "/*", "/*+", "*/", "--"}) {
+            lexer.defineSymbol(symbol);
+        }
+        for (boolean isIncludeHints : new boolean[]{false, true}) {
+            lexer.of("(/* ) , /*+ x */ + */x-- ) , *\r\n)");
+            TestUtils.assertEquals("(", SqlUtil.fetchNext(lexer, isIncludeHints));
+            TestUtils.assertEquals("x", SqlUtil.fetchNext(lexer, isIncludeHints));
+            TestUtils.assertEquals(")", SqlUtil.fetchNext(lexer, isIncludeHints));
+            Assert.assertNull(SqlUtil.fetchNext(lexer, isIncludeHints));
+        }
+    }
+
+    @Test
+    public void testFetchNextUnclosedQuotePosition() throws SqlException {
+        final GenericLexer lexer = new GenericLexer(64);
+        for (boolean isIncludeHints : new boolean[]{false, true}) {
+            lexer.of(" \t \"");
+            try {
+                SqlUtil.fetchNext(lexer, isIncludeHints);
+                Assert.fail();
+            } catch (SqlException e) {
+                Assert.assertEquals(3, e.getPosition());
+                TestUtils.assertEquals("unclosed quotation mark", e.getFlyweightMessage());
+            }
+        }
+    }
+
+    @Test
     public void testBrokenSingleQuotedToken1() {
         GenericLexer ts = new GenericLexer(64);
         ts.of("#1234'");

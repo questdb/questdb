@@ -36,11 +36,11 @@ import io.questdb.std.ObjectFactory;
  */
 public final class WindowSpec implements Mutable {
     public static final ObjectFactory<WindowSpec> FACTORY = WindowSpec::new;
-    private final IntList orderByColumnIds = new IntList();
-    private final ObjList<SortDirection> orderByDirections = new ObjList<>();
-    private final ObjList<CharSequence> orderByNames = new ObjList<>();
-    private final IntList orderByPositions = new IntList();
-    private final ObjList<BoundExpression> partitionBy = new ObjList<>();
+    private final IntList orderByColumnIds = new IntList(0);
+    private final ObjList<SortDirection> orderByDirections = new ObjList<>(0);
+    private final ObjList<CharSequence> orderByNames = new ObjList<>(0);
+    private final IntList orderByPositions = new IntList(0);
+    private final ObjList<BoundExpression> partitionBy = new ObjList<>(0);
     private int exclusionKind;
     private int exclusionKindPos;
     private int framingMode;
@@ -203,6 +203,14 @@ public final class WindowSpec implements Mutable {
     }
 
     public WindowSpec of(WindowExpression expression) {
+        final int orderByCount = expression.getOrderBy().size();
+        if (orderByCount > 0) {
+            orderByColumnIds.checkCapacity(orderByCount);
+            orderByDirections.checkCapacity(orderByCount);
+            orderByNames.checkCapacity(orderByCount);
+            orderByPositions.checkCapacity(orderByCount);
+        }
+        partitionBy.checkCapacity(expression.getPartitionBy().size());
         exclusionKind = expression.getExclusionKind();
         exclusionKindPos = expression.getExclusionKindPos();
         framingMode = expression.getFramingMode();

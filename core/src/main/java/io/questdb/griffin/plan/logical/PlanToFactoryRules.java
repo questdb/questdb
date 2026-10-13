@@ -378,6 +378,10 @@ public final class PlanToFactoryRules {
         }
         final OutputSchema input = window.getOutput();
         final int functionCount = window.getFunctionColumnIds().size();
+        final int distinctWindowCount = project.getDistinctWindowColumnCount();
+        if (distinctWindowCount >= 0 && distinctWindowCount != functionCount) {
+            return false;
+        }
         final int firstFunctionIndex = input.getColumnCount() - functionCount;
         int windowCount = 0;
         int lastFunctionIndex = -1;
@@ -390,11 +394,13 @@ public final class PlanToFactoryRules {
                 return false;
             }
             if (index >= firstFunctionIndex) {
-                if (index <= lastFunctionIndex && LogicalPlans.isColumnSelectedBefore(project, i, column.getColumnId())) {
+                if (distinctWindowCount < 0 && index <= lastFunctionIndex && LogicalPlans.isColumnSelectedBefore(project, i, column.getColumnId())) {
                     return false;
                 }
                 lastFunctionIndex = Math.max(lastFunctionIndex, index);
-                windowCount++;
+                if (++windowCount > functionCount) {
+                    return false;
+                }
             }
         }
         return windowCount == functionCount;

@@ -413,9 +413,10 @@ final class AggregateBinder implements Mutable {
                 timestampIndex = sampleByTimestampAliasIndex(source, aggregate, project, visibleCount);
             }
             if (timestampIndex < 0) {
+                final boolean hasRepeatedOrComputedColumns = hasComputedProjection(project) || LogicalPlans.hasRepeatedColumn(project, nestedReads);
                 for (int i = 0, n = scope.aggregateSelectExpressions.size(); i < n; i++) {
                     final ExpressionNode expression = scope.aggregateSelectExpressions.getQuick(i);
-                    if (hasComputedProjection(project) || LogicalPlans.hasRepeatedColumn(project)
+                    if (hasRepeatedOrComputedColumns
                             || sampleByBinder.referencesSampleByTimestamp(expression, aggregate.getChild().getOutput(), source)) {
                         final OutputSchema output = sort.getOutput();
                         final int index = output.getTimestampIndex();

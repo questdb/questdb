@@ -76,6 +76,7 @@ import io.questdb.std.Decimals;
 import io.questdb.std.GenericLexer;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
+import io.questdb.std.IntStack;
 import io.questdb.std.LowerCaseAsciiCharSequenceHashSet;
 import io.questdb.std.LowerCaseAsciiCharSequenceIntHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -192,7 +193,7 @@ public class SqlParser {
     // back when the copy's parse returns.
     private final ObjList<CharSequence> parkedViewsBeingCompiled;
     private final LowerCaseCharSequenceHashSet pivotAliasMap = new LowerCaseCharSequenceHashSet();
-    private final IntList pivotAliasPositions = new IntList();
+    private final IntList pivotAliasPositions;
     private final ObjectPool<PivotForColumn> pivotQueryColumnPool;
     // The PIVOT ... FOR ... IN (SELECT ...) sub-queries parsed inside the audited views whose
     // bodies the parser is expanding: each still lacks the audits of the views around it.
@@ -299,7 +300,8 @@ public class SqlParser {
             CharSequenceHashSet tempCharSequenceSet,
             ObjList<ExpressionNode> tempExprNodes,
             ObjList<CharSequence> parkedViewsBeingCompiled,
-            IntList tableNamePositions
+            IntList tableNamePositions,
+            IntStack paramCountStack
     ) {
         this.cairoEngine = cairoEngine;
         this.configuration = cairoEngine.getConfiguration();
@@ -329,6 +331,7 @@ public class SqlParser {
         this.tempCharSequenceSet = tempCharSequenceSet;
         this.tempExprNodes = tempExprNodes;
         this.parkedViewsBeingCompiled = parkedViewsBeingCompiled;
+        this.pivotAliasPositions = tableNamePositions;
         this.tableNamePositions = tableNamePositions;
         this.characterStore = characterStore;
         final int viewLexerPoolCapacity = configuration.getViewLexerPoolCapacity();
@@ -342,7 +345,8 @@ public class SqlParser {
                     expressionNodePool,
                     this,
                     characterStore,
-                    windowExpressionPool
+                    windowExpressionPool,
+                    paramCountStack
             );
         } else {
             this.expressionParser = new ExpressionParser(
@@ -351,7 +355,8 @@ public class SqlParser {
                     expressionNodePool,
                     this,
                     characterStore,
-                    windowExpressionPool
+                    windowExpressionPool,
+                    paramCountStack
             );
         }
         this.digit = 1;
@@ -677,6 +682,12 @@ public class SqlParser {
 
     private static boolean isLexerWhitespace(char c) {
         return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    }
+
+    private static boolean isLiteralLeaf(ExpressionNode node) {
+        return node == null || node.type == ExpressionNode.LITERAL && node.paramCount == 0
+                && node.lhs == null && node.rhs == null && node.args.size() == 0
+                && node.queryModel == null && node.windowExpression == null;
     }
 
     private static boolean isValidSampleByPeriodLetter(CharSequence token) {
@@ -7922,17 +7933,40 @@ public class SqlParser {
         }
     }
 
+    private void rewriteExpression(ExpressionNode node) throws SqlException {
+        if (isLiteralLeaf(node)) {
+            return;
+        }
+        if (node.type == ExpressionNode.FUNCTION
+                && isLiteralLeaf(node.lhs) && isLiteralLeaf(node.rhs)) {
+            boolean hasOnlyLiteralArguments = true;
+            for (int i = 0, n = node.args.size(); i < n && hasOnlyLiteralArguments; i++) {
+                hasOnlyLiteralArguments = isLiteralLeaf(node.args.getQuick(i));
+            }
+            if (hasOnlyLiteralArguments) {
+                rewriteCountAndWindowExpressions(node);
+                rewriteCase(node);
+                rewriteConcat(node);
+                rewritePgCast(node);
+                rewriteJsonExtractCast(node);
+                rewritePgNumeric(node);
+                return;
+            }
+        }
+        traversalAlgo.traverse(node, rewriteCountAndWindowExpressionsRef);
+        traversalAlgo.traverse(node, rewriteCaseRef);
+        traversalAlgo.traverse(node, rewriteConcatRef);
+        traversalAlgo.traverse(node, rewritePgCastRef);
+        traversalAlgo.traverse(node, rewriteJsonExtractCastRef);
+        traversalAlgo.traverse(node, rewritePgNumericRef);
+    }
+
     private ExpressionNode rewriteKnownStatements(
             ExpressionNode parent,
             @Nullable LowerCaseCharSequenceObjHashMap<ExpressionNode> decls,
             @Nullable CharSequence exprTargetVariableName
     ) throws SqlException {
-        traversalAlgo.traverse(parent, rewriteCountAndWindowExpressionsRef);
-        traversalAlgo.traverse(parent, rewriteCaseRef);
-        traversalAlgo.traverse(parent, rewriteConcatRef);
-        traversalAlgo.traverse(parent, rewritePgCastRef);
-        traversalAlgo.traverse(parent, rewriteJsonExtractCastRef);
-        traversalAlgo.traverse(parent, rewritePgNumericRef);
+        rewriteExpression(parent);
         return rewriteDeclaredVariables(parent, decls, exprTargetVariableName);
     }
 
@@ -7979,26 +8013,14 @@ public class SqlParser {
     private void rewriteWindowExpression(WindowExpression windowExpression) throws SqlException {
         final ObjList<ExpressionNode> partitionBy = windowExpression.getPartitionBy();
         for (int i = 0, n = partitionBy.size(); i < n; i++) {
-            rewriteWindowSubExpression(partitionBy.getQuick(i));
+            rewriteExpression(partitionBy.getQuick(i));
         }
         final ObjList<ExpressionNode> orderBy = windowExpression.getOrderBy();
         for (int i = 0, n = orderBy.size(); i < n; i++) {
-            rewriteWindowSubExpression(orderBy.getQuick(i));
+            rewriteExpression(orderBy.getQuick(i));
         }
-        rewriteWindowSubExpression(windowExpression.getRowsLoExpr());
-        rewriteWindowSubExpression(windowExpression.getRowsHiExpr());
-    }
-
-    private void rewriteWindowSubExpression(ExpressionNode node) throws SqlException {
-        if (node == null) {
-            return;
-        }
-        traversalAlgo.traverse(node, rewriteCountAndWindowExpressionsRef);
-        traversalAlgo.traverse(node, rewriteCaseRef);
-        traversalAlgo.traverse(node, rewriteConcatRef);
-        traversalAlgo.traverse(node, rewritePgCastRef);
-        traversalAlgo.traverse(node, rewriteJsonExtractCastRef);
-        traversalAlgo.traverse(node, rewritePgNumericRef);
+        rewriteExpression(windowExpression.getRowsLoExpr());
+        rewriteExpression(windowExpression.getRowsHiExpr());
     }
 
     @NotNull
@@ -8654,6 +8676,11 @@ public class SqlParser {
             max = Math.max(max, viewLexers.peekQuick(i).getPoolCapacity());
         }
         return max;
+    }
+
+    @TestOnly
+    int getWindowExpressionPoolCapacity() {
+        return windowExpressionPool.getCapacity();
     }
 
     @TestOnly

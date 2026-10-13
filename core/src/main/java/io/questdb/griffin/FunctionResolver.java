@@ -323,6 +323,9 @@ public class FunctionResolver implements Mutable {
      * such a subtree is wrapped.
      */
     public static void wrapRuntimeConstants(ObjList<Function> args) {
+        if (args.size() < 2) {
+            return;
+        }
         boolean allConstOrRuntimeConst = true;
         boolean anyRuntimeConst = false;
         for (int i = 0, n = args.size(); i < n; i++) {
@@ -335,7 +338,7 @@ public class FunctionResolver implements Mutable {
                 anyRuntimeConst = true;
             }
         }
-        if (!(allConstOrRuntimeConst && anyRuntimeConst)) {
+        if (anyRuntimeConst && !allConstOrRuntimeConst) {
             for (int i = 0, n = args.size(); i < n; i++) {
                 final Function arg = args.getQuick(i);
                 if (RuntimeConstFunction.isFoldable(arg)) {
@@ -351,6 +354,9 @@ public class FunctionResolver implements Mutable {
      * built arguments, which a shared scalar subquery bound does not: its reference is runtime constant.
      */
     public static void wrapRuntimeConstants(FunctionExpression call, ObjList<Function> args) {
+        if (args.size() < 2) {
+            return;
+        }
         boolean allConstOrRuntimeConst = true;
         boolean anyRuntimeConst = false;
         for (int i = 0, n = args.size(); i < n; i++) {
@@ -361,7 +367,7 @@ public class FunctionResolver implements Mutable {
                 anyRuntimeConst = true;
             }
         }
-        if (!(allConstOrRuntimeConst && anyRuntimeConst)) {
+        if (anyRuntimeConst && !allConstOrRuntimeConst) {
             for (int i = 0, n = args.size(); i < n; i++) {
                 final Function arg = args.getQuick(i);
                 if (RuntimeConstFunction.isFoldable(arg, call.argumentAt(i).getFunctionFlags())) {

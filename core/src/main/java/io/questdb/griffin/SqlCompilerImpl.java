@@ -137,6 +137,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.IntSortedList;
+import io.questdb.std.IntStack;
 import io.questdb.std.LongList;
 import io.questdb.std.LowerCaseAsciiCharSequenceObjHashMap;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -312,7 +313,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.planNodePools = new PlanNodePools(configuration);
             this.tmpJoinChildrenPool = new ObjectPool<>(IntHashSet::new, 4, planNodePools.maxRetainedJoinContexts);
             final int windowColumnPoolCapacity = configuration.getWindowColumnPoolCapacity();
-            ObjectPool<WindowExpression> windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, windowColumnPoolCapacity, windowColumnPoolCapacity);
+            ObjectPool<WindowExpression> windowExpressionPool = new ObjectPool<>(WindowExpression.FACTORY, windowColumnPoolCapacity, columnPoolCapacity);
             this.compiledQuery = new CompiledQueryImpl(engine);
             this.characterStore = new CharacterStore(
                     configuration.getSqlCharacterStoreCapacity(),
@@ -322,7 +323,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
             this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
             this.functionResolver = new FunctionResolver(configuration, engine.getFunctionFactoryCache());
-            this.functionParser = new FunctionParser(configuration, functionResolver, traversalAlgo, tmpFunctions, tmpFunctionPositions);
+            final IntStack tmpStack = new IntStack();
+            this.functionParser = new FunctionParser(configuration, functionResolver, traversalAlgo, tmpFunctions, tmpFunctionPositions, tmpStack);
             this.preparedFunctions = new PreparedFunctions(expressionPoolCapacity);
             this.functionSources = new TableFunctionSources(functionParser, planNodePools);
             this.expressionRewriter = newExpressionRewriter(functionParser);
@@ -331,7 +333,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tmpJoinChildrenPool, tmpJoinTypes, tmpJoinDependencies);
             this.codeGenerator = new SqlCodeGenerator(configuration, functionResolver, characterStore, asm,
                     entityColumnFilter, emptySchema, planTables, expressionRewriter, functionInstantiator, functionSources,
-                    tmpSink, tmpLongs, tmpIds, tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys);
+                    tmpSink, tmpLongs, tmpIds, tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys, tmpUniqueNames);
             this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
             registerKeywordBasedExecutors();
@@ -351,7 +353,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tmpTokens,
                     tmpNodes,
                     tmpNames,
-                    tmpPositions
+                    tmpPositions,
+                    tmpStack
             );
 
             alterOperationBuilder = createAlterOperationBuilder();
@@ -746,6 +749,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     @TestOnly
     public long getWindowCallComparisonCount() {
         return optimiser.getWindowCallComparisonCount();
+    }
+
+    @TestOnly
+    public int getWindowExpressionPoolCapacity() {
+        return parser.getWindowExpressionPoolCapacity();
     }
 
     @TestOnly

@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
 import io.questdb.griffin.SqlException;
@@ -68,6 +69,7 @@ import io.questdb.griffin.plan.logical.PhysicalProperties;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
+import io.questdb.griffin.plan.logical.UniqueColumnNames;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.BitSet;
@@ -78,7 +80,6 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjObjHashMap;
-import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -87,12 +88,13 @@ import org.jetbrains.annotations.Nullable;
  */
 final class WindowFactoryGenerator {
     private final BytecodeAssembler asm;
+    private final CharacterStore characterStore;
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
     private final EntityColumnFilter entityColumnFilter;
     private final FunctionInstantiator functionInstantiator;
-    private final StringSink nameSink;
     private final RecordComparatorCompiler recordComparatorCompiler;
+    private final UniqueColumnNames uniqueNames;
 
     WindowFactoryGenerator(
             CairoConfiguration configuration,
@@ -101,7 +103,8 @@ final class WindowFactoryGenerator {
             BytecodeAssembler asm,
             EntityColumnFilter entityColumnFilter,
             RecordComparatorCompiler recordComparatorCompiler,
-            StringSink nameSink
+            CharacterStore characterStore,
+            UniqueColumnNames uniqueNames
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
@@ -109,11 +112,8 @@ final class WindowFactoryGenerator {
         this.asm = asm;
         this.entityColumnFilter = entityColumnFilter;
         this.recordComparatorCompiler = recordComparatorCompiler;
-        this.nameSink = nameSink;
-    }
-
-    private static boolean isFreeName(CharSequence name, RecordMetadata metadata, @Nullable RecordMetadata reserved) {
-        return metadata.getColumnIndexQuiet(name) < 0 && (reserved == null || reserved.getColumnIndexQuiet(name) < 0);
+        this.characterStore = characterStore;
+        this.uniqueNames = uniqueNames;
     }
 
     /**
@@ -169,18 +169,6 @@ final class WindowFactoryGenerator {
             throw th;
         }
         return new SelectedRecordCursorFactory(renamed, mapping, base);
-    }
-
-    private String uniqueName(CharSequence name, RecordMetadata metadata, @Nullable RecordMetadata reserved) {
-        if (isFreeName(name, metadata, reserved)) {
-            return Chars.toString(name);
-        }
-        int k = 1;
-        do {
-            nameSink.clear();
-            nameSink.put(name).put('_').put(k++);
-        } while (!isFreeName(nameSink, metadata, reserved));
-        return nameSink.toString();
     }
 
     // Borrows the factory. The internal marker guarantees the outer projection drops the keep flag: fusion skips its
@@ -440,6 +428,7 @@ final class WindowFactoryGenerator {
             final ObjList<TableColumnMetadata> outputColumns = frame.windowOutputColumns;
             outputColumns.clear();
             outputColumns.setPos(outputCount);
+            uniqueNames.of(inputMetadata);
             for (int i = 0, n = sources.size(); i < n; i++) {
                 final int source = sources.getQuick(i);
                 if (source >= 0) {
@@ -454,7 +443,7 @@ final class WindowFactoryGenerator {
                     if (inputPositions.getQuick(source) == i) {
                         chainMetadata.add(i, column);
                     } else {
-                        chainMetadata.add(i, new TableColumnMetadata(uniqueName(column.getColumnName(), chainMetadata, inputMetadata),
+                        chainMetadata.add(i, new TableColumnMetadata(Chars.toString(uniqueNames.take(column.getColumnName(), characterStore, '_')),
                                 column.getColumnType(), column.getIndexType(),
                                 column.getIndexValueBlockCapacity(), column.isSymbolTableStatic(), column.getMetadata()));
                     }
@@ -469,10 +458,11 @@ final class WindowFactoryGenerator {
             }
             for (int i = 0, n = sources.size(); i < n; i++) {
                 if (sources.getQuick(i) < 0) {
-                    chainMetadata.add(i, new TableColumnMetadata(uniqueName(chainSchema.getColumnName(i), chainMetadata, null),
+                    chainMetadata.add(i, new TableColumnMetadata(Chars.toString(uniqueNames.take(chainSchema.getColumnName(i), characterStore, '_')),
                             chainSchema.getColumnType(i), IndexType.NONE, 0, false, null));
                 }
             }
+            uniqueNames.clear();
             final ArrayColumnTypes keyTypes = frame.keyTypes;
             final ArrayColumnTypes chainTypes = frame.valueTypes;
             final IntList order = frame.intListA;

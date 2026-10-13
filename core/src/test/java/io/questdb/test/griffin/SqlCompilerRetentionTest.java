@@ -30,6 +30,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -74,6 +75,39 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeepBindFailureReturnsScopes() throws Exception {
+        assertMemoryLeak(() -> {
+            String sql = "SELECT missing FROM long_sequence(1)";
+            for (int i = 0; i < MAX_RETAINED_DEPTH + 8; i++) {
+                sql = "SELECT x FROM long_sequence(1) WHERE x = (" + sql + ")";
+            }
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                assertQuery(sql)
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .fails(sql.indexOf("missing"), "Invalid column: missing");
+                Assert.assertTrue(compiler.getBindScopeCount() > MAX_RETAINED_DEPTH);
+                compiler.clear();
+                compiler.clear();
+                Assert.assertEquals(MAX_RETAINED_DEPTH, compiler.getBindScopeCount());
+
+                assertQuery("SELECT x FROM long_sequence(2) WHERE x = (SELECT max(x) FROM long_sequence(2))")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .returns("""
+                                x
+                                2
+                                """);
+                compiler.clear();
+                compileAndClose(compiler, sql.replace("missing", "x"));
+                Assert.assertTrue(compiler.getBindScopeCount() > MAX_RETAINED_DEPTH);
+                compiler.clear();
+                Assert.assertEquals(MAX_RETAINED_DEPTH, compiler.getBindScopeCount());
+            }
+        });
+    }
+
+    @Test
     public void testDeepCursorNestingReturnsGenerationFrames() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE s (sym SYMBOL)");
@@ -95,6 +129,56 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
                                 sym
                                 b
                                 """);
+                Assert.assertEquals(MAX_RETAINED_DEPTH, compiler.getGenerationFrameCount());
+            }
+        });
+    }
+
+    @Test
+    public void testDeepGenerationFailureReturnsFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s (sym SYMBOL)");
+            execute("INSERT INTO s VALUES ('a'), ('b')");
+            String sql = "SELECT sym FROM s WHERE length(sym) > 0";
+            for (int i = 0; i < MAX_RETAINED_DEPTH + 8; i++) {
+                sql = "SELECT sym FROM s WHERE sym IN (" + sql + ")";
+            }
+            final RuntimeException failure = new IllegalStateException("generation failure");
+            try (
+                    RetentionCompiler compiler = new RetentionCompiler();
+                    SqlExecutionContextImpl context = new SqlExecutionContextImpl(engine, 1) {
+                        @Override
+                        public boolean isParquetRowGroupPruningEnabled() {
+                            if (compiler.getGenerationDepth() > MAX_RETAINED_DEPTH) {
+                                throw failure;
+                            }
+                            return super.isParquetRowGroupPruningEnabled();
+                        }
+                    }
+            ) {
+                context.with(sqlExecutionContext.getSecurityContext());
+                try (RecordCursorFactory ignored = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    Assert.fail("generation must fail");
+                } catch (RuntimeException e) {
+                    Assert.assertSame(failure, e);
+                }
+                Assert.assertEquals(0, compiler.getGenerationDepth());
+                Assert.assertTrue(compiler.getGenerationFrameCount() > MAX_RETAINED_DEPTH);
+                compiler.clear();
+                compiler.clear();
+                Assert.assertEquals(MAX_RETAINED_DEPTH, compiler.getGenerationFrameCount());
+
+                assertQuery("SELECT sym FROM s WHERE sym IN (SELECT sym FROM s WHERE sym = 'b')")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .returns("""
+                                sym
+                                b
+                                """);
+                compiler.clear();
+                compileAndClose(compiler, sql);
+                Assert.assertTrue(compiler.getGenerationFrameCount() > MAX_RETAINED_DEPTH);
+                compiler.clear();
                 Assert.assertEquals(MAX_RETAINED_DEPTH, compiler.getGenerationFrameCount());
             }
         });
@@ -460,6 +544,38 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWindowExpressionsRetainColumnCapacity() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_COLUMN_POOL_CAPACITY, "2");
+            setProperty(PropertyKey.CAIRO_COLUMN_POOL_CAPACITY, "8");
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                Assert.assertEquals(2, compiler.getWindowExpressionPoolCapacity());
+                final StringSink sql = new StringSink();
+                for (int windowCount : new int[]{6, 9, 6}) {
+                    sql.clear();
+                    sql.put("SELECT ").repeat("sum(x) OVER (), ", windowCount - 1)
+                            .put("sum(x) OVER () FROM long_sequence(1)");
+                    compileAndClose(compiler, sql);
+                    Assert.assertTrue(compiler.getWindowExpressionPoolCapacity() >= windowCount);
+                    compiler.clear();
+                    Assert.assertEquals(8, compiler.getWindowExpressionPoolCapacity());
+                }
+
+                assertQuery("SELECT x, row_number() OVER (ORDER BY x DESC) n FROM long_sequence(3) ORDER BY x")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                x\tn
+                                1\t3
+                                2\t2
+                                3\t1
+                                """);
+            }
+        });
+    }
+
     private static void compileAndClose(SqlCompiler compiler, CharSequence sql) throws SqlException {
         try (RecordCursorFactory factory = compiler.compile(sql, sqlExecutionContext).getRecordCursorFactory()) {
             Assert.assertNotNull(factory);
@@ -480,5 +596,15 @@ public class SqlCompilerRetentionTest extends AbstractCairoTest {
         }
         sql.put(" FROM long_sequence(1)");
         return sql;
+    }
+
+    private static final class RetentionCompiler extends SqlCompilerImpl {
+        private RetentionCompiler() {
+            super(SqlCompilerRetentionTest.engine);
+        }
+
+        private int getGenerationDepth() {
+            return codeGenerator.getGenerationDepth();
+        }
     }
 }

@@ -332,6 +332,11 @@ public final class PlanVerifier {
         columnIds.clear();
         joinScope.clear();
         outerInputs.clear();
+        for (int i = 0, n = visited.size(); i < n; i++) {
+            if (visited.getQuick(i) instanceof ProjectPlan project) {
+                project.clearColumnReferenceCounts();
+            }
+        }
         visited.clear();
     }
 
@@ -833,6 +838,7 @@ public final class PlanVerifier {
         }
         requestedColumn(project.getRequestedOrderColumnId(), output);
         requestedOrder(project.getRequestedOrder(), output);
+        project.deriveColumnReferenceCounts(columnIds);
         if (project.isTimestampDropped() && (!(project.getChild() instanceof WindowJoinPlan) || LogicalPlans.isColumnOnlyProjection(project))) {
             fail(PROJECT_TIMESTAMP_DROP);
         }

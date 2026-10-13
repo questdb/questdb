@@ -852,6 +852,19 @@ public class SqlUtil {
                 continue;
             }
 
+            if (cs.length() == 1) {
+                if (blockCount == 0) {
+                    final char c = cs.charAt(0);
+                    if (c == '"') {
+                        throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
+                    }
+                    if (!GenericLexer.WHITESPACE_CH.contains(c)) {
+                        return cs;
+                    }
+                }
+                continue;
+            }
+
             if (Chars.equals("--", cs)) {
                 lineComment = true;
                 continue;
@@ -872,11 +885,7 @@ public class SqlUtil {
                 continue;
             }
 
-            if (blockCount == 0 && GenericLexer.WHITESPACE.excludes(cs)) {
-                // unclosed quote check
-                if (cs.length() == 1 && cs.charAt(0) == '"') {
-                    throw SqlException.$(lexer.lastTokenPosition(), "unclosed quotation mark");
-                }
+            if (blockCount == 0) {
                 return cs;
             }
         }

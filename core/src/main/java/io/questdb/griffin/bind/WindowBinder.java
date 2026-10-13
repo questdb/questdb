@@ -785,7 +785,7 @@ final class WindowBinder {
         if (!isWindowArgument && !isAlias && expression.type == ExpressionNode.LITERAL && !expression.isWildcard()) {
             ctx.bindColumnIndex(expression, scope.windowInput.getOutput(), source);
         }
-        if (isWindowArgument && expression.type == ExpressionNode.LITERAL) {
+        if (isWindowArgument && expression.type == ExpressionNode.LITERAL && scope.windowSelfReferences.size() > 0) {
             final int index = scope.windowSelfReferences.keyIndex(expression.token);
             if (index < 0) {
                 return windowColumnReference(scope.windowSelfReferences.valueAt(index), expression.position);
@@ -1111,6 +1111,9 @@ final class WindowBinder {
         resolveWindowAliasReferences(source, executionContext);
         for (int i = 0, n = bindScope.windowSelectExpressions.size(); i < n; i++) {
             final ExpressionNode expression = bindScope.windowSelectExpressions.getQuick(i);
+            if (bindScope.windowAliasIds.getQuick(i) < 0) {
+                bindScope.windowAliasIds.setQuick(i, windowResultId(expression));
+            }
             bindScope.windowSelectExpressions.setQuick(i, bindScope.windowAliasIds.getQuick(i) >= 0
                     ? windowColumnReference(bindScope.windowAliasIds.getQuick(i), expression.position)
                     : replaceWindowReferences(expression));
@@ -1188,7 +1191,9 @@ final class WindowBinder {
         clearSelectAliasIndexes();
         boolean hasReferences = false;
         for (int i = 1, n = columns.size(); i < n && !hasReferences; i++) {
-            hasReferences = referencesEarlierAlias(ctx.scope().windowSelectExpressions.getQuick(i), columns, i, source, false);
+            if (ctx.scope().windowAliasIds.getQuick(i) < 0) {
+                hasReferences = referencesEarlierAlias(ctx.scope().windowSelectExpressions.getQuick(i), columns, i, source, false);
+            }
         }
         clearSelectAliasIndexes();
         return hasReferences;

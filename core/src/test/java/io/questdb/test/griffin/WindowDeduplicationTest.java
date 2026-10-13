@@ -647,6 +647,80 @@ public class WindowDeduplicationTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWideDuplicatedInputColumns() throws Exception {
+        final StringSink sql = new StringSink();
+        final StringSink expected = new StringSink();
+        sql.put("SELECT ");
+        for (int i = 0; i < 1_024; i++) {
+            sql.put("x a").put(i).put(", ");
+            expected.put('a').put(i).put('\t');
+        }
+        sql.put("lag(x) OVER () w FROM long_sequence(1)");
+        expected.put("w\n");
+        for (int i = 0; i < 1_024; i++) {
+            expected.put("1\t");
+        }
+        expected.put("null\n");
+        assertQuery(sql)
+                .noRandomAccess()
+                .expectSize()
+                .withPlan("""
+                        Window
+                          functions: [lag(x, 1, NULL) over ()]
+                            long_sequence count: 1
+                        """)
+                .returns(expected);
+    }
+
+    @Test
+    public void testWideReorderedWindowOutputs() throws Exception {
+        final StringSink sql = new StringSink();
+        final StringSink expected = new StringSink();
+        sql.put("SELECT ");
+        for (int i = 1_023; i >= 0; i--) {
+            sql.put(i < 1_023 ? ", w" : "w").put(i);
+            expected.put(i < 1_023 ? "\tw" : "w").put(i);
+        }
+        sql.put(" FROM (").put(wideDistinctWindowCalls(1_024)).put(')');
+        expected.put('\n');
+        for (int i = 0; i < 1_024; i++) {
+            expected.put(i > 0 ? "\tnull" : "null");
+        }
+        expected.put('\n');
+        assertQuery(sql)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("""
+                        Window
+                          functions: [lag(x, 1024, NULL) over (),lag(x, 1023, NULL) over (),""")
+                .returns(expected);
+    }
+
+    @Test
+    public void testWideUnreadWindowCalls() throws Exception {
+        final StringSink sql = new StringSink();
+        final StringSink expected = new StringSink();
+        sql.put("SELECT ");
+        for (int i = 512; i < 1_024; i++) {
+            sql.put(i > 512 ? ", w" : "w").put(i);
+            expected.put(i > 512 ? "\tw" : "w").put(i);
+        }
+        sql.put(" FROM (").put(wideDistinctWindowCalls(1_024)).put(')');
+        expected.put('\n');
+        for (int i = 512; i < 1_024; i++) {
+            expected.put(i > 512 ? "\tnull" : "null");
+        }
+        expected.put('\n');
+        assertQuery(sql)
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining("""
+                        Window
+                          functions: [lag(x, 513, NULL) over (),lag(x, 514, NULL) over (),""")
+                .returns(expected);
+    }
+
     private static void assertWindowLayouts(LogicalPlan plan) {
         if (plan instanceof WindowPlan) {
             final WindowPlan window = (WindowPlan) plan;

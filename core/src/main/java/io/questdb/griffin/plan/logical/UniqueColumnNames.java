@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.plan.logical;
 
+import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
@@ -55,6 +56,14 @@ public final class UniqueColumnNames implements Mutable {
         clear();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             takenNames.add(output.getColumnName(i));
+        }
+        return this;
+    }
+
+    public UniqueColumnNames of(RecordMetadata metadata) {
+        clear();
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            takenNames.add(metadata.getColumnName(i));
         }
         return this;
     }
@@ -92,19 +101,31 @@ public final class UniqueColumnNames implements Mutable {
      * case.
      */
     public CharSequence take(CharSequence name, CharacterStore store) {
+        return take(name, store, '\0');
+    }
+
+    public CharSequence take(CharSequence name, CharacterStore store, char separator) {
         int index = takenNames.keyIndex(name);
         if (index > -1) {
             takenNames.addAt(index, name);
             return name;
         }
-        final int suffixIndex = nextSuffixes.keyIndex(name);
+        final CharSequence prefix;
+        if (separator == '\0') {
+            prefix = name;
+        } else {
+            final StringSink sink = Misc.getThreadLocalSink();
+            sink.put(name).put(separator);
+            prefix = sink;
+        }
+        final int suffixIndex = nextSuffixes.keyIndex(prefix);
         int suffix = Math.max(1, nextSuffixes.valueAt(suffixIndex));
         final CharacterStoreEntry entry = store.newEntry();
         final int start = entry.length();
         CharSequence candidate;
         while (true) {
             entry.trimTo(start);
-            entry.put(name).put(suffix);
+            entry.put(prefix).put(suffix);
             candidate = entry.toImmutable();
             index = takenNames.keyIndex(candidate);
             if (index > -1) {
@@ -113,7 +134,7 @@ public final class UniqueColumnNames implements Mutable {
             suffix++;
         }
         takenNames.addAt(index, candidate);
-        nextSuffixes.putAt(suffixIndex, name, suffix + 1);
+        nextSuffixes.putAt(suffixIndex, prefix, suffix + 1);
         return candidate;
     }
 }

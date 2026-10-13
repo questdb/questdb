@@ -88,6 +88,43 @@ public class ObjListTest {
         Assert.assertTrue("removed backing slots must be cleared", list.hasOnlyNullsBeyondSizeForTesting());
     }
 
+    @Test
+    public void testZeroCapacityBulkGrowth() {
+        final ObjList<String> inserted = new ObjList<>(0);
+        inserted.insert(0, 2, "a");
+        Assert.assertEquals(list("a", "a"), inserted);
+
+        final ObjList<String> copied = new ObjList<>(0);
+        copied.addAll(inserted);
+        copied.extendAndSet(3, "b");
+        Assert.assertEquals(list("a", "a", null, "b"), copied);
+
+        final ObjList<String> positioned = new ObjList<>(0);
+        positioned.setPos(2);
+        positioned.setQuick(1, "c");
+        Assert.assertEquals(list(null, "c"), positioned);
+    }
+
+    @Test
+    public void testZeroCapacityGrowthAndReuse() {
+        final ObjList<String> first = new ObjList<>(0);
+        final ObjList<String> second = new ObjList<>(0);
+        first.clear();
+        Assert.assertNull(first.getLast());
+        for (int i = 0; i < 64; i++) {
+            first.add(Integer.toString(i));
+        }
+        second.add("other");
+        Assert.assertEquals(64, first.size());
+        for (int i = 0; i < first.size(); i++) {
+            Assert.assertEquals(Integer.toString(i), first.getQuick(i));
+        }
+        first.clear();
+        first.add("reused");
+        Assert.assertEquals(list("reused"), first);
+        Assert.assertEquals(list("other"), second);
+    }
+
     private static <T> ObjList<T> remove(ObjList<T> o, int from, int to) {
         o.remove(from, to);
         return o;

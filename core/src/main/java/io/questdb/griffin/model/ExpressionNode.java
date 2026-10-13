@@ -74,7 +74,7 @@ public class ExpressionNode implements Mutable, Sinkable {
     public static final int VALUE_LIST = SET_OPERATION + 1;
     public static final ExpressionNodeFactory FACTORY = new ExpressionNodeFactory();
     public static final int UNKNOWN = 0;
-    public final ObjList<ExpressionNode> args = new ObjList<>(4);
+    public final ObjList<ExpressionNode> args = new ObjList<>(0);
     public boolean implemented;
     public boolean innerPredicate = false;
     public boolean isConstantExpression;

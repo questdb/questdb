@@ -41,6 +41,7 @@ import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
@@ -50,9 +51,13 @@ import io.questdb.std.ObjList;
  * an aggregate.
  */
 final class ProjectionMerge implements OptimiserPass {
-    private final OptimiserContext context;    private final PlanRewriter columnProjectCollapses = this::collapseColumnProject;
-    ProjectionMerge(OptimiserContext context) {
+    private final OptimiserContext context;
+    private final IntHashSet tmpIds;
+    private final PlanRewriter columnProjectCollapses = this::collapseColumnProject;
+
+    ProjectionMerge(OptimiserContext context, IntHashSet tmpIds) {
         this.context = context;
+        this.tmpIds = tmpIds;
     }
 
     @Override
@@ -86,10 +91,11 @@ final class ProjectionMerge implements OptimiserPass {
         return inner;
     }
 
-    private static boolean isCompleteColumnPermutation(ProjectPlan project) {
+    private static boolean isCompleteColumnPermutation(ProjectPlan project, IntHashSet columnIds) {
         final OutputSchema input = project.getChild().getOutput();
         final int count = project.getExpressions().size();
-        if (project.hasTimestampDeclaration() || count != input.getColumnCount() || !LogicalPlans.isColumnProjection(project)) {
+        if (project.hasTimestampDeclaration() || count != input.getColumnCount() || !LogicalPlans.isColumnProjection(project)
+                || LogicalPlans.hasRepeatedColumn(project, columnIds)) {
             return false;
         }
         for (int i = 0; i < count; i++) {
@@ -98,11 +104,6 @@ final class ProjectionMerge implements OptimiserPass {
             if (index < 0 || column.getDataType() != input.getColumnType(index)
                     || !Chars.equals(project.getOutput().getColumnName(i), input.getColumnName(index))) {
                 return false;
-            }
-            for (int k = 0; k < i; k++) {
-                if (((ColumnExpression) project.getExpressions().getQuick(k)).getColumnId() == column.getColumnId()) {
-                    return false;
-                }
             }
         }
         return true;
@@ -113,11 +114,11 @@ final class ProjectionMerge implements OptimiserPass {
      * unchanged, so it can order the grouped rows instead and let a column projection above it merge
      * with this one.
      */
-    private static boolean isSortableBelow(ProjectPlan project, SortPlan sort) {
+    private static boolean isSortableBelow(ProjectPlan project, SortPlan sort, IntHashSet columnIds) {
         final LogicalPlan input = project.getChild();
         if (!(input instanceof AggregatePlan || input instanceof FillPlan)
                 || sort.isMarkoutHorizon() || project.hasTimestampDeclaration() || !LogicalPlans.isColumnProjection(project)
-                || LogicalPlans.hasRepeatedColumn(project)) {
+                || LogicalPlans.hasRepeatedColumn(project, columnIds)) {
             return false;
         }
         final IntList ids = sort.getColumnIds();
@@ -257,16 +258,16 @@ final class ProjectionMerge implements OptimiserPass {
         }
         if (project.getChild() instanceof SortPlan sort) {
             LogicalPlan input = sort.getChild();
-            while (input instanceof ProjectPlan permutation && isCompleteColumnPermutation(permutation)) {
+            while (input instanceof ProjectPlan permutation && isCompleteColumnPermutation(permutation, tmpIds)) {
                 input = permutation.getChild();
             }
-            if (isCompleteColumnPermutation(project) && input instanceof AggregatePlan aggregate
+            if (isCompleteColumnPermutation(project, tmpIds) && input instanceof AggregatePlan aggregate
                     && aggregate.getGroupingExpressions().size() > 0
                     || (input instanceof JoinPlan || sort.getChild() instanceof WindowPlan)
                     && !sort.isMarkoutHorizon() && LogicalPlans.projectsSortKeys(project, sort)) {
                 return sortOverProject(project, sort);
             }
-            if (sort.getChild() instanceof ProjectPlan grouped && isSortableBelow(grouped, sort)) {
+            if (sort.getChild() instanceof ProjectPlan grouped && isSortableBelow(grouped, sort, tmpIds)) {
                 project.replaceInput(0, sortBelowProject(sort, grouped));
             }
         }

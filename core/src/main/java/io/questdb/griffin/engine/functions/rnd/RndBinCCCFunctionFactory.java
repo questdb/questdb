@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.functions.rnd;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -101,7 +102,7 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
 
         @Override
         public long getBinLen(Record rec) {
-            return sequence.len;
+            return getBin(rec) == null ? TableUtils.NULL_LEN : sequence.len;
         }
 
         @Override
@@ -163,7 +164,7 @@ public class RndBinCCCFunctionFactory implements FunctionFactory {
 
         @Override
         public long getBinLen(Record rec) {
-            return sequence.len;
+            return getBin(rec) == null ? TableUtils.NULL_LEN : sequence.len;
         }
 
         @Override

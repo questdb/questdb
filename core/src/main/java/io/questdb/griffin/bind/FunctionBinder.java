@@ -475,6 +475,19 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 ? index : input.getColumnIndexQuiet(qualifier, name, lo + 1, hi - 1);
     }
 
+    private static boolean hasOnlyColumnArguments(ExpressionNode node) {
+        if (node.lhs != null && node.lhs.type != ExpressionNode.LITERAL
+                || node.rhs != null && node.rhs.type != ExpressionNode.LITERAL) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (node.args.getQuick(i).type != ExpressionNode.LITERAL) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private static boolean isCaseText(int type) {
         return type == ColumnType.STRING || type == ColumnType.VARCHAR || type == ColumnType.SYMBOL;
     }
@@ -762,19 +775,20 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      */
     private void bindTree(ExpressionNode node, SqlExecutionContext executionContext) throws SqlException {
         final BindScope scope = ctx.scope();
-        if (isAstRewritable()) {
+        final boolean isRewritable = isAstRewritable() && (scope.bindingRole != BindingRole.WINDOW || !hasOnlyColumnArguments(node));
+        if (isRewritable) {
             // DECLARE references may share parser nodes across occurrences.
             // Reassociation belongs to this binding, never to that shared AST.
             node = ExpressionNode.deepClone(ctx.planNodes.syntheticNodes, node);
         }
         scope.bindingRoot = node;
         if (scope.bindingRole == BindingRole.PREDICATE) {
-            if (isAstRewritable()) {
+            if (isRewritable) {
                 rewriteAndOffsets(node);
             }
             bindTimestampBetweenLowerBound(node, executionContext);
         }
-        if (isAstRewritable()) {
+        if (isRewritable) {
             // Caller-selected group keys refer to exact subtrees. Reassociating
             // their ancestors here could move children across that boundary.
             node.reassociateConstants(resolver.getConfiguration().getCairoSqlLegacyOperatorPrecedence());
@@ -1053,7 +1067,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         final int type = input.getColumnType(index);
         final int columnId = input.getColumnId(index);
         final int mark = leafMark();
-        final Function leaf = scope.currentPreparation.addColumn(FunctionInstantiator.createColumnLeaf(node.position, columnId, index, type, input));
+        final Function leaf = scope.currentPreparation.addColumn(scope.bindingRole == BindingRole.WINDOW
+                ? FunctionInstantiator.createColumnFunction(node.position, index, type, input)
+                : FunctionInstantiator.createColumnLeaf(node.position, columnId, index, type, input));
         push(ctx.planNodes.columns.next().of(columnId, type, node.position), mark);
         return leaf;
     }

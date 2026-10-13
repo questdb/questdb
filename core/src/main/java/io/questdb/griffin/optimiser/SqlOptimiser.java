@@ -30,6 +30,7 @@ import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionInstantiator;
+import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.SqlException;
@@ -73,6 +74,7 @@ import org.jetbrains.annotations.TestOnly;
 public final class SqlOptimiser implements Mutable {
     private final AccessPathPlanning accessPathPlanning;
     private final AggregateInputOrder aggregateInputOrder;
+    private final IntHashSet columnIds;
     private final OptimiserContext context;
     private final Decorrelation decorrelation;
     private final JoinOrdering joinOrdering;
@@ -123,6 +125,7 @@ public final class SqlOptimiser implements Mutable {
             TableFunctionSources functionSources,
             PlanTables planTables
     ) {
+        this.columnIds = columnIds;
         context = new OptimiserContext(rewriter, callBinder, instantiator, functionSources, planNodes, planTables);
         final ObjectPool<ColumnExpression> columns = planNodes.columns;
         final ObjectPool<ConstantExpression> constants = planNodes.constants;
@@ -137,7 +140,7 @@ public final class SqlOptimiser implements Mutable {
                 tmpColumn, tmpSlaveKeys, tmpIndexes, tmpValues, tmpConjuncts);
         final ColumnPruning columnPruning = new ColumnPruning(context, aggregateInputOrder, tmpExpressions, columns, projects, tmpIndexes, tmpValues,
                 columnIds, tmpPlans, tmpSchema);
-        final ProjectionMerge projectionMerge = new ProjectionMerge(context);
+        final ProjectionMerge projectionMerge = new ProjectionMerge(context, columnIds);
         final AggregateRewrite aggregateRewrite = new AggregateRewrite(context, projectionMerge, tmpProjection, tmpColumn, tmpKeys);
         joinOrdering = new JoinOrdering(context, filters, new JoinOrderSolver(planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys, tmpKeys,
                 tmpOrder, tmpPending, readyInputs, joinChildren, joinChildrenPool, joinTypes, stagedDependencies), tmpConjuncts);
@@ -151,7 +154,7 @@ public final class SqlOptimiser implements Mutable {
         passes.add(columnPruning);
         passes.add(projectionMerge);
         passes.add(new NegativeLimitReversal(constants, sorts, tmpIndexes, tmpPlans));
-        passes.add(new OrderPlanning(functionFactoryCache, sorts));
+        passes.add(new OrderPlanning(functionFactoryCache, sorts, columnIds));
         operatorPlanning = new OperatorPlanning(configuration, context, tmpIndexes, tmpValues, tmpSteps);
         accessPathPlanning = new AccessPathPlanning(configuration, context, operatorPlanning, tmpConjuncts, tmpExpressions, tmpKeys, tmpValues,
                 intervalText, parsedIntervals);
@@ -209,6 +212,9 @@ public final class SqlOptimiser implements Mutable {
                 verifier.verify(plan, pass.getName());
             }
         }
+        if (verifier != null) {
+            LogicalPlans.deriveColumnReferenceCounts(plan, columnIds);
+        }
         return plan;
     }
 
@@ -237,7 +243,9 @@ public final class SqlOptimiser implements Mutable {
                 final LogicalPlan subqueryRoot = subqueries.getQuick(i).getRoot();
                 verifier.verifyAccessPaths(subqueryRoot);
                 verifier.verifySharedSources(subqueryRoot, hasSharedSources);
+                LogicalPlans.deriveColumnReferenceCounts(subqueryRoot, columnIds);
             }
+            LogicalPlans.deriveColumnReferenceCounts(root, columnIds);
         }
     }
 

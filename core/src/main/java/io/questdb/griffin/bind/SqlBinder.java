@@ -109,6 +109,7 @@ public final class SqlBinder implements Mutable {
     private final ReferencedColumns referencedColumns;
     private final SampleByBinder sampleByBinder;
     private final TemporalJoinBinder temporalJoinBinder;
+    private final IntHashSet tmpIds;
     private final IntList tmpOutputColumns;
     private final UpdateBinder updateBinder;
     private final WindowBinder windowBinder;
@@ -160,6 +161,7 @@ public final class SqlBinder implements Mutable {
         this.maxModelDepth = configuration.getSqlWindowMaxRecursion() + 1;
         this.hintScopes = new ObjectPool<>(LowerCaseCharSequenceObjHashMap::new, 4, configuration.getSqlModelPoolCapacity());
         this.tmpOutputColumns = tmpValues;
+        this.tmpIds = tmpIds;
         this.referencedColumns = new ReferencedColumns(tmpIdMap);
         this.ctx = new BindContext(subqueryCompiler, functionParser, scopes, sqlNodePool, characterStore, planNodePools, planTables,
                 preparedFunctions, functionSources, expressionRewriter, functionInstantiator, traversalAlgo, tmpArguments, tmpPositions,
@@ -615,7 +617,7 @@ public final class SqlBinder implements Mutable {
                 : isOrderBound && (hasComputedOrder(project, source)
                 || source.getOrderBy().size() > 0 && (hasComputedProjection(project) || sourcePlan instanceof JoinPlan
                 || sourcePlan instanceof SetOperationPlan && isSelectedOrder(project, source, sourcePlan.getOutput(), sourceAlias(source)))
-                || source.getOrderBy().size() > 0 && LogicalPlans.hasRepeatedColumn(project) && hasProjectedOrder(project, source)
+                || source.getOrderBy().size() > 0 && LogicalPlans.hasRepeatedColumn(project, tmpIds) && hasProjectedOrder(project, source)
         )
                   ? orderBinder.bindOutputOrder(model, sourcePlan, project, source, sourceAlias(source), hasWindows ? bindScope.windowOrderExpressions : null, executionContext)
                   : isOrderBound ? orderBinder.bindSourceOrder(sourcePlan, project, source, sourceAlias(source)) : orderBinder.designateTimestamp(project);
@@ -1285,7 +1287,8 @@ public final class SqlBinder implements Mutable {
     ) throws SqlException {
         final BindScope bindScope = ctx.scope();
         final CharSequence alias = sourceAlias(source);
-        final int foundIndex = expression.type == ExpressionNode.LITERAL ? FunctionBinder.findColumn(expression, bindingScope, alias) : -1;
+        final int foundIndex = aliasIndex >= 0 ? aliasIndex
+                : expression.type == ExpressionNode.LITERAL ? FunctionBinder.findColumn(expression, bindingScope, alias) : -1;
         if (expression.type != ExpressionNode.LITERAL || foundIndex == -1 && ctx.functionBinder.isOuterScopeColumn(expression)) {
             final CharSequence name = requestedName != null ? requestedName
                     : cursorSource < 0 ? column.getName() : bindScope.cursorNames.getQuick(cursorSource);
@@ -1306,7 +1309,7 @@ public final class SqlBinder implements Mutable {
             }
             return -1;
         }
-        if (referenceScope != null && isProjectionReference(expression, output, referenceScope)) {
+        if (referenceScope != null && aliasIndex < 0 && isProjectionReference(expression, output, referenceScope)) {
             final int index = getColumnIndexQuiet(referenceScope, expression.token);
             ctx.addProjection(project, ctx.planNodes.columns.next().of(referenceScope.getColumnId(index), referenceScope.getColumnType(index), expression.position),
                     null, column.getAlias() != null ? column.getAlias() : expression.token, true);

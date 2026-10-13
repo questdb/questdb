@@ -36,6 +36,55 @@ import org.junit.Test;
 
 public class WindowPlanningTest extends AbstractCairoTest {
     @Test
+    public void testArrayWindowArgumentsAfterColumnPruning() throws Exception {
+        assertQuery("SELECT s FROM (SELECT unused, sum(a[1] + dim_length(a, 1)) OVER () s FROM lp_window_array)")
+                .ddl("CREATE TABLE lp_window_array AS (SELECT x unused, ARRAY[x::DOUBLE, (x + 1)::DOUBLE] a FROM long_sequence(3))")
+                .expectSize()
+                .returns("""
+                        s
+                        12.0
+                        12.0
+                        12.0
+                        """);
+    }
+
+    @Test
+    public void testDeclaredWindowKeepsRenamedTimestamp() throws Exception {
+        assertQuery("DECLARE @w := sum(x) OVER () SELECT @w a, @w b, ts t FROM lp_declared_window ORDER BY ts")
+                .ddl("CREATE TABLE lp_declared_window AS (SELECT x, timestamp_sequence('2024-01-01', 1_000_000) ts FROM long_sequence(3)) TIMESTAMP(ts)")
+                .timestamp("t")
+                .expectSize()
+                .returns("""
+                        a\tb\tt
+                        6.0\t6.0\t2024-01-01T00:00:00.000000Z
+                        6.0\t6.0\t2024-01-01T00:00:01.000000Z
+                        6.0\t6.0\t2024-01-01T00:00:02.000000Z
+                        """);
+    }
+
+    @Test
+    public void testWindowNamesAndSourceAliasCollisions() throws Exception {
+        assertQuery("SELECT sum(x) OVER () x, x + 1 y FROM long_sequence(3)").expectSize().returns("""
+                x\ty
+                6.0\t2
+                6.0\t3
+                6.0\t4
+                """);
+        assertQuery("SELECT sum(x) OVER () \"a.b\", sum(x) OVER () \"in\", sum(x) OVER () \"in1\" FROM long_sequence(3)").expectSize().returns("""
+                a.b\tin\tin1
+                6.0\t6.0\t6.0
+                6.0\t6.0\t6.0
+                6.0\t6.0\t6.0
+                """);
+        assertQuery("DECLARE @w := sum(x) OVER () SELECT @w a, @w b, a + b c FROM long_sequence(3)").expectSize().returns("""
+                a\tb\tc
+                6.0\t6.0\t12.0
+                6.0\t6.0\t12.0
+                6.0\t6.0\t12.0
+                """);
+    }
+
+    @Test
     public void testStreamingAndCachedRankingUseBoundKeys() throws Exception {
         assertMemoryLeak(() -> {
             createRows();

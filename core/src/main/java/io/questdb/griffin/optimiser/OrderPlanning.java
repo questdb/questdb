@@ -57,6 +57,7 @@ import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.Chars;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
@@ -76,12 +77,14 @@ final class OrderPlanning implements OptimiserPass {
         }
         return TreeWalk.CONTINUE;
     };
+    private final IntHashSet columnIds;
     private final FunctionFactoryCache functionFactoryCache;
     private final ObjectPool<SortPlan> sorts;
     private boolean isJoinSlaveInput;
     private boolean isRandomAccessRequired;
 
-    OrderPlanning(FunctionFactoryCache functionFactoryCache, ObjectPool<SortPlan> sorts) {
+    OrderPlanning(FunctionFactoryCache functionFactoryCache, ObjectPool<SortPlan> sorts, IntHashSet columnIds) {
+        this.columnIds = columnIds;
         this.functionFactoryCache = functionFactoryCache;
         this.sorts = sorts;
     }
@@ -214,11 +217,23 @@ final class OrderPlanning implements OptimiserPass {
         plan.walkBottomUp(MARKOUT_HORIZONS);
     }
 
+    private static void requireScan(ScanPlan scan, SortDirection direction, SortPlan order, LimitPlan limit, boolean isRowOrderRequired) {
+        scan.setScanDirection(direction);
+        scan.getRequestedOrder().of(order);
+        scan.setLimit(limit == null ? null : limit.getLo(), limit == null ? null : limit.getHi());
+        scan.setRowOrderRequired(isRowOrderRequired);
+    }
+
+    private static SortDirection scanDirection(ScanPlan scan, int orderColumnId, SortDirection direction) {
+        return orderColumnId == scan.getOutput().getTimestampColumnId() && direction == SortDirection.DESCENDING
+                ? SortDirection.DESCENDING : SortDirection.ASCENDING;
+    }
+
     /**
      * Drops the sorts whose order a consumer re-sorts or discards, and the sorts of a single row that keep its
      * designated timestamp; a window's own ORDER BY and a markout sort stay.
      */
-    private static LogicalPlan removeReorderedSorts(LogicalPlan root) {
+    private LogicalPlan removeReorderedSorts(LogicalPlan root) {
         return removeReorderedSorts0(root, false, false);
     }
 
@@ -226,7 +241,7 @@ final class OrderPlanning implements OptimiserPass {
      * {@code isReordered}: a consumer above re-sorts or discards the order of {@code plan};
      * {@code isSetBranchReordered}: that consumer is a set operation, whose branch order never survives.
      */
-    private static LogicalPlan removeReorderedSorts0(LogicalPlan plan, boolean isReordered, boolean isSetBranchReordered) {
+    private LogicalPlan removeReorderedSorts0(LogicalPlan plan, boolean isReordered, boolean isSetBranchReordered) {
         switch (plan) {
             case SortPlan sort -> {
                 final LogicalPlan source = LogicalPlans.skipProjects(sort.getChild());
@@ -251,8 +266,10 @@ final class OrderPlanning implements OptimiserPass {
                 if (isSorted && project.getChild() instanceof ProjectPlan inner && isHiddenSortKeyPrefix(project, inner)) {
                     inner.getExpressions().setPos(project.getExpressions().size());
                     inner.getOutput().copyFrom(project.getOutput());
+                    inner.deriveColumnReferenceCounts(columnIds);
                     return inner;
                 }
+                project.deriveColumnReferenceCounts(columnIds);
             }
             case FilterPlan filter -> replaceReorderedInput(filter, isReordered, isSetBranchReordered);
             case WindowPlan window -> {
@@ -294,7 +311,7 @@ final class OrderPlanning implements OptimiserPass {
         return plan;
     }
 
-    private static void replaceReorderedInput(LogicalPlan plan, boolean isReordered, boolean isSetBranchReordered) {
+    private void replaceReorderedInput(LogicalPlan plan, boolean isReordered, boolean isSetBranchReordered) {
         final int previousTimestampId = plan.inputAt(0).getOutput().getTimestampColumnId();
         final LogicalPlan replacement = removeReorderedSorts0(plan.inputAt(0), isReordered, isSetBranchReordered);
         plan.replaceInput(0, replacement);
@@ -312,18 +329,6 @@ final class OrderPlanning implements OptimiserPass {
         } else if (plan instanceof WindowPlan) {
             plan.getOutput().setTimestampColumnId(timestampId);
         }
-    }
-
-    private static void requireScan(ScanPlan scan, SortDirection direction, SortPlan order, LimitPlan limit, boolean isRowOrderRequired) {
-        scan.setScanDirection(direction);
-        scan.getRequestedOrder().of(order);
-        scan.setLimit(limit == null ? null : limit.getLo(), limit == null ? null : limit.getHi());
-        scan.setRowOrderRequired(isRowOrderRequired);
-    }
-
-    private static SortDirection scanDirection(ScanPlan scan, int orderColumnId, SortDirection direction) {
-        return orderColumnId == scan.getOutput().getTimestampColumnId() && direction == SortDirection.DESCENDING
-                ? SortDirection.DESCENDING : SortDirection.ASCENDING;
     }
 
     private boolean hasGroupByWindowFunction(WindowPlan window) {

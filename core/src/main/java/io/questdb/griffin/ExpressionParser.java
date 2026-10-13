@@ -81,7 +81,7 @@ public class ExpressionParser {
     private final CharacterStore characterStore;
     private final ObjectPool<ExpressionNode> expressionNodePool;
     private final ObjStack<ExpressionNode> opStack = new ObjStack<>();
-    private final IntStack paramCountStack = new IntStack();
+    private final IntStack paramCountStack;
     private final ObjStack<Scope> scopeStack = new ObjStack<>();
     private final OperatorRegistry shadowRegistry;
     private final SqlParser sqlParser;
@@ -99,7 +99,8 @@ public class ExpressionParser {
             ObjectPool<ExpressionNode> expressionNodePool,
             SqlParser sqlParser,
             CharacterStore characterStore,
-            ObjectPool<WindowExpression> windowExpressionPool
+            ObjectPool<WindowExpression> windowExpressionPool,
+            IntStack paramCountStack
     ) {
         this.activeRegistry = activeRegistry;
         this.shadowRegistry = shadowRegistry;
@@ -107,6 +108,7 @@ public class ExpressionParser {
         this.sqlParser = sqlParser;
         this.characterStore = characterStore;
         this.windowExpressionPool = windowExpressionPool;
+        this.paramCountStack = paramCountStack;
     }
 
     public static int extractGeoHashSuffix(int position, CharSequence tok) throws SqlException {
