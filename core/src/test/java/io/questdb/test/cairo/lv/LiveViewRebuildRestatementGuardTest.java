@@ -37,6 +37,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -617,7 +618,21 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             shutdown();
             removeTimeline();
 
-            final LiveViewRebuildRestatementGuard guard = restart();
+            engine.buildViewGraphs();
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+                // The heal is a whole-view rebuild through the primary runtime, published as
+                // one replacement of the view's whole range.
+                Assert.assertEquals(1, job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_VIEW_REBUILD));
+                LiveViewCheckpointRepairRouteTest.assertLastRepairRoute(
+                        job,
+                        LiveViewCheckpointRepairRoute.ROUTE_VIEW_REBUILD,
+                        LiveViewCheckpointRepairRoute.RUNTIME_PRIMARY_REPLACED,
+                        LiveViewCheckpointRepairRoute.PUBLICATION_REPLACE_RANGE
+                );
+            }
 
             // The rebuild that heals a lost timeline over a base that still has every row goes
             // ahead exactly as it did before the guard - compared, and found to reproduce every

@@ -32,6 +32,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness.GroupKeySet;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
@@ -160,7 +161,8 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                         0,
                         Numbers.LONG_NULL,
                         Numbers.LONG_NULL,
-                        new LiveViewCheckpointOutputUniqueness()
+                        new LiveViewCheckpointOutputUniqueness(),
+                        new LiveViewCheckpointRepairRoute()
                 );
                 Assert.assertTrue("the fixture must have parked the session", session.isSuspended());
 
@@ -961,7 +963,8 @@ public class LiveViewCheckpointSegmentYieldTest extends AbstractLiveViewTest {
                                 0,
                                 Numbers.LONG_NULL,
                                 Numbers.LONG_NULL,
-                                parked
+                                parked,
+                                new LiveViewCheckpointRepairRoute()
                         );
                         Assert.fail("the injected copy failure must have failed the park");
                     } catch (InjectedAllocationFailure expected) {

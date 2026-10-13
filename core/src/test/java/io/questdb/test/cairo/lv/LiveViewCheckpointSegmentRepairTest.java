@@ -30,6 +30,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairSession;
 import io.questdb.cairo.lv.LiveViewCheckpointRestoreRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
@@ -252,11 +253,28 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
 
                 final long resumeBefore = viewInstance().getO3ResumeReplayRows();
                 final long boundaryBefore = viewInstance().getO3BoundaryReplayRows();
+                final long segmentRoutesBefore = job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD);
+                final long resumeRoutesBefore = job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR);
 
                 // A commit reaching back into the second day and forward at the head, which
                 // is the shape of the production workload's deep commits: rows at the
                 // frontier beside rows in one old segment.
                 commit(row(2, 3, "acct-1") + ", " + row(5, 3, "acct-2"), job);
+
+                // Two decisions on one change set: the closed day read whole as a segment of
+                // its own, then the residual at the head resumed from its anchor.
+                Assert.assertEquals(
+                        segmentRoutesBefore + 1,
+                        job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD)
+                );
+                Assert.assertEquals(
+                        resumeRoutesBefore + 1,
+                        job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR)
+                );
+                Assert.assertEquals(
+                        LiveViewCheckpointRepairRoute.routeName(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR),
+                        LiveViewCheckpointRepairRoute.routeName(job.repairRouteForTest().getRoute())
+                );
 
                 Assert.assertEquals(
                         "the second day must be repaired as a segment of its own",
@@ -440,12 +458,23 @@ public class LiveViewCheckpointSegmentRepairTest extends AbstractLiveViewTest {
                 // to the end of the base table and rewrite the third, fourth and fifth days
                 // on the way; the two segments hold one changed row each, and the third day
                 // between them holds none.
+                final long segmentRoutesBefore = job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD);
                 commit(row(2, 3, "acct-1") + ", " + row(4, 3, "acct-1"), job);
 
                 Assert.assertEquals(
                         "both corrected days must be repaired as segments of their own",
                         2,
                         job.segmentRepairCountForTest()
+                );
+                Assert.assertEquals(
+                        segmentRoutesBefore + 2,
+                        job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD)
+                );
+                LiveViewCheckpointRepairRouteTest.assertLastRepairRoute(
+                        job,
+                        LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD,
+                        LiveViewCheckpointRepairRoute.RUNTIME_ISOLATED,
+                        LiveViewCheckpointRepairRoute.PUBLICATION_REPLACE_RANGE
                 );
                 Assert.assertEquals(
                         "the two segment repairs must emit one row each and nothing between them",

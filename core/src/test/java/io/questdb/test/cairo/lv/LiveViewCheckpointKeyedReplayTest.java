@@ -1852,12 +1852,12 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
      * After the repair, a row tying the head sends a late acct-1 row at 01:00 through a resume
      * from the newest root below it, which reads acct-1's state back from that root.
      *
-     * @param maxChainedBoundaries  {@code cairo.live.view.checkpoint.repair.max.chained.boundaries}
-     * @param tiedRoot              which root acct-1 ties in the commit after the one that sealed
-     *                              it: 0 for the lowest, 2 for the highest, or -1 for none
-     * @param rootsBelowRange       how many acct-5 commits, each sealing a root on January 2,
-     *                              precede the burst. Those roots sit below the range, so the
-     *                              splice never re-versions them
+     * @param maxChainedBoundaries {@code cairo.live.view.checkpoint.repair.max.chained.boundaries}
+     * @param tiedRoot             which root acct-1 ties in the commit after the one that sealed
+     *                             it: 0 for the lowest, 2 for the highest, or -1 for none
+     * @param rootsBelowRange      how many acct-5 commits, each sealing a root on January 2,
+     *                             precede the burst. Those roots sit below the range, so the
+     *                             splice never re-versions them
      */
     private void assertKeyedRepairAroundTheChainedBoundaryBound(
             int maxChainedBoundaries,

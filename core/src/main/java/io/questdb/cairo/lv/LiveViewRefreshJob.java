@@ -347,6 +347,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // at the start of each repair; repairs never nest, so it cannot be observed
     // mid-walk.
     private final LiveViewCheckpointRepairPublication repairPublication = new LiveViewCheckpointRepairPublication();
+    // The route of the out-of-order repair currently executing, and the open segment's key
+    // domain it may follow. decideRepairRoute writes it and nothing else does; every method
+    // that reads it takes it as a parameter. One instance per worker, cleared at each repair
+    // entry point; repairs never nest.
+    private final LiveViewCheckpointRepairRoute repairRoute = new LiveViewCheckpointRepairRoute();
+    // Test and benchmark observability: completed repairs by the route they took, indexed by
+    // LiveViewCheckpointRepairRoute.ROUTE_*.
+    private final LongList repairRouteCounts = new LongList(LiveViewCheckpointRepairRoute.ROUTE_COUNT);
     // Whether the whole-view rebuild currently executing - or the last one, once it has
     // returned - would drop rows the view retains. One instance per worker, armed at the
     // start of each whole-view rebuild and left holding its evidence afterwards, which is
@@ -419,27 +427,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // Filled from the pinned generation and adjusted by the exact new-row timestamps the
     // change-set walk collected, so the replay never scans stored rows to recount them.
     private final LongList openSegmentArithmeticBoundaryPositions = new LongList();
-    // The same pricing for the OPEN anchor segment - the one the runtime is still standing
-    // in, whose corrections the resume repairs rather than a segment replay. It is one
-    // range rather than a list, so the verdict is a flag: true when the resume's own
-    // interval reads fewer rows by key than whole.
-    private boolean isOpenSegmentKeyedScanCheaper;
-    // The elapsed-time model's stricter override when row-only pricing omits a
-    // non-reusable root restore that dominates the whole-range executor.
-    private boolean isOpenSegmentRestoreAwareCheaper;
     // Benchmark-only override used to compare both executors on the same retained-state
     // shape. Static eligibility, arithmetic safety and sparse-publication guards still
     // apply; only the scan-row price verdict is overridden.
     private boolean isOpenSegmentKeyedReplayForcedForTest;
-    // Whether segmentChangeSet currently holds the open anchor segment's complete key
-    // domain for the repair the caller is planning. Set by repairChangeSetSegments and
-    // cleared by everything that reaches a resume without it, because the change set is
-    // worker-owned scratch: a stale true would hand one repair's keys to another's replay.
-    // The domain is collected only under the shape the resume's arithmetic proof needs -
-    // an exact insert-only WAL walk, an unfiltered view, a base that does not deduplicate -
-    // so a true here also says checkpoint row positions can move by the classified row
-    // delta instead of by scanning the live view's stored interval.
-    private boolean isOpenSegmentKeyDomainReady;
+    // Diagnostics for the pricing of the OPEN anchor segment - the one the runtime is still
+    // standing in, whose corrections the resume repairs rather than a segment replay. The
+    // verdict itself lives on the repair's route.
     private long openSegmentKeyedCheaperCount;
     private long openSegmentKeyedPostingRows;
     private long openSegmentKeyedPricedCount;
@@ -736,14 +730,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private final StringSink walNameSink = new StringSink();
     private final Path walPath = new Path();
     private final WalSegmentRecordCursor walRecordCursor;
-    // What the last truncateOrRetireTimelineOnO3 published, or LONG_NULL when it
-    // retired instead: the generation it committed and the boundary it left as that
-    // generation's head. Worker-owned and rewritten by every truncate; read once,
-    // immediately, by the resume replay deciding whether the runtime it holds may
-    // adopt that head as its incremental checkpoint baseline.
-    private long truncatedHeadCheckpointId = Numbers.LONG_NULL;
-    private long truncatedHeadGeneration = Numbers.LONG_NULL;
-    private long truncatedHeadMaxTs = Numbers.LONG_NULL;
+    // Output holder truncateOrRetireTimelineOnO3 fills for its caller. One instance per
+    // worker; every truncate rewrites it before returning.
+    private final TruncatedHead truncatedHead = new TruncatedHead();
     // True once the drain feeds a row to the incremental cursor; cleared on turn
     // entry and on every durable commit (fencedLiveViewCommit). If set at failure
     // time, the accumulators lead the last durable commit -> handleRefreshFailure
@@ -776,6 +765,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         this.memoryPool = new PageFrameMemoryPool(engine.getConfiguration(), 0L);
         this.walRecordCursor = new WalSegmentRecordCursor(addressCache, memoryPool);
         this.rowsBounds = new LiveViewCheckpointRowsBounds(engine.getConfiguration());
+        this.repairRouteCounts.setAll(LiveViewCheckpointRepairRoute.ROUTE_COUNT, 0);
     }
 
     /**
@@ -882,7 +872,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     @TestOnly
     public boolean truncateOrRetireTimelineOnO3ForTest(LiveViewInstance instance, long floorTs) {
-        return truncateOrRetireTimelineOnO3(instance, floorTs);
+        return truncateOrRetireTimelineOnO3(instance, floorTs, truncatedHead);
     }
 
     /**
@@ -938,6 +928,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     @TestOnly
     public LiveViewRebuildRestatementGuard rebuildRestatementGuardForTest() {
         return restatementGuard;
+    }
+
+    /**
+     * Test-only: completed repairs this worker ran on the given route, one of
+     * {@code LiveViewCheckpointRepairRoute.ROUTE_*}. A repair counts once, on the turn that
+     * publishes it, under the route it published on.
+     */
+    @TestOnly
+    public long repairRouteCountForTest(int route) {
+        return repairRouteCounts.getQuick(route);
+    }
+
+    /**
+     * Test-only: the route of the repair this worker decided last. Every decision
+     * overwrites it, so a test reads it once the repair it asserts on has finished.
+     */
+    @TestOnly
+    public LiveViewCheckpointRepairRoute repairRouteForTest() {
+        return repairRoute;
     }
 
     /**
@@ -5181,14 +5190,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * is what holds every restore off in the meantime, which is why a caller whose seal
      * fails must retire the prefix rather than clear the marker over it.
      *
+     * @param head receives the generation the truncate published and the boundary it
+     *             left as that generation's head, or {@link Numbers#LONG_NULL} in each
+     *             when the timeline was retired instead
      * @return true when the prefix was preserved and a marker is now live; false
      * when the timeline was retired
      */
-    private boolean truncateOrRetireTimelineOnO3(LiveViewInstance instance, long floorTs) {
+    private boolean truncateOrRetireTimelineOnO3(LiveViewInstance instance, long floorTs, TruncatedHead head) {
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
-        truncatedHeadGeneration = Numbers.LONG_NULL;
-        truncatedHeadMaxTs = Numbers.LONG_NULL;
-        truncatedHeadCheckpointId = Numbers.LONG_NULL;
+        head.clear();
         try {
             path.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
@@ -5244,9 +5254,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (preserved) {
                     instance.recordCheckpointTimelineWalPurgeFloor(result.getWalPurgeFloor());
                     instance.recordCheckpointTimelineStats(result.getStats());
-                    truncatedHeadGeneration = result.getGeneration();
-                    truncatedHeadMaxTs = result.getHeadMaxTimestamp();
-                    truncatedHeadCheckpointId = result.getHeadCheckpointId();
+                    head.of(result.getGeneration(), result.getHeadMaxTimestamp(), result.getHeadCheckpointId());
                 } else {
                     // No prefix survived after all - drop the marker before retiring.
                     LiveViewCheckpointRepairMarker.clear(engine.getConfiguration().getFilesFacade(), path);
@@ -5931,14 +5939,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * where the exact insert delta makes its publication independent of the stored interval,
      * so it is priced at the measured posting-index setup cap; closed segments retain the
      * conservative configured setup price.
-     *
-     * @return true when the keyed read is the cheaper of the two, which is the only case
-     * the repair may follow its keys in
+     * <p>
+     * The verdict goes on the route, {@link LiveViewCheckpointRepairRoute#isOpenSegmentKeyedScanCheaper()}
+     * being the only case the repair may follow its keys in.
      */
-    private boolean priceOpenSegmentKeyedScan(
+    private void priceOpenSegmentKeyedScan(
             LiveViewInstance instance,
             LiveViewCompiledPlan compiledPlan,
             TableReader reader,
+            LiveViewCheckpointRepairRoute route,
             long lowTsInclusive,
             long highTsInclusive,
             long selectedRootLogicalBytes,
@@ -5946,16 +5955,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean isColdHeadMiss,
             long outputLowTs
     ) {
-        isOpenSegmentKeyedScanCheaper = false;
-        isOpenSegmentRestoreAwareCheaper = false;
-        if (!isOpenSegmentKeyDomainReady) {
+        route.ofOpenSegmentPricing(false, false);
+        if (!route.isOpenSegmentKeyDomainReady()) {
             if (isColdHeadMiss) {
                 recordOpenSegmentKeyedUnpriced(true);
             }
             // No proof, no route: a resume that cannot derive its checkpoint positions
             // arithmetically reads every row above the anchor, and pricing a read it may
             // not take costs one index estimate per repair for nothing.
-            return false;
+            return;
         }
         final String viewName = instance.getDefinition().getViewName();
         final int scanColumnIndex = keyedScanColumnIndex(instance, compiledPlan);
@@ -5964,7 +5972,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // unprojected key. The domain was collected for nothing, which costs this one
             // walk and no repair.
             recordOpenSegmentKeyedUnpriced(isColdHeadMiss);
-            return false;
+            return;
         }
         final int readerColumnIndex = compiledPlan.getPageFrameFactory().getBaseColumnIndex(scanColumnIndex);
         final long configuredIndexOpenRows =
@@ -6002,7 +6010,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // sparse partition estimates at zero while a bitmap index would walk every
                 // posting its keys hold across that partition to reach the same verdict.
                 recordOpenSegmentKeyedUnpriced(isColdHeadMiss);
-                return false;
+                return;
             }
             final LiveViewCheckpointOpenSegmentCost elapsedCost = instance.getOpenSegmentRepairCost();
             // The key count loadScanKeys leaves in keyedScanKeys when it succeeds - one key
@@ -6040,7 +6048,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // reaches the restore's hysteresis floor, so both verdicts read "whole"
                     // before a key is resolved or a posting counted.
                     recordOpenSegmentKeyedUnpriced(isColdHeadMiss);
-                    return false;
+                    return;
                 }
                 // One posting row with no setup charge prices at the merge's charge alone.
                 final long mergeRowsPerPostingRow = LiveViewCheckpointKeyedScanCost.keyedScanCostRows(
@@ -6062,7 +6070,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     segmentChangeSet.hasResidualNullKey()
             )) {
                 recordOpenSegmentKeyedUnpriced(isColdHeadMiss);
-                return false;
+                return;
             }
             // The budget and the override below price the same key count.
             assert keyedScanKeys.size() == keyCount;
@@ -6075,7 +6083,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             );
             if (postingRows == LiveViewCheckpointKeyedScanCost.UNPRICEABLE) {
                 recordOpenSegmentKeyedUnpriced(isColdHeadMiss);
-                return false;
+                return;
             }
             final long keyedCostRows = LiveViewCheckpointKeyedScanCost.keyedScanCostRows(
                     postingRows,
@@ -6128,8 +6136,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     openSegmentRestoreAwareCheaperCount++;
                 }
             }
-            isOpenSegmentKeyedScanCheaper = isRowCheaper || isRestoreAwareCheaper;
-            isOpenSegmentRestoreAwareCheaper = isRestoreAwareCheaper;
+            route.ofOpenSegmentPricing(isRowCheaper || isRestoreAwareCheaper, isRestoreAwareCheaper);
             openSegmentRepairPhases.keyCount = keyedScanKeys.size();
             openSegmentRepairPhases.keyedCostRows = keyedCostRows;
             openSegmentRepairPhases.wholeRangeRows = wholeRangeRows;
@@ -6153,15 +6160,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", rowCheaper=").$(isRowCheaper)
                     .$(", keyedEstimateSaturated=").$(isKeyedEstimateSaturated)
                     .$(", restoreAwareCheaper=").$(isRestoreAwareCheaper)
-                    .$(", keyedCheaper=").$(isOpenSegmentKeyedScanCheaper).I$();
-            return isOpenSegmentKeyedScanCheaper;
+                    .$(", keyedCheaper=").$(route.isOpenSegmentKeyedScanCheaper()).I$();
         } catch (Throwable t) {
             // A pricing failure is not a repair failure: the resume reads every row above
             // its anchor either way, which is what it did before this existed.
             recordOpenSegmentKeyedUnpriced(isColdHeadMiss);
             LOG.info().$("live view open segment keyed scan could not be priced [view=").$(viewName)
                     .$(", error=").$(t).I$();
-            return false;
         }
     }
 
@@ -6257,6 +6262,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return -1;
         }
         return baseColumnWriterIndex(baseToken, compiledPlan.getBaseScanMetadata().getColumnName(scanColumnIndex));
+    }
+
+    /**
+     * Writes the merge a keyed repair falls back on once its sparse attempt fails, so the
+     * replacement carries every stored row of its range. The keyed closed-segment route
+     * already walked the stored interval and re-reads it; the open-segment routes never
+     * did and walk it once. Only a replay still bound as a sparse attempt has one to write.
+     */
+    private static void materializeSparseFallback(
+            LiveViewCheckpointRepairRoute route,
+            LiveViewCheckpointKeyedReplay replay
+    ) {
+        assert replay.isSparse();
+        if (route.isKeyedClosedSegment()) {
+            replay.materializeMerge();
+        } else {
+            replay.materializeUnaccountedMerge();
+        }
     }
 
     /**
@@ -6584,6 +6607,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             WindowRecordCursorFactory windowFactory,
             TableToken baseToken,
             TableReader reader,
+            LiveViewCheckpointRepairRoute route,
             long lateRowTs,
             long changeMaxTs,
             boolean insertOnly,
@@ -6591,7 +6615,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             boolean hasDiscardedLead,
             long advanceTo
     ) throws SqlException {
-        isOpenSegmentKeyDomainReady = false;
         if (!engine.getConfiguration().isLiveViewCheckpointRepairPerSegmentEnabled()) {
             return SEGMENT_REPAIR_NOT_TAKEN;
         }
@@ -6791,9 +6814,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // The open segment's domain, for the resume the caller is about to plan. Complete
         // means every commit above the walk's floor was visited row by row and every key
         // they carried fitted the budget; anything less leaves the resume reading whole.
-        isOpenSegmentKeyDomainReady = isOpenSegmentKeyed
+        route.setOpenSegmentKeyDomainReady(isOpenSegmentKeyed
                 && !isResidualEmpty
-                && segmentChangeSet.isResidualKeyDomainComplete();
+                && segmentChangeSet.isResidualKeyDomainComplete());
         if (segmentCount == 0) {
             // Nothing below the runtime's own segment after the sub-floor rows were
             // dropped. The residual bounds are still worth handing on: they carry the
@@ -6810,7 +6833,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // other is a root that cannot be found or read. The union range replaces the
             // runtime either way, whatever a failed restore left in it, and it reads the
             // whole range rather than a key domain.
-            isOpenSegmentKeyDomainReady = false;
+            route.setOpenSegmentKeyDomainReady(false);
             return SEGMENT_REPAIR_NOT_TAKEN;
         }
         // The loop position, so a segment whose replay parks on the turn budget can hand the
@@ -6843,7 +6866,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     isKeyed && segmentChangeSet.hasSegmentNullKey(i)
             );
         }
-        switch (driveChangeSetSegments(instance, windowFactory, reader, anchorPlan, segmentLoopScratch)) {
+        switch (driveChangeSetSegments(instance, windowFactory, reader, route, anchorPlan, segmentLoopScratch)) {
             case SEGMENT_STEP_SUSPENDED:
                 return SEGMENT_REPAIR_SUSPENDED;
             case SEGMENT_STEP_DECLINED:
@@ -6872,6 +6895,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * @param loop         the loop position as it stands <b>after</b> this segment was taken
      *                     off it, which is what a resuming turn continues from, and which
      *                     carries the segment's own key domain when its repair may follow one
+     * @param route        the route scratch, holding the open segment's key domain for the
+     *                     residual behind the loop
      * @param segmentStart the segment's own inclusive start, for the log
      * @param commitSeqTxn the base {@code seqTxn} this segment's replacement commits at
      */
@@ -6879,6 +6904,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
             TableReader reader,
+            LiveViewCheckpointRepairRoute route,
             LiveViewCheckpointAnchorPlan anchorPlan,
             LiveViewCheckpointSegmentLoop loop,
             long segmentStart,
@@ -6915,14 +6941,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", highTsExclusive=").$ts(repairPlan.getHighTsExclusive())
                 .$(", commitSeqTxn=").$(repairPlan.getCommitSeqTxn())
                 .$(", pinnedSeqTxn=").$(pinnedSeqTxn).I$();
-        final boolean isKeyed = armKeyedReplay(instance, reader, loop, segmentStart);
         try {
+            decideRepairRoute(
+                    instance,
+                    windowFactory,
+                    repairPlan,
+                    reader,
+                    route.ofScope(LiveViewCheckpointRepairRoute.SCOPE_SEGMENT),
+                    null,
+                    loop
+            );
             if (o3HeadMissReplay(
                     instance,
                     windowFactory,
                     repairPlan,
                     reader,
-                    false,
+                    route,
                     null,
                     // The session carries a keyed replay state with a partially consumed merge and key
                     // domain beside the loop, so every segment route observes the same budget.
@@ -6951,6 +6985,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Whether the view carries the (timestamp, key) identity a sparse publication upserts
+     * on, over the column the repair checks each pair's uniqueness on. Both conditions
+     * deny: a view with no identity has nothing to upsert onto, and one whose identity
+     * sits on another column would collapse pairs the check never saw. The view's table
+     * carries the identity as its dedup keys.
+     */
+    private static boolean hasUpsertIdentity(LiveViewInstance instance, int keyColumnIndex) {
+        return instance.isDedupKeyed() && instance.getDedupKeyColumnIndex() == keyColumnIndex;
+    }
+
+    /**
      * Whether an open-segment replay may follow the correction's own keys, on everything
      * decidable before the anchor root is opened.
      * <p>
@@ -6971,25 +7016,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      *     instead;</li>
      *     <li>the pricing, which says a keyed read of this repair's own interval is the
      *     smaller of the two;</li>
-     *     <li>the view's own dedup keys, because the publication is an upsert on them.
-     *     Without them the block would have to carry every stored row above the anchor,
-     *     which is the whole range and no saving at all;</li>
+     *     <li>the view's upsert identity, because the publication is an upsert on it - see
+     *     {@link #hasUpsertIdentity}. Without it the block would have to carry every stored
+     *     row above the anchor, which is the whole range and no saving at all;</li>
      *     <li>an anchor at or above the open segment's start, so the replay crosses no
      *     anchor boundary. A replay that crossed one would move keys between the
      *     compaction frontier's buckets on a runtime holding only some of them.</li>
      * </ul>
      */
-    private boolean isOpenSegmentKeyedReplayAvailable(LiveViewInstance instance, long replayLowTs) {
+    private boolean isOpenSegmentKeyedReplayAvailable(
+            LiveViewInstance instance,
+            LiveViewCheckpointRepairRoute route,
+            long replayLowTs
+    ) {
         if (!engine.getConfiguration().isLiveViewCheckpointRepairOpenSegmentKeyedReplayEnabled()
-                || !isOpenSegmentKeyDomainReady
-                || (!isOpenSegmentKeyedScanCheaper && !isOpenSegmentKeyedReplayForcedForTest)) {
+                || !route.isOpenSegmentKeyDomainReady()
+                || (!route.isOpenSegmentKeyedScanCheaper() && !isOpenSegmentKeyedReplayForcedForTest)) {
             return false;
         }
-        if (!instance.isDedupKeyed()
-                || instance.getDedupKeyColumnIndex() != LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(
-                instance.getCompiledPlan())) {
-            // The view carries no identity for a sparse publication to upsert on, or it
-            // carries one over another column than the pair a repair would check.
+        if (!hasUpsertIdentity(instance, LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(instance.getCompiledPlan()))) {
             return false;
         }
         final LiveViewWindow anchorWindow = instance.getAnchorWindow();
@@ -7135,7 +7180,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * The domain comes off {@link #segmentChangeSet} rather than off a loop, because a
      * resume is one repair rather than a queue of them: nothing carries it across a turn,
-     * and {@link #isOpenSegmentKeyDomainReady} is what says it belongs to this repair.
+     * and {@link LiveViewCheckpointRepairRoute#isOpenSegmentKeyDomainReady()} is what says it
+     * belongs to this repair.
      *
      * @return true when every key resolved against the pinned reader's own symbol map
      */
@@ -7444,6 +7490,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Closes the stored-row cursor a keyed route bound into {@code replay} and releases its
+     * merge state, folding a close that fails into {@code primary} rather than throwing it,
+     * so the releases a caller still owes run before anything propagates.
+     */
+    private static @Nullable Throwable closeStoredRowsBestEffort(
+            @Nullable Throwable primary,
+            LiveViewCheckpointKeyedReplay replay
+    ) {
+        try {
+            replay.closeStoredRows();
+            return primary;
+        } catch (Throwable th) {
+            return Misc.foldCleanupFailure(primary, th);
+        }
+    }
+
+    /**
      * Reports why a segment reads whole after its keyed replay was armed, and returns the
      * null the caller reads as "read it whole".
      * <p>
@@ -7618,6 +7681,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
             TableReader reader,
+            LiveViewCheckpointRepairRoute route,
             LiveViewCheckpointAnchorPlan anchorPlan,
             LiveViewCheckpointSegmentLoop loop
     ) throws SqlException {
@@ -7638,6 +7702,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     instance,
                     windowFactory,
                     reader,
+                    route,
                     anchorPlan,
                     loop,
                     segmentStart,
@@ -7670,6 +7735,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             WindowRecordCursorFactory windowFactory,
             TableToken baseToken,
             TableReader reader,
+            LiveViewCheckpointRepairRoute route,
             long residualLateRowTs,
             long residualChangeMaxTs,
             boolean insertOnly,
@@ -7701,8 +7767,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", resumeScanRows=").$(repairPlan.getResumeScanRows())
                 .$(", rebuildScanRows=").$(repairPlan.getRebuildScanRows()).I$();
         try {
-            if (repairPlan.isResumeFromAnchor()) {
-                replayFromAnchor(instance, windowFactory, repairPlan, reader);
+            decideRepairRoute(
+                    instance,
+                    windowFactory,
+                    repairPlan,
+                    reader,
+                    route.ofScope(LiveViewCheckpointRepairRoute.SCOPE_CHANGE_SET),
+                    null,
+                    null
+            );
+            if (route.isResumeFromAnchor()) {
+                replayFromAnchor(instance, windowFactory, repairPlan, reader, route);
                 return false;
             }
             // Either no logical boundary sits below the change (the whole timeline is above it,
@@ -7710,10 +7785,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // apply raced ahead over an unclassifiable range), in which case this is the
             // O(view age) rebuild from the view boundary; or one does and the plan priced its
             // resume above the localized rebuild, in which case this reads only [L, H).
-            return o3HeadMissReplay(instance, windowFactory, repairPlan, reader, false, null, true);
+            return o3HeadMissReplay(instance, windowFactory, repairPlan, reader, route, null, true);
         } finally {
-            // Both executors arm the worker's keyed replay for an open-segment keyed route, and
-            // only their publication tails clear it. An early return or a throw skips the tail
+            // decideRepairRoute arms the worker's keyed replay for an open-segment keyed route,
+            // and only the executors' publication tails clear it. An early return or a throw skips the tail
             // and would leave the replay armed, and bound to a sparse publication, for the next
             // repair this worker runs, of any view. A repair that parked has already swapped a
             // fresh replay in, so this clears nothing the parked session owns. Mirrors
@@ -7742,12 +7817,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
             TableReader reader,
+            LiveViewCheckpointRepairRoute route,
             LiveViewCheckpointSegmentLoop loop
     ) throws SqlException {
         // The change set that carried the parked loop's key domain has been refilled by
         // every repair this worker classified since, so the residual behind the loop reads
-        // whole. The loop carries its own segments' keys; nothing carries the open one's.
-        isOpenSegmentKeyDomainReady = false;
+        // whole. The loop carries its own segments' keys; nothing carries the open one's,
+        // and a resumed route never takes the domain from its session.
+        assert !route.isOpenSegmentKeyDomainReady();
         if (settleRepairedSegment(instance, loop, loop.getInFlightSegmentStart()) != SEGMENT_STEP_DONE) {
             return false;
         }
@@ -7770,7 +7847,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // it from - long since refilled by whatever else this worker classified - is not
         // read here at all. The keys resolve against the same pinned snapshot they were
         // priced at, which is the reader this turn was handed.
-        final int step = driveChangeSetSegments(instance, windowFactory, reader, anchorPlan, loop);
+        final int step = driveChangeSetSegments(instance, windowFactory, reader, route, anchorPlan, loop);
         if (step == SEGMENT_STEP_SUSPENDED) {
             return true;
         }
@@ -7785,6 +7862,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 windowFactory,
                 instance.getDefinition().getBaseTableToken(),
                 reader,
+                route,
                 loop.getResidualMinTs(),
                 loop.getResidualMaxTs(),
                 loop.isResidualInsertOnly(),
@@ -7870,8 +7948,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
         // Nothing has decomposed this change yet, so no resume below it may follow a key
-        // domain. repairChangeSetSegments is what earns the flag back.
-        isOpenSegmentKeyDomainReady = false;
+        // domain. repairChangeSetSegments is what earns the domain back.
+        repairRoute.clear();
         // An intra-commit out-of-order FIRST commit can reach the replay path
         // before any in-order cycle computed snapshot capability (which normally
         // happens in maybeWriteHeadCheckpoint). Compute it here so the
@@ -8010,7 +8088,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // decomposition declines comes back NOT_TAKEN and takes the union range, which
             // is what every repair took before this existed.
             final int segmentRepair = repairChangeSetSegments(
-                    instance, windowFactory, baseToken, reader, lateRowTs, changeMaxTs, insertOnly, fromSeqTxn, hasDiscardedLead, advanceTo);
+                    instance, windowFactory, baseToken, reader, repairRoute, lateRowTs, changeMaxTs, insertOnly, fromSeqTxn, hasDiscardedLead, advanceTo);
             if (segmentRepair == SEGMENT_REPAIR_SUSPENDED) {
                 // One segment's replay parked on the turn budget, and the rest of the loop -
                 // the segments it has not reached, and the residual it still owes once they
@@ -8042,6 +8120,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         windowFactory,
                         baseToken,
                         reader,
+                        repairRoute,
                         residualLateRowTs,
                         residualChangeMaxTs,
                         insertOnly,
@@ -8189,13 +8268,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         instance.recordCheckpointRepairResume();
         boolean suspended = false;
         try {
-            suspended = o3HeadMissReplay(instance, windowFactory, session.getPlan(), reader, false, session, true);
+            repairRoute.clear();
+            decideRepairRoute(
+                    instance,
+                    windowFactory,
+                    session.getPlan(),
+                    reader,
+                    repairRoute.ofScope(LiveViewCheckpointRepairRoute.SCOPE_RESUMED),
+                    session,
+                    null
+            );
+            suspended = o3HeadMissReplay(instance, windowFactory, session.getPlan(), reader, repairRoute, session, true);
             if (!suspended && segmentLoopScratch.isOpen()) {
                 // The parked segment published. Book it and take the rest of its loop
                 // against the same pinned snapshot, which is what stops the loop being paid
                 // for twice: the change is still unconsumed, so a turn that stopped here
                 // would have the next drain re-classify it and repair every segment again.
-                suspended = continueSegmentLoop(instance, windowFactory, reader, segmentLoopScratch);
+                suspended = continueSegmentLoop(instance, windowFactory, reader, repairRoute, segmentLoopScratch);
             }
         } finally {
             if (!suspended) {
@@ -8533,6 +8622,401 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Decides the route one repair takes, and is the only code that does: which rows the
+     * replay reads, which runtime it folds them into, and whether its timeline can be
+     * spliced. The executors take the decision as given and re-derive none of it. See
+     * {@link LiveViewCheckpointRepairRoute}.
+     * <p>
+     * The route's scope says who is asking, which decides the routes on offer:
+     * <ul>
+     *     <li>{@code SCOPE_CHANGE_SET}, a change set's union range or the residual behind a
+     *     segment loop: a resume from the plan's anchor when the plan chose one, read
+     *     along the open segment's key domain when that is priced cheaper and safe; a
+     *     head-miss rebuild otherwise, read along that domain from the open segment's
+     *     start when no anchor sits below the change;</li>
+     *     <li>{@code SCOPE_SEGMENT}, one closed segment of a segment loop: a head-miss
+     *     rebuild of the segment, read along the keys its correction touched when the loop
+     *     priced that cheaper;</li>
+     *     <li>{@code SCOPE_VIEW}, a whole-view rebuild;</li>
+     *     <li>{@code SCOPE_RESUMED}, the next turn of a parked repair, which continues on
+     *     the route its first turn took.</li>
+     * </ul>
+     * A keyed route needs two resources before its executor starts: this worker's
+     * {@link LiveViewCheckpointKeyedReplay} armed with the key domain, and the view's
+     * stored-row cursor bound into it. Both are taken here, before the executor detaches
+     * the pinned reader into the execution context, because the cursor reads the view's own
+     * table rather than the base. A route that cannot take them is not chosen: the decision
+     * falls back to the whole read and releases what it took. From a successful return the
+     * keyed replay owns the cursor and the executor releases it, while the caller's
+     * {@code finally} disarms the replay. A throw releases both here.
+     *
+     * @param resumed     the parked session for {@code SCOPE_RESUMED}, null otherwise
+     * @param segmentLoop the loop whose in-flight segment {@code SCOPE_SEGMENT} repairs,
+     *                    null otherwise
+     */
+    private void decideRepairRoute(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            LiveViewCheckpointRepairPlan plan,
+            TableReader reader,
+            LiveViewCheckpointRepairRoute route,
+            @Nullable LiveViewCheckpointRepairSession resumed,
+            @Nullable LiveViewCheckpointSegmentLoop segmentLoop
+    ) {
+        assert (route.getScope() == LiveViewCheckpointRepairRoute.SCOPE_RESUMED) == (resumed != null);
+        assert (route.getScope() == LiveViewCheckpointRepairRoute.SCOPE_SEGMENT) == (segmentLoop != null);
+        if (resumed != null) {
+            decideResumedRoute(instance, route, resumed);
+            return;
+        }
+        try {
+            if (route.getScope() == LiveViewCheckpointRepairRoute.SCOPE_CHANGE_SET && plan.isResumeFromAnchor()) {
+                decideResumeFromAnchorRoute(instance, windowFactory, plan, reader, route);
+            } else {
+                decideHeadMissRoute(instance, windowFactory, plan, reader, route, segmentLoop);
+            }
+        } catch (Throwable th) {
+            // A keyed route that faulted half way may hold an armed replay and a bound
+            // stored-row cursor, and neither may outlive the decision that took it.
+            closeStoredRowsBestEffort(th, keyedReplay);
+            try {
+                keyedReplay.clear();
+            } catch (Throwable cleanup) {
+                Misc.foldCleanupFailure(th, cleanup);
+            }
+            throw th;
+        }
+    }
+
+    /**
+     * The head-miss family: a rebuild that reads from the plan's scan floor {@code L}, or
+     * from the view's boundary, through {@link #o3HeadMissReplay}.
+     * <p>
+     * Two keyed routes compete here, and at most one is on offer for a given plan. The cold
+     * open-segment route needs an end-of-frame localized plan with no anchor below the
+     * change; the keyed closed-segment route needs a converging one, with a finite
+     * {@code H}. A segment repair arms its key domain first, and a cold route that is on
+     * offer re-arms the replay with the open segment's domain or disarms it, which leaves
+     * the closed-segment route to the converging plans it needs anyway.
+     */
+    private void decideHeadMissRoute(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            LiveViewCheckpointRepairPlan plan,
+            TableReader reader,
+            LiveViewCheckpointRepairRoute route,
+            @Nullable LiveViewCheckpointSegmentLoop segmentLoop
+    ) {
+        final boolean fullRebuild = route.getScope() == LiveViewCheckpointRepairRoute.SCOPE_VIEW;
+        final long viewLowerBoundTimestamp = instance.getDefinition().getViewLowerBoundTimestamp();
+        // A finite dependency raised the floors above the view boundary, so this
+        // rebuild is bounded below. fullRebuild is redundant here - its callers all
+        // pass a non-DATA trigger, which the plan refuses to localize - and is kept
+        // only so a future full-rebuild caller with a timestamp cannot silently
+        // inherit a localized floor.
+        final boolean localized = plan.isLocalized() && !fullRebuild;
+        // L: the lowest base row the replay reads. Everything below it is provably
+        // outside every frame the replay evaluates.
+        final long scanLowTs = localized ? plan.getReplayLowTs() : viewLowerBoundTimestamp;
+        // R: the lowest output row the replay emits, and the REPLACE_RANGE floor.
+        // Rows scanned below it warm the window state up and produce nothing.
+        final long emitLowTs = localized ? plan.getOutputLowTs() : viewLowerBoundTimestamp;
+        // H: finite only for a localized rebuild, and only when the plan proved the
+        // repair converges below the runtime frontier. It governs three things that
+        // have to move together - where the scan stops, where the replacement stops,
+        // and whether the runtime keeps the state it entered with - so they all read
+        // this one flag rather than the plan directly. Routed through the same
+        // fullRebuild veto as the floors: a rebuild that must recompute the whole view
+        // may not stop early, whatever the plan derived.
+        final boolean finiteHighBound = localized && plan.isRuntimeStatePreserved();
+        // H restated as the exclusive interval bound every timeline consumer takes: the
+        // plan's finite H for a converging repair, and the top of the timestamp range for
+        // one whose influence reaches the end of the base table. Neither of the plan's own
+        // accessors serves here - getHighTsExclusive() is LONG_NULL under an EOF tag,
+        // which is the tagged form recovery reads back, and getScanHighTsInclusive() is
+        // inclusive, so reusing it would move every boundary below by one microsecond.
+        final long timelineHighTsExclusive = finiteHighBound ? plan.getHighTsExclusive() : Long.MAX_VALUE;
+        route.ofHeadMissScope(localized, finiteHighBound, scanLowTs, emitLowTs, timelineHighTsExclusive);
+        // The closed segment's key domain, which the loop carries only for a segment whose
+        // keyed scan it priced cheaper.
+        final boolean isSegmentKeyDomainArmed = segmentLoop != null
+                && armKeyedReplay(instance, reader, segmentLoop, segmentLoop.getInFlightSegmentStart());
+        // A keyed no-anchor replay starts cold at the active anchor segment's origin.
+        // Price it before touching either runtime, resolve Q in the pinned reader, and keep
+        // the stored-row merge unopened unless duplicate output makes the sparse publication
+        // fall back. The same Q narrows the EOF timeline splice, so a successful bootstrap
+        // leaves an ordinary checkpoint resume behind it rather than another cold repair.
+        boolean isColdKeyedRoute = false;
+        if (isColdOpenSegmentKeyedHeadMissAvailable(windowFactory, plan)) {
+            priceOpenSegmentKeyedScan(
+                    instance,
+                    instance.getCompiledPlan(),
+                    reader,
+                    route,
+                    scanLowTs,
+                    plan.getScanHighTsInclusive(),
+                    0,
+                    false,
+                    true,
+                    emitLowTs
+            );
+            if (isOpenSegmentKeyedReplayAvailable(instance, route, scanLowTs)
+                    && armOpenSegmentKeyedReplay(instance, reader)
+                    && instance.getCompiledPlan().getPageFrameFactory()
+                    .isIndexedForwardTimestampRangeSupported(keyedReplay.getBaseKeyColumnIndex())
+                    && isOpenSegmentStoredSuffixIntact(instance, reader, emitLowTs)) {
+                isColdKeyedRoute = openStoredRowCursor(instance, emitLowTs, Long.MAX_VALUE) != null;
+            }
+            if (!isColdKeyedRoute) {
+                keyedReplay.clear();
+            }
+        }
+        // A whole-view rebuild is never localized, so the cold route is never on offer to it.
+        assert !fullRebuild || !isColdKeyedRoute;
+        // The runtime the replay folds its rows into. A converging repair gets its own,
+        // holding only the keys of [L, H): the primary runtime is then neither wiped nor
+        // copied aside, and the state above H it was already correct in stays where it is.
+        // The cold route gets its own too, because it starts from the segment's origin
+        // rather than from the state the forward drain left. Null puts the replay back
+        // through the primary runtime, which is what an unlocalized rebuild wants - its
+        // replay state IS the new runtime - and what a converging repair falls back to
+        // when the second compile is unavailable.
+        final boolean isIsolated = isolatedRepairRuntime(instance, finiteHighBound || isColdKeyedRoute) != null;
+        if (isColdKeyedRoute && !isIsolated) {
+            keyedReplay.closeStoredRows();
+            keyedReplay.clear();
+            isColdKeyedRoute = false;
+        }
+        // Whether this repair may re-version the logical boundaries it crosses instead
+        // of truncating the timeline at R. What it needs is that the publication be able
+        // to describe every key the boundary held. Two ways to get there. A time-expiring
+        // dependency reconstructs every key outright, which is
+        // LiveViewCheckpointRepairPlan.isReplayStateKeyComplete(). A ROWS dependency
+        // does not - a root frozen from such a replay would describe a narrower key set
+        // than the boundary it replaces, which a later resume or restore then reads as
+        // the whole truth - so it instead names the keys it does describe, and the
+        // publication leaves every other key's entry exactly as the old root wrote it.
+        // With neither, the repair truncates at R: the runtime survives a narrowed
+        // state because the overlay puts it back, and a published root has nothing to
+        // put it back from.
+        //
+        // The two arms are not the same repair, and the key domain belongs to one of
+        // them only. A converging repair restores the runtime it entered with, so a
+        // narrowed replay costs it nothing and Q is what carries the splice. A repair
+        // reaching the end of the base table promotes what its replay ends on instead,
+        // and a ROWS frame is exactly the dependency that promotion is unsafe for - it
+        // never expires by time, so a key with no row at or above L keeps state no
+        // replay from L reconstructs. The plan already refuses to localize that shape
+        // behind an EOF bound; the predicate says so too rather than leaning on it, so
+        // the domain disjunct cannot follow a future ROWS repair over the boundary.
+        // What the EOF arm does admit is every key-complete localization - the anchored
+        // repair this exists for, and the bounded RANGE one that has localized behind
+        // EOF since the localization existed - on one argument for both: a key the
+        // replay never saw has an expired frame, or a reset segment, at every timestamp
+        // the re-versioned roots describe, so a root that omits it and a root that
+        // carries its empty accumulator say the same thing.
+        final boolean isTimelineSpliceable = isColdKeyedRoute || (finiteHighBound
+                ? plan.isReplayStateKeyComplete() || plan.hasOutputKeyDomain()
+                : localized && plan.isReplayStateKeyComplete());
+        // Whether a closed segment's replay follows the keys its correction touched instead
+        // of reading the segment whole, and the view's own rows it publishes for every other
+        // key. It needs the bounded interval a converging repair has. The cold route was
+        // fully gated above and opened its merge before the isolated runtime was acquired.
+        boolean isClosedSegmentKeyed = isSegmentKeyDomainArmed
+                && !isColdKeyedRoute
+                && keyedReplay.isArmed()
+                && !fullRebuild
+                && localized
+                && finiteHighBound;
+        if (isClosedSegmentKeyed) {
+            // The keys outside Q keep the old root's entry, yet the position the freeze
+            // stamps counts every row at or below the boundary. Both describe the same
+            // row set only while the old root covers its own timestamp group. A row of
+            // another key that tied the boundary in a later commit is in the count and
+            // not in that key's entry, and the new position would hide the shortfall
+            // from the guard that refuses to resume from such a root, so a later resume
+            // would skip the tie row for good. The whole segment's read re-freezes every
+            // boundary from the base, tie rows included. A covering root keeps the keyed
+            // route, and so does every root of a repair crossing more of them than the
+            // splice re-versions: that splice declines, and the truncate drops them.
+            timelineAnchors.of(instance);
+            if (isTimelineSpliceable && !timelineAnchors.isEveryTimestampGroupCovered(
+                    plan.getRetireLowTs(),
+                    timelineHighTsExclusive,
+                    engine.getConfiguration().getLiveViewCheckpointRepairMaxChainedBoundaries()
+            )) {
+                declineStoredRows(instance, "a root the repair re-versions no longer covers its timestamp group");
+                isClosedSegmentKeyed = false;
+            } else {
+                isClosedSegmentKeyed = openStoredRowCursor(instance, emitLowTs, plan.getHighTsExclusive()) != null;
+            }
+        }
+        final int kind;
+        if (fullRebuild) {
+            kind = LiveViewCheckpointRepairRoute.ROUTE_VIEW_REBUILD;
+        } else if (isColdKeyedRoute) {
+            kind = LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT;
+        } else if (isClosedSegmentKeyed) {
+            kind = LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT;
+        } else if (segmentLoop != null) {
+            kind = LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD;
+        } else {
+            kind = LiveViewCheckpointRepairRoute.ROUTE_RANGE_REBUILD;
+        }
+        final int runtime;
+        if (isIsolated) {
+            runtime = LiveViewCheckpointRepairRoute.RUNTIME_ISOLATED;
+        } else if (finiteHighBound) {
+            runtime = LiveViewCheckpointRepairRoute.RUNTIME_PRIMARY_COPY_ASIDE;
+        } else {
+            runtime = LiveViewCheckpointRepairRoute.RUNTIME_PRIMARY_REPLACED;
+        }
+        route.ofRoute(
+                kind,
+                runtime,
+                isTimelineSpliceable,
+                isColdKeyedRoute ? segmentChangeSet.getResidualRowCount() : 0
+        );
+    }
+
+    /**
+     * The resume family: a replay from the plan's sealed anchor through
+     * {@link #replayFromAnchor}, keyed along the open segment's domain or whole.
+     */
+    private void decideResumeFromAnchorRoute(
+            LiveViewInstance instance,
+            WindowRecordCursorFactory windowFactory,
+            LiveViewCheckpointRepairPlan plan,
+            TableReader reader,
+            LiveViewCheckpointRepairRoute route
+    ) {
+        // Replay starts strictly above anchorMaxTs because the anchor's state already
+        // covers rows up to and including anchorMaxTs.
+        final long replayLowTs = plan.getReplayLowTs();
+        final boolean isRuntimeAnchorReusable = canReuseRuntimeAnchor(instance, windowFactory, plan);
+        openSegmentRepairPhases.reset(
+                System.nanoTime(),
+                plan.getAnchorLogicalStateBytes(),
+                plan.getAnchorCheckpointId(),
+                instance.getHeadCheckpointRootId(),
+                isRuntimeAnchorReusable
+        );
+        // What a resume following the correction's own keys would read, against what
+        // reading every row above the anchor costs. Priced here because the interval is
+        // only known here: the floor is the anchor the plan selected and the ceiling is
+        // the end of the base table.
+        final long pricingStart = System.nanoTime();
+        priceOpenSegmentKeyedScan(
+                instance,
+                instance.getCompiledPlan(),
+                reader,
+                route,
+                replayLowTs,
+                plan.getScanHighTsInclusive(),
+                plan.getAnchorLogicalStateBytes(),
+                isRuntimeAnchorReusable,
+                false,
+                replayLowTs
+        );
+        openSegmentRepairPhases.pricingNanos = System.nanoTime() - pricingStart;
+        // Whether this resume follows the correction's own keys. Everything the route needs
+        // is known by now - the domain, the pricing, the view's own identity - except the
+        // anchor root's shape, which the executor's restore answers by declining.
+        boolean isKeyed = isOpenSegmentKeyedReplayAvailable(instance, route, replayLowTs)
+                && armOpenSegmentKeyedReplay(instance, reader);
+        if (isKeyed && !isOpenSegmentStoredSuffixIntact(instance, reader, plan.getOutputLowTs())) {
+            // The view keeps rows above the anchor that the base no longer produces, or the
+            // count that would rule that out could not be taken, and the upsert would leave
+            // such rows in place, so the resume reads every key instead. The check runs after
+            // the arm, so a resume the arm already declined pays for no count.
+            keyedReplay.clear();
+            isKeyed = false;
+        }
+        // A keyed replay may not fold its rows into the runtime the forward drain stands
+        // in: it follows some keys, so the primary would be left holding state rewound to
+        // this anchor for every key it did not follow. The isolated runtime holds this
+        // correction's keys and nothing else, and the transplant at the end hands them back.
+        if (isKeyed && isolatedRepairRuntime(instance, true) == null) {
+            // No second runtime to replay into, and the copy-aside overlay is not an
+            // alternative here: it is proportional to the view's whole key domain, which is
+            // the cost this route exists to avoid.
+            keyedReplay.clear();
+            isKeyed = false;
+        }
+        // A keyed resume knows its exact output-row delta from the WAL decomposition -
+        // insert-only, unfiltered and over a base that does not deduplicate is what its
+        // own gate admits, and nothing else follows keys here. These two pre-repair table
+        // coordinates are what replace the stored-row interval scan.
+        long durableRowsBeforeRepair = Numbers.LONG_NULL;
+        long durableMaxTsBeforeRepair = Numbers.LONG_NULL;
+        long insertedRowDelta = 0;
+        if (isKeyed) {
+            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
+                durableRowsBeforeRepair = lvReader.size();
+                durableMaxTsBeforeRepair = durableRowsBeforeRepair > 0
+                        ? lvReader.getMaxTimestamp()
+                        : Numbers.LONG_NULL;
+                insertedRowDelta = segmentChangeSet.getResidualRowCount();
+            } catch (Throwable t) {
+                // Pricing admitted this replay on the arithmetic path's measured setup
+                // cost. Continuing by key without its durable coordinate would silently
+                // restore the O(interval) stored-row scan that price omitted, so decline
+                // the keyed route for this turn and take the ordinary whole-range replay.
+                keyedReplay.clear();
+                isKeyed = false;
+                LOG.info().$("live view open segment row delta could not be measured, keyed resume declined [view=")
+                        .$(instance.getDefinition().getViewName()).$(", error=").$(t).I$();
+            }
+        }
+        // Keep the view's stored-row cursor available for the duplicate-output fallback.
+        // The resume itself never advances it; if uniqueness denies the upsert,
+        // materializeUnaccountedMerge walks it once and writes the full replacement.
+        if (isKeyed && openStoredRowCursor(instance, plan.getOutputLowTs(), Long.MAX_VALUE) == null) {
+            keyedReplay.clear();
+            isKeyed = false;
+        }
+        if (isKeyed) {
+            route.ofKeyedResumeBaseline(durableRowsBeforeRepair, durableMaxTsBeforeRepair, insertedRowDelta);
+        }
+        final int runtime;
+        if (isKeyed) {
+            runtime = LiveViewCheckpointRepairRoute.RUNTIME_ISOLATED;
+        } else if (isRuntimeAnchorReusable) {
+            runtime = LiveViewCheckpointRepairRoute.RUNTIME_PRIMARY_REUSED;
+        } else {
+            runtime = LiveViewCheckpointRepairRoute.RUNTIME_PRIMARY_REPLACED;
+        }
+        route.ofResumeRoute(
+                isKeyed
+                        ? LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR
+                        : LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR,
+                runtime,
+                isRuntimeAnchorReusable
+        );
+    }
+
+    /**
+     * The next turn of a parked repair continues on the route its first turn took. It may
+     * not decide again: the parked replay is already standing part-way through one route
+     * and one runtime's accumulators, and the inputs to the decision move between turns.
+     * <p>
+     * The runtime is still read back rather than copied, from the factory the session
+     * recorded. {@link #resumeSuspendedRepair} is the only caller that resumes, and it has
+     * just refused every candidate whose recorded factory is neither of the view's two
+     * live runtimes - so a cache that does not match it means the parked replay is
+     * standing in the primary, which is what its first turn decided.
+     */
+    private static void decideResumedRoute(
+            LiveViewInstance instance,
+            LiveViewCheckpointRepairRoute route,
+            LiveViewCheckpointRepairSession resumed
+    ) {
+        route.copyDecisionFrom(resumed.getRoute());
+        final LiveViewRepairRuntime cachedRuntime = instance.getRepairRuntime();
+        route.ofResumedRuntime(cachedRuntime != null && cachedRuntime.getWindowFactory() == resumed.getWindowFactory());
+    }
+
+    /**
      * Resume replay from a logical checkpoint boundary: rolls window state back to
      * that root's snapshot moment (clear per-function maps, then restore the root),
      * scans the base table from {@code anchorMaxTs + 1} forward (never below
@@ -8590,12 +9074,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * window state at that same moment. A truncated timeline is then retired and
      * re-opened by the next in-order seal, while a published splice needs no seal
      * above it.
+     * <p>
+     * Whether the resume follows the open segment's keys, and the runtime it folds into,
+     * come off {@code route}: {@link #decideRepairRoute} settled both before this runs and
+     * bound the stored-row cursor a keyed resume falls back on.
      */
     private void replayFromAnchor(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
             LiveViewCheckpointRepairPlan plan,
-            TableReader reader
+            TableReader reader,
+            LiveViewCheckpointRepairRoute route
     ) throws SqlException {
         final String viewName = instance.getDefinition().getViewName();
         final long anchorCheckpointId = plan.getAnchorCheckpointId();
@@ -8647,96 +9136,18 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // prove the table moved the way the arithmetic says before any root is
         // published against it.
         long anchorRowPosition = Numbers.LONG_NULL;
-        // A keyed resume knows its exact output-row delta from the WAL decomposition -
-        // insert-only, unfiltered and over a base that does not deduplicate is what its
-        // own gate admits, and nothing else follows keys here. These two pre-repair table
-        // coordinates are what replace the stored-row interval scan.
-        long durableRowsBeforeRepair = Numbers.LONG_NULL;
-        long durableMaxTsBeforeRepair = Numbers.LONG_NULL;
-        long insertedRowDelta = 0;
+        // Whether this resume follows the correction's own keys, as decideRepairRoute
+        // settled it. A keyed resume folds into the isolated runtime and knows its exact
+        // output-row delta from the WAL decomposition, with the two pre-repair table
+        // coordinates the decision measured standing in for the stored-row interval scan.
+        final boolean isKeyed = route.isKeyedScan();
+        final boolean isRuntimeAnchorReusable = route.isRuntimeAnchorReusable();
+        final long durableRowsBeforeRepair = route.getKeyedResumeDurableRows();
+        final long durableMaxTsBeforeRepair = route.getKeyedResumeDurableMaxTs();
+        final long insertedRowDelta = route.getInsertedRowDelta();
+        final LiveViewRepairRuntime repairRuntime = route.isIsolated() ? instance.getRepairRuntime() : null;
+        assert isKeyed == (repairRuntime != null) : "a keyed resume folds into the isolated runtime and nothing else does";
         final LiveViewCompiledPlan primaryPlan = instance.getCompiledPlan();
-        final boolean isRuntimeAnchorReusable = canReuseRuntimeAnchor(instance, windowFactory, plan);
-        openSegmentRepairPhases.reset(
-                System.nanoTime(),
-                plan.getAnchorLogicalStateBytes(),
-                plan.getAnchorCheckpointId(),
-                instance.getHeadCheckpointRootId(),
-                isRuntimeAnchorReusable
-        );
-        // What a resume following the correction's own keys would read, against what
-        // reading every row above the anchor costs. Priced here because the interval is
-        // only known here: the floor is the anchor the plan selected and the ceiling is
-        // the end of the base table.
-        final long pricingStart = System.nanoTime();
-        priceOpenSegmentKeyedScan(
-                instance,
-                primaryPlan,
-                reader,
-                replayLowTs,
-                plan.getScanHighTsInclusive(),
-                plan.getAnchorLogicalStateBytes(),
-                isRuntimeAnchorReusable,
-                false,
-                replayLowTs
-        );
-        openSegmentRepairPhases.pricingNanos = System.nanoTime() - pricingStart;
-        // Whether this resume follows the correction's own keys. Everything the route needs
-        // is known by now - the domain, the pricing, the view's own identity - except the
-        // anchor root's shape, which the restore below answers by declining.
-        boolean isKeyed = isOpenSegmentKeyedReplayAvailable(instance, replayLowTs)
-                && armOpenSegmentKeyedReplay(instance, reader);
-        if (isKeyed && !isOpenSegmentStoredSuffixIntact(instance, reader, plan.getOutputLowTs())) {
-            // The view keeps rows above the anchor that the base no longer produces, or the
-            // count that would rule that out could not be taken, and the upsert would leave
-            // such rows in place, so the resume reads every key instead. The check runs after
-            // the arm, so a resume the arm already declined pays for no count.
-            keyedReplay.clear();
-            isKeyed = false;
-        }
-        // A keyed replay may not fold its rows into the runtime the forward drain stands
-        // in: it follows some keys, so the primary would be left holding state rewound to
-        // this anchor for every key it did not follow. The isolated runtime holds this
-        // correction's keys and nothing else, and the transplant at the end hands them back.
-        final LiveViewRepairRuntime repairRuntime = isKeyed ? isolatedRepairRuntime(instance, true) : null;
-        if (isKeyed && repairRuntime == null) {
-            // No second runtime to replay into, and the copy-aside overlay is not an
-            // alternative here: it is proportional to the view's whole key domain, which is
-            // the cost this route exists to avoid.
-            keyedReplay.clear();
-            isKeyed = false;
-        }
-        if (isKeyed) {
-            try (TableReader lvReader = engine.getReader(instance.getLiveViewToken())) {
-                durableRowsBeforeRepair = lvReader.size();
-                durableMaxTsBeforeRepair = durableRowsBeforeRepair > 0
-                        ? lvReader.getMaxTimestamp()
-                        : Numbers.LONG_NULL;
-                insertedRowDelta = segmentChangeSet.getResidualRowCount();
-            } catch (Throwable t) {
-                // Pricing admitted this replay on the arithmetic path's measured setup
-                // cost. Continuing by key without its durable coordinate would silently
-                // restore the O(interval) stored-row scan that price omitted, so decline
-                // the keyed route for this turn and take the ordinary whole-range replay.
-                keyedReplay.clear();
-                isKeyed = false;
-                LOG.info().$("live view open segment row delta could not be measured, keyed resume declined [view=")
-                        .$(viewName).$(", error=").$(t).I$();
-            }
-        }
-        // Keep the view's stored-row cursor available for the duplicate-output fallback.
-        // The resume itself never advances it; if uniqueness denies the upsert,
-        // materializeUnaccountedMerge walks it once and writes the full replacement.
-        // Resolve its factory BEFORE the reader below is detached into the execution
-        // context, which is the ordering o3HeadMissReplay takes for the same scan and the
-        // same reason - it reads the view's table, not the base this repair pinned.
-        RecordCursor storedRowCursor = null;
-        if (isKeyed) {
-            storedRowCursor = openStoredRowCursor(instance, plan.getOutputLowTs(), Long.MAX_VALUE);
-            if (storedRowCursor == null) {
-                keyedReplay.clear();
-                isKeyed = false;
-            }
-        }
         final LiveViewCompiledPlan compiledPlan = isKeyed ? repairRuntime.getPlan() : primaryPlan;
         final WindowRecordCursorFactory replayWindowFactory = isKeyed ? repairRuntime.getWindowFactory() : windowFactory;
         final LiveViewWindow replayAnchorWindow = isKeyed ? repairRuntime.getAnchorWindow() : instance.getAnchorWindow();
@@ -8934,7 +9345,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // stands at the anchor, and a keyed replay does not fold into the
                         // primary at all.
                         final boolean isRuntimeAnchorReused =
-                                !isKeyed && isRuntimeAnchorReusable;
+                                route.getRuntime() == LiveViewCheckpointRepairRoute.RUNTIME_PRIMARY_REUSED;
                         if (isKeyed) {
                             // The replay folds into the isolated runtime, so what needs
                             // rewinding is its accumulators. The primary's stay exactly
@@ -9136,20 +9547,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // to a sparse commit is collapsed silently.
                     reportOutputUniqueness(viewName, isKeyed, isKeyed);
                     // The verdict, acted on. A keyed resume publishes only the rows it
-                    // recomputed, upserted onto the view's dedup keys, and leaves every
-                    // other stored row where it stands - but only when the pair it upserts
-                    // on names each of those rows once. A repeat, or a replay that
-                    // recomputed nothing at all, abandons the attempt: the merge writes
-                    // every stored row of the interval and the resume publishes its whole
-                    // range with the replacement, which collapses nothing.
-                    final boolean isSparse = isKeyed
-                            && appendedRows > 0
-                            && outputUniqueness.isUnique();
+                    // recomputed, upserted onto the view's upsert identity, and leaves every
+                    // other stored row where it stands - see decidePublication for when that
+                    // is safe. Otherwise the merge writes every stored row of the interval and
+                    // the resume publishes its whole range with the replacement, which
+                    // collapses nothing.
+                    route.decidePublication(keyedReplay, appendedRows, outputUniqueness);
+                    final boolean isSparse = route.isSparsePublication();
                     // The sparse attempt deliberately did not walk the stored interval: its
                     // checkpoint positions came from the exact insert delta rather than from
                     // counting rows. So the fallback walks it once, writing as it goes,
                     // rather than counting it and then re-reading it to write it.
-                    if (!isSparse && keyedReplay.materializeUnaccountedMerge()) {
+                    if (!isSparse && keyedReplay.isSparse()) {
+                        materializeSparseFallback(route, keyedReplay);
                         isSparseFallback = true;
                         sparsePublicationFallbackCount++;
                         LOG.info().$("live view open segment resume abandoned its sparse publication [view=")
@@ -9204,10 +9614,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // freeze incrementally: the stamp the restore took moves to that
                         // generation, keeping the keys the replay touched.
                         final long timelineStart = System.nanoTime();
-                        prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, plan.getOutputLowTs());
+                        prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, plan.getOutputLowTs(), truncatedHead);
                         openSegmentRepairPhases.timelinePublicationNanos += System.nanoTime() - timelineStart;
                         if (!isKeyed) {
-                            adoptTruncatedHeadCheckpointBaseline(instance, windowFactory, anchorMaxTs, anchorCheckpointId);
+                            adoptTruncatedHeadCheckpointBaseline(instance, windowFactory, truncatedHead, anchorMaxTs, anchorCheckpointId);
                         }
                     }
                     final long commitStart = System.nanoTime();
@@ -9252,7 +9662,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // cursor; its counter is already read back into capturedBoundaries. The merge
                 // keeps the counts it ended on, which the tail below still reads.
                 boundaryFreezingCursor.clear();
-                keyedReplay.releaseMergeState();
                 // A close that fails does not skip the releases below; it propagates once they
                 // have run. Closing the cursor hands a pooled reader of the view's own table
                 // back, and a reader close can fail for any remap or I/O reason: a reader whose
@@ -9260,7 +9669,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // passive. Its throw used to leave the pinned reader detached and the capture
                 // unfreed, since the publication tail that frees the capture after a completed
                 // replay never runs behind a throw.
-                Throwable failure = Misc.freeBestEffort(null, storedRowCursor);
+                Throwable failure = closeStoredRowsBestEffort(null, keyedReplay);
                 if (readerAttached) {
                     executionContext.clearReader();
                     engine.attachReader(reader);
@@ -9514,6 +9923,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // And only now the disposition planning settled on, so live_views() never
             // names an executor whose rows the counters above do not carry yet.
             instance.publishCheckpointRepairOutcome();
+            repairRouteCounts.increment(route.getRoute());
             final long scanCommitApplyNanos = openSegmentRepairPhases.scanWindowWalAppendNanos
                     + openSegmentRepairPhases.commitNanos
                     + openSegmentRepairPhases.applyNanos;
@@ -9555,7 +9965,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", timelineKept=").$(timelineSplice != null)
                     .$(", rowsEmitted=").$(appendedRows)
                     .$(", keyed=").$(isKeyed)
-                    .$(", restoreAware=").$(isOpenSegmentRestoreAwareCheaper)
+                    .$(", restoreAware=").$(route.isOpenSegmentRestoreAwareCheaper())
                     .$(", selectedRootLogicalBytes=").$(openSegmentRepairPhases.selectedRootLogicalBytes)
                     .$(", selectedRootId=").$(openSegmentRepairPhases.selectedRootId)
                     .$(", headRootId=").$(openSegmentRepairPhases.headRootId)
@@ -9645,17 +10055,26 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             WindowRecordCursorFactory windowFactory,
             long lateRowTs,
             TableToken baseToken,
-            long advanceTo,
-            boolean fullRebuild
+            long advanceTo
     ) throws SqlException {
-        final long pinSeqTxn = fullRebuild ? Math.max(advanceTo, rebuildSnapshotFloor(instance)) : advanceTo;
+        final long pinSeqTxn = Math.max(advanceTo, rebuildSnapshotFloor(instance));
         final TableReader reader = waitForApply(baseToken, pinSeqTxn);
         try {
             planO3Repair(instance, windowFactory, lateRowTs, Numbers.LONG_NULL, false, baseToken, pinSeqTxn, reader, false);
+            repairRoute.clear();
+            decideRepairRoute(
+                    instance,
+                    windowFactory,
+                    repairPlan,
+                    reader,
+                    repairRoute.ofScope(LiveViewCheckpointRepairRoute.SCOPE_VIEW),
+                    null,
+                    null
+            );
             // These callers own the pinned reader for one call and close it below, so
             // the rebuild may not park a repair on it. It never would: a non-DATA
             // trigger denies localization, and only a localized rebuild yields.
-            o3HeadMissReplay(instance, windowFactory, repairPlan, reader, fullRebuild, null, false);
+            o3HeadMissReplay(instance, windowFactory, repairPlan, reader, repairRoute, null, false);
         } finally {
             reader.close();
         }
@@ -9715,15 +10134,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the watermark advances past the whole snapshot, so a floor above a back-dated
      * apply-ahead row would drop it permanently.
      * <p>
-     * {@code fullRebuild} distinguishes a wholesale rebuild (restart restore,
-     * corrupt-checkpoint restore, base-metadata-drift / mid-drain recovery, WAL-loss
-     * re-derive) from an incremental O3 trigger. A full rebuild recomputes the entire
+     * The view-rebuild route ({@code fullRebuild} below) distinguishes a wholesale rebuild
+     * (restart restore, corrupt-checkpoint restore, base-metadata-drift / mid-drain
+     * recovery, WAL-loss re-derive) from an incremental O3 trigger. A full rebuild recomputes the entire
      * view from the applied base, so its REPLACE_RANGE must cover the whole view range
      * ({@code [viewLowerBoundTimestamp, +inf)}) to purge ANY stale on-disk row - notably
      * a below-frontier dedup replacement that dropped a row out of the {@code WHERE}
      * filter, whose stale pre-replacement row sits below the recompute's lowest surviving
      * ts and would otherwise survive the {@code replayMinTs}-floored replace. The
-     * incremental path ({@code fullRebuild == false}) keeps the trigger-clamped floor so a
+     * incremental routes keep the trigger-clamped floor so a
      * non-DATA removal (DROP PARTITION / TTL / TRUNCATE) still freezes its prefix. A full
      * rebuild never localizes - every one of its callers passes a non-DATA trigger, which
      * the plan refuses to derive floors from.
@@ -9753,7 +10172,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * repair resumes it, through {@code resumed}; the pinned snapshot {@code E} it
      * holds cannot be reopened once lost, which is why a crash discards the
      * candidate and replans instead.
+     * <p>
+     * Pure execution of a route as well as a plan: {@link #decideRepairRoute} has already
+     * chosen the keyed scan, the cold open-segment route, the runtime and whether the
+     * timeline can be spliced, and this method reads those off {@code route} without
+     * re-deriving them. The one route change it makes is
+     * {@link LiveViewCheckpointRepairRoute#declineKeyedScan}, for the stored-row check only
+     * its live-view writer can answer.
      *
+     * @param route    the route {@link #decideRepairRoute} decided for {@code plan}
      * @param resumed  the session a prior turn parked, or null to start a repair
      * @param mayYield whether this caller can hand the pinned reader over to a
      *                 parked repair. False for the callers that own the reader for
@@ -9765,7 +10192,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             WindowRecordCursorFactory windowFactory,
             LiveViewCheckpointRepairPlan plan,
             TableReader reader,
-            boolean fullRebuild,
+            LiveViewCheckpointRepairRoute route,
             @Nullable LiveViewCheckpointRepairSession resumed,
             boolean mayYield
     ) throws SqlException {
@@ -9780,147 +10207,46 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // what makes the trigger usable once a finite START FROM boundary is in play.
         final long triggerLowTs = plan.getCorrectionTs();
         final long effectiveSeqTxn = plan.getCommitSeqTxn();
-        // A finite dependency raised the floors above the view boundary, so this
-        // rebuild is bounded below. fullRebuild is redundant here - its callers all
-        // pass a non-DATA trigger, which the plan refuses to localize - and is kept
-        // only so a future full-rebuild caller with a timestamp cannot silently
-        // inherit a localized floor.
-        final boolean localized = plan.isLocalized() && !fullRebuild;
-        // L: the lowest base row the replay reads. Everything below it is provably
-        // outside every frame the replay evaluates.
-        final long scanLowTs = localized ? plan.getReplayLowTs() : viewLowerBoundTimestamp;
-        // R: the lowest output row the replay emits, and the REPLACE_RANGE floor.
-        // Rows scanned below it warm the window state up and produce nothing.
-        final long emitLowTs = localized ? plan.getOutputLowTs() : viewLowerBoundTimestamp;
-        // H: finite only for a localized rebuild, and only when the plan proved the
-        // repair converges below the runtime frontier. It governs three things that
-        // have to move together - where the scan stops, where the replacement stops,
-        // and whether the runtime keeps the state it entered with - so they all read
-        // this one flag rather than the plan directly. Routed through the same
-        // fullRebuild veto as the floors: a rebuild that must recompute the whole view
-        // may not stop early, whatever the plan derived.
-        final boolean finiteHighBound = localized && plan.isRuntimeStatePreserved();
-        // H restated as the exclusive interval bound every timeline consumer takes: the
-        // plan's finite H for a converging repair, and the top of the timestamp range for
-        // one whose influence reaches the end of the base table. Neither of the plan's own
-        // accessors serves here - getHighTsExclusive() is LONG_NULL under an EOF tag,
-        // which is the tagged form recovery reads back, and getScanHighTsInclusive() is
-        // inclusive, so reusing it would move every boundary below by one microsecond.
-        final long timelineHighTsExclusive = finiteHighBound ? plan.getHighTsExclusive() : Long.MAX_VALUE;
-        // A keyed no-anchor replay starts cold at the active anchor segment's origin.
-        // Price it before touching either runtime, resolve Q in the pinned reader, and keep
-        // the stored-row merge unopened unless duplicate output makes the sparse publication
-        // fall back. The same Q narrows the EOF timeline splice, so a successful bootstrap
-        // leaves an ordinary checkpoint resume behind it rather than another cold repair.
-        boolean isColdKeyedRoute = false;
-        RecordCursor storedRowCursor = null;
-        LiveViewCheckpointKeyedReplay repairKeyedReplay = this.keyedReplay;
+        // The route's scope, as decideHeadMissRoute derived it: whether the rebuild
+        // recomputes the whole view, whether it is bounded below (L, R) and above (H), and
+        // whether its timeline can be spliced. Read once here and never derived again.
+        final boolean fullRebuild = route.isViewRebuild();
+        final boolean localized = route.isLocalized();
+        final long scanLowTs = route.getScanLowTs();
+        final long emitLowTs = route.getEmitLowTs();
+        final boolean finiteHighBound = route.isFiniteHighBound();
+        final long timelineHighTsExclusive = route.getTimelineHighTsExclusive();
+        final boolean isTimelineSpliceable = route.isTimelineSpliceable();
+        // A parked keyed replay travels in its session; every other repair uses this
+        // worker's, which decideRepairRoute armed and bound the stored-row cursor into.
+        final LiveViewCheckpointKeyedReplay repairKeyedReplay = resumed != null && resumed.getKeyedReplay() != null
+                ? resumed.getKeyedReplay()
+                : this.keyedReplay;
         // The prologue below acquires these and the replay's own try/finally releases them.
-        // They sit at method scope, next to storedRowCursor above, so the prologue's own
-        // cleanup can reach them too. isReplayEntered is what tells the two cleanups apart: it
-        // turns true on the replay's first statement, so the prologue's runs only when the
-        // replay never started.
+        // They sit at method scope so the prologue's own cleanup can reach them too.
+        // isReplayEntered is what tells the two cleanups apart: it turns true on the
+        // replay's first statement, so the prologue's runs only when the replay never
+        // started.
         LiveViewCheckpointRepairSession session = null;
         LiveViewCheckpointTimelineStoreWriter.RepairCapture timelineCapture = null;
         boolean isReplayEntered = false;
         // The executor's prologue runs from here to the replay's own try/finally below,
-        // and it opens the view's stored-row merge cursor on the way: the cold keyed route
-        // straight away, the closed-segment keyed route once its key domain is priced. It
-        // also throws - the row-position rebase reads the pinned generation's checkpoint
-        // metadata and raises over a missing or torn page, and raises outright when the
-        // rebased position overflows - so what it acquires needs a cleanup of its own from
-        // the open onward, the way replayFromAnchor's keyed resume gets one after its own.
+        // and it starts out holding the view's stored-row merge cursor a keyed route bound
+        // into the keyed replay. It also throws - the row-position rebase reads the pinned
+        // generation's checkpoint metadata and raises over a missing or torn page, and
+        // raises outright when the rebased position overflows - so what it holds needs a
+        // cleanup of its own, the way replayFromAnchor's keyed resume gets one.
         try {
-            if (resumed == null && isColdOpenSegmentKeyedHeadMissAvailable(windowFactory, plan)) {
-                priceOpenSegmentKeyedScan(
-                        instance,
-                        instance.getCompiledPlan(),
-                        reader,
-                        scanLowTs,
-                        plan.getScanHighTsInclusive(),
-                        0,
-                        false,
-                        true,
-                        emitLowTs
-                );
-                if (isOpenSegmentKeyedReplayAvailable(instance, scanLowTs)
-                        && armOpenSegmentKeyedReplay(instance, reader)
-                        && instance.getCompiledPlan().getPageFrameFactory()
-                        .isIndexedForwardTimestampRangeSupported(repairKeyedReplay.getBaseKeyColumnIndex())
-                        && isOpenSegmentStoredSuffixIntact(instance, reader, emitLowTs)) {
-                    storedRowCursor = openStoredRowCursor(instance, emitLowTs, Long.MAX_VALUE);
-                    isColdKeyedRoute = storedRowCursor != null;
-                }
-                if (!isColdKeyedRoute) {
-                    Misc.free(storedRowCursor);
-                    storedRowCursor = null;
-                    repairKeyedReplay.clear();
-                }
-            }
-            if (resumed != null && resumed.getKeyedReplay() != null) {
-                repairKeyedReplay = resumed.getKeyedReplay();
-                isColdKeyedRoute = resumed.isColdKeyedReplayRoute();
-            }
-            // The runtime this turn folds its rows into. A first turn decides it. A resumed
-            // turn does not get to: the parked replay is already standing part-way through
-            // one runtime's accumulators and no other holds what it folded, so it continues
-            // in the factory the session recorded rather than in whatever the cache and the
-            // switch would name now. resumeSuspendedRepair is the only caller that passes a
-            // session, and it has just refused every candidate whose recorded factory is
-            // neither of the view's two live runtimes - so a cache that does not match it
-            // means the parked replay is standing in the primary.
-            final LiveViewRepairRuntime repairRuntime;
-            if (resumed != null) {
-                final LiveViewRepairRuntime cachedRuntime = instance.getRepairRuntime();
-                repairRuntime = cachedRuntime != null && cachedRuntime.getWindowFactory() == resumed.getWindowFactory()
-                        ? cachedRuntime
-                        : null;
-            } else {
-                repairRuntime = isolatedRepairRuntime(instance, finiteHighBound || isColdKeyedRoute);
-            }
-            if (isColdKeyedRoute && repairRuntime == null) {
-                Misc.free(storedRowCursor);
-                storedRowCursor = null;
-                repairKeyedReplay.clear();
-                isColdKeyedRoute = false;
-            }
+            // The runtime this turn folds its rows into, as the route decided it. A resumed
+            // turn continues in the runtime its session recorded - see decideResumedRoute.
+            final LiveViewRepairRuntime repairRuntime = route.isIsolated() ? instance.getRepairRuntime() : null;
+            assert route.isIsolated() == (repairRuntime != null);
             final boolean isIsolated = repairRuntime != null;
             if (isIsolated) {
                 isolatedReplayTurnCount++;
             }
             final WindowRecordCursorFactory replayWindowFactory = isIsolated ? repairRuntime.getWindowFactory() : windowFactory;
             final LiveViewWindow replayAnchorWindow = isIsolated ? repairRuntime.getAnchorWindow() : anchorWindow;
-            // Whether this repair may re-version the logical boundaries it crosses instead
-            // of truncating the timeline at R. What it needs is that the publication be able
-            // to describe every key the boundary held. Two ways to get there. A time-expiring
-            // dependency reconstructs every key outright, which is
-            // LiveViewCheckpointRepairPlan.isReplayStateKeyComplete(). A ROWS dependency
-            // does not - a root frozen from such a replay would describe a narrower key set
-            // than the boundary it replaces, which a later resume or restore then reads as
-            // the whole truth - so it instead names the keys it does describe, and the
-            // publication leaves every other key's entry exactly as the old root wrote it.
-            // With neither, the repair truncates at R: the runtime survives a narrowed
-            // state because the overlay puts it back, and a published root has nothing to
-            // put it back from.
-            //
-            // The two arms are not the same repair, and the key domain belongs to one of
-            // them only. A converging repair restores the runtime it entered with, so a
-            // narrowed replay costs it nothing and Q is what carries the splice. A repair
-            // reaching the end of the base table promotes what its replay ends on instead,
-            // and a ROWS frame is exactly the dependency that promotion is unsafe for - it
-            // never expires by time, so a key with no row at or above L keeps state no
-            // replay from L reconstructs. The plan already refuses to localize that shape
-            // behind an EOF bound; the predicate says so too rather than leaning on it, so
-            // the domain disjunct cannot follow a future ROWS repair over the boundary.
-            // What the EOF arm does admit is every key-complete localization - the anchored
-            // repair this exists for, and the bounded RANGE one that has localized behind
-            // EOF since the localization existed - on one argument for both: a key the
-            // replay never saw has an expired frame, or a reset segment, at every timestamp
-            // the re-versioned roots describe, so a root that omits it and a root that
-            // carries its empty accumulator say the same thing.
-            final boolean isTimelineSpliceable = isColdKeyedRoute || (finiteHighBound
-                    ? plan.isReplayStateKeyComplete() || plan.hasOutputKeyDomain()
-                    : localized && plan.isReplayStateKeyComplete());
             // The publication ordering this rebuild walks. It owns the two decisions the
             // rest of the method used to spread across local flags: what happens to the
             // runtime once the repair publishes, and whether the replacement is
@@ -9928,12 +10254,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // describe it.
             repairPublication.clear();
             repairPublication.plan();
-            // The runtime this replay folds its rows into. A converging repair gets its own,
-            // holding only the keys of [L, H): the primary runtime is then neither wiped nor
-            // copied aside, and the state above H it was already correct in stays where it is.
-            // Null puts the replay back through the primary runtime, which is what an
-            // unlocalized rebuild wants - its replay state IS the new runtime - and what a
-            // converging repair falls back to when the second compile is unavailable.
             // Everything one localized repair carries across the turns it may take. A
             // repair that never yields uses it as plain scratch and disposes of it on
             // the way out; only a repair that parks leaves it on the instance. The
@@ -9949,7 +10269,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             final boolean resuming = resumed != null;
             session = resuming
                     ? resumed
-                    : (finiteHighBound || isTimelineSpliceable || isColdKeyedRoute) ? openRepairSession(plan, replayWindowFactory) : null;
+                    : (finiteHighBound || isTimelineSpliceable || route.isColdOpenSegment()) ? openRepairSession(plan, replayWindowFactory) : null;
             boolean readerAttached = false;
             // Whether the primary runtime comes out of this repair holding the state it went
             // in with. True both for a replay that ran beside it and for one that copied it
@@ -9974,51 +10294,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // scan-cost counter is sourced from it when no filter is present to count
             // base rows itself.
             long scannedRows = 0;
-            // Whether this replay follows the keys its correction touched instead of reading
-            // the segment whole, and the view's own rows it publishes for every other key. The
-            // caller armed the key domain either for one closed segment or for a no-anchor
-            // replay from the active segment's origin. What is decided here is whether this
-            // repair is a shape that route can serve: the former needs the bounded interval a
-            // converging repair has, while the cold route was fully gated and opened its merge
-            // before the isolated runtime was acquired above.
-            //
-            // Ahead of the capture rather than beside the cursor, because the capture carries
-            // Q: a keyed replay's frozen roots describe its own keys and leave every other
-            // key's entry exactly as the old root wrote it, and a capture opened without Q
-            // would instead take the replay's narrower state for the whole truth.
-            boolean isKeyedRoute = resumed != null && resumed.getKeyedReplay() != null
-                    ? resumed.isKeyedReplayRoute()
-                    : isColdKeyedRoute || (repairKeyedReplay.isArmed()
-                                           && !resuming
-                                           && !fullRebuild
-                                           && localized
-                                           && finiteHighBound);
-            if (isKeyedRoute && !isColdKeyedRoute && !resuming) {
-                // The keys outside Q keep the old root's entry, yet the position the freeze
-                // stamps counts every row at or below the boundary. Both describe the same
-                // row set only while the old root covers its own timestamp group. A row of
-                // another key that tied the boundary in a later commit is in the count and
-                // not in that key's entry, and the new position would hide the shortfall
-                // from the guard that refuses to resume from such a root, so a later resume
-                // would skip the tie row for good. The whole segment's read re-freezes every
-                // boundary from the base, tie rows included. A covering root keeps the keyed
-                // route, and so does every root of a repair crossing more of them than the
-                // splice below re-versions: that splice declines, and the truncate drops them.
-                timelineAnchors.of(instance);
-                if (isTimelineSpliceable && !timelineAnchors.isEveryTimestampGroupCovered(
-                        plan.getRetireLowTs(),
-                        timelineHighTsExclusive,
-                        engine.getConfiguration().getLiveViewCheckpointRepairMaxChainedBoundaries()
-                )) {
-                    declineStoredRows(instance, "a root the repair re-versions no longer covers its timestamp group");
-                    isKeyedRoute = false;
-                } else {
-                    storedRowCursor = openStoredRowCursor(instance, emitLowTs, plan.getHighTsExclusive());
-                    if (storedRowCursor == null) {
-                        isKeyedRoute = false;
-                    }
-                }
-            }
             // The timeline range splice this repair publishes instead of retiring
             // the whole timeline. Taken by a repair whose replay can describe every key
             // the boundaries it crosses held - see isTimelineSpliceable. Null leaves the
@@ -10050,7 +10325,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // first, and the one that chains.
                         false,
                         true,
-                        isKeyedRoute ? repairKeyedReplay.getOutputKeys() : null,
+                        route.isKeyedScan() ? repairKeyedReplay.getOutputKeys() : null,
                         replayWindowFactory.getWindowFunctions(),
                         replayAnchorWindow
                 );
@@ -10084,7 +10359,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // roots this capture re-versions - not here, ahead of a replay that may park
                 // for many turns, be discarded or crash having moved nothing.
             }
-            if (timelineCapture != null && isColdKeyedRoute) {
+            if (timelineCapture != null && route.isColdOpenSegment()) {
                 // The cold keyed envelope is insert-only, unfiltered and over a base that
                 // does not deduplicate, so each residual base row adds exactly one output
                 // row. Rebase the old roots' effective positions by that exact delta instead
@@ -10116,9 +10391,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 }
                 openSegmentArithmeticRowPositionCount++;
             }
-            final long insertedRowDelta = resuming
-                    ? resumed.getKeyedInsertedRowDelta()
-                    : isColdKeyedRoute ? segmentChangeSet.getResidualRowCount() : 0;
+            final long insertedRowDelta = route.getInsertedRowDelta();
             if (session != null) {
                 // The publication mirrors every stage it records into the descriptor, and
                 // a resumed turn walks the stages from PLAN again over the same record.
@@ -10322,7 +10595,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 if (resuming) {
                     outputUniqueness.copyFrom(resumed.getOutputUniqueness());
                 } else {
-                    outputUniqueness.of((isKeyedRoute || (localized && finiteHighBound))
+                    outputUniqueness.of((route.isKeyedScan() || (localized && finiteHighBound))
                             ? LiveViewCheckpointOutputUniqueness.outputKeyColumnIndex(compiledPlan)
                             : LiveViewCheckpointOutputUniqueness.NO_KEY_COLUMN);
                 }
@@ -10452,7 +10725,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     boolean walWriterRetained = false;
                     try {
                         RecordToRowCopier copier = ensureCopier(instance, walWriter);
-                        if (isKeyedRoute && !resuming) {
+                        if (route.isKeyedScan() && !resuming) {
                             final PageFrameRecordCursorFactory storedRowFactory = storedRowScanFactory(instance);
                             if (storedRowFactory != null
                                     && storedRowFactory.getMetadata().getColumnCount() == walWriter.getMetadata().getColumnCount()
@@ -10469,9 +10742,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // proved one identity and upserted on another would collapse
                                 // rows nothing checked. The verdict itself is not known until
                                 // the replay ends, which is what makes it an attempt.
-                                final boolean isSparseAttempt = instance.isDedupKeyed()
-                                        && outputUniqueness.isArmed()
-                                        && instance.getDedupKeyColumnIndex() == outputUniqueness.getKeyColumnIndex();
+                                final boolean isSparseAttempt = outputUniqueness.isArmed()
+                                        && hasUpsertIdentity(instance, outputUniqueness.getKeyColumnIndex());
                                 repairKeyedReplay.bindOutput(
                                         storedRowCopier(instance, walWriter, storedRowFactory.getMetadata()),
                                         walWriter,
@@ -10479,14 +10751,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         instance,
                                         isSparseAttempt
                                 );
-                                if (isColdKeyedRoute) {
+                                if (route.isColdOpenSegment()) {
                                     openSegmentColdKeyedReplayCount++;
                                     instance.recordO3OpenSegmentColdKeyedReplay();
                                 } else {
                                     keyedReplaySegmentCount++;
                                 }
                                 LOG.info().$("live view repair replayed by key [view=").$(viewName)
-                                        .$(", origin=").$(isColdKeyedRoute ? "segment start" : "closed segment")
+                                        .$(", origin=").$(route.isColdOpenSegment() ? "segment start" : "closed segment")
                                         .$(", keys=").$(repairKeyedReplay.getBaseSymbolKeys().size())
                                         .$(", sparseAttempt=").$(isSparseAttempt)
                                         .$(", outputLowTs=").$ts(emitLowTs)
@@ -10495,21 +10767,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // The replay's own factory does not admit the index substitution,
                                 // or the view's schema has moved out from under the scan built
                                 // against it. Read the segment whole, which needs none of it.
-                                declineStoredRows(instance, storedRowFactory == null
+                                // This is the one check the decision could not make: only the
+                                // writer this executor opens vouches for the view's schema.
+                                final String reason = storedRowFactory == null
                                         ? "no scan of the view's own table"
-                                        : "the replay's base scan does not admit an indexed substitution");
-                                isKeyedRoute = false;
+                                        : "the replay's base scan does not admit an indexed substitution";
+                                declineStoredRows(instance, reason);
+                                route.declineKeyedScan(reason);
                             }
                         }
-                        if (!resuming && session != null && (isKeyedRoute || isColdKeyedRoute)) {
-                            session.prepareKeyedReplay(
-                                    isKeyedRoute,
-                                    isColdKeyedRoute,
-                                    insertedRowDelta,
-                                    isColdKeyedRoute ? openSegmentArithmeticBoundaryPositions : null
-                            );
+                        if (!resuming && session != null && route.isColdOpenSegment()) {
+                            // The cold route's arithmetic row positions, which a parked turn
+                            // hands to the turn that resumes it. The rest of the route goes
+                            // with the session when it parks.
+                            session.setKeyedBoundaryPositions(openSegmentArithmeticBoundaryPositions);
                         }
-                        try (RecordCursor pageCursor = isKeyedRoute
+                        try (RecordCursor pageCursor = route.isKeyedScan()
                                 // The keys the correction touched, followed through the base's
                                 // posting index, rather than every row of the range they landed
                                 // in. The merge above supplies the rest of the segment.
@@ -10538,7 +10811,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                         source,
                                         timelineCapture,
                                         repairBoundaries,
-                                        isColdKeyedRoute
+                                        route.isColdOpenSegment()
                                                 ? resuming
                                                   ? resumed.getKeyedBoundaryPositions()
                                                   : openSegmentArithmeticBoundaryPositions
@@ -10551,7 +10824,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 );
                                 boundaryFreezingCursor.setRowPosition(
                                         durableRowsBelowFloor + appendedRows + repairKeyedReplay.getMergedRows());
-                                if (isKeyedRoute && !isColdKeyedRoute) {
+                                if (route.isKeyedClosedSegment()) {
                                     // A keyed replay's cursor yields only the affected keys'
                                     // rows, so the boundary about to be frozen has to count
                                     // the merged rows below it as well. Draining here rather
@@ -10623,7 +10896,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     // not reach it, so emitting it would duplicate a row the LV
                                     // table still holds.
                                     if (ts >= emitLowTs) {
-                                        if (isKeyedRoute && !isColdKeyedRoute) {
+                                        if (route.isKeyedClosedSegment()) {
                                             // Every unaffected key's stored row at or below
                                             // this one, so the block's rows come out in
                                             // timestamp order and the position stamped below
@@ -10718,7 +10991,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 if (!yielded && timelineCapture != null) {
                                     boundaryFreezingCursor.freezeRemaining();
                                 }
-                                if (isKeyedRoute && !isColdKeyedRoute && !yielded) {
+                                if (route.isKeyedClosedSegment() && !yielded) {
                                     // The stored rows above the last boundary the freeze
                                     // drained to. They sit inside the range the replacement
                                     // deletes, so a repair that stopped accounting at its own
@@ -10777,7 +11050,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             if (yielded) {
                                 LiveViewCheckpointKeyedReplay replacementKeyedReplay = null;
                                 try {
-                                    if (resumed == null && (isKeyedRoute || isColdKeyedRoute)) {
+                                    if (resumed == null && route.hasKeyedReplay()) {
                                         replacementKeyedReplay = new LiveViewCheckpointKeyedReplay();
                                     }
                                     session.suspend(
@@ -10791,7 +11064,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                             o3ScanRows,
                                             replayMinTs,
                                             replayMaxTs,
-                                            outputUniqueness
+                                            outputUniqueness,
+                                            route
                                     );
                                     if (replacementKeyedReplay != null) {
                                         session.ownKeyedReplay(repairKeyedReplay);
@@ -10863,28 +11137,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // duplicate admitted to a sparse commit is collapsed silently.
                                 reportOutputUniqueness(
                                         viewName,
-                                        isKeyedRoute || localized && finiteHighBound,
-                                        isKeyedRoute
+                                        route.isKeyedScan() || localized && finiteHighBound,
+                                        route.isKeyedScan()
                                 );
                                 // The verdict, acted on. A sparse attempt publishes only the
-                                // rows the replay recomputed, upserted onto the view's dedup
-                                // keys, and leaves every other stored row where it stands -
-                                // but only when the pair it upserts on names each of those
-                                // rows once, and every stored row of a recomputed key has
-                                // its pair among them. A repeat, a stored row the replay did
-                                // not re-emit - one the view derived from base rows since
-                                // removed - or a replay that recomputed nothing at all,
-                                // abandons the attempt: the merge writes the rows it had
-                                // only counted and the repair publishes its whole range with
-                                // the replacement, which collapses nothing and deletes what
-                                // the upsert would have left standing.
-                                final boolean isSparse = repairKeyedReplay.isSparse()
-                                        && appendedRows > 0
-                                        && outputUniqueness.isUnique()
-                                        && repairKeyedReplay.getUnpairedSupersededRows() == 0;
-                                if (!isSparse && (isColdKeyedRoute
-                                        ? repairKeyedReplay.materializeUnaccountedMerge()
-                                        : repairKeyedReplay.materializeMerge())) {
+                                // rows the replay recomputed, upserted onto the view's upsert
+                                // identity, and leaves every other stored row where it stands -
+                                // see decidePublication for when that is safe. Otherwise the
+                                // merge writes the rows it had only counted and the repair
+                                // publishes its whole range with the replacement, which
+                                // collapses nothing and deletes what the upsert would have
+                                // left standing.
+                                route.decidePublication(repairKeyedReplay, appendedRows, outputUniqueness);
+                                final boolean isSparse = route.isSparsePublication();
+                                if (!isSparse && repairKeyedReplay.isSparse()) {
+                                    materializeSparseFallback(route, repairKeyedReplay);
                                     sparsePublicationFallbackCount++;
                                     LOG.info().$("live view keyed repair abandoned its sparse publication [view=")
                                             .$(viewName)
@@ -10935,19 +11202,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     // The truncate writes its durable marker first and drops the
                                     // roots at or above R. It retires the timeline instead when no
                                     // prefix survives, which takes the marker with it.
-                                    prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs);
+                                    prefixMarkerLive = truncateOrRetireTimelineOnO3(instance, emitLowTs, truncatedHead);
                                 }
                                 if (isSparse) {
                                     sparsePublicationCount++;
-                                    final long supersededRows = isColdKeyedRoute
+                                    final long supersededRows = route.isColdOpenSegment()
                                             ? Math.max(0, appendedRows - insertedRowDelta)
                                             : repairKeyedReplay.getSupersededRows();
-                                    final long rowsKept = isColdKeyedRoute
+                                    final long rowsKept = route.isColdOpenSegment()
                                             ? Math.max(0, durableRowsReplaced - supersededRows)
                                             : repairKeyedReplay.getMergedRows();
                                     sparsePublicationRowsKept += rowsKept;
                                     LOG.info().$("live view keyed repair published sparsely [view=").$(viewName)
-                                            .$(", origin=").$(isColdKeyedRoute ? "segment start" : "closed segment")
+                                            .$(", origin=").$(route.isColdOpenSegment() ? "segment start" : "closed segment")
                                             .$(", replayedRows=").$(appendedRows)
                                             .$(", supersededRows=").$(supersededRows)
                                             .$(", rowsKept=").$(rowsKept)
@@ -11006,6 +11273,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // replay established; it is stated rather than assumed.
                     isPrimaryKept = false;
                     repairPublication.candidateReady(runtimeDisposition(isPrimaryKept));
+                    route.ofReplacePublication();
                     try (WalWriter walWriter = engine.getWalWriter(instance.getLiveViewToken())) {
                         commitLiveViewWithReplaceRangeFenced(instance, walWriter,
                                 effectiveSeqTxn,
@@ -11071,14 +11339,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         if (!repairKeyedReplay.isSparse()) {
                             keyedReplayMergedRows += repairKeyedReplay.getMergedRows();
                         }
-                        try {
-                            repairKeyedReplay.closeStoredRows();
-                        } catch (Throwable t) {
-                            failure = t;
-                        }
-                        storedRowCursor = null;
+                        failure = closeStoredRowsBestEffort(null, repairKeyedReplay);
                     }
-                    if (isIsolated && !yielded && (!isColdKeyedRoute || !replayCompleted)) {
+                    if (isIsolated && !yielded && (!route.isColdOpenSegment() || !replayCompleted)) {
                         // The repair is over - published, empty or unwinding - so the keys its
                         // replay folded into the isolated runtime describe nothing any more.
                         // Rewinding here rather than only before the next replay is what keeps an
@@ -11265,7 +11528,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     final long emittedRows = appendedRows + repairKeyedReplay.getMergedRows();
                     final long expectedRowsAfterRepair;
                     try {
-                        expectedRowsAfterRepair = isColdKeyedRoute
+                        expectedRowsAfterRepair = route.isColdOpenSegment()
                                 ? Math.addExact(durableRowsBeforeRepair, insertedRowDelta)
                                 : Math.addExact(
                                 Math.subtractExact(durableRowsBeforeRepair, durableRowsReplaced),
@@ -11309,7 +11572,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // generation that describes the state the primary is about to hold is
                 // already published, so a crash from here on restores that generation
                 // rather than a runtime nothing recorded.
-                if (isColdKeyedRoute && replacementReconciled) {
+                if (route.isColdOpenSegment() && replacementReconciled) {
                     // The repair publication is durable, but the replay ran beside the primary
                     // and followed only Q. Hand those finished accumulators back before
                     // the head seal images the primary. A partial failure leaves durable output
@@ -11488,7 +11751,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // generation - or gone. Either way nothing is left for a startup sweep to
                     // discard, so the descriptor's ownership claim retires with it, together
                     // with the session that carried the repair across its turns.
-                    if (isColdKeyedRoute) {
+                    if (route.isColdOpenSegment()) {
                         repairRuntime.reset();
                         repairKeyedReplay.clear();
                     }
@@ -11514,6 +11777,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // an executor whose rows the counters above do not carry yet. A replay that
             // parked returned above and publishes on the turn that finishes it.
             instance.publishCheckpointRepairOutcome();
+            repairRouteCounts.increment(route.getRoute());
             // applyAheadGap = the seqTxns ApplyWal2TableJob raced past the O3 trigger
             // (effectiveSeqTxn - advanceTo); a wide gap is what forces the rebuild when no
             // sealed anchor sits below the ahead range's minimum in-view ts. scanLowTs /
@@ -11528,7 +11792,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", applyAheadGap=").$(plan.getPinnedSeqTxn() - plan.getTriggerSeqTxn())
                     .$(", localized=").$(localized)
                     .$(", scanLowTs=").$(scanLowTs)
-                    .$(", coldKeyed=").$(isColdKeyedRoute)
+                    .$(", coldKeyed=").$(route.isColdOpenSegment())
                     .$(", emitLowTs=").$(emitLowTs)
                     .$(", highTsExclusive=").$(finiteHighBound ? plan.getHighTsExclusive() : Numbers.LONG_NULL)
                     .$(", runtimeStatePreserved=").$(repairPublication.isKeepPrimaryRuntime())
@@ -11574,7 +11838,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 try {
                     Throwable failure = null;
                     if (resumed == null) {
-                        failure = Misc.freeBestEffort(null, storedRowCursor);
+                        failure = closeStoredRowsBestEffort(null, repairKeyedReplay);
                         // After the cursor even when its close failed: the merge must not keep
                         // pointing at a cursor that is half closed.
                         try {
@@ -13553,15 +13817,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void adoptTruncatedHeadCheckpointBaseline(
             LiveViewInstance instance,
             WindowRecordCursorFactory windowFactory,
+            TruncatedHead head,
             long anchorMaxTs,
             long anchorCheckpointId
     ) {
-        if (truncatedHeadGeneration == Numbers.LONG_NULL
-                || truncatedHeadMaxTs != anchorMaxTs
-                || truncatedHeadCheckpointId != anchorCheckpointId) {
+        if (head.generation == Numbers.LONG_NULL
+                || head.maxTs != anchorMaxTs
+                || head.checkpointId != anchorCheckpointId) {
             return;
         }
-        adoptSplicedCheckpointBaseline(instance, windowFactory, truncatedHeadGeneration);
+        adoptSplicedCheckpointBaseline(instance, windowFactory, head.generation);
     }
 
     /**
@@ -14223,8 +14488,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     windowFactory,
                     Numbers.LONG_NULL,
                     instance.getDefinition().getBaseTableToken(),
-                    durableBaseSeqTxn,
-                    true
+                    durableBaseSeqTxn
             );
             if (isUpgradeRebuild) {
                 instance.recordCheckpointRestoreUpgradeRebuilt();
@@ -15534,7 +15798,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             );
             ensureBaseAppliedForRebuild(instance, rebuildSeqTxn, cause);
             instance.setLeadRowCount(0);
-            o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, rebuildSeqTxn, true);
+            o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, rebuildSeqTxn);
             // REPLACE_RANGE rewrote disk, so the published slot is stale; rebuild it
             // from the rewritten LV table or reads keep serving pre-recompute rows.
             rebuildInMemoryTier(instance);
@@ -17179,7 +17443,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // counter after it, so the published slot becomes a clean disk subset stamped at the new
             // seqTxn with leadRowCount 0.
             instance.setLeadRowCount(0);
-            o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, baseAppliedSeqTxn, true);
+            o3HeadMissReplay(instance, getWindowFactory(instance), Numbers.LONG_NULL, baseToken, baseAppliedSeqTxn);
             // REPLACE_RANGE rewrote disk, so the published slot is stale; rebuild it from the
             // rewritten LV table (read via the LV token - the missing base WAL is irrelevant here)
             // or reads keep serving the pre-replay rows and the next flush re-appends the stale lead.
@@ -18696,6 +18960,29 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             maxTimestamp = Numbers.LONG_NULL;
             resumeDataOffset = Numbers.LONG_NULL;
             stateBytes = 0L;
+        }
+    }
+
+    /**
+     * Output holder for {@link #truncateOrRetireTimelineOnO3}: the generation the truncate
+     * published and the boundary it left as that generation's head, or
+     * {@link Numbers#LONG_NULL} in each when the timeline was retired instead. A resume reads
+     * it immediately to decide whether the runtime it holds may adopt that head as its
+     * incremental checkpoint baseline.
+     */
+    private static final class TruncatedHead {
+        long checkpointId = Numbers.LONG_NULL;
+        long generation = Numbers.LONG_NULL;
+        long maxTs = Numbers.LONG_NULL;
+
+        void clear() {
+            of(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL);
+        }
+
+        void of(long generation, long maxTs, long checkpointId) {
+            this.generation = generation;
+            this.maxTs = maxTs;
+            this.checkpointId = checkpointId;
         }
     }
 }

@@ -34,6 +34,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointOpenSegmentCost;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -111,6 +112,13 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 // no predecessor to resume from and the replay starts cold at the day origin.
                 commit(row(3, 2, 35, "acct-1"), job);
 
+                Assert.assertEquals(1, job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT));
+                LiveViewCheckpointRepairRouteTest.assertLastRepairRoute(
+                        job,
+                        LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT,
+                        LiveViewCheckpointRepairRoute.RUNTIME_ISOLATED,
+                        LiveViewCheckpointRepairRoute.PUBLICATION_SPARSE_UPSERT
+                );
                 Assert.assertEquals(1, job.openSegmentColdKeyedPricedCountForTest());
                 Assert.assertEquals(0, job.openSegmentColdKeyedUnpricedCountForTest());
                 Assert.assertEquals(1, job.openSegmentColdKeyedCheaperCountForTest());
@@ -569,6 +577,15 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                         "a cold keyed repair must honor the configured replay budget",
                         instance.getCheckpointRepairResumes() > resumesBefore
                 );
+                // Every resumed turn continued on the route the first turn decided, and the
+                // repair counts once, on the turn that published it.
+                Assert.assertEquals(1, job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT));
+                Assert.assertEquals(
+                        LiveViewCheckpointRepairRoute.routeName(LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT),
+                        LiveViewCheckpointRepairRoute.routeName(job.repairRouteForTest().getRoute())
+                );
+                Assert.assertEquals(LiveViewCheckpointRepairRoute.SCOPE_RESUMED, job.repairRouteForTest().getScope());
+                Assert.assertTrue(job.repairRouteForTest().isIsolated());
                 Assert.assertTrue(
                         "the repair must have handed its keys back",
                         job.transplantedKeyCountForTest() > 0
@@ -844,6 +861,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
                 driveRefreshToQuiescence(job);
                 openTheDayAboveARoot(job);
+                final long keyedResumesBefore = job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR);
 
                 commit(row(4, 2, 35, "acct-1"), job);
 
@@ -851,6 +869,16 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                         "the resume must follow the correction's own keys",
                         1,
                         job.openSegmentKeyedResumeCountForTest()
+                );
+                Assert.assertEquals(
+                        keyedResumesBefore + 1,
+                        job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR)
+                );
+                LiveViewCheckpointRepairRouteTest.assertLastRepairRoute(
+                        job,
+                        LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR,
+                        LiveViewCheckpointRepairRoute.RUNTIME_ISOLATED,
+                        LiveViewCheckpointRepairRoute.PUBLICATION_SPARSE_UPSERT
                 );
                 assertQuery("SELECT o3_open_segment_keyed_resume_count, "
                         + "o3_open_segment_cold_keyed_replay_count FROM live_views()")
@@ -1191,6 +1219,12 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                         1,
                         job.openSegmentKeyedResumeCountForTest()
                 );
+                LiveViewCheckpointRepairRouteTest.assertLastRepairRoute(
+                        job,
+                        LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR,
+                        LiveViewCheckpointRepairRoute.RUNTIME_ISOLATED,
+                        LiveViewCheckpointRepairRoute.PUBLICATION_REPLACE_RANGE
+                );
                 Assert.assertEquals(
                         "and still derive its checkpoint positions from the insert delta",
                         1,
@@ -1286,6 +1320,14 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(0, job.openSegmentRestoreAwareCheaperCountForTest());
                 Assert.assertEquals(0, job.openSegmentKeyedResumeCountForTest());
                 Assert.assertEquals(1, job.runtimeAnchorReuseCountForTest());
+                Assert.assertEquals(1, job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR));
+                Assert.assertEquals(0, job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR));
+                LiveViewCheckpointRepairRouteTest.assertLastRepairRoute(
+                        job,
+                        LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR,
+                        LiveViewCheckpointRepairRoute.RUNTIME_PRIMARY_REUSED,
+                        LiveViewCheckpointRepairRoute.PUBLICATION_REPLACE_RANGE
+                );
                 assertViewMatchesRecompute();
             }
         });

@@ -31,6 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputKeyDomain;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -208,6 +209,7 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 commit(row(5, 1, 0, 0, "acct-1"), job);
                 final long rowsBefore = count("select count() from lv");
                 final String untouchedBefore = dumpRowsOf("acct-3");
+                final long keyedSegmentsBefore = job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT);
 
                 commit(correction("acct-2"), job);
 
@@ -215,6 +217,10 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                         "the correction must be repaired by key for there to be a smaller set to publish",
                         1,
                         job.keyedReplaySegmentCountForTest()
+                );
+                Assert.assertEquals(
+                        keyedSegmentsBefore + 1,
+                        job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT)
                 );
                 Assert.assertEquals(1, job.sparsePublicationCountForTest());
                 Assert.assertEquals(0, job.sparsePublicationFallbackCountForTest());
@@ -257,10 +263,16 @@ public class LiveViewSparsePublicationTest extends AbstractLiveViewTest {
                 commit(row(5, 1, 0, 0, "acct-1"), job);
                 final long rowsBefore = count("select count() from lv");
                 final String untouchedBefore = dumpRowsOf("acct-3");
+                final long keyedSegmentsBefore = job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT);
 
                 commit(correction("acct-1"), job);
 
                 Assert.assertEquals(1, job.keyedReplaySegmentCountForTest());
+                Assert.assertEquals(
+                        "the fallback publishes on the route that attempted the upsert",
+                        keyedSegmentsBefore + 1,
+                        job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT)
+                );
                 Assert.assertEquals(
                         "the repeat is in the set a sparse commit would have carried",
                         1,

@@ -33,6 +33,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairPlan;
+import io.questdb.cairo.lv.LiveViewCheckpointRepairRoute;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewWindow;
@@ -980,6 +981,22 @@ public class LiveViewSteadyStateBenchmark {
                             repairName(instance),
                             job.isolatedReplayTurnCountForTest(),
                             job.segmentYieldCountForTest()
+                    );
+                    // The route mix: completed repairs by the route each one published on,
+                    // as LiveViewRefreshJob.decideRepairRoute chose it. view, range and
+                    // segment read whole; keyed_segment, cold and keyed_resume follow the
+                    // correction's keys; resume replays above a sealed anchor.
+                    System.out.printf(
+                            Locale.ROOT,
+                            "# routes view=%d range=%d segment=%d keyed_segment=%d cold=%d resume=%d "
+                                    + "keyed_resume=%d%n",
+                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_VIEW_REBUILD),
+                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_RANGE_REBUILD),
+                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_SEGMENT_REBUILD),
+                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_CLOSED_SEGMENT),
+                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_COLD_OPEN_SEGMENT),
+                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_RESUME_FROM_ANCHOR),
+                            job.repairRouteCountForTest(LiveViewCheckpointRepairRoute.ROUTE_KEYED_RESUME_FROM_ANCHOR)
                     );
                     // What a keyed replay of each corrected closed segment would have read,
                     // beside what the segment replays this run actually performed did.

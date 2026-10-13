@@ -92,9 +92,14 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private final LiveViewCheckpointOutputUniqueness outputUniqueness = new LiveViewCheckpointOutputUniqueness();
     private final LiveViewCheckpointScratchOverlay overlay = new LiveViewCheckpointScratchOverlay();
     private final LiveViewCheckpointSealCarryover sealCarryover = new LiveViewCheckpointSealCarryover();
+    // The cold open-segment route's arithmetic row positions, one per boundary the
+    // capture re-versions, for the turn that resumes it.
     private final LongList keyedBoundaryPositions = new LongList();
     private final LiveViewRefreshJob owner;
     private final LiveViewCheckpointRepairPlan plan = new LiveViewCheckpointRepairPlan();
+    // The route the first turn decided, which every later turn continues on. Copied in
+    // when the repair parks; see LiveViewRefreshJob.decideRepairRoute.
+    private final LiveViewCheckpointRepairRoute route = new LiveViewCheckpointRepairRoute();
     // Where the multi-segment loop that started this repair had got to, for a repair that
     // is one segment of one. Empty for a repair that stands on its own.
     private final LiveViewCheckpointSegmentLoop segmentLoop = new LiveViewCheckpointSegmentLoop();
@@ -111,10 +116,7 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
     private long durableRowsBelowFloor;
     private long durableRowsReplaced;
     private ObjList<WindowFunction> functions;
-    private long keyedInsertedRowDelta;
     private LiveViewCheckpointKeyedReplay keyedReplay;
-    private boolean isColdKeyedReplayRoute;
-    private boolean isKeyedReplayRoute;
     private boolean isSuspended;
     // Set when close() abandoned the repair but could not put the overlay back, leaving the
     // compiled factory holding neither the pre-repair state nor a settled one. Read by
@@ -227,6 +229,7 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         keyedBoundaryPositions.clear();
         segmentLoop.clear();
         outputUniqueness.clear();
+        route.clear();
         isSuspended = false;
         // close() rethrows rather than swallows, which keeps the contract it already had:
         // a caller that sees a failure today still sees it, and a genuine IO fault does
@@ -358,20 +361,8 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         return keyedBoundaryPositions;
     }
 
-    public long getKeyedInsertedRowDelta() {
-        return keyedInsertedRowDelta;
-    }
-
     public LiveViewCheckpointKeyedReplay getKeyedReplay() {
         return keyedReplay;
-    }
-
-    public boolean isColdKeyedReplayRoute() {
-        return isColdKeyedReplayRoute;
-    }
-
-    public boolean isKeyedReplayRoute() {
-        return isKeyedReplayRoute;
     }
 
     public void ownKeyedReplay(@NotNull LiveViewCheckpointKeyedReplay keyedReplay) {
@@ -429,6 +420,13 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      */
     public long getResumeSkipRows() {
         return resumeSkipRows;
+    }
+
+    /**
+     * @return the route the first turn decided, which a resumed turn continues on
+     */
+    public LiveViewCheckpointRepairRoute getRoute() {
+        return route;
     }
 
     /**
@@ -509,19 +507,9 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         this.plan.copyFrom(plan);
     }
 
-    public void prepareKeyedReplay(
-            boolean isKeyedReplayRoute,
-            boolean isColdKeyedReplayRoute,
-            long keyedInsertedRowDelta,
-            @Nullable LongList keyedBoundaryPositions
-    ) {
-        this.isKeyedReplayRoute = isKeyedReplayRoute;
-        this.isColdKeyedReplayRoute = isColdKeyedReplayRoute;
-        this.keyedInsertedRowDelta = keyedInsertedRowDelta;
+    public void setKeyedBoundaryPositions(@NotNull LongList keyedBoundaryPositions) {
         this.keyedBoundaryPositions.clear();
-        if (keyedBoundaryPositions != null) {
-            this.keyedBoundaryPositions.addAll(keyedBoundaryPositions);
-        }
+        this.keyedBoundaryPositions.addAll(keyedBoundaryPositions);
     }
 
     /**
@@ -579,6 +567,8 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
      * @param outputUniqueness   the pairs the replay has emitted so far, copied aside so
      *                           the turn that resumes compares against them rather than
      *                           starting the check over
+     * @param route              the route the replay is on, which the turn that resumes
+     *                           continues on rather than deciding again
      */
     public void suspend(
             @NotNull TableReader baseReader,
@@ -591,7 +581,8 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
             long scanRows,
             long replayMinTs,
             long replayMaxTs,
-            @NotNull LiveViewCheckpointOutputUniqueness outputUniqueness
+            @NotNull LiveViewCheckpointOutputUniqueness outputUniqueness,
+            @NotNull LiveViewCheckpointRepairRoute route
     ) {
         // Ahead of the three handovers below, because it is the only statement here that can
         // fail: its key-set copy allocates. The caller owns the reader, the writer and the
@@ -610,6 +601,7 @@ public final class LiveViewCheckpointRepairSession implements QuietCloseable {
         this.scanRows = scanRows;
         this.replayMinTs = replayMinTs;
         this.replayMaxTs = replayMaxTs;
+        this.route.copyDecisionFrom(route);
         this.isSuspended = true;
         this.turns++;
     }
