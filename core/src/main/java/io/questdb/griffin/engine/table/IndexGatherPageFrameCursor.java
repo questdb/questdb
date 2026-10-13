@@ -108,6 +108,13 @@ import java.util.concurrent.atomic.AtomicLong;
 public class IndexGatherPageFrameCursor implements PageFrameCursor {
     public static final byte TASK_INDEX = 0;
     public static final byte TASK_SCAN = 1;
+    // a run's slice of the list's keys, counted and read by the worker, see buildUnits()
+    public static final byte TASK_UNIT = 2;
+    // (run, key) count probes from which the tasks are built as units, see buildTasks()
+    static final long UNIT_MODE_MIN_PROBES = 4096;
+    // units per slot (the owner's and each worker's) that unit mode aims for
+    private static final int UNITS_PER_SLOT = 8;
+    private static long unitModeMinProbes = UNIT_MODE_MIN_PROBES;
     private static final int[] NO_KEYS = new int[0];
     private final ByteList frameFormats = new ByteList();
     private final IntList framePartitions = new IntList();
@@ -115,6 +122,13 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
     private final LongList frameRowHis = new LongList();
     private final LongList frameRowLos = new LongList();
     private final int frameRows;
+    // index runs of native frames: first frame, frame end, posting reader; see buildTasks()
+    private final IntList runFrameLos = new IntList();
+    private final IntList runFrameHis = new IntList();
+    private final ObjList<AbstractPostingIndexReader> runReaders = new ObjList<>();
+    // whether the tasks may be built as units the workers count, see buildTasks()
+    private final boolean unitsEnabled;
+    private final int workerCount;
     private final ObjList<AbstractPostingIndexReader> frozenReaders = new ObjList<>();
     private final FwdTableReaderPageFrameCursor inner;
     private final int keyColumnIndex;
@@ -138,7 +152,10 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
     private final AtomicLong testIndexTasks = new AtomicLong();
     private final AtomicLong testScanTasks = new AtomicLong();
     private final AtomicLong testWorkerTasks = new AtomicLong();
+    private final AtomicLong testUnitTasks = new AtomicLong();
     private boolean areTasksBuilt;
+    // the last build made units, see buildTasks()
+    private boolean isUnitMode;
     private long estimatedRows;
     private boolean isExhausted;
 
@@ -149,7 +166,8 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
             int frameRows,
             long taskRows,
             boolean splitKeysByRowRange,
-            int workerCount
+            int workerCount,
+            boolean unitsEnabled
     ) {
         this.inner = new FwdTableReaderPageFrameCursor(columnIndexes, columnSizeShifts, null, 1);
         this.inner.setPageFrameRows(frameRows);
@@ -157,6 +175,8 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
         this.frameRows = frameRows;
         this.taskRows = Math.max(1, taskRows);
         this.splitKeysByRowRange = splitKeysByRowRange;
+        this.workerCount = workerCount;
+        this.unitsEnabled = unitsEnabled;
         // one reader per slot: the owner's (-1) and the workers'
         this.taskReaderSlots = new ObjList<>(workerCount + 1);
         for (int i = 0; i <= workerCount; i++) {
@@ -232,6 +252,15 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
         return estimatedRows;
     }
 
+    /**
+     * Below this many (run, key) count probes, the query's thread builds the tasks from the
+     * index's counts; from it on, it builds units the workers count. Tests force either.
+     */
+    @TestOnly
+    public static void setUnitModeMinProbes(long probes) {
+        unitModeMinProbes = probes;
+    }
+
     @TestOnly
     public int getFrozenReaderCount() {
         return frozenReaders.size();
@@ -242,7 +271,15 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
      */
     @TestOnly
     public long[] getTaskCounts() {
-        return new long[]{testIndexTasks.get(), testScanTasks.get(), testWorkerTasks.get()};
+        return new long[]{testIndexTasks.get(), testScanTasks.get(), testWorkerTasks.get(), testUnitTasks.get()};
+    }
+
+    /**
+     * Whether the last execution's tasks were built as units, see {@link #buildTasks()}.
+     */
+    @TestOnly
+    public boolean isUnitMode() {
+        return isUnitMode;
     }
 
     public int getKeyColumnIndex() {
@@ -347,6 +384,7 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
         testIndexTasks.set(0);
         testScanTasks.set(0);
         testWorkerTasks.set(0);
+        testUnitTasks.set(0);
         inner.of(executionContext, partitionFrameCursor);
         for (int i = 0, n = keyFunctions.size(); i < n; i++) {
             keyFunctions.getQuick(i).init(this, executionContext);
@@ -475,25 +513,33 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
         if (taskKeys.size() > sliceLo) {
             addIndexTask(frameLo, frameHi, rowLo, rowHi, sliceLo, taskKeys.size(), sliceRows, reader);
         }
-        if (used && !reader.isFrozen()) {
-            // positioned at this query's index snapshot, with its value memory mapped in full, so
-            // the workers' detached cursors read it without changing it; an interval scan meets a
-            // partition's reader once per interval
-            reader.warmForKeys(NO_KEYS, null);
-            reader.setFrozen(true);
-            frozenReaders.add(reader);
+        if (used) {
+            freeze(reader);
         }
     }
 
+    /**
+     * Builds the tasks once the frames are. Runs of a partition's contiguous native frames, read
+     * through its posting reader, make index tasks; other frames scan tasks.
+     * <p>
+     * With few (run, key) pairs, the query's thread builds index tasks from the index's per-key
+     * counts, which balance the tasks by the rows they read and split a frequent key by row range.
+     * With many, which a long list over many partitions makes, those counts are serial work on the
+     * query's thread before any worker starts. The tasks are then built as units instead
+     * ({@link #TASK_UNIT}): a run and a slice of the list's keys, which the slot that takes the
+     * unit counts and reads. Units never split a key within a run, so a key's rows of a run come,
+     * in order, from one slot, as with {@code splitKeysByRowRange} false. The choice is made at
+     * every open, from the frames and the keys of that open.
+     */
     private void buildTasks() {
         assert !areTasksBuilt;
         areTasksBuilt = true;
+        runFrameLos.clear();
+        runFrameHis.clear();
+        runReaders.clear();
         for (int f = 0, n = framePartitions.size(); f < n; ) {
             final IndexReader reader = frameReaders.getQuick(f);
             if (frameFormats.getQuick(f) != PartitionFormat.NATIVE || !(reader instanceof PostingIndexFwdReader posting)) {
-                if (isScanNeeded(reader)) {
-                    addScanTask(f);
-                }
                 f++;
                 continue;
             }
@@ -506,8 +552,73 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
                     && frameRowLos.getQuick(g) == frameRowHis.getQuick(g - 1)) {
                 g++;
             }
-            buildIndexTasks(f, g, posting);
+            runFrameLos.add(f);
+            runFrameHis.add(g);
+            runReaders.add(posting);
             f = g;
+        }
+        final int runCount = runReaders.size();
+        isUnitMode = unitsEnabled && keys.size() > 0 && (long) runCount * keys.size() >= unitModeMinProbes;
+        // tasks follow the frames: a run's tasks where its first frame is, scan tasks in between
+        int run = 0;
+        for (int f = 0, n = framePartitions.size(); f < n; ) {
+            if (run < runCount && runFrameLos.getQuick(run) == f) {
+                final int g = runFrameHis.getQuick(run);
+                if (isUnitMode) {
+                    buildUnits(f, g, runReaders.getQuick(run), runCount);
+                } else {
+                    buildIndexTasks(f, g, runReaders.getQuick(run));
+                }
+                run++;
+                f = g;
+                continue;
+            }
+            if (isScanNeeded(frameReaders.getQuick(f))) {
+                addScanTask(f);
+            }
+            f++;
+        }
+    }
+
+    // Unit mode: the run's units, the list's keys in contiguous slices, as many slices as make
+    // the units of all runs about UNITS_PER_SLOT per slot. Their rows are estimated from the
+    // run's rows and the share of the table's symbols the slice holds; the slot reads them.
+    private void buildUnits(int frameLo, int frameHi, AbstractPostingIndexReader reader, int runCount) {
+        final long rowLo = frameRowLos.getQuick(frameLo);
+        final long rowHi = frameRowHis.getQuick(frameHi - 1);
+        final int keyCount = keys.size();
+        final long targetUnits = (long) UNITS_PER_SLOT * (workerCount + 1);
+        final int slices = (int) Math.max(1, Math.min(keyCount, (targetUnits + runCount - 1) / runCount));
+        final int symbolCount = Math.max(1, inner.getSymbolTable(keyColumnIndex).getSymbolCount() + 1);
+        for (int i = 0; i < slices; i++) {
+            final int keyLo = (int) ((long) keyCount * i / slices);
+            final int keyHi = (int) ((long) keyCount * (i + 1) / slices);
+            if (keyHi <= keyLo) {
+                continue;
+            }
+            taskKinds.add(TASK_UNIT);
+            taskFrameLos.add(frameLo);
+            taskFrameHis.add(frameHi);
+            taskRowLos.add(rowLo);
+            taskRowHis.add(rowHi);
+            taskKeyLos.add(keyLo);
+            taskKeyHis.add(keyHi);
+            taskReaders.add(reader);
+            final long rows = Math.max(1, (rowHi - rowLo) * Math.min(keyHi - keyLo, symbolCount) / symbolCount);
+            taskRowCounts.add(rows);
+            estimatedRows += rows;
+        }
+        freeze(reader);
+    }
+
+    private void freeze(AbstractPostingIndexReader reader) {
+        if (!reader.isFrozen()) {
+            // positioned at this query's index snapshot, with its value memory mapped in full, so
+            // the workers' detached cursors read it without changing it; an interval scan meets a
+            // partition's reader once per interval
+            reader.warmForKeys(NO_KEYS, null);
+            reader.setFrozen(true);
+            frozenReaders.add(reader);
         }
     }
 
@@ -527,6 +638,9 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
         taskReaders.clear();
         taskRowCounts.clear();
         taskKeys.clear();
+        runFrameLos.clear();
+        runFrameHis.clear();
+        runReaders.clear();
         estimatedRows = 0;
         isExhausted = false;
         areTasksBuilt = false;
@@ -668,7 +782,8 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
             runStarts.clear();
             currentRuns.clear();
             runPos = 0;
-            (taskKinds.getQuick(task) == TASK_SCAN ? testScanTasks : testIndexTasks).incrementAndGet();
+            final byte kind = taskKinds.getQuick(task);
+            (kind == TASK_SCAN ? testScanTasks : kind == TASK_UNIT ? testUnitTasks : testIndexTasks).incrementAndGet();
             if (slotId > -1) {
                 testWorkerTasks.incrementAndGet();
             }
@@ -800,9 +915,17 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
             bucket = 0;
             bufferPos = 0;
             final int keyHi = taskKeyHis.getQuick(task);
+            final boolean unit = taskKinds.getQuick(task) == TASK_UNIT;
+            final IndexReader reader = taskReaders.getQuick(task);
             while (keyPos < keyHi && drained.size() < maxRows) {
                 if (cursor == null) {
-                    cursor = taskReaders.getQuick(task).getDetachedCursor(taskKeys.getQuick(keyPos), rowLo, rowHi - 1, null);
+                    final int key = unit ? keys.getQuick(keyPos) : taskKeys.getQuick(keyPos);
+                    if (unit && !hasRows((AbstractPostingIndexReader) reader, key)) {
+                        // the unit's count, which the query's thread no longer makes
+                        keyPos++;
+                        continue;
+                    }
+                    cursor = reader.getDetachedCursor(key, rowLo, rowHi - 1, null);
                 }
                 final long start = drained.size();
                 final long wanted = maxRows - start;
@@ -826,6 +949,14 @@ public class IndexGatherPageFrameCursor implements PageFrameCursor {
             }
             bucket(taskFrameLos.getQuick(task), taskFrameHis.getQuick(task));
             return true;
+        }
+
+        // Whether the key may have rows in the unit's range: a count of zero says it has none.
+        private boolean hasRows(AbstractPostingIndexReader reader, int key) {
+            final long callerHiInclusive = rowHi - 1;
+            final long entryMax = reader.getEntryMaxValue();
+            final long clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
+            return reader.estimateMatchesClamped(key, rowLo, callerHiInclusive, clampedMax) != 0;
         }
 
         private void swapBuffers() {
