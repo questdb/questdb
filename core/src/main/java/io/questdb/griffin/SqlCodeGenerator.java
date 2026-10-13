@@ -4224,9 +4224,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // by the immediate base model), so that list cannot decide ownership. A
             // non-empty list without the node means an optimizer path dropped or
             // rebuilt the node: fail loudly under -ea, and without -ea skip the fill
-            // rather than guess a column. The check runs after the FILL(NONE)
-            // validation so that an all-NONE list, which carries no signal, still
-            // fails that validation as before.
+            // rather than guess a column. That assertion reaches only the shape where
+            // rewriteSelectClause0 re-exposed the list; under the LATERAL fallback the
+            // list is empty by construction, so a rebuilt node there skips the fill
+            // silently and LateralJoinTest's LATEST ON fill tests are the net. The
+            // check runs after the FILL(NONE) validation so that an all-NONE list,
+            // which carries no signal, still fails that validation as before.
             final RecordMetadata baseMeta = groupByFactory.getMetadata();
             final int timestampIndex = findFillBucketIndex(model, baseMeta, curr);
             if (timestampIndex < 0) {

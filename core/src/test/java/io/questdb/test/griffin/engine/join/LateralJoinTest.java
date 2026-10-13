@@ -1215,6 +1215,7 @@ public class LateralJoinTest extends AbstractCairoTest {
                     """)
                     .noLeakCheck()
                     .withPlanContaining("Filter filter: _latest_rn=1")
+                    .withPlanNotContaining("Sample By Fill")
                     .returns("""
                             id\tts\tval
                             1\t2024-01-01T00:00:00.000000Z\t1.0
@@ -1283,9 +1284,11 @@ public class LateralJoinTest extends AbstractCairoTest {
 
     @Test
     public void testLateralLatestOnSampleByFillUnderOuterGroupBy() throws Exception {
-        // An outer GROUP BY over the lateral join must count the inner gap row (3 rows
-        // for id 1) and must not claim the inner fill as its own: its output never
-        // carries the inner bucket node, so generateFill leaves the outer group-by alone.
+        // An outer GROUP BY over the lateral join must still see the inner gap row
+        // (3 rows for id 1, not 2). The fill-holding model sits under join model x, so
+        // generateFill's nested-model walk from the outer group-by never reaches it;
+        // this test pins that the fill survives under an outer aggregate. The outer
+        // GROUP BY ownership shapes are pinned by the SampleByFill*Test classes.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z')");
@@ -1313,7 +1316,12 @@ public class LateralJoinTest extends AbstractCairoTest {
     public void testLateralLatestOnSampleByFillValueAndPrevTwoOuterRows() throws Exception {
         // Same fallback as testLateralLatestOnSampleByFillNullKeepsGapRows, with two outer
         // rows and the value and PREV fill modes. Each fill must match the rows the same
-        // LATERAL body returns without LATEST ON.
+        // LATERAL body returns without LATEST ON. Those rows follow the keyed fill grid
+        // of the decorrelated query: the outer row is a group key, so every key gets
+        // every bucket between the global first and last bucket, which is why outer row
+        // 2 also gets the 00:00 and 01:00 buckets that precede its own start_ts. That is
+        // master's behaviour for the body without LATEST ON too; this test pins only
+        // that the fallback matches it, not that a per-outer-row grid would be wrong.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, start_ts TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO o VALUES (1, '2023-12-31T00:00:00Z', '2024-01-01T00:00:00Z'), (2, '2024-01-01T01:00:00Z', '2024-01-01T00:00:00Z')");
