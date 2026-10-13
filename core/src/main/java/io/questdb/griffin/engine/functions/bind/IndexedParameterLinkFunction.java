@@ -35,6 +35,7 @@ import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
 import io.questdb.std.Decimal128;
@@ -337,5 +338,15 @@ public class IndexedParameterLinkFunction implements Function, FunctionExtension
     private Function getBase() {
         assert base != null;
         return base;
+    }
+
+    @Override
+    public boolean hasPerCallState() {
+        return FunctionFlags.hasPerCallState(base);
+    }
+
+    @Override
+    public boolean isRandom() {
+        return FunctionFlags.isRandom(base);
     }
 }

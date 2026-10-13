@@ -377,6 +377,11 @@ public class ProjectedColumnFunction implements Function {
     }
 
     @Override
+    public boolean hasPerCallState() {
+        return function.hasPerCallState();
+    }
+
+    @Override
     public boolean isNullConstant() {
         return function.isNullConstant();
     }

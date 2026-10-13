@@ -34,6 +34,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.bool.SymbolKeyBitSet;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.ObjList;
@@ -213,5 +214,15 @@ public class CompiledFilterSymbolInBitSet extends BooleanFunction {
             final long wordAddress = address + ((long) (idx >>> 6) << 3);
             Unsafe.getUnsafe().putLong(wordAddress, Unsafe.getUnsafe().getLong(wordAddress) | (1L << idx));
         }
+    }
+
+    @Override
+    public boolean hasPerCallState() {
+        return FunctionFlags.hasPerCallState(variables);
+    }
+
+    @Override
+    public boolean isRandom() {
+        return FunctionFlags.isRandom(variables);
     }
 }
