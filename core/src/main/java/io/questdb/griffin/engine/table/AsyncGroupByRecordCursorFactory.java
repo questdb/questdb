@@ -72,12 +72,16 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
+import java.util.concurrent.atomic.LongAdder;
+
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
-    private static final java.util.concurrent.atomic.LongAdder CONSTANT_KEY_FRAMES = new java.util.concurrent.atomic.LongAdder();
-    private static volatile boolean constantKeyFrameCounting;
+    // test-only: frames aggregateConstantKeyNonSharded() took while counting is on; a plain read of
+    // the flag per frame, the counter is touched only in tests
+    private static final LongAdder CONSTANT_KEY_FRAMES = new LongAdder();
+    private static boolean constantKeyFrameCounting;
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::filterAndAggregate;
     // rows an index gather task reads per batch, see gatherAndAggregate()
