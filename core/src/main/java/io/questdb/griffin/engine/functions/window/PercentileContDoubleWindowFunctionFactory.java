@@ -278,8 +278,8 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
 
                     // Calculate continuous percentile with interpolation
                     double position = percentile * (size - 1);
-                    int lowerIndex = (int) Math.floor(position);
-                    int upperIndex = (int) Math.ceil(position);
+                    long lowerIndex = (long) Math.floor(position);
+                    long upperIndex = (long) Math.ceil(position);
 
                     // Select the bracketing values (values start at listPtr + DATA_OFFSET).
                     // Everything right of lowerIndex is >= its value after the first selection,
@@ -415,8 +415,8 @@ public class PercentileContDoubleWindowFunctionFactory extends AbstractWindowFun
 
             // Calculate continuous percentile with interpolation
             double position = percentile * (size - 1);
-            int lowerIndex = (int) Math.floor(position);
-            int upperIndex = (int) Math.ceil(position);
+            long lowerIndex = (long) Math.floor(position);
+            long upperIndex = (long) Math.ceil(position);
 
             // Select the bracketing values. Everything right of lowerIndex is >= its value
             // after the first selection, so the second one finds the next order statistic.

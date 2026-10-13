@@ -315,8 +315,8 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
 
                         // Calculate continuous percentile with interpolation
                         double position = percentile * (size - 1);
-                        int lowerIndex = (int) Math.floor(position);
-                        int upperIndex = (int) Math.ceil(position);
+                        long lowerIndex = (long) Math.floor(position);
+                        long upperIndex = (long) Math.ceil(position);
 
                         double resultValue;
                         if (lowerIndex == upperIndex) {
@@ -491,8 +491,8 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
 
                 // Calculate continuous percentile with interpolation
                 double position = percentile * (size - 1);
-                int lowerIndex = (int) Math.floor(position);
-                int upperIndex = (int) Math.ceil(position);
+                long lowerIndex = (long) Math.floor(position);
+                long upperIndex = (long) Math.ceil(position);
 
                 if (lowerIndex == upperIndex) {
                     results[i] = listMemory.getDouble(lowerIndex * 8L);
