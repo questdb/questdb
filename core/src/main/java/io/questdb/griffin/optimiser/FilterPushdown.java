@@ -84,7 +84,10 @@ final class FilterPushdown implements OptimiserPass {
     private final ColumnExpression mappingColumn;
     private final ProjectPlan mappingProjection;
     private final ObjectPool<ColumnExpression> narrowingColumns;
-    private final PlanVisitor sharedDomainFilters = this::filterSharedDomain;
+    private final PlanVisitor sharedDomainFilters = plan -> {
+        filterSharedDomain(plan);
+        return TreeWalk.CONTINUE;
+    };
     private final ObjList<BoundExpression> tmpExpressions;
     private final IntList transitiveFactOrigins;
     private final ObjList<BoundExpression> transitiveFacts;
@@ -726,15 +729,15 @@ final class FilterPushdown implements OptimiserPass {
      * A decorrelation domain re-reads a master input; the master's own filters also narrow the
      * domain to the keys the join can match.
      */
-    private int filterSharedDomain(LogicalPlan plan) {
+    private void filterSharedDomain(LogicalPlan plan) {
         if (!(plan instanceof AggregatePlan aggregate) || aggregate.getSharedSource() == null
                 || !(aggregate.getChild() instanceof ScanPlan scan)) {
-            return TreeWalk.CONTINUE;
+            return;
         }
         final LogicalPlan source = LogicalPlans.skipFilters(aggregate.getSharedSource().getInput());
         if (source == aggregate.getSharedSource().getInput() || !(source instanceof ScanPlan sourceScan)
                 || !sourceScan.getTableToken().equals(scan.getTableToken())) {
-            return TreeWalk.CONTINUE;
+            return;
         }
         final int position = aggregate.getPosition();
         mappingProjection.clear();
@@ -753,12 +756,10 @@ final class FilterPushdown implements OptimiserPass {
         for (LogicalPlan filter = aggregate.getSharedSource().getInput(); filter != source; filter = filter.inputAt(0)) {
             final BoundExpression predicate = ((FilterPlan) filter).getPredicate();
             if (LogicalPlans.isStableWithinExecution(predicate) && LogicalPlans.readsOnly(predicate, mappingProjection.getOutput())) {
-                final FilterPlan copy = filters.next().of(input, context.getRewriter().copyRemappedColumns(predicate, mappingProjection), predicate.getPosition());
-                input = copy;
+                input = filters.next().of(input, context.getRewriter().copyRemappedColumns(predicate, mappingProjection), predicate.getPosition());
             }
         }
         aggregate.replaceInput(0, input);
-        return TreeWalk.CONTINUE;
     }
 
     private ProjectPlan groupingKeyView(AggregatePlan aggregate) {
