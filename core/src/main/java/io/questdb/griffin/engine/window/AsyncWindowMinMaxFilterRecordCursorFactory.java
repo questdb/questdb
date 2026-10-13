@@ -138,6 +138,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     private final int[] argKinds;
     private final RecordCursorFactory base;
     private final int baseColumnCount;
+    private final int boundWindow;
     private final IntList crossIndex;
     private final MinMaxCursor cursor;
     private final ObjList<LookupFilter> filters = new ObjList<>();
@@ -162,6 +163,10 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     // The dense lookup of an all-SYMBOL key, or 0: per window, one value per combination of
     // symbol keys, NULL included; see buildDense().
     private long denseAddr;
+    // the bound window's loosest value across partitions, when every partition holds one
+    private boolean boundActive;
+    private double boundDouble;
+    private long boundLong;
     private int denseBuildCount;
     private long denseSize;
     private long denseSlots;
@@ -185,6 +190,8 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
      * @param argColumns      per window, the base column of its argument
      * @param argKinds        per window, one of the {@code ARG_*} kinds
      * @param isMin           per window, min or max
+     * @param boundWindow     the window whose value every passing row's argument reaches, or -1; see
+     *                        {@link #buildBound()}
      * @param usedBaseColumns the base columns the filter reads, partition key and arguments included
      */
     public AsyncWindowMinMaxFilterRecordCursorFactory(
@@ -203,6 +210,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             int @NotNull [] argColumns,
             int @NotNull [] argKinds,
             boolean @NotNull [] isMin,
+            int boundWindow,
             @NotNull IntHashSet usedBaseColumns,
             @NotNull ObjList<CharSequence> windowPlans,
             @NotNull PageFrameReduceTaskFactory reduceTaskFactory,
@@ -217,6 +225,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         this.argColumns = argColumns;
         this.argKinds = argKinds;
         this.isMin = isMin;
+        this.boundWindow = boundWindow;
         this.windowPlans = windowPlans;
         this.workerCount = workerCount;
         this.keyColumnArray = keyColumns.toArray();
@@ -369,6 +378,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             aggregate(executionContext, order);
             replay(executionContext, order, memoryTracker);
             buildDense(memoryTracker);
+            buildBound();
             final RecordCursor filterCursor = filterFactory.getCursor(executionContext);
             cursor.of(filterCursor, memoryTracker);
             return cursor;
@@ -392,6 +402,11 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     /**
      * Executions that looked window values up in a dense array rather than the map.
      */
+    @TestOnly
+    public boolean isBoundActive() {
+        return boundActive;
+    }
+
     @TestOnly
     public int getDenseBuildCount() {
         return denseBuildCount;
@@ -638,6 +653,60 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
                 }
             }
         }
+    }
+
+    /**
+     * The filter holds only where the bound window's argument reaches its window value (see
+     * SqlCodeGenerator.boundWindow()), so a row whose argument lies beyond the loosest value of all
+     * partitions, the smallest max or the largest min, fails it. Off when a partition's value is
+     * NULL, which a NULL argument may equal.
+     */
+    private void buildBound() {
+        boundActive = false;
+        if (boundWindow < 0 || lookupMap.size() == 0) {
+            return;
+        }
+        final int slot = windowSlots[boundWindow];
+        final boolean min = isMin[boundWindow];
+        final MapRecordCursor mapCursor = lookupMap.getCursor();
+        final MapRecord mapRecord = mapCursor.getRecord();
+        if (argKinds[boundWindow] <= ARG_FLOAT) {
+            double bound = min ? Double.NEGATIVE_INFINITY : Double.POSITIVE_INFINITY;
+            while (mapCursor.hasNext()) {
+                final double d = mapRecord.getValue().getDouble(slot);
+                if (Numbers.isNull(d)) {
+                    return;
+                }
+                bound = min ? Math.max(bound, d) : Math.min(bound, d);
+            }
+            boundDouble = bound;
+        } else {
+            long bound = min ? Long.MIN_VALUE : Long.MAX_VALUE;
+            while (mapCursor.hasNext()) {
+                final long l = mapRecord.getValue().getLong(slot);
+                if (l == Numbers.LONG_NULL) {
+                    return;
+                }
+                bound = min ? Math.max(bound, l) : Math.min(bound, l);
+            }
+            boundLong = bound;
+        }
+        boundActive = true;
+    }
+
+    // Whether the row's argument lies beyond the bound, see buildBound(). A NULL argument does not;
+    // a DOUBLE one must clear the comparison tolerance.
+    private boolean isBeyondBound(Record record) {
+        final int w = boundWindow;
+        if (argKinds[w] <= ARG_FLOAT) {
+            final double d = readDouble(record, w);
+            if (Numbers.isNull(d)) {
+                return false;
+            }
+            return isMin[w] ? d - boundDouble > Numbers.DOUBLE_TOLERANCE : boundDouble - d > Numbers.DOUBLE_TOLERANCE;
+        }
+        final long l = readLong(record, w);
+        return l != Numbers.LONG_NULL && (isMin[w] ? l > boundLong : l < boundLong);
     }
 
     /**
@@ -1509,6 +1578,9 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
 
         @Override
         public boolean getBool(Record rec) {
+            if (factory.boundActive && factory.isBeyondBound(rec)) {
+                return false;
+            }
             lookupRecord.of(rec);
             joinRecord.of(rec, lookupRecord);
             return inner.getBool(record);

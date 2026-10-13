@@ -5604,6 +5604,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     argColumns,
                     argKinds,
                     isMin,
+                    boundWindow(filterExpr, metadata, crossIndex, windowOfColumn, argColumns, isMin),
                     usedBaseColumns,
                     windowPlans,
                     reduceTaskFactory,
@@ -5792,6 +5793,62 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static CharSequence unqualified(CharSequence name) {
         final int dot = Chars.indexOfLastUnquoted(name, '.');
         return dot > -1 ? name.subSequence(dot + 1, name.length()) : name;
+    }
+
+    /**
+     * The window whose value bounds the rows that can pass the filter, or -1: a top-level conjunct
+     * that holds only when the window's argument reaches its window value, such as
+     * {@code x = max(x) over (...)} or {@code x <= min(x) over (...)}. A row whose argument lies
+     * beyond every partition's value then fails the filter without a lookup.
+     */
+    private static int boundWindow(
+            ExpressionNode node,
+            RecordMetadata metadata,
+            IntList crossIndex,
+            IntList windowOfColumn,
+            int[] argColumns,
+            boolean[] isMin
+    ) {
+        if (node == null || node.type != OPERATION || node.paramCount != 2 || node.lhs == null || node.rhs == null) {
+            return -1;
+        }
+        if (SqlKeywords.isAndKeyword(node.token)) {
+            final int w = boundWindow(node.lhs, metadata, crossIndex, windowOfColumn, argColumns, isMin);
+            return w >= 0 ? w : boundWindow(node.rhs, metadata, crossIndex, windowOfColumn, argColumns, isMin);
+        }
+        if (node.lhs.type != LITERAL || node.rhs.type != LITERAL) {
+            return -1;
+        }
+        final int l = metadata.getColumnIndexQuiet(node.lhs.token);
+        final int r = metadata.getColumnIndexQuiet(node.rhs.token);
+        if (l < 0 || r < 0) {
+            return -1;
+        }
+        final int lw = windowOfColumn.getQuick(l);
+        final int rw = windowOfColumn.getQuick(r);
+        // the operator as read with the argument on its left: "<=" and "<" when the window is on the left flip
+        final CharSequence op = node.token;
+        final int w;
+        final boolean argOnLeft;
+        if (lw < 0 && rw >= 0 && crossIndex.getQuick(l) == argColumns[rw]) {
+            w = rw;
+            argOnLeft = true;
+        } else if (rw < 0 && lw >= 0 && crossIndex.getQuick(r) == argColumns[lw]) {
+            w = lw;
+            argOnLeft = false;
+        } else {
+            return -1;
+        }
+        if (Chars.equals(op, '=')) {
+            return w;
+        }
+        // with the argument on the left, a max window needs ">=" or ">", a min window "<=" or "<"
+        final boolean greater = Chars.equals(op, ">=") || Chars.equals(op, '>');
+        final boolean less = Chars.equals(op, "<=") || Chars.equals(op, '<');
+        if (!greater && !less) {
+            return -1;
+        }
+        return (greater == argOnLeft) != isMin[w] ? w : -1;
     }
 
     private static boolean isWindowMinMaxKeyType(int columnType) {

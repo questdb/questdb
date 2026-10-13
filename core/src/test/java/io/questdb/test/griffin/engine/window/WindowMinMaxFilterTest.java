@@ -101,6 +101,66 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBoundPrefilter() throws Exception {
+        assertMemoryLeak(() -> {
+            // b: each partition's extremes lie apart, so the loosest bound rejects most rows; A's max
+            // and its runner-up are 5e-11 apart, within the DOUBLE tolerance, so both equal the max
+            execute("create table b as (select timestamp_sequence(0, 100000000) ts, rnd_symbol('A','B','C') k, " +
+                    "(x % 100)::double p, x % 100 l, (x % 100)::timestamp tt, x from long_sequence(3_000)) timestamp(ts) partition by day");
+            execute("insert into b values (3_000_000_000_000, 'A', 200.0, 200, 200::timestamp, 3001), " +
+                    "(3_000_100_000_000, 'A', 199.99999999995, 199, 199::timestamp, 3002), " +
+                    "(3_000_200_000_000, 'B', -5.0, -5, (-5)::timestamp, 3003)");
+            final String[] bounded = {
+                    "select ts, k, p, x from (select ts, k, p, x, max(p) over (partition by k) w from b) where p = w",
+                    "select ts, k, p, x from (select ts, k, p, x, max(p) over (partition by k) w from b) where w = p",
+                    "select ts, k, p, x from (select ts, k, p, x, max(p) over (partition by k) w from b) where p >= w",
+                    "select ts, k, p, x from (select ts, k, p, x, max(p) over (partition by k) w from b) where w <= p and x > 10",
+                    "select ts, k, p, x from (select ts, k, p, x, min(p) over (partition by k) w from b) where x > 10 and p <= w",
+                    "select ts, k, p, x from (select ts, k, p, x, min(p) over (partition by k) w from b) where w > p or p = w and x > 0",
+                    "select ts, k, l, x from (select ts, k, l, x, max(l) over (partition by k) w from b) where l = w",
+                    "select ts, k, l, x from (select ts, k, l, x, min(l) over (partition by k) w from b) where l <= w",
+                    "select ts, k, tt, x from (select ts, k, tt, x, max(tt) over (partition by k) w from b) where tt >= w",
+            };
+            final boolean[] active = {true, true, true, true, true, false, true, true, true};
+            // the wrong direction, or another column: no bound
+            final String[] unbounded = {
+                    "select ts, k, p, x from (select ts, k, p, x, max(p) over (partition by k) w from b) where p <= w and x % 7 = 0",
+                    "select ts, k, p, x from (select ts, k, p, x, min(p) over (partition by k) w from b) where p >= w and x % 7 = 0",
+                    "select ts, k, p, x from (select ts, k, p, x, max(p) over (partition by k) w from b) where x = w or p = w",
+            };
+            for (int i = 0; i < bounded.length + unbounded.length; i++) {
+                final boolean isBounded = i < bounded.length;
+                final String query = isBounded ? bounded[i] : unbounded[i - bounded.length];
+                final String expected = serial(engine, sqlExecutionContext, query);
+                sqlExecutionContext.setParallelWindowMinMaxRewriteEnabled(true);
+                try (RecordCursorFactory factory = select(query)) {
+                    final AsyncWindowMinMaxFilterRecordCursorFactory minMax = find(factory);
+                    Assert.assertNotNull(query, minMax);
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        TestUtils.assertEquals(query, expected, print(cursor, factory));
+                    }
+                    Assert.assertEquals(query, isBounded && active[i], minMax.isBoundActive());
+                }
+            }
+            // the max matches across the tolerance
+            TestUtils.assertContains(serial(engine, sqlExecutionContext, bounded[0]), "199.99999999995");
+            // a NULL in a partition's value turns the bound off; NULL = NULL still passes
+            execute("insert into b values (3_000_300_000_000, 'D', null, null, null, 3004)");
+            final String query = bounded[0];
+            final String expected = serial(engine, sqlExecutionContext, query);
+            sqlExecutionContext.setParallelWindowMinMaxRewriteEnabled(true);
+            try (RecordCursorFactory factory = select(query)) {
+                final AsyncWindowMinMaxFilterRecordCursorFactory minMax = find(factory);
+                try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                    TestUtils.assertEquals(query, expected, print(cursor, factory));
+                }
+                Assert.assertFalse(minMax.isBoundActive());
+            }
+            TestUtils.assertContains(expected, "\tD\t");
+        });
+    }
+
+    @Test
     public void testCancelBeforeTheAggregation() throws Exception {
         assertCancellation(false);
     }
