@@ -1128,9 +1128,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             closeActivePartition(false);
             configureAppendPosition();
         }
+        Throwable commandFailure = null;
         try {
             return command.apply(this, contextAllowsAnyStructureChanges);
         } catch (Throwable th) {
+            commandFailure = th;
             // A command run outside the WAL reports to a statement or, from the command queue, only a message to
             // the thread that sent it: a failed data sync stops the engine here
             if (engine.isDataSyncFailureFatal(th)) {
@@ -1141,12 +1143,23 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } finally {
             // Also after a failure: a list command may have changed some partitions before it failed.
             if (enrolledAdaptive && !distressed) {
-                if (isRequiredCompletion) {
-                    // A no-op retry can follow a committed change whose first publication succeeded but whose
-                    // second failed. Certify disk coverage even when close or another epoch cleared the owed bit.
-                    completeDurableEpochAfter("direct partition change");
-                } else if (engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() != getTxn()) {
-                    advanceDurableEpochBestEffort("direct change");
+                try {
+                    if (isRequiredCompletion) {
+                        // A no-op retry can follow a committed change whose first publication succeeded but whose
+                        // second failed. Certify disk coverage even when close or another epoch cleared the owed bit.
+                        completeDurableEpochAfter("direct partition change");
+                    } else if (engine.getTableSequencerAPI().getTxnTracker(tableToken).getPinnedEpochTxn() != getTxn()) {
+                        advanceDurableEpochBestEffort("direct change");
+                    }
+                } catch (Throwable completionFailure) {
+                    if (commandFailure == null) {
+                        throw completionFailure;
+                    }
+                    // The statement reports the command's own failure, whichever flush the platform's save point
+                    // takes; the tracker keeps the completion owed.
+                    commandFailure.addSuppressed(completionFailure);
+                    LOG.error().$("could not complete durable epoch after a failed direct change [table=").$(tableToken)
+                            .$(", e=").$(completionFailure).I$();
                 }
             }
         }
@@ -16804,18 +16817,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             );
             final int partitionDirLen = path.size();
             final long findPtr = ff.findFirst(path.$());
-            if (findPtr < 0) {
-                path.trimTo(pathSize);
-                throw CairoException.critical(ff.errno())
-                        .put("could not enumerate partition for adaptive epoch [path=").put(path).put(']');
-            }
-            if (findPtr == 0) {
-                // Trim before throwing, as the branch above does. The caller (handleBestEffortDurableEpochFailure)
+            if (findPtr <= 0) {
+                // Name the partition directory, then trim before throwing. The caller (handleBestEffortDurableEpochFailure)
                 // swallows this, so a `path` left at the partition directory would corrupt the next unqualified
                 // path.concat() on this writer.
+                final CairoException e = CairoException.critical(ff.errno()).put(findPtr < 0
+                        ? "could not enumerate partition for adaptive epoch [path="
+                        : "attached partition is absent during adaptive epoch [path=").put(path).put(']');
                 path.trimTo(pathSize);
-                throw CairoException.critical(ff.errno())
-                        .put("attached partition is absent during adaptive epoch [path=").put(path).put(']');
+                throw e;
             }
             try {
                 int findResult;
