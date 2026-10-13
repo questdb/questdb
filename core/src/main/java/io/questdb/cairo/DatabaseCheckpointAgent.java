@@ -754,41 +754,37 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
     }
 
     /**
-     * Waits for the WalPurgeJob to finish its current sweep and pauses it. The wait is done in
-     * bounded steps of at most {@link #WAL_PURGE_LOCK_WAIT_STEP_MILLIS}; between steps it checks
-     * the circuit breaker and engine shutdown, logs progress, and gives up once the total wait
-     * exceeds the query timeout. The total bound also covers callers with a no-op circuit breaker,
-     * such as scheduled backups.
+     * Waits for the WalPurgeJob to finish its current sweep and pauses it. The fair lock hands
+     * over at the end of the sweep in progress, so the wait is bounded by a single sweep. The
+     * wait is done in steps of at most {@link #WAL_PURGE_LOCK_WAIT_STEP_MILLIS}, or the query
+     * timeout if shorter; between steps it checks the circuit breaker, which carries the
+     * statement's own timeout, and engine shutdown, and logs progress. Once the lock is acquired,
+     * the circuit breaker is checked again and the lock is released if the breaker has tripped.
      */
     private void lockWalPurgeJob(SqlExecutionCircuitBreaker circuitBreaker) {
-        if (engine.tryLockWalPurgeJob(0, TimeUnit.MILLISECONDS)) {
-            return;
-        }
-        final long maxWaitMillis = configuration.getCircuitBreakerConfiguration().getQueryTimeout();
-        final long startNanos = System.nanoTime();
-        while (true) {
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
-            if (engine.isClosing()) {
-                throw CairoException.nonCritical().put("checkpoint cancelled, database is closing");
-            }
-            final long waitedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
-            long stepMillis = WAL_PURGE_LOCK_WAIT_STEP_MILLIS;
-            if (maxWaitMillis > 0) {
-                final long remainingMillis = maxWaitMillis - waitedMillis;
-                if (remainingMillis <= 0) {
-                    throw CairoException.nonCritical()
-                            .put("timed out waiting for WAL purge job to pause [waitedMs=").put(waitedMillis)
-                            .put(", timeoutMs=").put(maxWaitMillis)
-                            .put(']');
+        if (!engine.tryLockWalPurgeJob(0, TimeUnit.MILLISECONDS)) {
+            final long queryTimeoutMillis = configuration.getCircuitBreakerConfiguration().getQueryTimeout();
+            final long stepMillis = queryTimeoutMillis > 0
+                    ? Math.min(queryTimeoutMillis, WAL_PURGE_LOCK_WAIT_STEP_MILLIS)
+                    : WAL_PURGE_LOCK_WAIT_STEP_MILLIS;
+            final long startNanos = System.nanoTime();
+            do {
+                circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+                if (engine.isClosing()) {
+                    throw CairoException.nonCritical().put("checkpoint cancelled, database is closing");
                 }
-                stepMillis = Math.min(stepMillis, remainingMillis);
-            }
-            if (waitedMillis > 0) {
-                LOG.info().$("waiting for WAL purge job to pause [waitedMs=").$(waitedMillis).I$();
-            }
-            if (engine.tryLockWalPurgeJob(stepMillis, TimeUnit.MILLISECONDS)) {
-                return;
-            }
+                final long waitedMillis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNanos);
+                if (waitedMillis > 0) {
+                    LOG.info().$("waiting for WAL purge job to pause [waitedMs=").$(waitedMillis).I$();
+                }
+            } while (!engine.tryLockWalPurgeJob(stepMillis, TimeUnit.MILLISECONDS));
+        }
+        // the statement may have been cancelled or timed out while waiting for the lock
+        try {
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+        } catch (Throwable th) {
+            engine.unlockWalPurgeJob();
+            throw th;
         }
     }
 

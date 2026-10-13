@@ -126,6 +126,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.locks.LockSupport;
 
 import static io.questdb.PropertyKey.*;
 
@@ -4456,37 +4457,74 @@ public class CheckpointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRunWalPurgeJobLockTimeoutNoopCircuitBreaker() throws Exception {
-        // Scheduled backups create the checkpoint with a no-op circuit breaker; the WAL purge
-        // lock wait must still be bounded by the query timeout.
+    public void testRunWalPurgeJobLockWaitAbortsOnEngineClose() throws Exception {
+        // a no-op circuit breaker never trips, so engine shutdown is what ends the wait
         assertMemoryLeak(() -> {
             execute("create table test (ts timestamp, name symbol, val int)");
-            circuitBreakerConfiguration = new DefaultSqlExecutionCircuitBreakerConfiguration() {
-                @Override
-                public long getQueryTimeout() {
-                    return 200;
-                }
-            };
             Assert.assertTrue(engine.tryLockWalPurgeJob(0, TimeUnit.SECONDS)); // emulate WalPurgeJob running with lock
+            engine.setClosing(true);
             try {
-                final long start = System.nanoTime();
-                try {
-                    engine.checkpointCreate(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER, false);
-                    Assert.fail();
-                } catch (CairoException ex) {
-                    TestUtils.assertContains(ex.getFlyweightMessage(), "timed out waiting for WAL purge job to pause");
-                }
-                Assert.assertTrue(System.nanoTime() - start >= TimeUnit.MILLISECONDS.toNanos(200));
-                Assert.assertFalse(engine.getCheckpointStatus().isInProgress());
+                engine.checkpointCreate(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER, false);
+                Assert.fail();
+            } catch (CairoException ex) {
+                TestUtils.assertContains(ex.getFlyweightMessage(), "checkpoint cancelled, database is closing");
             } finally {
+                engine.setClosing(false);
                 engine.unlockWalPurgeJob();
             }
+            Assert.assertFalse(engine.getCheckpointStatus().isInProgress());
+            Assert.assertFalse(engine.isWalPurgeJobLocked());
 
             engine.checkpointCreate(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER, false);
             Assert.assertTrue(engine.isWalPurgeJobLocked());
             execute("checkpoint release");
             Assert.assertFalse(engine.isWalPurgeJobLocked());
         });
+    }
+
+    @Test
+    public void testRunWalPurgeJobLockWaitCancelledBeforeHandOff() throws Exception {
+        // the statement is cancelled while queued; the hand-off must not start the checkpoint
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, name symbol, val int)");
+            final TableToken tableToken = engine.verifyTableName("test");
+            Assert.assertTrue(engine.tryLockWalPurgeJob(0, TimeUnit.SECONDS)); // emulate WalPurgeJob running with lock
+            final Thread checkpointThread = Thread.currentThread();
+            final Thread sweep = new Thread(() -> {
+                // wait for the checkpoint to queue on the WAL purge lock
+                while (LockSupport.getBlocker(checkpointThread) == null) {
+                    Os.pause();
+                }
+                circuitBreaker.cancel();
+                engine.unlockWalPurgeJob();
+            });
+            circuitBreaker.resetTimer();
+            sweep.start();
+            try {
+                engine.checkpointCreate(circuitBreaker, false);
+                Assert.fail();
+            } catch (CairoException ex) {
+                Assert.assertTrue(ex.isCancellation());
+            } finally {
+                sweep.join();
+            }
+            Assert.assertFalse(engine.getCheckpointStatus().isInProgress());
+            Assert.assertFalse(engine.isWalPurgeJobLocked());
+            path.trimTo(rootLen).concat(tableToken).$();
+            Assert.assertFalse(ff.exists(path.$()));
+        });
+    }
+
+    @Test
+    public void testRunWalPurgeJobLockWaitOutlastsQueryTimeoutNoopCircuitBreaker() throws Exception {
+        // scheduled backups use a no-op circuit breaker
+        testRunWalPurgeJobLockWaitOutlastsQueryTimeout(false);
+    }
+
+    @Test
+    public void testRunWalPurgeJobLockWaitOutlastsQueryTimeoutStatementTimeout() throws Exception {
+        // setUp() gives the statement's circuit breaker a longer timeout than the configured query timeout
+        testRunWalPurgeJobLockWaitOutlastsQueryTimeout(true);
     }
 
     @Test
@@ -5572,6 +5610,34 @@ public class CheckpointTest extends AbstractCairoTest {
             }
 
             engine.checkpointRelease();
+        });
+    }
+
+    private void testRunWalPurgeJobLockWaitOutlastsQueryTimeout(boolean useSql) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table test (ts timestamp, name symbol, val int)");
+            final long sweepMillis = 5 * configuration.getCircuitBreakerConfiguration().getQueryTimeout();
+            Assert.assertTrue(engine.tryLockWalPurgeJob(0, TimeUnit.SECONDS)); // emulate a WalPurgeJob sweep
+            final Thread sweep = new Thread(() -> {
+                Os.sleep(sweepMillis);
+                engine.unlockWalPurgeJob();
+            });
+            final long start = System.nanoTime();
+            sweep.start();
+            try {
+                if (useSql) {
+                    execute("checkpoint create");
+                } else {
+                    engine.checkpointCreate(SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER, false);
+                }
+            } finally {
+                sweep.join();
+            }
+            Assert.assertTrue(System.nanoTime() - start >= TimeUnit.MILLISECONDS.toNanos(sweepMillis));
+            Assert.assertTrue(engine.getCheckpointStatus().isInProgress());
+            Assert.assertTrue(engine.isWalPurgeJobLocked());
+            execute("checkpoint release");
+            Assert.assertFalse(engine.isWalPurgeJobLocked());
         });
     }
 
