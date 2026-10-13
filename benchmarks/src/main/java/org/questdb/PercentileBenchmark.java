@@ -25,7 +25,10 @@
 package org.questdb;
 
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.DefaultCairoConfiguration;
+import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
@@ -51,6 +54,9 @@ public class PercentileBenchmark {
 
     private static final int WARMUP_ITERATIONS = 3;
     private static final int MEASUREMENT_ITERATIONS = 7;
+    // Sums every percentile value read, so the JIT cannot drop the reads;
+    // runBenchmarkSuite() prints it once per dataset.
+    private static double resultChecksum;
 
     private static final String[] QUERY_LABELS = {
             "percentile_disc(val, 0.95)",
@@ -98,13 +104,29 @@ public class PercentileBenchmark {
     private static long benchmarkQuery(CairoEngine engine, SqlExecutionContext ctx, String query) throws SqlException {
         try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
             try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                // Group-by percentile functions select the value lazily, in the record getter,
+                // so the timed loop must read the percentile column (the last one in every query).
+                final int percentileColumn = factory.getMetadata().getColumnCount() - 1;
+                final int percentileType = factory.getMetadata().getColumnType(percentileColumn);
+                final boolean isArray = ColumnType.isArray(percentileType);
+                double sum = 0;
                 long start = System.nanoTime();
                 try (RecordCursor cursor = factory.getCursor(ctx)) {
+                    final Record record = cursor.getRecord();
                     while (cursor.hasNext()) {
-                        // consume all rows
+                        if (isArray) {
+                            ArrayView array = record.getArray(percentileColumn, percentileType);
+                            for (int i = 0, n = array.getFlatViewLength(); i < n; i++) {
+                                sum += array.getDouble(i);
+                            }
+                        } else {
+                            sum += record.getDouble(percentileColumn);
+                        }
                     }
                 }
-                return System.nanoTime() - start;
+                long elapsed = System.nanoTime() - start;
+                resultChecksum += sum;
+                return elapsed;
             }
         }
     }
@@ -191,6 +213,7 @@ public class PercentileBenchmark {
                     double median = medianMs(measurements);
                     System.out.printf("%-50s %12.1f%n", QUERY_LABELS[q], median);
                 }
+                System.out.printf("%nResult checksum: %.3f%n", resultChecksum);
             }
         } catch (SqlException e) {
             System.err.println("SQL error: " + e.getMessage());
