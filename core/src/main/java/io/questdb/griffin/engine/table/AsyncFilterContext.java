@@ -72,6 +72,8 @@ public class AsyncFilterContext implements Closeable {
     private final ObjList<SelectivityStats> perWorkerSelectivityStats;
     // Set per execution by initFilters(), see getExecutionCompiledFilter().
     private boolean compiledFilterSuspended;
+    // a worker slot's pool the owner reads a frame through, see FrameDecodeAheadAtom
+    private PageFrameMemoryPool ownerMemoryPoolOverride;
 
     AsyncFilterContext(
             CairoConfiguration configuration,
@@ -159,6 +161,7 @@ public class AsyncFilterContext implements Closeable {
     }
 
     public void clear() {
+        ownerMemoryPoolOverride = null;
         Misc.free(ownerMemoryPool);
         Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
         ownerSelectivityStats.clear();
@@ -255,7 +258,8 @@ public class AsyncFilterContext implements Closeable {
 
     public PageFrameMemoryPool getMemoryPool(int slotId) {
         if (slotId == -1) {
-            return ownerMemoryPool;
+            final PageFrameMemoryPool override = ownerMemoryPoolOverride;
+            return override != null ? override : ownerMemoryPool;
         }
         return perWorkerMemoryPools.getQuick(slotId);
     }
@@ -313,6 +317,14 @@ public class AsyncFilterContext implements Closeable {
             pool.setMemoryTracker(memoryTracker);
             pool.of(pageFrameAddressCache, ParquetDecodeHint.MONOTONIC);
         }
+    }
+
+    /**
+     * Makes {@link #getMemoryPool(int)} answer {@code pool} for the owner (slot -1) until called
+     * with null, see {@link io.questdb.cairo.sql.async.FrameDecodeAheadAtom}.
+     */
+    public void setOwnerMemoryPoolOverride(@Nullable PageFrameMemoryPool pool) {
+        ownerMemoryPoolOverride = pool;
     }
 
     public boolean shouldUseLateMaterialization(int slotId, boolean isParquetFrame) {

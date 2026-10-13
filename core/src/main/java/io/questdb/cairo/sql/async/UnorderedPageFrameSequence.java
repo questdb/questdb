@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameAddressCache;
 import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -49,6 +50,7 @@ import io.questdb.mp.SOUnboundedCountDownLatch;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.FiberCancellationSignal;
 import io.questdb.mp.continuation.SuspensionScope;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -67,6 +69,9 @@ import java.util.concurrent.atomic.AtomicLong;
  * Designed for factories that don't need ordered results (GROUP BY, top-K).
  */
 public class UnorderedPageFrameSequence<T extends StatefulAtom> extends AbstractPageFrameSequence implements Closeable {
+    // a frame of a decode-ahead round that no slot decoded: not single-key covered
+    private static final int NOT_DECODED_AHEAD = -2;
+    private static final UnorderedPageFrameReducer DECODE_AHEAD_REDUCER = UnorderedPageFrameSequence::decodeFrameAhead;
     private static final AtomicLong ID_SEQ = new AtomicLong();
     private static final Log LOG = LogFactory.getLog(UnorderedPageFrameSequence.class);
     private static final long MAX_TAIL_SPIN_NANOS = 16_000L;
@@ -75,6 +80,8 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     // native frames come without column addresses, which the threads processing them compute, see
     // PageFrameCursor.deferFrameAddresses()
     private final boolean deferFrameAddresses;
+    // per frame of a decode-ahead round, the slot whose pool decoded it, see decodeFramesAheadAndReduceLocally()
+    private final IntList decodedFrameSlots = new IntList();
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final AsyncQueryErrorState errorState = new AsyncQueryErrorState("unexpected reduce error");
     private final LongList frameRowCounts = new LongList();
@@ -87,6 +94,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     private final long tailSpinTimeoutNanos;
     private final WorkStealingStrategy workStealingStrategy;
     private T atom;
+    // set once the frames are built: they hold fewer rows than localReduceMaxRows, but are too many to
+    // decode on the calling thread, so dispatchAndAwait() has the workers decode them, then reduces them
+    // on the calling thread, see FrameDecodeAheadAtom
+    private boolean decodeFramesAhead;
     private PageFrameAddressCache frameAddressCache;
     private int frameCount;
     private PageFrameCursor frameCursor;
@@ -212,6 +223,10 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             reduceFramesLocally();
             return;
         }
+        if (decodeFramesAhead) {
+            decodeFramesAheadAndReduceLocally();
+            return;
+        }
         dispatchAndAwait(frameCount);
     }
 
@@ -221,7 +236,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
      */
     @TestOnly
     public static long[] getLocalReduceOpensForTesting() {
-        return new long[]{LOCAL_FRAME_OPENS.get(), DISPATCHED_FRAME_OPENS.get()};
+        return new long[]{LOCAL_FRAME_OPENS.get(), DISPATCHED_FRAME_OPENS.get(), DECODED_AHEAD_FRAME_OPENS.get()};
     }
 
     /**
@@ -323,6 +338,62 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             }
         } finally {
             endRound();
+        }
+    }
+
+    private static void decodeFrameAhead(
+            int workerId,
+            PageFrameMemoryRecord record,
+            int frameIndex,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            UnorderedPageFrameSequence<?> frameSequence,
+            UnorderedPageFrameSequence<?> stealingFrameSequence
+    ) {
+        if (!frameSequence.frameAddressCache.isFrameSingleKeyCovered(frameIndex)) {
+            return;
+        }
+        final FrameDecodeAheadAtom atom = (FrameDecodeAheadAtom) frameSequence.atom;
+        final int slotId = atom.maybeAcquire(workerId, stealingFrameSequence == frameSequence, circuitBreaker);
+        try {
+            final PageFrameMemoryPool pool = atom.getDecodeMemoryPool(slotId);
+            try {
+                // decodes the frame's covered columns into the pool's buffers for the frame, which
+                // the pool keeps for the query
+                pool.navigateTo(frameIndex);
+            } finally {
+                pool.releaseParquetBuffers();
+            }
+            // each task writes its own frame's entry; the round's latch publishes it to the owner
+            frameSequence.decodedFrameSlots.setQuick(frameIndex, slotId);
+        } finally {
+            atom.release(slotId);
+        }
+    }
+
+    // A round decodes the single-key covered frames on the workers, each into the pool of the slot that
+    // takes it; then the frames are reduced here, in frame order, each read through the pool that decoded
+    // it. The fold runs as reduceFramesLocally() runs it, so its results are bit for bit a local reduce's.
+    private void decodeFramesAheadAndReduceLocally() {
+        final FrameDecodeAheadAtom decodeAtom = (FrameDecodeAheadAtom) atom;
+        decodedFrameSlots.setAll(frameCount, NOT_DECODED_AHEAD);
+        dispatchRoundAndAwait(DECODE_AHEAD_REDUCER, frameRowCounts);
+        hasTailSpun = false;
+        queuedCount = 0;
+        workStealCircuitBreaker.init(sqlExecutionContext.getCircuitBreaker());
+        try {
+            for (int i = 0; i < frameCount && isActive(); i++) {
+                final int slotId = decodedFrameSlots.getQuick(i);
+                decodeAtom.setOwnerMemoryPool(slotId != NOT_DECODED_AHEAD ? decodeAtom.getDecodeMemoryPool(slotId) : null);
+                reduceLocally(i);
+            }
+        } finally {
+            decodeAtom.setOwnerMemoryPool(null);
+        }
+        if (errorState.hasError()) {
+            throw buildError();
+        }
+        if (!isActive() && getCancelReason() != SqlExecutionCircuitBreaker.STATE_OK) {
+            throw buildInterruptionException();
         }
     }
 
@@ -711,6 +782,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         roundTaskRowCounts = null;
         isReadyToDispatch = false;
         reduceFramesLocally = false;
+        decodeFramesAhead = false;
         localReduceMaxRows = 0;
         // Drop the borrowed tracker reference; the provider owns the native block.
         memoryTracker = null;
@@ -797,9 +869,17 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
             frameRowCounts.add(frameRows);
             frameAddressCache.add(frameCount++, frame);
         }
-        reduceFramesLocally = rows < localReduceMaxRows && (!deferFrameAddresses || frameCount <= LOCAL_REDUCE_MAX_FRAMES);
+        // Under the threshold, the frames are reduced on this thread, in frame order, as without the frame
+        // dispatch switch, so that aggregates whose result depends on the order they see rows in (a DOUBLE
+        // sum) give the same bits. Past LOCAL_REDUCE_MAX_FRAMES frames, the workers decode them first.
+        final boolean isUnderRowThreshold = rows < localReduceMaxRows;
+        decodeFramesAhead = isUnderRowThreshold
+                && deferFrameAddresses
+                && frameCount > LOCAL_REDUCE_MAX_FRAMES
+                && atom instanceof FrameDecodeAheadAtom;
+        reduceFramesLocally = isUnderRowThreshold && !decodeFramesAhead;
         if (localReduceMaxRows > 0) {
-            countFrameOpens(reduceFramesLocally);
+            countFrameOpens(reduceFramesLocally, decodeFramesAhead);
         }
 
         // Mirror PageFrameSequence.buildAddressCache(): covered frames decode their

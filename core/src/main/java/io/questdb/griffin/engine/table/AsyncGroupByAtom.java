@@ -34,9 +34,11 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
+import io.questdb.cairo.sql.async.FrameDecodeAheadAtom;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
@@ -70,7 +72,7 @@ import org.jetbrains.annotations.TestOnly;
 import java.io.Closeable;
 
 
-public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {
+public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, PerWorkerLockOwner, Closeable, Reopenable, Plannable {
     private final int batchSize;
     // Column-wise batch kernels, one per slot, or null when no aggregate has one or they are disabled.
     private final GroupByBatchKernels ownerBatchKernels;
@@ -382,6 +384,11 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         return shardingCtx.getDestShards();
     }
 
+    @Override
+    public PageFrameMemoryPool getDecodeMemoryPool(int slotId) {
+        return filterCtx.getMemoryPool(slotId);
+    }
+
     public AsyncFilterContext getFilterContext() {
         return filterCtx;
     }
@@ -505,6 +512,7 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
      *
      * @throws io.questdb.cairo.CairoException when circuit breaker has tripped
      */
+    @Override
     public int maybeAcquire(int workerId, boolean owner, SqlExecutionCircuitBreaker circuitBreaker) {
         if (workerId == -1 && owner) {
             return -1;
@@ -516,6 +524,7 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         shardingCtx.maybeEnableSharding(fragment, getTotalFunctionCardinality(fragment.slotId));
     }
 
+    @Override
     public void release(int slotId) {
         perWorkerLocks.releaseSlot(slotId);
     }
@@ -549,6 +558,11 @@ public class AsyncGroupByAtom implements StatefulAtom, PerWorkerLockOwner, Close
         for (int i = 0, n = groupByFunctions.size(); i < n; i++) {
             groupByFunctions.getQuick(i).resetStats();
         }
+    }
+
+    @Override
+    public void setOwnerMemoryPool(@Nullable PageFrameMemoryPool pool) {
+        filterCtx.setOwnerMemoryPoolOverride(pool);
     }
 
     @Override

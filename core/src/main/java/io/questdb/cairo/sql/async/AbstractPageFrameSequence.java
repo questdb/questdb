@@ -46,6 +46,9 @@ abstract class AbstractPageFrameSequence {
     // RecordCursorFactory.getLocalReduceMaxRows(), whose frames were reduced on the query's
     // thread, and those whose frames were dispatched; counted only while a test asks for it
     // (countFrameOpens()), so that production opens do not share a contended counter
+    // of the dispatched ones, those whose frames the workers decoded for a fold on the query's
+    // thread, see FrameDecodeAheadAtom
+    static final AtomicLong DECODED_AHEAD_FRAME_OPENS = new AtomicLong();
     static final AtomicLong DISPATCHED_FRAME_OPENS = new AtomicLong();
     static final AtomicLong LOCAL_FRAME_OPENS = new AtomicLong();
     static volatile boolean isCountingFrameOpens;
@@ -73,9 +76,12 @@ abstract class AbstractPageFrameSequence {
         LOCAL_REDUCE_MAX_FRAMES = frames < 0 ? LOCAL_REDUCE_MAX_FRAMES_DEFAULT : frames;
     }
 
-    static void countFrameOpens(boolean reduceFramesLocally) {
+    static void countFrameOpens(boolean reduceFramesLocally, boolean decodeFramesAhead) {
         if (isCountingFrameOpens) {
             (reduceFramesLocally ? LOCAL_FRAME_OPENS : DISPATCHED_FRAME_OPENS).incrementAndGet();
+            if (decodeFramesAhead) {
+                DECODED_AHEAD_FRAME_OPENS.incrementAndGet();
+            }
         }
     }
 

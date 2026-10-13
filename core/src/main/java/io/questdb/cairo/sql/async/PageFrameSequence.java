@@ -847,7 +847,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
         reduceFramesLocally = rows < localReduceMaxRows && (!deferFrameAddresses || frameCount <= LOCAL_REDUCE_MAX_FRAMES);
         if (localReduceMaxRows > 0) {
-            countFrameOpens(reduceFramesLocally);
+            countFrameOpens(reduceFramesLocally, false);
         }
 
         // Covered frames decode their columns on the async workers (in
