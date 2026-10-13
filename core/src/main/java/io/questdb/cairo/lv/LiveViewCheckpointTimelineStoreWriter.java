@@ -5468,8 +5468,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private final class ChainedPreviousBoundary implements PreviousBoundary, Closeable {
             private final LiveViewCheckpointDataSegmentWriter dataWriter;
             private final LiveViewCheckpointPartitionMapEntry entry = new LiveViewCheckpointPartitionMapEntry();
-            private final LiveViewCheckpointBinaryKeyIndex functionOrdinalIndex =
-                    new LiveViewCheckpointBinaryKeyIndex();
+            // A function's ordinal is its position here. The list holds one identity per
+            // function of the view, so a linear scan finds it.
+            private final ObjList<byte[]> functionIdentities = new ObjList<>();
             @TestOnly
             private int functionIdentityQualificationCountForTest;
             // Both indexes name the staged keys by their handles in the capture scratch's key
@@ -5559,7 +5560,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 Misc.free(publishedRoot);
                 Misc.free(entry);
                 Misc.free(windowEntry);
-                functionOrdinalIndex.clear();
+                functionIdentities.clear();
                 stagedPartitions.clear();
                 windowPayloads.clear();
                 newest = null;
@@ -5740,14 +5741,14 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
             private int functionOrdinal(byte[] functionIdentity, boolean isCreate) {
                 assert isCreate || incrementFunctionIdentityQualificationCountForTest();
-                final int existingOrdinal = functionOrdinalIndex.get(0, 0, functionIdentity);
-                if (existingOrdinal > -1) {
-                    return existingOrdinal;
+                for (int i = 0, n = functionIdentities.size(); i < n; i++) {
+                    if (Arrays.equals(functionIdentities.getQuick(i), functionIdentity)) {
+                        return i;
+                    }
                 }
                 if (isCreate) {
-                    final int ordinal = functionOrdinalIndex.size();
-                    functionOrdinalIndex.put(0, 0, functionIdentity, ordinal);
-                    return ordinal;
+                    functionIdentities.add(functionIdentity);
+                    return functionIdentities.size() - 1;
                 }
                 return -1;
             }

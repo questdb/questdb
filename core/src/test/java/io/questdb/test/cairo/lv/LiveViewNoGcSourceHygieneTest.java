@@ -123,13 +123,6 @@ public class LiveViewNoGcSourceHygieneTest {
                 2 byte[] encoded
                 1 byte[] getEncoded()
                 1 new byte[]
-            LiveViewCheckpointBinaryKeyIndex.java
-                # The function-identity index of one publication, one entry per function.
-                4 byte[] key
-                1 byte[] slot
-                1 byte[][] keys
-                1 byte[][] oldKeys
-                1 new byte[]
             LiveViewCheckpointByteArrayPool.java
                 # The pool of decoded per-root metadata images.
                 1 LiveViewCheckpointByteArrayPool
@@ -199,7 +192,9 @@ public class LiveViewNoGcSourceHygieneTest {
                 1 byte[] identity
             LiveViewCheckpointTimelineStoreWriter.java
                 # Borrowed compiled identities, key schemas and manifests a seal names its
-                # function and window roots by, and looks predecessors up by.
+                # function and window roots by, and looks predecessors up by; a chained
+                # capture lists one identity per function of the view.
+                1 ObjList<byte[]> functionIdentities
                 17 byte[] functionIdentity
                 2 byte[] identity
                 9 byte[] keySchema

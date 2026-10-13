@@ -25,7 +25,6 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.cairo.lv.LiveViewCheckpointBinaryKeyIndex;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Unsafe;
@@ -37,6 +36,8 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.util.Arrays;
+import java.util.HashMap;
 
 /**
  * The native partition index a freeze scratch and a chained repair capture keep over their
@@ -407,18 +408,18 @@ public class LiveViewCheckpointKeyIndexTest {
         TestUtils.assertMemoryLeak(() -> {
             final Object arena = ARENA_CONSTRUCTOR.newInstance();
             final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
-            final LiveViewCheckpointBinaryKeyIndex oracle = new LiveViewCheckpointBinaryKeyIndex();
+            final HashMap<String, Integer> oracle = new HashMap<>();
             try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                 final long[] handles = appendKeys(arena, probe, KEY_COUNT);
                 for (int i = 0; i < KEY_COUNT; i++) {
                     INDEX_PUT.invoke(index, i & 7, i & 3, handles[i], i);
-                    oracle.put(i & 7, i & 3, key(i), i);
+                    oracle.put(oracleKey(i & 7, i & 3, key(i)), i);
                 }
                 Assert.assertEquals(oracle.size(), (int) INDEX_SIZE.invoke(index));
                 for (int i = 0; i < KEY_COUNT; i++) {
                     final byte[] key = key(i);
                     probe.of(key);
-                    Assert.assertEquals(oracle.get(i & 7, i & 3, key), get(index, probe, i & 7, i & 3));
+                    Assert.assertEquals((int) oracle.get(oracleKey(i & 7, i & 3, key)), get(index, probe, i & 7, i & 3));
                     Assert.assertEquals(-1, get(index, probe, (i & 7) + 8, i & 3));
                     Assert.assertEquals(-1, get(index, probe, i & 7, (i & 3) + 4));
                     Assert.assertEquals(-1, (int) INDEX_GET.invoke(index, i & 7, i & 3, probe.address(), KEY_LENGTH - 1));
@@ -568,6 +569,13 @@ public class LiveViewCheckpointKeyIndexTest {
             bytes[i] = (byte) (value >>> (8 * i));
         }
         return bytes;
+    }
+
+    /**
+     * The heap oracle's key: both qualifiers and the key bytes, compared by content.
+     */
+    private static String oracleKey(int namespace, int version, byte[] key) {
+        return namespace + "/" + version + "/" + Arrays.toString(key);
     }
 
     /**
