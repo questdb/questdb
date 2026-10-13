@@ -29,15 +29,26 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.functions.test.TestWorkerCloneFunctionFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
+import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.MemoryTracker;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.QueryAssertion;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.BindVarTuple;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Test;
 
 public class HorizonJoinTest extends AbstractCairoTest {
@@ -2121,6 +2132,728 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 5s STEP 1s AS h")
                     .noLeakCheck()
                     .fails(102, "RANGE generates too many offsets [count=6, max=3]");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterBindReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, venue SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            execute("INSERT INTO trades VALUES ('2000-01-01T00:00:02Z', 'X')");
+            execute("""
+                    INSERT INTO quotes VALUES
+                        ('2000-01-01T00:00:00Z', 'X', 'A', 10.0),
+                        ('2000-01-01T00:00:01Z', 'X', 'B', 999.0)
+                    """);
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (boolean hasJoinKeys : new boolean[]{false, true}) {
+                    for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                        final String query = "SELECT avg(q.price) a" + (hasMultipleSlaves ? ", avg(r.price) b" : "")
+                                + " FROM trades t HORIZON JOIN quotes q ON ("
+                                + (hasJoinKeys ? "t.sym = q.sym AND " : "") + "q.venue = $1)"
+                                + (hasMultipleSlaves ? " HORIZON JOIN (quotes WHERE venue = $1) r" : "")
+                                + " LIST (0s) AS h";
+                        bindVariableService.setStr(0, "A");
+                        try (RecordCursorFactory factory = select(query)) {
+                            final ObjList<String> venueValues = new ObjList<>("A", "ZZZ", "B", "A");
+                            for (int venueIndex = 0; venueIndex < venueValues.size(); venueIndex++) {
+                                final String venue = venueValues.getQuick(venueIndex);
+                                bindVariableService.setStr(0, venue);
+                                final String value = venue.equals("A") ? "10.0" : venue.equals("B") ? "999.0" : "null";
+                                new QueryAssertion(engine, factory).withContext(sqlExecutionContext)
+                                        .inferRandomAccess().expectSize()
+                                        .returns("a" + (hasMultipleSlaves ? "\tb" : "") + "\n" + value
+                                                + (hasMultipleSlaves ? "\t" + value : "") + "\n");
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterCachedHitReopen() throws Exception {
+        testHorizonJoinRightFilterCacheReopen(false, true);
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterCachedHitReopenParallel() throws Exception {
+        testHorizonJoinRightFilterCacheReopen(true, true);
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterCachedMissReopen() throws Exception {
+        testHorizonJoinRightFilterCacheReopen(false, false);
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterCachedMissReopenParallel() throws Exception {
+        testHorizonJoinRightFilterCacheReopen(true, false);
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterCompilationRollback() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                // alloc() owns native memory. The UNION ALL master rejects random access
+                // after code generation has stolen the slave filters and assembled aggregates.
+                final String query = "SELECT avg(q.price) FROM ((SELECT * FROM trades UNION ALL SELECT * FROM trades) TIMESTAMP(ts)) t "
+                        + "HORIZON JOIN quotes q ON (q.price > alloc(32)) "
+                        + (hasMultipleSlaves ? "HORIZON JOIN (quotes WHERE price > alloc(64)) r " : "")
+                        + "LIST (0s) AS h";
+                assertQuery(query).fails(query.indexOf("HORIZON"), "left-hand side of HORIZON JOIN can only be a table with an optional filter");
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterConjunction() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, venue SYMBOL INDEX, price DOUBLE) TIMESTAMP(ts)");
+            execute("INSERT INTO trades VALUES ('2000-01-01T00:00:03Z', 'X')");
+            execute("""
+                    INSERT INTO quotes VALUES
+                        ('2000-01-01T00:00:00Z', 'X', 'A', 10.0),
+                        ('2000-01-01T00:00:01Z', 'X', 'A', 999.0),
+                        ('2000-01-01T00:00:02Z', 'X', 'B', 20.0)
+                    """);
+            for (boolean isParallelFilter : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelFilterEnabled(isParallelFilter);
+                for (boolean isParallelHorizon : new boolean[]{false, true}) {
+                    sqlExecutionContext.setParallelHorizonJoinEnabled(isParallelHorizon);
+                    for (boolean hasJoinKeys : new boolean[]{false, true}) {
+                        for (boolean hasGroupKeys : new boolean[]{false, true}) {
+                            final String query = "SELECT " + (hasGroupKeys ? "h.offset, " : "")
+                                    + "avg(q.price) FROM trades t HORIZON JOIN (quotes WHERE price < 50) q ON ("
+                                    + (hasJoinKeys ? "t.sym = q.sym AND " : "") + "q.venue = 'A') LIST (0s) AS h";
+                            final Class<?> factoryClass = isParallelHorizon
+                                    ? (hasGroupKeys ? AsyncHorizonJoinRecordCursorFactory.class : AsyncHorizonJoinNotKeyedRecordCursorFactory.class)
+                                    : (hasGroupKeys ? HorizonJoinRecordCursorFactory.class : HorizonJoinNotKeyedRecordCursorFactory.class);
+                            assertQuery(query)
+                                    .inferRandomAccess()
+                                    .expectSize()
+                                    .withBaseFactoryClass(factoryClass)
+                                    .withPlanContaining("slave filter")
+                                    .returns(hasGroupKeys ? "offset\tavg\n0\t10.0\n" : "avg\n10.0\n");
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterCursorClose() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 16 * 1024 * 1024L);
+            TestUtils.execute(null, (engine, _, context) -> {
+                engine.execute("CREATE TABLE trades (ts TIMESTAMP) TIMESTAMP(ts)", context);
+                engine.execute("CREATE TABLE quotes (ts TIMESTAMP, stamp STRING, price DOUBLE) TIMESTAMP(ts)", context);
+                engine.execute("INSERT INTO trades VALUES ('2000-01-01T00:00:02Z')", context);
+                engine.execute("INSERT INTO quotes VALUES ('2000-01-01T00:00:00Z', '2000-01-01', 10.0), ('2000-01-01T00:00:01Z', '2000-01-02', 999.0)", context);
+                for (boolean isParallel : new boolean[]{false, true}) {
+                    context.setParallelHorizonJoinEnabled(isParallel);
+                    for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                        for (boolean hasGroupKeys : new boolean[]{false, true}) {
+                            final String query = "SELECT " + (hasGroupKeys ? "h.offset, " : "") + "avg(q.price) FROM trades t "
+                                    + "HORIZON JOIN quotes q ON (q.stamp::SYMBOL = '2000-01-01'::TIMESTAMP) "
+                                    + (hasMultipleSlaves ? "HORIZON JOIN quotes r ON (r.stamp::SYMBOL = '2000-01-01'::TIMESTAMP) " : "")
+                                    + "LIST (0s) AS h";
+                            try (RecordCursorFactory factory = engine.select(query, context)) {
+                                Assert.assertTrue(factory instanceof QueryProgress);
+                                Assert.assertEquals((isParallel ? "Async" : "") + (hasMultipleSlaves ? "Multi" : "")
+                                                + "HorizonJoin" + (hasGroupKeys ? "" : "NotKeyed") + "RecordCursorFactory",
+                                        factory.getBaseFactory().getClass().getSimpleName());
+                                for (int i = 0; i < 2; i++) {
+                                    final MemoryTracker tracker;
+                                    try (RecordCursor cursor = factory.getCursor(context)) {
+                                        tracker = context.getMemoryTracker();
+                                        Assert.assertNotNull(tracker);
+                                        Assert.assertTrue(cursor.hasNext());
+                                        Assert.assertEquals(10.0, cursor.getRecord().getDouble(hasGroupKeys ? 1 : 0), 0.0);
+                                        Assert.assertFalse(cursor.hasNext());
+                                    }
+                                    Assert.assertEquals(query, 0, tracker.getUsed());
+                                }
+                                new QueryAssertion(engine, factory).withContext(context).inferRandomAccess().expectSize()
+                                        .returns(hasGroupKeys ? "offset\tavg\n0\t10.0\n" : "avg\n10.0\n");
+                            }
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterFactoryMatrix() throws Exception {
+        assertMemoryLeak(() -> {
+            for (TestTimestampType leftType : TestTimestampType.values()) {
+                for (TestTimestampType rightType : TestTimestampType.values()) {
+                    execute("CREATE TABLE trades (ts " + leftType.getTypeName() + ", sym SYMBOL) TIMESTAMP(ts)");
+                    execute("CREATE TABLE quotes (ts " + rightType.getTypeName()
+                            + ", sym SYMBOL, venue SYMBOL INDEX, price DOUBLE, bid DOUBLE, ask DOUBLE, tag VARCHAR) TIMESTAMP(ts)");
+                    execute("INSERT INTO trades VALUES ('2000-01-01T00:00:02Z', 'X')");
+                    execute("""
+                            INSERT INTO quotes VALUES
+                                ('2000-01-01T00:00:00Z', 'X', 'A', 10.0, 1.0, 2.0, 'valid'),
+                                ('2000-01-01T00:00:01Z', 'X', 'B', 999.0, 3.0, 2.0, 'bad')
+                            """);
+                    for (boolean isParallel : new boolean[]{false, true}) {
+                        sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                        for (boolean hasGroupKeys : new boolean[]{false, true}) {
+                            for (boolean hasJoinKeys : new boolean[]{false, true}) {
+                                for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                                    final ObjList<String> predicateValues = new ObjList<>(
+                                            "q.venue = 'A'",
+                                            "q.venue IN ('A')",
+                                            "q.venue ~ '^A$'",
+                                            "length(q.tag) > 3 AND q.price < 50",
+                                            "(q.venue = 'A' AND q.bid < q.ask) OR q.price < 0",
+                                            "q.bid < q.ask",
+                                            "q.bid = q.ask - 1",
+                                            "q.venue != 'B'",
+                                            "q.ts < timestamp_shuffle('2000-01-01T00:00:00.5Z'::TIMESTAMP, '2000-01-01T00:00:00.9Z'::TIMESTAMP)");
+                                    for (int predicateIndex = 0; predicateIndex < predicateValues.size(); predicateIndex++) {
+                                        final String predicate = predicateValues.getQuick(predicateIndex);
+                                        final String query = "SELECT " + (hasGroupKeys ? "t.sym, " : "")
+                                                + "avg(q.price) a" + (hasMultipleSlaves ? ", avg(r.price) b" : "")
+                                                + " FROM trades t HORIZON JOIN quotes q ON ("
+                                                + (hasJoinKeys ? "t.sym = q.sym AND (" + predicate + ")" : predicate) + ")"
+                                                + (hasMultipleSlaves ? " HORIZON JOIN (quotes WHERE venue = 'A') r"
+                                                                       + (hasJoinKeys ? " ON (t.sym = r.sym)" : "") : "")
+                                                + " LIST (0s) AS h" + (hasGroupKeys ? " GROUP BY t.sym" : "");
+                                        final String expected = (hasGroupKeys ? "sym\t" : "") + "a"
+                                                + (hasMultipleSlaves ? "\tb" : "") + "\n"
+                                                + (hasGroupKeys ? "X\t" : "") + "10.0"
+                                                + (hasMultipleSlaves ? "\t10.0" : "") + "\n";
+                                        assertQuery(query)
+                                                .inferRandomAccess()
+                                                .expectSize()
+                                                .withPlanContaining((isParallel ? "Async " : "")
+                                                        + (hasMultipleSlaves ? "Multi " : "") + "Horizon Join", "slave filter")
+                                                .returns(expected);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    execute("DROP TABLE trades");
+                    execute("DROP TABLE quotes");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterInitFailureReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, tag VARCHAR, price DOUBLE) TIMESTAMP(ts)");
+            execute("INSERT INTO trades VALUES ('2000-01-01T00:00:02Z', 'X')");
+            execute("INSERT INTO quotes VALUES ('2000-01-01T00:00:00Z', 'X', 'pass', 10.0), ('2000-01-01T00:00:01Z', 'X', 'reject', 999.0)");
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                    for (boolean hasGroupKeys : new boolean[]{false, true}) {
+                        final String query = "SELECT " + (hasGroupKeys ? "h.offset, " : "") + "avg(q.price) FROM trades t "
+                                + "HORIZON JOIN quotes q ON (q.tag ~ $1) "
+                                + (hasMultipleSlaves ? "HORIZON JOIN (quotes WHERE tag ~ $1) r " : "")
+                                + "LIST (0s) AS h";
+                        final String header = hasGroupKeys ? "offset\tavg\n0\t" : "avg\n";
+                        final ObjList<BindVarTuple> cases = new ObjList<>();
+                        cases.add(BindVarTuple.ok("initial match", header + "10.0\n", b -> b.setStr(0, "^pass$")));
+                        cases.add(BindVarTuple.fails("invalid regex at init", "Unclosed character class", b -> b.setStr(0, "[")));
+                        cases.add(BindVarTuple.ok("reopen after failed init", header + "999.0\n", b -> b.setStr(0, "^reject$")));
+                        assertQuery(query).inferRandomAccess().expectSize().assertBinds(cases);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterKeyMissAcrossMasterFrames() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 16 * 1024 * 1024L);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 16);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, context) -> {
+                // Every 'B' quote fails the filter, so 'B' trades never match in any master frame.
+                engine.execute("""
+                        CREATE TABLE trades AS (
+                            SELECT timestamp_sequence('2000-01-01T00:00:01Z'::TIMESTAMP, 1_000_000) ts,
+                                   (CASE WHEN x % 2 = 1 THEN 'A' ELSE 'B' END)::SYMBOL sym
+                            FROM long_sequence(256)
+                        ) TIMESTAMP(ts)
+                        """, context);
+                engine.execute("""
+                        CREATE TABLE quotes AS (
+                            SELECT timestamp_sequence('2000-01-01T00:00:00.5Z'::TIMESTAMP, 500_000) ts,
+                                   (CASE WHEN x % 2 = 1 THEN 'A' ELSE 'B' END)::SYMBOL sym,
+                                   (CASE WHEN x % 2 = 1 THEN 'X' ELSE 'Y' END)::SYMBOL venue,
+                                   x::DOUBLE price
+                            FROM long_sequence(512)
+                        ) TIMESTAMP(ts)
+                        """, context);
+                for (boolean isParallel : new boolean[]{false, true}) {
+                    context.setParallelHorizonJoinEnabled(isParallel);
+                    for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                        for (boolean hasGroupKeys : new boolean[]{false, true}) {
+                            final String query = "SELECT " + (hasGroupKeys ? "h.offset, " : "") + "count(q.price) c, sum(q.price) s FROM trades t "
+                                    + "HORIZON JOIN quotes q ON (t.sym = q.sym AND q.venue = 'X') "
+                                    + (hasMultipleSlaves ? "HORIZON JOIN quotes r ON (t.sym = r.sym AND r.venue = 'X') " : "")
+                                    + "LIST (0s) AS h";
+                            try (RecordCursorFactory factory = engine.select(query, context)) {
+                                Assert.assertEquals((isParallel ? "Async" : "") + (hasMultipleSlaves ? "Multi" : "")
+                                                + "HorizonJoin" + (hasGroupKeys ? "" : "NotKeyed") + "RecordCursorFactory",
+                                        factory.getBaseFactory().getClass().getSimpleName());
+                                for (int i = 0; i < 2; i++) {
+                                    final MemoryTracker tracker;
+                                    try (RecordCursor cursor = factory.getCursor(context)) {
+                                        tracker = context.getMemoryTracker();
+                                        Assert.assertNotNull(tracker);
+                                        Assert.assertTrue(cursor.hasNext());
+                                        Assert.assertEquals(128, cursor.getRecord().getLong(hasGroupKeys ? 1 : 0));
+                                        Assert.assertFalse(cursor.hasNext());
+                                    }
+                                    Assert.assertEquals(query, 0, tracker.getUsed());
+                                }
+                                new QueryAssertion(engine, factory).withContext(context).inferRandomAccess().expectSize()
+                                        .returns(hasGroupKeys ? "offset\tc\ts\n0\t128\t32640.0\n" : "c\ts\n128\t32640.0\n");
+                            }
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterKeyMissThenMatch() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 16);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, context) -> {
+                // 'B' quotes pass the filter only in the second half, so 'B' trades miss
+                // in the early master frames and must match in the later ones, in a
+                // later quotes partition than the recorded misses.
+                engine.execute("""
+                        CREATE TABLE trades AS (
+                            SELECT timestamp_sequence('2000-01-01T00:01:00Z'::TIMESTAMP, 60_000_000) ts,
+                                   (CASE WHEN x % 2 = 1 THEN 'A' ELSE 'B' END)::SYMBOL sym
+                            FROM long_sequence(256)
+                        ) TIMESTAMP(ts)
+                        """, context);
+                engine.execute("""
+                        CREATE TABLE quotes AS (
+                            SELECT timestamp_sequence('2000-01-01T00:00:30Z'::TIMESTAMP, 30_000_000) ts,
+                                   (CASE WHEN x % 2 = 1 THEN 'A' ELSE 'B' END)::SYMBOL sym,
+                                   (CASE WHEN x % 2 = 1 OR x > 256 THEN 'X' ELSE 'Y' END)::SYMBOL venue,
+                                   x::DOUBLE price
+                            FROM long_sequence(512)
+                        ) TIMESTAMP(ts) PARTITION BY HOUR
+                        """, context);
+                for (boolean isParallel : new boolean[]{false, true}) {
+                    context.setParallelHorizonJoinEnabled(isParallel);
+                    for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                        for (boolean hasGroupKeys : new boolean[]{false, true}) {
+                            final String values = "count(q.price) c, sum(q.price) s" + (hasMultipleSlaves ? ", sum(r.price) rs" : "");
+                            final String query = "SELECT " + (hasGroupKeys ? "t.sym, " : "") + values + " FROM trades t "
+                                    + "HORIZON JOIN quotes q ON (t.sym = q.sym AND q.venue = 'X') "
+                                    + (hasMultipleSlaves ? "HORIZON JOIN quotes r ON (t.sym = r.sym AND r.venue = 'X') " : "")
+                                    + "LIST (0s) AS h" + (hasGroupKeys ? " ORDER BY sym" : "");
+                            final String reference = "SELECT " + (hasGroupKeys ? "t.sym, " : "") + values + " FROM trades t "
+                                    + "ASOF JOIN (quotes WHERE venue = 'X') q ON (t.sym = q.sym) "
+                                    + (hasMultipleSlaves ? "ASOF JOIN (quotes WHERE venue = 'X') r ON (t.sym = r.sym) " : "")
+                                    + (hasGroupKeys ? "ORDER BY sym" : "");
+                            final String expected = hasGroupKeys
+                                    ? (hasMultipleSlaves
+                                       ? "sym\tc\ts\trs\nA\t128\t32640.0\t32640.0\nB\t64\t24704.0\t24704.0\n"
+                                       : "sym\tc\ts\nA\t128\t32640.0\nB\t64\t24704.0\n")
+                                    : (hasMultipleSlaves ? "c\ts\trs\n192\t57344.0\t57344.0\n" : "c\ts\n192\t57344.0\n");
+                            final StringSink referenceSink = new StringSink();
+                            engine.print(reference, referenceSink, context);
+                            TestUtils.assertEquals(expected, referenceSink);
+                            assertQuery(query).withEngine(engine).withContext(context).noLeakCheck()
+                                    .inferRandomAccess().expectSize().withPlanContaining((isParallel ? "Async " : "")
+                                            + (hasMultipleSlaves ? "Multi " : "") + "Horizon Join", "slave filter")
+                                    .returns(expected);
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterNullProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("SELECT sum(q.price) FROM trades t HORIZON JOIN "
+                        + "(SELECT a.ts, a.sym, first(b.price) price FROM (quotes WHERE price > 0) a "
+                        + "WINDOW JOIN quotes b ON (1=0) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW) q "
+                        + "ON (t.sym = q.sym) LIST (0s) AS h")
+                        .fails(34, "right side of time series join has no timestamp");
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterProjectionHiddenColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, side SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, side SYMBOL, \"offset\" LONG, price DOUBLE) TIMESTAMP(ts)");
+            execute("INSERT INTO trades VALUES ('2000-01-01T00:00:02Z', 'X', 'buy')");
+            execute("""
+                    INSERT INTO quotes VALUES
+                        ('2000-01-01T00:00:00Z', 'X', 'bid', 7, 10.0),
+                        ('2000-01-01T00:00:01Z', 'X', 'ask', 7, 999.0)
+                    """);
+            // The subquery projects away quotes.side and quotes.offset, so they must not
+            // shadow the unqualified trades.side and h.offset, nor resolve through the alias.
+            final String slave = "HORIZON JOIN (SELECT ts, sym, price FROM quotes WHERE side = 'bid' AND \"offset\" = 7) ";
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                    final String from = " FROM trades t " + slave + "q ON (t.sym = q.sym) "
+                            + (hasMultipleSlaves ? slave + "r ON (t.sym = r.sym) " : "") + "LIST (0s) AS h";
+                    assertQuery("SELECT side, offset, avg(q.price) avg_q" + (hasMultipleSlaves ? ", avg(r.price) avg_r" : "") + from)
+                            .inferRandomAccess().expectSize()
+                            .withPlanContaining((isParallel ? "Async " : "") + (hasMultipleSlaves ? "Multi " : "") + "Horizon Join", "slave filter")
+                            .returns("side\toffset\tavg_q" + (hasMultipleSlaves ? "\tavg_r" : "") + "\nbuy\t0\t10.0" + (hasMultipleSlaves ? "\t10.0" : "") + "\n");
+                    assertQuery("SELECT q.side, avg(q.price)" + from).fails(7, "Invalid column: q.side");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterProjectionTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, ts2 TIMESTAMP, price DOUBLE, tag VARCHAR) TIMESTAMP(ts)");
+            execute("INSERT INTO trades VALUES (15)");
+            execute("INSERT INTO quotes VALUES (0, 10, 10, 'pass'), (1, 20, 999, 'pass')");
+            final String query = "SELECT avg(q.price), count(q.ts), max(q.ts2) FROM trades t HORIZON JOIN "
+                    + "((SELECT ts, ts2, price FROM quotes WHERE tag = 'pass') TIMESTAMP(ts2)) q LIST (0s) AS h";
+            final ObjList<String> projections = new ObjList<>("ts, ts2, price", "price, ts2, ts");
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery(query).fails(query.indexOf("HORIZON"), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
+                for (int i = 0; i < projections.size(); i++) {
+                    assertQuery("SELECT avg(q.price) avg_price, count(q.ts) quote_count, max(q.ts2) quote_ts2 "
+                            + "FROM trades t HORIZON JOIN ((SELECT " + projections.getQuick(i)
+                            + " FROM quotes WHERE tag = 'pass') TIMESTAMP(ts)) q LIST (0s) AS h")
+                            .inferRandomAccess().expectSize().returns("""
+                                    avg_price\tquote_count\tquote_ts2
+                                    999.0\t1\t1970-01-01T00:00:00.000020Z
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterRejectedExpressions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, qty LONG) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)");
+            final ObjList<String> predicateValues = new ObjList<>("t.qty > 0", "t.qty > q.price", "q.price > t.qty", "h.offset > 0");
+            for (int predicateIndex = 0; predicateIndex < predicateValues.size(); predicateIndex++) {
+                final String predicate = predicateValues.getQuick(predicateIndex);
+                for (int slave = 0; slave < 3; slave++) {
+                    final String query = "SELECT avg(q.price) FROM trades t "
+                            + (slave == 2 ? "HORIZON JOIN quotes r ON (t.sym = r.sym) " : "")
+                            + "HORIZON JOIN quotes q ON (t.sym = q.sym AND " + predicate + ") "
+                            + (slave == 1 ? "HORIZON JOIN quotes r ON (t.sym = r.sym) " : "")
+                            + "LIST (0s) AS h";
+                    assertQuery(query).fails(query.indexOf('>'), "unsupported HORIZON join expression");
+                }
+            }
+            final String otherSlavePredicate = "SELECT avg(q.price) FROM trades t HORIZON JOIN quotes r ON (t.sym = r.sym) "
+                    + "HORIZON JOIN quotes q ON (t.sym = q.sym AND r.price > 0) LIST (0s) AS h";
+            assertQuery(otherSlavePredicate).fails(otherSlavePredicate.indexOf('>'), "unsupported HORIZON join expression");
+            final String inSubquery = "SELECT avg(q.price) FROM trades t HORIZON JOIN quotes q "
+                    + "ON (q.sym IN (SELECT sym FROM trades)) LIST (0s) AS h";
+            assertQuery(inSubquery).fails(inSubquery.indexOf("SELECT sym"), "query is not allowed here");
+            final ObjList<String> rhsValues = new ObjList<>(
+                    "(SELECT ts, sym, price AS p FROM quotes WHERE price > 0)",
+                    "(SELECT ts, sym, price * 2 AS p FROM quotes WHERE price > 0)",
+                    "(SELECT ts, sym, price AS p FROM quotes WHERE price > 0 LIMIT 1)");
+            for (int rhsIndex = 0; rhsIndex < rhsValues.size(); rhsIndex++) {
+                final String rhs = rhsValues.getQuick(rhsIndex);
+                final String query = "SELECT avg(q.p) FROM trades t HORIZON JOIN " + rhs + " q LIST (0s) AS h";
+                assertQuery(query).fails(query.indexOf("HORIZON"), "right-hand side of HORIZON JOIN can only be a table with an optional filter");
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterShapes() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, venue SYMBOL INDEX, price DOUBLE) TIMESTAMP(ts)");
+            execute("INSERT INTO trades VALUES ('2000-01-01T00:00:02Z', 'X')");
+            execute("""
+                    INSERT INTO quotes VALUES
+                        ('2000-01-01T00:00:00Z', 'X', 'A', 10.0),
+                        ('2000-01-01T00:00:01Z', 'X', 'B', 999.0)
+                    """);
+            for (boolean isParallelFilter : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelFilterEnabled(isParallelFilter);
+                for (boolean isParallelHorizon : new boolean[]{false, true}) {
+                    sqlExecutionContext.setParallelHorizonJoinEnabled(isParallelHorizon);
+                    final ObjList<String> rhsValues = new ObjList<>(
+                            "quotes q ON (t.sym = q.sym AND q.venue = 'A')",
+                            "(quotes WHERE venue = 'A') q ON (t.sym = q.sym)",
+                            "(quotes WHERE price < 50) q ON (t.sym = q.sym AND q.venue = 'A')",
+                            "quotes q ON (q.venue IN ('A'))",
+                            "(quotes WHERE venue ~ '^A$') q");
+                    for (int rhsIndex = 0; rhsIndex < rhsValues.size(); rhsIndex++) {
+                        final String rhs = rhsValues.getQuick(rhsIndex);
+                        assertQuery("SELECT avg(q.price) FROM trades t HORIZON JOIN " + rhs + " LIST (0s) AS h")
+                                .inferRandomAccess()
+                                .expectSize()
+                                .withPlanContaining(isParallelHorizon ? "Async Horizon Join" : "Horizon Join", "slave filter")
+                                .returns("avg\n10.0\n");
+                    }
+                    final ObjList<String> predicateValues = new ObjList<>("false", "1 = 0", "venue = 'ZZZ'", "price > 1000");
+                    for (int predicateIndex = 0; predicateIndex < predicateValues.size(); predicateIndex++) {
+                        final String predicate = predicateValues.getQuick(predicateIndex);
+                        assertQuery("SELECT count(q.price), avg(q.price) FROM trades t HORIZON JOIN (quotes WHERE "
+                                + predicate + ") q LIST (0s) AS h")
+                                .inferRandomAccess()
+                                .expectSize()
+                                .returns("count\tavg\n0\tnull\n");
+                    }
+                    final ObjList<String> constantOnValues = new ObjList<>("t.sym = q.sym AND true", "t.sym = q.sym AND 1 = 1", "1 = 1",
+                            "t.sym = q.sym AND false", "t.sym = q.sym AND 1 = 0", "1 = 0");
+                    for (int onIndex = 0; onIndex < constantOnValues.size(); onIndex++) {
+                        final boolean isTrue = onIndex < 3;
+                        final QueryAssertion assertion = assertQuery("SELECT count(q.price), avg(q.price) FROM trades t HORIZON JOIN quotes q ON ("
+                                + constantOnValues.getQuick(onIndex) + ") LIST (0s) AS h")
+                                .inferRandomAccess()
+                                .expectSize();
+                        if (isTrue) {
+                            assertion.withPlanNotContaining("slave filter").returns("count\tavg\n1\t999.0\n");
+                        } else {
+                            assertion.withPlanContaining("slave filter: false").returns("count\tavg\n0\tnull\n");
+                        }
+                    }
+                    final ObjList<BindVarTuple> boolCases = new ObjList<>();
+                    boolCases.add(BindVarTuple.ok("false", "count\tavg\n0\tnull\n", b -> b.setBoolean(0, false)));
+                    boolCases.add(BindVarTuple.ok("true", "count\tavg\n1\t999.0\n", b -> b.setBoolean(0, true)));
+                    boolCases.add(BindVarTuple.ok("false again", "count\tavg\n0\tnull\n", b -> b.setBoolean(0, false)));
+                    assertQuery("SELECT count(q.price), avg(q.price) FROM trades t HORIZON JOIN quotes q ON (t.sym = q.sym AND $1) LIST (0s) AS h")
+                            .inferRandomAccess()
+                            .expectSize()
+                            .assertBinds(boolCases);
+                    // A constant predicate filters only the right-hand table whose ON clause holds it.
+                    assertQuery("SELECT count(q.price), avg(r.price) FROM trades t HORIZON JOIN quotes q ON (t.sym = q.sym AND 1 = 0) "
+                            + "HORIZON JOIN quotes r ON (t.sym = r.sym AND 1 = 1) LIST (0s) AS h")
+                            .inferRandomAccess()
+                            .expectSize()
+                            .returns("count\tavg\n0\t999.0\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterSparseParallelDifferential() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_ABSOLUTE_THRESHOLD, 1);
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_BWD_SCAN_MIN_GAP, 0);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, context) -> {
+                engine.execute("CREATE TABLE trades AS (SELECT (x % 3)::SYMBOL sym, "
+                        + "timestamp_sequence('2000-01-01'::TIMESTAMP, 21_600_000_000L) ts "
+                        + "FROM long_sequence(512)) TIMESTAMP(ts) PARTITION BY DAY", context);
+                engine.execute("CREATE TABLE quotes AS (SELECT (x % 3)::SYMBOL sym, x::DOUBLE price, "
+                        + "CASE WHEN x <= 3 THEN 'pass' ELSE 'reject' END::VARCHAR tag, "
+                        + "timestamp_sequence('2000-01-01'::TIMESTAMP, 3_600_000_000L) ts "
+                        + "FROM long_sequence(4_000)) TIMESTAMP(ts) PARTITION BY DAY", context);
+                for (int offset = -1; offset <= 1; offset++) {
+                    engine.execute("CREATE TABLE shifted" + (offset + 1) + " AS (SELECT sym, dateadd('h', "
+                            + offset + ", ts) ts FROM trades) TIMESTAMP(ts)", context);
+                }
+                for (boolean isParallel : new boolean[]{false, true}) {
+                    context.setParallelHorizonJoinEnabled(isParallel);
+                    for (boolean hasJoinKeys : new boolean[]{false, true}) {
+                        for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                            for (boolean hasGroupKeys : new boolean[]{false, true}) {
+                                for (boolean hasMatches : new boolean[]{false, true}) {
+                                    final String predicate = hasMatches ? "tag ~ '^pass$'" : "tag ~ '^absent$'";
+                                    final String slaves = " (quotes WHERE " + predicate + ") q"
+                                            + (hasJoinKeys ? " ON (t.sym = q.sym)" : "");
+                                    final String moreSlaves = hasMultipleSlaves
+                                            ? " (quotes WHERE " + predicate + ") r" + (hasJoinKeys ? " ON (t.sym = r.sym)" : "") : "";
+                                    final String values = "sum(q.price) a" + (hasMultipleSlaves ? ", sum(r.price) b" : "");
+                                    final String query = "SELECT " + (hasGroupKeys ? "h.offset / 3_600_000_000L off, " : "") + values
+                                            + " FROM trades t HORIZON JOIN" + slaves
+                                            + (hasMultipleSlaves ? " HORIZON JOIN" + moreSlaves : "")
+                                            + " RANGE FROM -1h TO 1h STEP 1h AS h" + (hasGroupKeys ? " ORDER BY off" : "");
+                                    final StringBuilder reference = new StringBuilder();
+                                    for (int offset = -1; offset <= 1; offset++) {
+                                        if (offset > -1) {
+                                            reference.append(" UNION ALL ");
+                                        }
+                                        reference.append("SELECT ").append(offset).append("L off, ").append(values)
+                                                .append(" FROM shifted").append(offset + 1).append(" t ASOF JOIN").append(slaves)
+                                                .append(hasMultipleSlaves ? " ASOF JOIN" + moreSlaves : "");
+                                    }
+                                    final StringSink expected = new StringSink();
+                                    final String referenceQuery = hasGroupKeys ? reference + " ORDER BY off"
+                                            : "SELECT sum(a) a" + (hasMultipleSlaves ? ", sum(b) b" : "") + " FROM (" + reference + ")";
+                                    engine.print(referenceQuery, expected, context);
+                                    assertQuery(query).withEngine(engine).withContext(context).noLeakCheck()
+                                            .inferRandomAccess().expectSize().withPlanContaining((isParallel ? "Async " : "")
+                                                    + (hasMultipleSlaves ? "Multi " : "") + "Horizon Join", "slave filter")
+                                            .returns(expected);
+                                }
+                            }
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterSubqueryIntervalAndFallback() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, label VARCHAR) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, venue SYMBOL INDEX, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE allowed (venue SYMBOL INDEX)");
+            execute("INSERT INTO allowed VALUES ('A'), ('C')");
+            execute("INSERT INTO trades VALUES ('2000-01-03T00:00:02Z', 'X', 'label')");
+            execute("""
+                    INSERT INTO quotes VALUES
+                        ('2000-01-01T00:00:00Z', 'X', 'A', 1.0),
+                        ('2000-01-02T00:00:00Z', 'X', 'A', 10.0),
+                        ('2000-01-03T00:00:00Z', 'X', 'A', 50.0),
+                        ('2000-01-03T00:00:01Z', 'X', 'B', 999.0)
+                    """);
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("""
+                        SELECT avg(q.price) FROM trades t
+                        HORIZON JOIN (quotes WHERE ts IN '2000-01-02' AND venue = 'A') q
+                        LIST (-1s, 0s, 1s) AS h
+                        """).noRandomAccess().expectSize()
+                        .withPlanContaining("Interval forward scan", "slave filter")
+                        .returns("avg\n10.0\n");
+                assertQuery("""
+                        SELECT count(), count(q.price), avg(q.price) FROM trades t
+                        HORIZON JOIN (quotes WHERE ts IN '2000-01-02' AND ts IN '2000-01-03') q
+                        LIST (0s) AS h
+                        """).noRandomAccess().expectSize()
+                        .withPlanContaining("slave filter: false")
+                        .returns("count\tcount1\tavg\n1\t0\tnull\n");
+                assertQuery("""
+                        SELECT avg(q.price) FROM trades t
+                        HORIZON JOIN (quotes WHERE venue IN (SELECT venue FROM allowed WHERE venue = 'A')) q
+                        LIST (0s) AS h
+                        """).noRandomAccess().expectSize().returns("avg\n50.0\n");
+                assertQuery("""
+                        SELECT avg(q.price) a, avg(r.price) b FROM trades t
+                        HORIZON JOIN quotes q ON (q.venue = 'A')
+                        HORIZON JOIN quotes r LIST (0s) AS h
+                        """).noRandomAccess().expectSize().returns("a\tb\n50.0\t999.0\n");
+                // count_distinct(VARCHAR) forces a serial aggregate after the slave filter is stolen.
+                assertQuery("""
+                        SELECT count_distinct(t.label), avg(q.price) FROM trades t
+                        HORIZON JOIN quotes q ON (q.venue = 'A') LIST (0s) AS h
+                        """).noRandomAccess().expectSize()
+                        .withPlanContaining("Horizon Join").withPlanNotContaining("Async")
+                        .returns("count_distinct\tavg\n1\t50.0\n");
+            }
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightFilterWorkerCursorClose() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 16 * 1024 * 1024L);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 16);
+            setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 16);
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, context) -> {
+                context.setParallelHorizonJoinEnabled(true);
+                engine.execute("CREATE TABLE trades AS (SELECT timestamp_sequence('2000-01-01T00:00:02Z'::TIMESTAMP, 1) ts "
+                        + "FROM long_sequence(256)) TIMESTAMP(ts)", context);
+                engine.execute("CREATE TABLE quotes (ts TIMESTAMP, stamp STRING, price DOUBLE) TIMESTAMP(ts)", context);
+                engine.execute("INSERT INTO quotes VALUES ('2000-01-01T00:00:00Z', '2000-01-01', 10.0), ('2000-01-01T00:00:01Z', '2000-01-02', 999.0)", context);
+                for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                    for (boolean hasGroupKeys : new boolean[]{false, true}) {
+                        final String query = "SELECT " + (hasGroupKeys ? "h.offset, " : "") + "avg(q.price) FROM trades t "
+                                + "HORIZON JOIN quotes q ON (test_worker_clone(q.stamp::SYMBOL = '2000-01-01'::TIMESTAMP, -q.price)) "
+                                + (hasMultipleSlaves ? "HORIZON JOIN quotes r ON (test_worker_clone(r.stamp::SYMBOL = '2000-01-01'::TIMESTAMP, -r.price)) " : "")
+                                + "LIST (0s) AS h";
+                        TestWorkerCloneFunctionFactory.arm(-500);
+                        try (RecordCursorFactory factory = engine.select(query, context)) {
+                            Assert.assertEquals(hasMultipleSlaves ? 10 : 5, TestWorkerCloneFunctionFactory.created());
+                            final MemoryTracker tracker;
+                            try (RecordCursor cursor = factory.getCursor(context)) {
+                                tracker = context.getMemoryTracker();
+                                Assert.assertTrue(cursor.hasNext());
+                                Assert.assertEquals(10.0, cursor.getRecord().getDouble(hasGroupKeys ? 1 : 0), 0.0);
+                                Assert.assertFalse(cursor.hasNext());
+                            }
+                            Assert.assertTrue(TestWorkerCloneFunctionFactory.workerEvaluations() > 0);
+                            Assert.assertEquals(0, TestWorkerCloneFunctionFactory.mismatches());
+                            Assert.assertEquals(0, tracker.getUsed());
+                            new QueryAssertion(engine, factory).withContext(context).inferRandomAccess().expectSize()
+                                    .returns(hasGroupKeys ? "offset\tavg\n0\t10.0\n" : "avg\n10.0\n");
+                        } finally {
+                            TestWorkerCloneFunctionFactory.disarm();
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRightOnFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE quotes (ts #TIMESTAMP, sym SYMBOL, venue SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+            execute("INSERT INTO trades VALUES ('2000-01-01T00:00:02Z', 'X')");
+            execute("""
+                    INSERT INTO quotes VALUES
+                        ('2000-01-01T00:00:00Z', 'X', 'A', 10.0),
+                        ('2000-01-01T00:00:01Z', 'X', 'B', 999.0)
+                    """);
+            assertQuery("""
+                    SELECT h.offset, avg(q.price)
+                    FROM trades t
+                    HORIZON JOIN quotes q ON (t.sym = q.sym AND q.venue = 'A')
+                    LIST (0s) AS h
+                    GROUP BY h.offset
+                    """)
+                    .expectSize()
+                    .returns("offset\tavg\n0\t10.0\n");
         });
     }
 
@@ -7091,6 +7824,52 @@ public class HorizonJoinTest extends AbstractCairoTest {
 
     private long getSecondsDivisor() {
         return leftTableTimestampType == TestTimestampType.MICRO ? 1_000_000L : 1_000_000_000L;
+    }
+
+    private void testHorizonJoinRightFilterCacheReopen(boolean isParallel, boolean isCachedHit) throws Exception {
+        assertMemoryLeak(() -> {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+            execute("CREATE TABLE trades (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, stamp STRING, price DOUBLE) TIMESTAMP(ts)");
+            execute("INSERT INTO trades VALUES ('2000-01-01T00:00:02Z')");
+            for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                for (boolean hasGroupKeys : new boolean[]{false, true}) {
+                    for (boolean isNegated : new boolean[]{false, true}) {
+                        for (boolean isNano : new boolean[]{false, true}) {
+                            execute("TRUNCATE TABLE quotes");
+                            final String matchingStamp = isNegated ? "2000-01-02" : "2000-01-01";
+                            final String rejectedStamp = isNegated ? "2000-01-01" : "2000-01-02";
+                            execute("INSERT INTO quotes VALUES ('2000-01-01T00:00:00Z', '"
+                                    + (isCachedHit ? matchingStamp : rejectedStamp) + "', " + (isCachedHit ? 10 : 999) + ")");
+                            final String filter = "stamp::SYMBOL " + (isNegated ? "!=" : "=")
+                                    + " '2000-01-01'::" + (isNano ? "TIMESTAMP_NS" : "TIMESTAMP");
+                            final String query = "SELECT " + (hasGroupKeys ? "h.offset, " : "")
+                                    + "avg(q.price)" + (hasMultipleSlaves ? ", avg(r.price)" : "")
+                                    + " FROM trades t HORIZON JOIN (quotes WHERE " + filter + ") q "
+                                    + (hasMultipleSlaves ? "HORIZON JOIN (quotes WHERE " + filter + ") r " : "")
+                                    + "LIST (0s) AS h";
+                            final String header = (hasGroupKeys ? "offset\t" : "")
+                                    + "avg" + (hasMultipleSlaves ? "\tavg1" : "") + "\n";
+                            final String prefix = hasGroupKeys ? "0\t" : "";
+                            final String expected = header + prefix + "10.0" + (hasMultipleSlaves ? "\t10.0" : "") + "\n";
+                            try (RecordCursorFactory factory = select(query)) {
+                                Assert.assertEquals((isParallel ? "Async" : "") + (hasMultipleSlaves ? "Multi" : "")
+                                                + "HorizonJoin" + (hasGroupKeys ? "" : "NotKeyed") + "RecordCursorFactory",
+                                        factory.getBaseFactory().getClass().getSimpleName());
+                                new QueryAssertion(engine, factory).withContext(sqlExecutionContext).inferRandomAccess().expectSize()
+                                        .returns(isCachedHit ? expected
+                                                : header + prefix + "null" + (hasMultipleSlaves ? "\tnull" : "") + "\n");
+                                execute("INSERT INTO quotes VALUES ('2000-01-01T00:00:01Z', '"
+                                        + (isCachedHit ? rejectedStamp : matchingStamp) + "', " + (isCachedHit ? 999 : 10) + ")");
+                                assertQuery(query).inferRandomAccess().expectSize().returns(expected);
+                                new QueryAssertion(engine, factory).withContext(sqlExecutionContext).inferRandomAccess().expectSize()
+                                        .returns(expected);
+                            }
+                        }
+                    }
+                }
+            }
+        });
     }
 
     private String replaceExpectedMasterTimestamp(String expected) {
