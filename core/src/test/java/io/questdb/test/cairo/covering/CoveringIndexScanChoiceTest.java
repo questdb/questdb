@@ -25,13 +25,18 @@
 package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.mp.WorkerPool;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -50,6 +55,18 @@ import org.junit.Test;
  * about 20% of them, R about 0.4%.
  */
 public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest {
+
+    @Override
+    public void setUp() {
+        super.setUp();
+        UnorderedPageFrameSequence.setLocalReduceOpenCountingForTesting(true);
+    }
+
+    @Override
+    public void tearDown() throws Exception {
+        UnorderedPageFrameSequence.setLocalReduceOpenCountingForTesting(false);
+        super.tearDown();
+    }
 
     @Test
     public void testBindVariableKeyKeepsCovering() throws Exception {
@@ -296,6 +313,61 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
     }
 
     @Test
+    public void testParallelArmsOnWorkerPool() throws Exception {
+        // AbstractCairoTest has no workers, so there "dispatched" means the query thread steals
+        // its own tasks. Here four workers reduce the dispatched arm, and the local arm runs
+        // with the same pool idle: both return the rows of the no_index plan, and each open
+        // takes the arm the threshold names.
+        final String[] queries = {
+                "select count(), sum(v), max(w), min(ts), max(ts) from t where sym = 'R'",
+                "select s2, count(), max(v % 7) m, min(w) from t where sym = 'R' order by s2",
+                "select count(), sum(v) from t where sym = 'R' and w > 100",
+                "select timestamp_floor('1h', ts) h, s2, avg(v) a from t where sym = 'R' order by h, s2",
+                "select ts, v, w from t where sym = 'R' and w > 100",
+                "select ts, v from t where sym = 'R' and v % 3 = 0 limit -7",
+                "select count(), sum(v) from t where sym = 'R' and ts in '1970-01-02'",
+        };
+        // a threshold above every selection reduces locally; 1 dispatches every non-empty open
+        // (0 would turn the per-open decision off, and with it the counting)
+        for (long localMaxRows : new long[]{Long.MAX_VALUE, 1}) {
+            final boolean local = localMaxRows > 1;
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_COVERING_LOCAL_MAX_ROWS, localMaxRows);
+            // frames smaller than the selection, so the dispatched arm has tasks for every worker
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_COVERING_FRAME_ROWS, 500);
+            assertMemoryLeak(() -> {
+                final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+                TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                    if (engine.getTableTokenIfExists("t") == null) {
+                        createTable(engine, ctx);
+                    }
+                    for (String q : queries) {
+                        final StringSink plan = new StringSink();
+                        TestUtils.printSql(compiler, ctx, "explain " + q, plan);
+                        Assert.assertTrue(q + '\n' + plan, plan.toString().contains("CoveringIndex"));
+                        Assert.assertTrue(q + '\n' + plan, plan.toString().contains("Async"));
+                        final StringSink expected = new StringSink();
+                        TestUtils.printSql(compiler, ctx, q.replaceFirst("select ", "select /*+ no_index */ "), expected);
+                        try (RecordCursorFactory factory = compiler.compile(q, ctx).getRecordCursorFactory()) {
+                            // one factory, opened three times
+                            for (int i = 0; i < 3; i++) {
+                                final long[] before = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                                final StringSink actual = new StringSink();
+                                try (RecordCursor cursor = factory.getCursor(ctx)) {
+                                    println(factory.getMetadata(), cursor, actual);
+                                }
+                                final long[] after = UnorderedPageFrameSequence.getLocalReduceOpensForTesting();
+                                TestUtils.assertEquals(q, expected, actual);
+                                Assert.assertTrue(q + (local ? " ran local" : " was dispatched"), after[local ? 0 : 1] > before[local ? 0 : 1]);
+                                Assert.assertEquals(q, before[local ? 1 : 0], after[local ? 1 : 0]);
+                            }
+                        }
+                    }
+                }, configuration, LOG);
+            });
+        }
+    }
+
+    @Test
     public void testRareKeyKeepsCoveringAndSmallWorkRunsLocally() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
@@ -403,17 +475,21 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
         Assert.assertFalse(query + '\n' + plan, plan.toString().contains(fragment));
     }
 
-    private void createTable() throws Exception {
-        execute("create table t (ts timestamp, sym symbol, s2 symbol, v long, w double) timestamp(ts) partition by day");
+    private static void createTable(CairoEngine engine, SqlExecutionContext ctx) throws SqlException {
+        engine.execute("create table t (ts timestamp, sym symbol, s2 symbol, v long, w double) timestamp(ts) partition by day", ctx);
         // 1.2M rows over 3 days (one 1M-row frame is the floor of the choice)
-        execute("insert into t select (x * 216_000L)::timestamp,"
+        engine.execute("insert into t select (x * 216_000L)::timestamp,"
                 + " case when x % 5 = 0 then 'F' when x % 250 = 1 then 'R' when x % 5 = 1 then 'G' else 'k' || (x % 97) end,"
-                + " 's' || (x % 3), x, x / 7.0 from long_sequence(1_200_000)");
-        execute("alter table t alter column sym add index type posting include (s2, v, w)");
+                + " 's' || (x % 3), x, x / 7.0 from long_sequence(1_200_000)", ctx);
+        engine.execute("alter table t alter column sym add index type posting include (s2, v, w)", ctx);
         // and rows after the index was built
-        execute("insert into t select (259_200_000_000L + x * 216_000L)::timestamp,"
+        engine.execute("insert into t select (259_200_000_000L + x * 216_000L)::timestamp,"
                 + " case when x % 5 = 0 then 'F' when x % 250 = 1 then 'R' else 'k' || (x % 97) end,"
-                + " 's' || (x % 3), x, x / 7.0 from long_sequence(30_000)");
+                + " 's' || (x % 3), x, x / 7.0 from long_sequence(30_000)", ctx);
+    }
+
+    private void createTable() throws Exception {
+        createTable(engine, sqlExecutionContext);
         final StringSink plan = new StringSink();
         printSql("explain select /*+ use_index */ ts, v from t where sym = 'R'", plan);
         TestUtils.assertContains(plan, "CoveringIndex");

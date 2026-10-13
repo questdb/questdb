@@ -221,6 +221,14 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
     }
 
     /**
+     * Turns on or off the counting {@link #getLocalReduceOpensForTesting()} reads; off by default.
+     */
+    @TestOnly
+    public static void setLocalReduceOpenCountingForTesting(boolean enabled) {
+        isCountingFrameOpens = enabled;
+    }
+
+    /**
      * Whether the frames, once built, hold too few rows to be worth the workers, so
      * {@link #dispatchAndAwait()} reduces them on the calling thread.
      */
@@ -779,7 +787,7 @@ public class UnorderedPageFrameSequence<T extends StatefulAtom> extends Abstract
         }
         reduceFramesLocally = rows < localReduceMaxRows;
         if (localReduceMaxRows > 0) {
-            (reduceFramesLocally ? LOCAL_FRAME_OPENS : DISPATCHED_FRAME_OPENS).incrementAndGet();
+            countFrameOpens(reduceFramesLocally);
         }
 
         // Mirror PageFrameSequence.buildAddressCache(): covered frames decode their
