@@ -479,6 +479,35 @@ public class RecordBlockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncFilterGatherIsChargedToTheQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createAllTypes();
+            final String query = "select * from at where l > 5000";
+            try (RecordCursorFactory factory = select(query)) {
+                final long[] growth = new long[2];
+                for (int k = 0; k < 4; k++) {
+                    final boolean peekFirst = (k & 1) == 0;
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        final MemoryTracker tracker = sqlExecutionContext.getMemoryTracker();
+                        Assert.assertNotNull(tracker);
+                        final long usedBefore = tracker.getUsed();
+                        if (!peekFirst) {
+                            Assert.assertTrue(cursor.hasNext());
+                        }
+                        final RecordBlock block = cursor.peekRecordBlock(1000);
+                        Assert.assertNotNull(block);
+                        // a gathered column has no row indexes
+                        final int l = factory.getMetadata().getColumnIndex("l");
+                        Assert.assertEquals(peekFirst, block.getColumnRowIndexesAddress(l) == 0);
+                        growth[peekFirst ? 0 : 1] = Math.max(growth[peekFirst ? 0 : 1], tracker.getUsed() - usedBefore);
+                    }
+                }
+                Assert.assertTrue("the gathered values are charged to the query: " + growth[0] + " vs " + growth[1], growth[0] > growth[1]);
+            }
+        });
+    }
+
+    @Test
     public void testScanOffersFrames() throws Exception {
         assertMemoryLeak(() -> {
             createAllTypes();
