@@ -637,6 +637,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // a table model generated as if it carried the no_index hint: the scan side of a choice
     // between an index plan and a scan, see generateSelectGroupBy()
     private IQueryModel forcedScanModel;
+    // an input of an ASOF, LT or SPLICE JOIN, while it is generated, see isAsOfInput()
+    private IQueryModel asOfInputModel;
     // {selected, scanned} of the last covering-index selection estimate, see estimateSelection()
     private final long[] coveringEstimate = new long[2];
     // the state of the models a generation consumes, for the sites that generate a model, or
@@ -8462,7 +8464,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     }
 
                     // compile
-                    slaveToFree = generateQuery(slaveModel, executionContext, index > 0);
+                    final IQueryModel prevAsOfInputModel = asOfInputModel;
+                    if (isAsOfJoinInput(joinModels, ordered, i)) {
+                        asOfInputModel = slaveModel;
+                    }
+                    try {
+                        slaveToFree = generateQuery(slaveModel, executionContext, index > 0);
+                    } finally {
+                        asOfInputModel = prevAsOfInputModel;
+                    }
 
                     // check if this is the root of joins
                     if (master == null) {
@@ -12329,6 +12339,30 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } finally {
             groupByNestedModel = prevGroupByNestedModel;
         }
+    }
+
+    // Whether the join's i-th model in join order is an input of an ASOF, LT or SPLICE JOIN: the slave
+    // of one, or the first model when the next joins it so.
+    private static boolean isAsOfJoinInput(ObjList<IQueryModel> joinModels, IntList ordered, int i) {
+        final int at = i == 0 ? 1 : i;
+        if (at >= ordered.size()) {
+            return false;
+        }
+        final int joinType = joinModels.getQuick(ordered.getQuick(at)).getJoinType();
+        return joinType == IQueryModel.JOIN_ASOF || joinType == IQueryModel.JOIN_LT || joinType == IQueryModel.JOIN_SPLICE;
+    }
+
+    // Whether model is the table an ASOF, LT or SPLICE JOIN reads, down its chain of nested models.
+    // Those joins read their slave by time frames, which a covering-index scan has not, and their
+    // parallel and filtered plans read a master's filter over a scan: such a table takes the scan,
+    // see scanInPlaceOfFrequentCovering().
+    private boolean isAsOfInput(IQueryModel model) {
+        for (IQueryModel m = asOfInputModel; m != null; m = m.getNestedModel()) {
+            if (m == model) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // Whether model is the table a GROUP BY reads, down its chain of nested models: its rows are
@@ -20550,8 +20584,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             final double maxSelectivity = isGroupByInput(model)
                     ? configuration.getSqlCoveringGroupByScanChoiceMaxSelectivity()
                     : configuration.getSqlCoveringScanChoiceMaxSelectivity();
-            if (covering == null
-                    || !covering.estimateSelection(executionContext, COVERING_CHOICE_MIN_SCANNED_ROWS, coveringEstimate)
+            if (covering == null) {
+                return coveringPlan;
+            }
+            if (isAsOfInput(model)) {
+                coveringEstimate[0] = coveringEstimate[1] = -1;
+            } else if (!covering.estimateSelection(executionContext, COVERING_CHOICE_MIN_SCANNED_ROWS, coveringEstimate)
                     || coveringEstimate[0] <= maxSelectivity * coveringEstimate[1]) {
                 return coveringPlan;
             }
