@@ -4213,15 +4213,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // SqlOptimiser.rewriteSelectClause0 re-exposes a non-NONE fill list on a
-            // group-by model only when that model's own base model carries the fill.
-            // An empty list means this group-by owns no non-NONE fill: either the
-            // fill found by the walk above belongs to an inner query (an outer GROUP
-            // BY over a SAMPLE BY ... FILL sub-query must not stack the inner fill
-            // on its own output), or its own fill is FILL(NONE). The check runs
-            // after the FILL(NONE) validation so that an all-NONE list, which carries
-            // no signal, still fails that validation as before.
-            if (model.getSampleByFill().size() == 0) {
+            // This group-by owns the fill when its output carries the bucket key node
+            // that SqlOptimiser.rewriteSampleBy recorded on the model holding the fill
+            // parameters. An outer GROUP BY over a SAMPLE BY ... FILL sub-query reaches
+            // the inner fill through the walk above but never carries that node, so it
+            // must not stack the inner fill on its own output. The owner may sit several
+            // models above the fill: LateralJoinRewriter's LATEST ON fallback inserts a
+            // filter model and a window model in between, which leaves the group-by's
+            // sampleByFill list empty (rewriteSelectClause0 re-exposes only a fill held
+            // by the immediate base model), so that list cannot decide ownership. A
+            // non-empty list without the node means an optimizer path dropped or
+            // rebuilt the node: fail loudly under -ea, and without -ea skip the fill
+            // rather than guess a column. The check runs after the FILL(NONE)
+            // validation so that an all-NONE list, which carries no signal, still
+            // fails that validation as before.
+            final RecordMetadata baseMeta = groupByFactory.getMetadata();
+            final int timestampIndex = findFillBucketIndex(model, baseMeta, curr);
+            if (timestampIndex < 0) {
+                assert model.getSampleByFill().size() == 0 : "fill bucket key node not found on the group-by output";
                 return groupByFactory;
             }
 
@@ -4257,19 +4266,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return groupByFactory;
             }
 
-            final RecordMetadata baseMeta = groupByFactory.getMetadata();
-            final int timestampIndex = findFillBucketIndex(model, baseMeta, curr);
-            // This group-by owns the fill (checked above), so its output must carry the
-            // bucket key node that rewriteSampleBy recorded. A miss means an optimizer
-            // path dropped or rebuilt that node. Fail loudly under -ea; without -ea skip
-            // the fill rather than guess a column.
-            assert timestampIndex >= 0 : "fill bucket key node not found on the group-by output";
-            if (timestampIndex < 0) {
-                final Throwable cleanupFailure = Misc.freeObjListBestEffort(null, fillValues);
-                fillValues = null;
-                CairoException.rethrowCleanupFailure(cleanupFailure);
-                return groupByFactory;
-            }
             int timestampType = baseMeta.getColumnType(timestampIndex);
             TimestampDriver driver = getTimestampDriver(timestampType);
             fillFromFunc = driver.getTimestampConstantNull();
