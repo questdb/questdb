@@ -205,6 +205,43 @@ public class IndexKeyScanParallelTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitBoundsTheParallelOpen() throws Exception {
+        // A constant LIMIT caps what an open reads: below the thresholds it keeps the serial scan
+        // without counting the symbol's rows; above them the parallel plan stops dispatching frames
+        // once it has the rows, so it reads fewer frames than without the LIMIT.
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+            DeferredSingleSymbolFilterPageFrameRecordCursorFactory.setParallelThresholdsForTesting(4_000, Long.MAX_VALUE, Long.MAX_VALUE);
+            try (RecordCursorFactory factory = select("select * from t where sym = 'A' limit 10")) {
+                final DeferredSingleSymbolFilterPageFrameRecordCursorFactory scan = findScan(factory);
+                Assert.assertNotNull(scan.getParallelScan());
+                final String actual = print(factory, sqlExecutionContext);
+                Assert.assertArrayEquals(new long[]{1, 0}, scan.getOpenCounts());
+                Assert.assertEquals(10, scan.getLastEstimateRows());
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "false");
+                TestUtils.assertEquals(print(engine, sqlExecutionContext, "select * from t where sym = 'A' limit 10"), actual);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+            }
+            DeferredSingleSymbolFilterPageFrameRecordCursorFactory.setParallelThresholdsForTesting(0, 0, 0);
+            final long[] frames = new long[2];
+            final String[] queries = {"select * from t where sym = 'A'", "select * from t where sym = 'A' limit 10"};
+            for (int i = 0; i < 2; i++) {
+                IndexKeyPageFrameCursor.TEST_INDEX_FRAMES.set(0);
+                try (RecordCursorFactory factory = select(queries[i])) {
+                    final String actual = print(factory, sqlExecutionContext);
+                    Assert.assertEquals(1, findScan(factory).getOpenCounts()[1]);
+                    frames[i] = IndexKeyPageFrameCursor.TEST_INDEX_FRAMES.get();
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "false");
+                    TestUtils.assertEquals(queries[i], print(engine, sqlExecutionContext, queries[i]), actual);
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+                }
+            }
+            Assert.assertTrue(java.util.Arrays.toString(frames), frames[1] < frames[0]);
+        });
+    }
+
+    @Test
     public void testParallelMatchesSerialOnTestContext() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext);

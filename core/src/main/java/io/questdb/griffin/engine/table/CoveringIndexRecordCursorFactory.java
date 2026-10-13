@@ -2400,7 +2400,8 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // produced without a covering cursor and without its boundary postings, see
         // fillFrameForKeyLean(); the workers resolve what the frame needs when they decode it.
         protected boolean leanProduction;
-        // tests: frames the lean production produced, and those it left to the cursor
+        // tests: frames the lean production produced, and those it left to the cursor; counted under
+        // assert only, so production does not share the counters' cache line
         @TestOnly
         static volatile long leanFramesForTesting;
         @TestOnly
@@ -2773,8 +2774,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 if (lean != SENTINEL_FALLBACK) {
                     return lean;
                 }
-                // MIXED, or a reader the lean path does not read: the covering cursor's way below
-                leanFallbacksForTesting++;
+                // MIXED, or a reader the lean path does not read: the covering cursor's way below;
+                // counted for tests only, under assert, off the production path
+                assert leanFallbacksForTesting++ >= 0;
             }
             // Open (or continue) the covering cursor. KEEPING this is load-bearing
             // even on the cheap path: getCursor -> reloadConditionally pre-extends
@@ -2911,7 +2913,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             } else {
                 clearCheapChunkState();
             }
-            leanFramesForTesting++;
+            assert leanFramesForTesting++ >= 0;
             // the range: from the chunk's first posting (or the partition's first row) to the
             // partition's end; the decode reads the frame's count of postings from its start
             return finalizeFrame(count, partitionIndex, rawSymbolKey, firstAbs, nullMax + 1, false);

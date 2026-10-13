@@ -112,16 +112,16 @@ public interface PageFrameCursor extends QuietCloseable, SymbolTableSource {
      *
      * @return whether the cursor will defer them; false for a cursor that cannot
      */
+    default boolean deferFrameAddresses() {
+        return false;
+    }
+
     /**
      * The number of frames this cursor is expected to yield, or -1 when it cannot tell cheaply: a
      * hint for sizing what holds the frames, which may be too high or too low.
      */
     default long getFrameCountHint() {
         return -1;
-    }
-
-    default boolean deferFrameAddresses() {
-        return false;
     }
 
     /**

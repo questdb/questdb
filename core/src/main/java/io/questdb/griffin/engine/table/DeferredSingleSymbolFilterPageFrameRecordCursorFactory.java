@@ -80,6 +80,8 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     // the parallel plan, or null; see setParallelScan()
     private RecordCursorFactory parallelScan;
     private long parallelOpens;
+    // the rows an open reads at most (a constant LIMIT), or Long.MAX_VALUE; see setParallelScan()
+    private long parallelRowsCap = Long.MAX_VALUE;
     // tests: the last open's estimate of the symbol's rows
     private long lastEstimateRows = -1;
     private long serialOpens;
@@ -194,10 +196,13 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
 
     /**
      * Takes the parallel plan, which shares this factory's partition frames and key function;
-     * the factory frees it.
+     * the factory frees it. {@code rowsCap} is the rows an open reads at most, a constant LIMIT, or
+     * Long.MAX_VALUE: an open whose cap is below the parallel plan's thresholds keeps the serial
+     * scan without an estimate.
      */
-    public void setParallelScan(@NotNull RecordCursorFactory parallelScan) {
+    public void setParallelScan(@NotNull RecordCursorFactory parallelScan, long rowsCap) {
         this.parallelScan = parallelScan;
+        this.parallelRowsCap = rowsCap;
     }
 
     @Override
@@ -239,6 +244,12 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     // Whether this open's selection is large enough for the parallel plan: from the posting index's
     // counts of the symbol, a partition at a time, sampled by stride past ESTIMATE_MAX_PARTITIONS.
     private boolean isParallelWorthIt(SqlExecutionContext executionContext) throws SqlException {
+        final long minRows = Math.min(parallelMinRows, parallelMinSpreadRows);
+        if (parallelRowsCap < minRows) {
+            // a LIMIT reads fewer rows than any parallel open needs
+            lastEstimateRows = parallelRowsCap;
+            return false;
+        }
         try (PartitionFrameCursor frameCursor = partitionFrameCursorFactory.getCursor(
                 executionContext,
                 columnIndexes,
@@ -255,6 +266,13 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
             final int indexKey = TableUtils.toIndexKey(key);
             final long bound = frameCursor.getFrameCountUpperBound();
             final long partitions = bound > 0 ? bound : reader.getPartitionCount();
+            final long tableRows = reader.size();
+            if (tableRows < minRows || (tableRows < parallelMinRows && partitions < parallelMinPartitions)) {
+                // the whole table holds too few rows, or too few over too few partitions: no count
+                // of the symbol can reach the thresholds, so none is read
+                lastEstimateRows = tableRows;
+                return false;
+            }
             final long stride = Math.max(1, (partitions + ESTIMATE_MAX_PARTITIONS - 1) / ESTIMATE_MAX_PARTITIONS);
             long sampledRows = 0;
             long sampledPartitions = 0;
@@ -289,7 +307,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
             if (sampledPartitions == 0) {
                 return false;
             }
-            final long rows = sampledRows * stride;
+            final long rows = Math.min(sampledRows * stride, parallelRowsCap);
             lastEstimateRows = rows;
             return rows >= parallelMinRows
                     || (rows >= parallelMinSpreadRows && partitionsWithRows * stride >= parallelMinPartitions);

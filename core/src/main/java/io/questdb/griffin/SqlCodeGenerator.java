@@ -14423,11 +14423,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Compiles one more copy of a projection's functions, as {@link #generateSelectVirtualWithSubQuery}
-     * compiled {@code owner}'s, against the same input. Returns null, having freed what it
-     * compiled, when a copy does not come out as the owner's function did.
-     */
-    /**
      * Lets the threads that filter an Async Filter's frames compute the virtual columns of the
      * projection over it, see {@link FrameProjection}: columns of a fixed-size numeric type whose
      * expression is not a plain column. Each worker slot gets a copy of the projection's
@@ -14501,6 +14496,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
                 copies.add(copy);
             }
+        } catch (SqlException e) {
+            // the query compiled with the owner's functions: a copy that does not compile leaves the
+            // projection to them, as a copy that comes out differently does
+            for (int k = 0, m = copies.size(); k < m; k++) {
+                Misc.freeObjList(copies.getQuick(k));
+            }
+            LOG.info().$("projection stays on the query's thread, a copy did not compile [error=").$(e.getFlyweightMessage()).I$();
+            return;
         } catch (Throwable th) {
             for (int k = 0, m = copies.size(); k < m; k++) {
                 Misc.freeObjList(copies.getQuick(k));
@@ -14546,6 +14549,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return false;
     }
 
+    /**
+     * Compiles one more copy of a projection's functions, as {@link #generateSelectVirtualWithSubQuery}
+     * compiled {@code owner}'s, against the same input. Returns null, having freed what it
+     * compiled, when a copy does not come out as the owner's function did.
+     */
     private @Nullable ObjList<Function> compileProjectionCopy(
             IQueryModel virtualModel,
             VirtualRecordCursorFactory owner,
@@ -16720,6 +16728,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // an Async Filter over the scan's partitions whose workers read each frame's rows of the symbol
     // from its posting index. It shares the scan's partition frames and key function.
     private void attachParallelIndexScan(
+            IQueryModel model,
             DeferredSingleSymbolFilterPageFrameRecordCursorFactory serial,
             RecordMetadata queryMeta,
             PartitionFrameCursorFactory dfcFactory,
@@ -16728,12 +16737,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             IntList columnIndexes,
             IntList columnSizeShifts,
             SqlExecutionContext executionContext
-    ) {
+    ) throws SqlException {
+        // A constant, non-negative LIMIT bounds the rows an open reads: the parallel plan then stops
+        // dispatching frames once it has them, and a LIMIT too small for the parallel plan keeps the
+        // serial scan without an estimate. A negative or non-constant LIMIT is left to the LIMIT above.
+        Function limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
+        long rowsCap = Long.MAX_VALUE;
+        if (limitLoFunction != null) {
+            if (!mayBeNegativeLimit(limitLoFunction, executionContext) && limitLoFunction.getLong(null) != Numbers.LONG_NULL) {
+                rowsCap = limitLoFunction.getLong(null);
+            } else {
+                limitLoFunction = Misc.free(limitLoFunction);
+            }
+        }
+        final int limitLoPos = limitLoFunction != null && model.getLimitAdviceLo() != null ? model.getLimitAdviceLo().position : 0;
         final IndexKeyScanFrameFactory frames = new IndexKeyScanFrameFactory(queryMeta, dfcFactory, symbolFunc, keyColumnIndex, columnIndexes, columnSizeShifts);
         try {
             final IntHashSet usedColumns = new IntHashSet();
             usedColumns.add(keyColumnIndex);
-            serial.setParallelScan(new AsyncFilteredRecordCursorFactory(
+            final AsyncFilteredRecordCursorFactory parallelScan = new AsyncFilteredRecordCursorFactory(
                     executionContext.getCairoEngine(),
                     configuration,
                     executionContext.getMessageBus(),
@@ -16743,13 +16765,17 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     reduceTaskFactory,
                     null,
                     expressionNodePool.next().of(LITERAL, "index key", 0, 0),
-                    null,
-                    0,
+                    limitLoFunction,
+                    limitLoPos,
                     executionContext.getSharedQueryWorkerCount(),
                     false
-            ));
+            );
+            // the parallel plan owns it now
+            limitLoFunction = null;
+            serial.setParallelScan(parallelScan, rowsCap);
         } catch (Throwable th) {
             // the serial scan still runs; the frames borrow, so they free nothing of it
+            Misc.free(limitLoFunction);
             Misc.free(frames);
             throw th;
         }
@@ -17430,7 +17456,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     symbolFunc = null;
                                     if (isParallelIndexScanCandidate(model, reader, columnIndexes.getQuick(keyColumnIndex), order, indexDirection, executionContext)) {
                                         try {
-                                            attachParallelIndexScan(result, queryMeta, dfcFactory, resultSymbolFunc, keyColumnIndex, columnIndexes, columnSizeShifts, executionContext);
+                                            attachParallelIndexScan(model, result, queryMeta, dfcFactory, resultSymbolFunc, keyColumnIndex, columnIndexes, columnSizeShifts, executionContext);
                                         } catch (Throwable th) {
                                             // the scan owns the partition frames: freed with it, not by the outer catch
                                             dfcFactory = null;

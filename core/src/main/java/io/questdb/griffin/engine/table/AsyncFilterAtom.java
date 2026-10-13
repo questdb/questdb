@@ -193,7 +193,7 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
         final FrameProjection projection = this.projection;
         if (projection != null && !task.isCountOnly() && task.getFilteredRows().size() > 0
                 && task.getFrameMemory().getFrameFormat() == PartitionFormat.NATIVE) {
-            task.setProjected(projection.project(workerId, owner, record, task.getFilteredRows(), task.getProjectedValues(), circuitBreaker));
+            task.setProjected(projection.project(workerId, owner, record, task.getFilteredRows(), task.getProjectedValues(), task.getMemoryTracker(), circuitBreaker));
         }
     }
 

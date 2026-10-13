@@ -151,15 +151,21 @@ public class FrameProjection implements QuietCloseable {
         this.slotBaseRecords = new ObjList<>(slotCount);
         this.slotKernels = new ObjList<>(slotCount);
         this.slotBlocks = new ObjList<>(slotCount);
-        for (int i = 0; i < slotCount; i++) {
-            slotRecords.add(new VirtualFunctionRecord(slotFunctions.getQuick(i), reservedSlots));
-            slotBaseRecords.add(crossIndex != null ? new SelectedRecord(crossIndex) : null);
-            final GroupByBatchKernels kernels = GroupByBatchKernels.compileProjection(slotFunctions.getQuick(i), reservedSlots, KERNEL_BATCH_ROWS);
-            slotKernels.add(kernels);
-            slotBlocks.add(kernels != null ? new ProjectionBlock() : null);
+        try {
+            for (int i = 0; i < slotCount; i++) {
+                slotRecords.add(new VirtualFunctionRecord(slotFunctions.getQuick(i), reservedSlots));
+                slotBaseRecords.add(crossIndex != null ? new SelectedRecord(crossIndex) : null);
+                final GroupByBatchKernels kernels = GroupByBatchKernels.compileProjection(slotFunctions.getQuick(i), reservedSlots, KERNEL_BATCH_ROWS);
+                slotKernels.add(kernels);
+                slotBlocks.add(kernels != null ? new ProjectionBlock() : null);
+            }
+            // the workers' slots; the owner always has its own
+            this.locks = new PerWorkerLocks(configuration, Math.max(1, slotCount - 1));
+        } catch (Throwable th) {
+            // the projection owns the copies from here on: free them, and the kernels compiled so far
+            close();
+            throw th;
         }
-        // the workers' slots; the owner always has its own
-        this.locks = new PerWorkerLocks(configuration, Math.max(1, slotCount - 1));
     }
 
     /**
@@ -338,6 +344,7 @@ public class FrameProjection implements QuietCloseable {
             @NotNull PageFrameMemoryRecord frameRecord,
             @NotNull DirectLongList rows,
             @NotNull DirectLongList sink,
+            @Nullable MemoryTracker memoryTracker,
             @NotNull SqlExecutionCircuitBreaker circuitBreaker
     ) {
         final int slot = workerId == -1 && owner ? -1 : locks.acquireSlot(workerId, circuitBreaker);
@@ -354,7 +361,7 @@ public class FrameProjection implements QuietCloseable {
             final long rowCount = rows.size();
             final long words = (rowCount * rowBytes + Long.BYTES - 1) / Long.BYTES;
             sink.clear();
-            sink.ensureCapacity(words);
+            ensureCapacity(sink, words, memoryTracker);
             final long dst = sink.getAddress();
             final GroupByBatchKernels kernels = slotKernels.getQuick(slot + 1);
             final ProjectionBlock block = slotBlocks.getQuick(slot + 1);
@@ -416,6 +423,25 @@ public class FrameProjection implements QuietCloseable {
         testProjectedFrames.set(0);
         testKernelBatches.set(0);
         testRowBatches.set(0);
+    }
+
+    // Grows the frame's value list, charging the growth to the query's memory limit (a breach throws).
+    // The list belongs to a reduce task of the shared queue, which may free or reuse it after the
+    // query ends, so its frees are global-only and the charge is released when the query's tracker
+    // is reconciled, as covered decode buffers' are, see MemoryTracker.addCoveredBytes().
+    private static void ensureCapacity(DirectLongList sink, long words, @Nullable MemoryTracker memoryTracker) {
+        final long capacityBefore = sink.getCapacity();
+        if (memoryTracker == null || capacityBefore >= words) {
+            sink.ensureCapacity(words);
+            return;
+        }
+        sink.setMemoryTracker(memoryTracker);
+        try {
+            sink.ensureCapacity(words);
+        } finally {
+            sink.setMemoryTracker(null);
+        }
+        memoryTracker.addCoveredBytes((sink.getCapacity() - capacityBefore) * Long.BYTES);
     }
 
     private static void write(Record record, int col, int type, long address) {
