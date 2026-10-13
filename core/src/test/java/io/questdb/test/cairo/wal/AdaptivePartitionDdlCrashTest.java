@@ -58,6 +58,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -289,6 +290,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
     @Test
     public void testCrashAfterOperation() throws Exception {
+        // Windows links a directory as a file (CreateSymbolicLinkW without SYMBOLIC_LINK_FLAG_DIRECTORY), which
+        // ATTACH cannot list; the moved and copied directories cover ATTACH there.
+        Assume.assumeFalse("a soft-linked partition directory does not attach on Windows", operation == Operation.ATTACH_SOFT_LINK && Os.isWindows());
         final boolean startsNosync = history == History.NOSYNC || history == History.ENROLLED_ON_WRITER_OPEN || history == History.KILLED_BEFORE_TXN_NOSYNC;
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, startsNosync ? "nosync" : "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, history.periodicOff() ? -1 : NO_PERIODIC_SAVE_POINT_MS);

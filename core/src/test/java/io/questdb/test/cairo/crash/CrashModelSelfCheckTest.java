@@ -27,10 +27,12 @@ package io.questdb.test.cairo.crash;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 import java.io.IOException;
@@ -286,6 +288,9 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     public void test9_syncfsJournalsEveryoneUnderPerInodeJournaling() throws Exception {
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
         ff.modelSharedJournal = false; // ext4 fast_commit: a per-inode fdatasync(A) would not journal B (test 7)
+        // The filesystem-wide syncfs of Linux, which tests pin off Linux too; CrashFaultFilesFacadeTest checks the
+        // single-file one of macOS and Windows.
+        ff.setSyncfsFileSystemWide(true);
         final String dir = temp.newFolder("model9").getAbsolutePath();
         try (Path a = new Path().of(dir).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
             Mapped ma = mapAndFill(ff, a, NEW);
@@ -320,6 +325,8 @@ public class CrashModelSelfCheckTest extends AbstractTest {
     public void test10_syncfsPersistsUnmappedDirtyPages() throws Exception {
         final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
         ff.modelSharedJournal = false;
+        // The filesystem-wide syncfs of Linux, as in test 9.
+        ff.setSyncfsFileSystemWide(true);
         final String dir = temp.newFolder("model10").getAbsolutePath();
         try (Path a = new Path().of(dir).concat("a.d"); Path b = new Path().of(dir).concat("b.d")) {
             Mapped ma = mapAndFill(ff, a, NEW);
@@ -455,7 +462,9 @@ public class CrashModelSelfCheckTest extends AbstractTest {
         final String[] shrinks = {"truncate to zero", "truncate to one page", "copy an empty file over it"};
         final String[] syncs = {"msync(MS_SYNC) of page 1", "sync_file_range of page 1, then fdatasync(B)", "fdatasync(B) only"};
         final StringBuilder failures = new StringBuilder();
-        for (int shrink = 0; shrink < shrinks.length; shrink++) {
+        // Windows copies onto no existing file (CopyFileW fails if it exists), so a copy cannot shrink one there.
+        final int shrinkCount = Os.isWindows() ? shrinks.length - 1 : shrinks.length;
+        for (int shrink = 0; shrink < shrinkCount; shrink++) {
             for (int sync = 0; sync < syncs.length; sync++) {
                 final String what = "test15 [" + shrinks[shrink] + ", " + syncs[sync] + "]: ";
                 final byte[] got = shrinkRewriteAndCrash(temp.newFolder("model15-" + shrink + "-" + sync).getAbsolutePath(), shrink, sync);
@@ -614,6 +623,8 @@ public class CrashModelSelfCheckTest extends AbstractTest {
      */
     @Test
     public void test21_pathDeletedByTheRollbackStartsEmpty() throws Exception {
+        // The names created again become durable only through a directory fsync, and Windows opens no directory.
+        Assume.assumeFalse("Windows has no directory handle to fsync", Os.isWindows());
         final Map<String, BiConsumer<CrashFaultFilesFacade, String>> ways = new LinkedHashMap<>();
         ways.put("durable bytes, entry never durable", (ff, p) -> {
             rewriteAndSync(ff, p, "a.d", (f, m) -> f.fsync(m.fd));
@@ -1012,6 +1023,10 @@ public class CrashModelSelfCheckTest extends AbstractTest {
                 ff.fsyncAndClose(m.fd);
             }
         });
+        if (Os.isWindows()) {
+            // Windows opens no directory, so it has no directory fsync to run; tests 16 and 22 check the rest.
+            return flushes;
+        }
         flushes.put("new file, directory fsync", (ff, dir) -> {
             rewriteAndSync(ff, dir, "c.d", (f, m) -> f.fsync(m.fd));
             syncDirectory(ff, dir);

@@ -562,8 +562,9 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
             final TableToken tt = buildTableWithEpochAndLazyTail();
             execute("alter table t add column c1 int");
             execute("alter table t add column c2 symbol");
-            // Enough columns to grow _meta past the page it was allocated with.
-            for (int i = 0; i < 64; i++) {
+            // Enough columns to grow _meta past the page it was allocated with: 64 for a 4 KiB page, as many more
+            // as the OS page is larger (64 KiB on Windows).
+            for (int i = 0, n = (int) (64 * Files.PAGE_SIZE / 4096); i < n; i++) {
                 execute("alter table t add column a_rather_long_column_name_" + i + " long");
             }
             execute("insert into t (ts, v, c1, c2) values ('2024-10-02T00:00:00.000000Z', " + (K + M) + ", 1, 'a')");
@@ -855,6 +856,8 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
                     rejection == Rejection.HEADER_VERSIONS ? columnVersion + 1 : columnVersion,
                     metadataVersion
             );
+            // Remove first, as replaceLiveFile() does: Windows copies onto no existing file.
+            ff.removeQuiet(live.trimTo(liveLen).concat(DurableEpochManifest.FILE_NAME).put(".0").$());
             Assert.assertTrue(ff.copy(
                     forge.trimTo(forgeLen).concat(DurableEpochManifest.FILE_NAME).put(".0").$(),
                     live.trimTo(liveLen).concat(DurableEpochManifest.FILE_NAME).put(".0").$()
@@ -875,6 +878,7 @@ public class AdaptiveRecoveryTornEpochCopyCrashTest extends AbstractAdaptiveCras
                             tx.getMetadataVersion()
                     );
                 }
+                ff.removeQuiet(live.trimTo(liveLen).concat(DurableEpochManifest.FILE_NAME).put(".1").$());
                 Assert.assertTrue(ff.copy(
                         forgeOlder.trimTo(forgeOlderLen).concat(DurableEpochManifest.FILE_NAME).put(".1").$(),
                         live.trimTo(liveLen).concat(DurableEpochManifest.FILE_NAME).put(".1").$()

@@ -105,6 +105,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testAdaptiveAttachParquetFailedDirFsyncIsFailStop() throws Exception {
+        Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
         assertAttachParquetSyncFailure("adaptive", 1);
     }
 
@@ -150,6 +151,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testAsyncAttachParquetFailedDirFsyncIsNotFailStop() throws Exception {
+        Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
         assertAttachParquetSyncFailure("async", 1);
     }
 
@@ -213,6 +215,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncAddColumnFailedDirFsyncIsFailStop() throws Exception {
+        Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
         // the _meta swap takes four fsyncs first
         assertFsyncFailureIsFailStop("sync", false, null, () -> execute("ALTER TABLE x ADD COLUMN w INT"), "addColumn", 4);
     }
@@ -392,6 +395,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
 
     @Test
     public void testSyncConvertToParquetNonWalFailedDirFsyncIsFailStop() throws Exception {
+        Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
         assertConvertToParquetSyncFailure("sync", false, new FsyncFailureFacade("produceParquetFromNative", 2, false));
     }
 
@@ -593,6 +597,7 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
      * added and the engine keeps taking writes. These modes take no other fsync in the statement.
      */
     private void assertAddColumnDirFsyncFailureIsNotFailStop(String commitMode) throws Exception {
+        Assume.assumeFalse("a directory takes no fsync on Windows", Os.isWindows());
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         final FsyncFailureFacade ff = new FsyncFailureFacade("addColumn", 0, false);
         assertMemoryLeak(ff, () -> {

@@ -1233,7 +1233,8 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                     if (adaptive && !isTransient) {
                         Assert.assertTrue(row + "the commit must fail with the engine stop: " + failure, failure instanceof CairoError && CairoException.isDataSyncFailure(failure));
                         Assert.assertTrue(row + "the engine must stop", engine.isDurabilityFailed());
-                        Assert.assertTrue(row + "the error names the file: " + failure.getMessage(), failure.getMessage().contains("could not start writeback") && failure.getMessage().contains("path="));
+                        // Only Linux tells the path of an fd (Files.findPathOfFd); elsewhere the error names the fd.
+                        Assert.assertTrue(row + "the error names the file: " + failure.getMessage(), failure.getMessage().contains("could not start writeback") && failure.getMessage().contains(Os.isLinux() ? "path=" : "fd="));
                         Assert.assertTrue(row + "nothing becomes durable", commitTracker.getLocalDurableSeqTxn() < 1);
                         engine.releaseAllWriters();
                         engine.resetDurabilityFailure();

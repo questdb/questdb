@@ -29,11 +29,13 @@ import io.questdb.cairo.vm.MemoryCMARWImpl;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Os;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.ClassRule;
 import org.junit.Test;
 import org.junit.rules.TemporaryFolder;
@@ -261,6 +263,8 @@ public class MemoryCMARWImplTest {
      */
     @Test
     public void testExtendAfterShrinkReservesFromFileLength() throws Exception {
+        // testExtendAfterTruncateReservesFromFileStart covers what Windows does instead.
+        Assume.assumeFalse("Windows does not shrink a mapped file", Os.isWindows());
         TestUtils.assertMemoryLeak(() -> {
             final RecordingFilesFacade ff = new RecordingFilesFacade();
             final long pageSize = Files.PAGE_SIZE;
@@ -298,15 +302,23 @@ public class MemoryCMARWImplTest {
                     mem.of(ff, path.$(), pageSize, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
                     appendLongs(mem, 3 * pageSize);
                     mem.truncate();
-                    Assert.assertEquals(pageSize, ff.length(mem.getFd()));
-
-                    ff.log.clear();
-                    appendLongs(mem, 3 * pageSize);
-                    TestUtils.assertEquals(
-                            "allocate " + 2 * pageSize + "\n"
-                                    + "range " + 2 * pageSize + " " + 3 * pageSize + "\n",
-                            ff.log
-                    );
+                    if (Os.isWindows()) {
+                        // Windows does not shrink a mapped file: truncate() zeroes the tail in place, and the file
+                        // keeps covering what the next appends extend into, so they reserve nothing.
+                        Assert.assertEquals(3 * pageSize, ff.length(mem.getFd()));
+                        ff.log.clear();
+                        appendLongs(mem, 3 * pageSize);
+                        TestUtils.assertEquals("", ff.log);
+                    } else {
+                        Assert.assertEquals(pageSize, ff.length(mem.getFd()));
+                        ff.log.clear();
+                        appendLongs(mem, 3 * pageSize);
+                        TestUtils.assertEquals(
+                                "allocate " + 2 * pageSize + "\n"
+                                        + "range " + 2 * pageSize + " " + 3 * pageSize + "\n",
+                                ff.log
+                        );
+                    }
                 } finally {
                     mem.close();
                 }

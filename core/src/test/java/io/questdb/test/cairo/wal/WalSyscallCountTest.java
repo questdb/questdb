@@ -206,7 +206,10 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         Assume.assumeFalse("the sequencer log format does not touch column pages", isV2);
         setCountProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         setCountProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, io.questdb.std.Files.PAGE_SIZE);
-        setCountProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1_000);
+        // The counts below hold for any OS page size: the rows scale with it, 16 KiB pages on macOS take 4 times
+        // the rows of 4 KiB ones, 64 KiB pages on Windows 16 times, and every varchar has the same length.
+        final int scale = (int) (io.questdb.std.Files.PAGE_SIZE / 4096);
+        setCountProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1_000 * scale);
         final CountingFacade ff = new CountingFacade();
         ff.isCountingPageReleases = true;
         assertMemoryLeak(ff, () -> {
@@ -215,12 +218,12 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
             try (WalWriter writer = getWalWriter("x")) {
                 ff.start(true);
-                for (int i = 0; i < 1_500; i++) {
+                for (int i = 0; i < 1_500 * scale; i++) {
                     final TableWriter.Row row = writer.newRow((i + 1) * 1_000_000L);
                     row.putLong(1, i);
-                    row.putVarchar(2, new Utf8String("varchar too long to inline " + i));
+                    row.putVarchar(2, new Utf8String("varchar too long to inline " + (1_000_000 + i)));
                     row.append();
-                    if (i % 300 == 299) {
+                    if (i % (300 * scale) == 300 * scale - 1) {
                         writer.commit();
                     }
                 }
@@ -233,9 +236,9 @@ public class WalSyscallCountTest extends AbstractCairoTest {
                 case "sync" -> "msyncSync";
                 default -> Os.isLinux() ? "msyncAsync" : "msyncSync";
             };
-            // 22 releases as the pages fill (18 in the first segment of 1,200 rows, 4 in the second of 300) and 4
-            // as the segment roll closes ts.d, v.d, vc.d and vc.i: the same in every mode.
-            Assert.assertEquals("column page releases [mode=" + commitMode + ']', grade + "=26", CountingFacade.join(ff.pageReleases));
+            // 23 releases as the pages fill the two segments and 4 as the segment roll closes ts.d, v.d, vc.d and
+            // vc.i: the same in every mode.
+            Assert.assertEquals("column page releases [mode=" + commitMode + ']', grade + "=27", CountingFacade.join(ff.pageReleases));
         });
     }
 
@@ -358,43 +361,19 @@ public class WalSyscallCountTest extends AbstractCairoTest {
      */
     @Test
     public void testPeriodicSavePointSyncs() throws Exception {
-        Assume.assumeTrue("only ADAPTIVE takes save points", "adaptive".equals(commitMode));
-        Assume.assumeFalse("Windows syncs no directory", Os.isWindows());
-        setCountProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-        setCountProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
-        setCountProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
-        final CountingFacade ff = new CountingFacade();
-        assertMemoryLeak(ff, () -> {
-            Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
-            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x VALUES (1_000_000, 1)");
-            drainWalQueue();
-            try (TableWriter writer = getWriter("x")) {
-                // A writer's first save point also flushes every partition; the test counts the next one.
-                writer.advanceDurableEpoch(1L);
-                ff.startSyncLog();
-                writer.advanceDurableEpoch(2L);
-                ff.stopSyncLog();
+        assertPeriodicSavePointSyncs(new CountingFacade());
+    }
+
+    /**
+     * {@link #testPeriodicSavePointSyncs} where syncfs flushes one file, as on macOS and Windows.
+     */
+    @Test
+    public void testPeriodicSavePointSyncsWithoutFsWideSyncfs() throws Exception {
+        assertPeriodicSavePointSyncs(new CountingFacade() {
+            @Override
+            public boolean isSyncfsFileSystemWide() {
+                return false;
             }
-            final List<String> log = ff.syncLog;
-            int columnFlushEnd = -1;
-            for (int i = 0, n = log.size(); i < n; i++) {
-                if (log.get(i).startsWith("syncfs")) {
-                    columnFlushEnd = i;
-                }
-            }
-            Assert.assertTrue("the column flush ends with syncfs: " + log, columnFlushEnd > -1);
-            Assert.assertEquals(
-                    "sync calls after the column flush",
-                    """
-                            msyncSync
-                            fsync _cv
-                            msyncSync
-                            fsync _txn
-                            fsync _epoch.manifest.0
-                            fsync _epoch.manifest.0""",
-                    String.join("\n", log.subList(columnFlushEnd + 1, log.size()))
-            );
         });
     }
 
@@ -493,9 +472,12 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         // Without mixed I/O, copying a WAL column maps its lazy source instead of copying through file descriptors.
         // Destination pages are already warm; source WAL v.d and the three variable-size columns need more maps.
         final int maps = 3 + files / 2 + (isMixedIO ? 0 : 1 + files / 2);
+        // The event reader asks for random access, and maps _event outside the mmap cache for it. Off Linux the
+        // OS takes no advice (POSIX_MADV_RANDOM is -1), and it maps _event through the cache like the rest.
+        final String eventMaps = io.questdb.std.Files.POSIX_MADV_RANDOM != -1 ? maps + " mmapNoCache=1" : String.valueOf(maps + 1);
         // A V2 apply pass also opens the sequencer part file "0".
-        return "calls: close=" + ((isV2 ? 11 : 10) + 2 * files) + " madvise=3 mmap=" + maps
-                + " mmapNoCache=1 mremap=1" + msyncs + " munmap=" + (maps + 1) + " openRO=" + ((isV2 ? 6 : 5) + files)
+        return "calls: close=" + ((isV2 ? 11 : 10) + 2 * files) + " madvise=3 mmap=" + eventMaps
+                + " mremap=1" + msyncs + " munmap=" + (maps + 1) + " openRO=" + ((isV2 ? 6 : 5) + files)
                 + " readNonNegativeLong=3; opened: " + (isV2 ? "0=1 " : "") + "_event=1 _event.i=1 _txnlog=1 "
                 + (isVarSize ? "a.d=1 a.i=1 s.d=1 s.i=1 ts.d=1 v.d=1 vc.d=1 vc.i=1" : "ts.d=1 v.d=1");
     }
@@ -549,6 +531,49 @@ public class WalSyscallCountTest extends AbstractCairoTest {
                             + ", varSize=" + isVarSize + ']',
                     expected(commitMode, isV2, isCommit, isVarSize, configuration.isWriterMixedIOEnabled()),
                     actual
+            );
+        });
+    }
+
+    private void assertPeriodicSavePointSyncs(CountingFacade ff) throws Exception {
+        Assume.assumeTrue("only ADAPTIVE takes save points", "adaptive".equals(commitMode));
+        Assume.assumeFalse("Windows syncs no directory", Os.isWindows());
+        setCountProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setCountProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
+        setCountProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        assertMemoryLeak(ff, () -> {
+            Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1_000_000, 1)");
+            drainWalQueue();
+            try (TableWriter writer = getWriter("x")) {
+                // A writer's first save point also flushes every partition; the test counts the next one.
+                writer.advanceDurableEpoch(1L);
+                ff.startSyncLog();
+                writer.advanceDurableEpoch(2L);
+                ff.stopSyncLog();
+            }
+            final List<String> log = ff.syncLog;
+            int columnFlushEnd = -1;
+            for (int i = 0, n = log.size(); i < n; i++) {
+                if (log.get(i).startsWith("syncfs")) {
+                    columnFlushEnd = i;
+                }
+            }
+            Assert.assertTrue("the column flush ends with syncfs: " + log, columnFlushEnd > -1);
+            // Where syncfs flushes one file, the save point makes the sequencer files durable itself.
+            final String sequencerSyncs = ff.isSyncfsFileSystemWide() ? "" : (isV2 ? "fdatasync 0\n" : "") + "fdatasync _txnlog\n";
+            Assert.assertEquals(
+                    "sync calls after the column flush",
+                    """
+                            msyncSync
+                            fsync _cv
+                            msyncSync
+                            fsync _txn
+                            """ + sequencerSyncs + """
+                            fsync _epoch.manifest.0
+                            fsync _epoch.manifest.0""",
+                    String.join("\n", log.subList(columnFlushEnd + 1, log.size()))
             );
         });
     }
