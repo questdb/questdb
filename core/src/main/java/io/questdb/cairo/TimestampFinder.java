@@ -40,9 +40,28 @@ public interface TimestampFinder {
     long countBefore(long timestamp);
 
     /**
+     * Counts rows before {@code timestamp}, using inclusive search bounds in this
+     * finder's coordinate space. The caller guarantees the count is between
+     * {@code rowLo} and {@code rowHi + 1}; the result remains partition-relative.
+     * Composite finders may ignore the bounds rather than pass logical row
+     * positions to a physical base finder.
+     */
+    default long countBefore(long timestamp, long rowLo, long rowHi) {
+        return countBefore(timestamp);
+    }
+
+    /**
      * Counts rows whose timestamp is less than or equal to {@code timestamp}.
      */
     long countThrough(long timestamp);
+
+    /**
+     * Counts rows through {@code timestamp}, with the same search-bound contract
+     * as {@link #countBefore(long, long, long)}.
+     */
+    default long countThrough(long timestamp, long rowLo, long rowHi) {
+        return countThrough(timestamp);
+    }
 
     /**
      * Conservative upper bound for the partition's maximum timestamp, without

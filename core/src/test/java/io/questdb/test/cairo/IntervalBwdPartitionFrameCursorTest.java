@@ -25,6 +25,8 @@
 package io.questdb.test.cairo;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.IntervalBwdPartitionFrameCursor;
@@ -186,6 +188,73 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
         intervals.add(timestampType.getDriver().parseFloorLiteral("1979-01-09T00:00:00.000Z"));
 
         testIntervals(PartitionBy.NONE, increment, N, "", 0);
+    }
+
+    @Test
+    public void testBoundedIntervalSearch() throws Exception {
+        assertMemoryLeak(() -> {
+            final int rowCount = 12;
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, rowCount);
+            AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.DAY)
+                    .timestamp(timestampType.getTimestampType()));
+            final long start = timestampType.getDriver().parseFloorLiteral("2020-01-01T00:00");
+            final long hour = timestampType.getDriver().fromHours(1);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int i = 0; i < rowCount; i++) {
+                    writer.newRow(start + (i / 2) * hour).append();
+                }
+                writer.newRow(start + timestampType.getDriver().fromDays(1)).append();
+                writer.commit();
+            }
+            if (convertToParquet) {
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            }
+            intervals.add(start + hour, start + hour);
+            intervals.add(start + 3 * hour, start + 3 * hour);
+            intervals.add(start + 4 * hour, start + 4 * hour);
+
+            final IntList decodedRowHi = new IntList();
+            final CairoConfiguration trackingConfiguration = new CairoConfigurationWrapper(configuration) {
+                @Override
+                public ParquetPartitionDecoder newParquetPartitionDecoder() {
+                    return new ParquetPartitionDecoder() {
+                        @Override
+                        public int decodeRowGroup(RowGroupBuffers buffers, DirectIntList columns, int rowGroup, int rowLo, int rowHi) {
+                            decodedRowHi.add(rowHi);
+                            return super.decodeRowGroup(buffers, columns, rowGroup, rowLo, rowHi);
+                        }
+                    };
+                }
+            };
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    IntervalBwdPartitionFrameCursor cursor = new IntervalBwdPartitionFrameCursor(
+                            trackingConfiguration,
+                            new RuntimeIntervalModel(timestampType.getDriver(), reader.getPartitionedBy(), intervals),
+                            reader.getMetadata().getTimestampIndex()
+                    )
+            ) {
+                cursor.of(reader, null);
+                for (int pass = 0; pass < 2; pass++) {
+                    assertFrameRows(cursor.next(), 8, 10);
+                    decodedRowHi.clear();
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    cursor.calculateSize(counter);
+                    Assert.assertEquals(4, counter.get());
+                    assertDecodeBound(decodedRowHi, 8);
+
+                    // Calculating the remaining size must not advance the iteration's bound.
+                    decodedRowHi.clear();
+                    assertFrameRows(cursor.next(), 6, 8);
+                    assertDecodeBound(decodedRowHi, 8);
+                    decodedRowHi.clear();
+                    assertFrameRows(cursor.next(), 2, 4);
+                    Assert.assertNull(cursor.next());
+                    assertDecodeBound(decodedRowHi, 6);
+                    cursor.toTop();
+                }
+            }
+        });
     }
 
     @Test
@@ -377,6 +446,29 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
                     col("a", ColumnType.SYMBOL).indexed(true, 4).
                     col("b", ColumnType.SYMBOL).indexed(true, 4);
             AbstractCairoTest.create(model);
+        });
+    }
+
+    @Test
+    public void testIntervalSpansPartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.DAY)
+                    .col("v", ColumnType.INT)
+                    .timestamp(timestampType.getTimestampType()));
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, '2020-01-01T21:00'),
+                    (2, '2020-01-02T10:00'),
+                    (3, '2020-01-02T11:00'),
+                    (4, '2020-01-03T00:00')
+                    """);
+            if (convertToParquet) {
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE timestamp >= 0");
+            }
+            assertQuery("SELECT v FROM x WHERE timestamp IN '2020-01-01T20:00;9h' ORDER BY timestamp DESC")
+                    .noLeakCheck()
+                    .withPlanContaining("Interval backward scan")
+                    .returns("v\n1\n");
         });
     }
 
@@ -687,6 +779,12 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
         testIntervals(PartitionBy.DAY, increment, N, expected, 72);
     }
 
+    private static void assertFrameRows(PartitionFrame frame, long lo, long hi) {
+        Assert.assertNotNull(frame);
+        Assert.assertEquals(lo, frame.getRowLo());
+        Assert.assertEquals(hi, frame.getRowHi());
+    }
+
     private static void assertIndexRowsMatchSymbol(PartitionFrameCursor cursor, TestTableReaderRecord record, int columnIndex, long expectedCount) {
         // SymbolTable is a table at table scope, so it will be the same for every
         // partition frame here. Get its instance outside of partition frame loop.
@@ -728,6 +826,15 @@ public class IntervalBwdPartitionFrameCursorTest extends AbstractCairoTest {
         }
         if (allNative) {
             Assert.assertEquals(expectedCount, rowCount);
+        }
+    }
+
+    private void assertDecodeBound(IntList decodedRowHi, int rowHi) {
+        if (convertToParquet) {
+            Assert.assertTrue("the interval search must decode timestamps", decodedRowHi.size() > 0);
+            for (int i = 0; i < decodedRowHi.size(); i++) {
+                Assert.assertTrue("decoded rows from a previously searched interval", decodedRowHi.getQuick(i) <= rowHi);
+            }
         }
     }
 

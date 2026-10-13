@@ -32,6 +32,7 @@ import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TimestampDriver;
+import io.questdb.cairo.TimestampFinder;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
 import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
@@ -233,6 +234,8 @@ public class TimestampFinderTest extends AbstractCairoTest {
                     Assert.assertEquals(0, nativeFinder.countThrough(timestamp));
                     Assert.assertEquals(0, parquetFinder.countBefore(timestamp));
                     Assert.assertEquals(0, parquetFinder.countThrough(timestamp));
+                    assertBoundedCounts(nativeFinder, timestamp, 0, 0, 0);
+                    assertBoundedCounts(parquetFinder, timestamp, 0, 0, 0);
                 }
             }
         });
@@ -251,6 +254,14 @@ public class TimestampFinderTest extends AbstractCairoTest {
     @Test
     public void testFuzzSomeDuplicates() throws Exception {
         testFuzz(100);
+    }
+
+    private static void assertBoundedCounts(TimestampFinder finder, long timestamp, long before, long through, int rowCount) {
+        Assert.assertEquals(before, finder.countBefore(timestamp, Math.max(0, before - 1), Math.min(rowCount - 1, before + 1)));
+        Assert.assertEquals(through, finder.countThrough(timestamp, Math.max(0, through - 1), Math.min(rowCount - 1, through + 1)));
+        // An empty search window already identifies the partition-relative count.
+        Assert.assertEquals(before, finder.countBefore(timestamp, before, before - 1));
+        Assert.assertEquals(through, finder.countThrough(timestamp, through, through - 1));
     }
 
     private void assertCounts(int timestampType, long[] timestamps, long[] boundaries) throws Exception {
@@ -316,6 +327,8 @@ public class TimestampFinderTest extends AbstractCairoTest {
                 Assert.assertEquals("parquet countBefore(" + boundary + ')', expectedBefore, parquetFinder.countBefore(boundary));
                 Assert.assertEquals("native countThrough(" + boundary + ')', expectedThrough, nativeFinder.countThrough(boundary));
                 Assert.assertEquals("parquet countThrough(" + boundary + ')', expectedThrough, parquetFinder.countThrough(boundary));
+                assertBoundedCounts(nativeFinder, boundary, expectedBefore, expectedThrough, timestamps.length);
+                assertBoundedCounts(parquetFinder, boundary, expectedBefore, expectedThrough, timestamps.length);
             }
         }
     }

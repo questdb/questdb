@@ -70,22 +70,38 @@ public class ParquetTimestampFinder implements TimestampFinder, Mutable, QuietCl
 
     @Override
     public long countBefore(long timestamp) {
+        return countBefore(timestamp, 0, rowCount - 1);
+    }
+
+    @Override
+    public long countBefore(long timestamp, long rowLo, long rowHi) {
+        if (rowLo > rowHi) {
+            return rowLo;
+        }
         // Row group statistics answer whole-partition bounds without a native search.
         if (rowCount == 0 || timestamp == Long.MIN_VALUE || minTimestampExact() >= timestamp) {
             return 0;
         }
-        return findTimestamp(timestamp - 1, 0, rowCount - 1) + 1;
+        return findTimestamp(timestamp - 1, rowLo, rowHi) + 1;
     }
 
     @Override
     public long countThrough(long timestamp) {
+        return countThrough(timestamp, 0, rowCount - 1);
+    }
+
+    @Override
+    public long countThrough(long timestamp, long rowLo, long rowHi) {
+        if (rowLo > rowHi) {
+            return rowLo;
+        }
         if (rowCount == 0) {
             return 0;
         }
         if (maxTimestampExact() <= timestamp) {
             return rowCount;
         }
-        return findTimestamp(timestamp, 0, rowCount - 1) + 1;
+        return findTimestamp(timestamp, rowLo, rowHi) + 1;
     }
 
     public long findTimestamp(long value, long rowLo, long rowHi) {
