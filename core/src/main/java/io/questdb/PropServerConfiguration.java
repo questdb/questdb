@@ -2478,7 +2478,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             if (!(cairoIndexScanChoiceMaxSelectivity >= 0 && cairoIndexScanChoiceMaxSelectivity <= 1)) {
                 throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY.getPropertyPath() + " must be between 0 and 1");
             }
-            this.cairoCoveringScanChoiceMaxSelectivity = getDouble(properties, env, PropertyKey.CAIRO_SQL_COVERING_SCAN_CHOICE_MAX_SELECTIVITY, "0.3");
+            this.cairoCoveringScanChoiceMaxSelectivity = getDouble(properties, env, PropertyKey.CAIRO_SQL_COVERING_SCAN_CHOICE_MAX_SELECTIVITY, "0.15");
             if (!(cairoCoveringScanChoiceMaxSelectivity >= 0 && cairoCoveringScanChoiceMaxSelectivity <= 1)) {
                 throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_COVERING_SCAN_CHOICE_MAX_SELECTIVITY.getPropertyPath() + " must be between 0 and 1");
             }

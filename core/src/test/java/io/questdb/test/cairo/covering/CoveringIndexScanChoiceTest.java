@@ -49,7 +49,7 @@ import org.junit.Test;
 /**
  * The choice, when a query compiles, between a covering-index scan and a scan of the table, from
  * the posting index's per-key counts: a key that selects more than
- * {@code cairo.sql.index.scan.choice.max.selectivity} of the scanned rows takes the scan the
+ * {@code cairo.sql.covering.scan.choice.max.selectivity} (15%) of the scanned rows takes the scan the
  * {@code no_index} hint gives, and a rare key keeps the covering scan. A covering scan's residual
  * filter and GROUP BY are parallel plans, which reduce the frames on the query's thread when, at
  * open, they hold fewer than {@code cairo.sql.parallel.covering.local.max.rows} rows. Hints that
@@ -82,6 +82,25 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
             bindVariableService.setStr(0, "F");
             assertPlanContains("select ts, v from t where sym = $1", "CoveringIndex");
             assertSameResult("select ts, v from t where sym = $1", "select /*+ no_index */ ts, v from t where sym = $1");
+        });
+    }
+
+    @Test
+    public void testCoveringThresholdIsItsOwn() throws Exception {
+        // F selects ~20%: above the covering choice's 15% it takes the scan, under a 30% one it
+        // keeps the covering plan, whatever the plain index's gather threshold says
+        setProperty(PropertyKey.CAIRO_SQL_COVERING_SCAN_CHOICE_MAX_SELECTIVITY, "0.3");
+        setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY, "0.01");
+        assertMemoryLeak(() -> {
+            createTable();
+            final String[] queries = {
+                    "select ts, v from t where sym = 'F'",
+                    "select sym, avg(v), count() from t where sym in ('F', 'R') order by sym",
+            };
+            for (String q : queries) {
+                assertPlanContains(q, "CoveringIndex");
+                assertSameResult(q, q.replace("select ", "select /*+ no_index */ "));
+            }
         });
     }
 

@@ -1937,7 +1937,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public double getSqlCoveringScanChoiceMaxSelectivity() {
-        return 0.3;
+        return 0.15;
     }
 
     @Override
