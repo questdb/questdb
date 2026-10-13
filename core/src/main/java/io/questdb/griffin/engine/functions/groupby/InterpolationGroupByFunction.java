@@ -31,6 +31,7 @@ import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.PlanSink;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.InterpolationUtil;
 import io.questdb.std.BinarySequence;
@@ -371,5 +372,25 @@ public class InterpolationGroupByFunction implements GroupByFunction, FunctionEx
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("Interpolated(").val(wrappedFunction).val(")");
+    }
+
+    @Override
+    public boolean hasPerCallState() {
+        return FunctionFlags.hasPerCallState(wrappedFunction);
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return FunctionFlags.isNonDeterministic(wrappedFunction);
+    }
+
+    @Override
+    public boolean isRandom() {
+        return FunctionFlags.isRandom(wrappedFunction);
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return FunctionFlags.isStableWithinExecution(wrappedFunction);
     }
 }

@@ -93,6 +93,7 @@ public interface BinaryFunction extends Function {
     default boolean isNonDeterministic() {
         return getLeft().isNonDeterministic() || getRight().isNonDeterministic();
     }
+
     @Override
     default boolean hasPerCallState() {
         return getLeft().hasPerCallState() || getRight().hasPerCallState();

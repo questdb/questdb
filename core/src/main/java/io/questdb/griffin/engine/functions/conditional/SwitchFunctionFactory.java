@@ -36,6 +36,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.constants.Constants;
@@ -670,6 +671,26 @@ public class SwitchFunctionFactory implements FunctionFactory {
             }
             sink.val(',').val(elseFunc).val(')');
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(elseFunc, keyFunction, nullFunc);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(elseFunc, keyFunction, nullFunc);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(elseFunc, keyFunction, nullFunc);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(elseFunc, keyFunction, nullFunc);
+        }
     }
 
     /**
@@ -785,6 +806,26 @@ public class SwitchFunctionFactory implements FunctionFactory {
                     .val(",'").val(strKey).val("',").val(thenValue)
                     .val(',').val(elseValue).val(')');
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return FunctionFlags.hasPerCallState(elseFunction, keyFunction) || FunctionFlags.hasPerCallState(thenFunctions);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return FunctionFlags.isNonDeterministic(elseFunction, keyFunction) || FunctionFlags.isNonDeterministic(thenFunctions);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return FunctionFlags.isRandom(elseFunction, keyFunction) || FunctionFlags.isRandom(thenFunctions);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return FunctionFlags.isStableWithinExecution(elseFunction, keyFunction) && FunctionFlags.isStableWithinExecution(thenFunctions);
+        }
     }
 
     /**
@@ -841,6 +882,26 @@ public class SwitchFunctionFactory implements FunctionFactory {
             sink.val('\'').val(strKey1).val("',").val(branch1);
             sink.val(",'").val(strKey2).val("',").val(branch2);
             toPlanSwitchSuffix(sink);
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(branch1, branch2);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(branch1, branch2);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(branch1, branch2);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(branch1, branch2);
         }
     }
 
@@ -901,6 +962,26 @@ public class SwitchFunctionFactory implements FunctionFactory {
             }
             toPlanSwitchSuffix(sink);
         }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(keyBranches);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(keyBranches);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(keyBranches);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(keyBranches);
+        }
     }
 
     /**
@@ -947,6 +1028,26 @@ public class SwitchFunctionFactory implements FunctionFactory {
             toPlanSwitchPrefix(sink);
             sink.val('\'').val(strKey).val("',").val(branch);
             toPlanSwitchSuffix(sink);
+        }
+
+        @Override
+        public boolean hasPerCallState() {
+            return super.hasPerCallState() || FunctionFlags.hasPerCallState(branch);
+        }
+
+        @Override
+        public boolean isNonDeterministic() {
+            return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(branch);
+        }
+
+        @Override
+        public boolean isRandom() {
+            return super.isRandom() || FunctionFlags.isRandom(branch);
+        }
+
+        @Override
+        public boolean isStableWithinExecution() {
+            return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(branch);
         }
     }
 }

@@ -350,11 +350,7 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return this == obj;
     }
 
-    /**
-     * Returns true if this function is non-deterministic.
-     *
-     * @return true if non-deterministic
-     */
+
     /**
      * Returns true if the function or one of its arguments keeps state from call to call within
      * an execution, so that its value at a row depends on how many calls came before it:
@@ -369,6 +365,11 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return false;
     }
 
+    /**
+     * Returns true if this function is non-deterministic.
+     *
+     * @return true if non-deterministic
+     */
     default boolean isNonDeterministic() {
         return false;
     }

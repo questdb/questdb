@@ -99,6 +99,7 @@ public interface MultiArgFunction extends Function {
         }
         return false;
     }
+
     @Override
     default boolean hasPerCallState() {
         final ObjList<Function> args = args();

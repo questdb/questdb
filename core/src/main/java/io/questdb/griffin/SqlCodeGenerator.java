@@ -5391,6 +5391,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (base == null || windowFunctions == null || windowFunctions.size() == 0 || !base.supportsPageFrameCursor()) {
             return null;
         }
+        // the workers compute the windows and the filter over their own rows, see isRowPure()
+        for (int i = 0, n = windowFunctions.size(); i < n; i++) {
+            if (!isWindowRowPure(windowFunctions.getQuick(i))) {
+                return null;
+            }
+        }
         final RecordMetadata metadata = factory.getMetadata();
         final RecordMetadata baseMetadata = base.getMetadata();
         final ObjList<QueryColumn> columns = model.getColumns();
@@ -5545,8 +5551,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.free(factory, th);
             throw th;
         }
-        if (filter.isConstant() || filter.isRuntimeConstant()) {
-            // the ordinary path plans these without a filter
+        // the workers each call a copy of the filter, see isRowPure()
+        if (filter.isConstant() || filter.isRuntimeConstant() || !isRowPure(filter)) {
+            // the ordinary path plans these without a filter, and a filter that is not the row's
+            // alone serially
             Misc.free(filter);
             restoreWhereClause(filterExpr);
             return null;
@@ -8852,8 +8860,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (parallelWindowJoinEnabled
                                         && masterSupportsPageFrames
                                         && GroupByUtils.isParallelismSupported(groupByFunctions)
-                                        // the workers compute copies of the aggregates, see isCallOrderFree()
+                                        // the workers compute copies of the aggregates, of the ON clause's
+                                        // filter and of the window bounds, see isCallOrderFree()
                                         && isCallOrderFree(groupByFunctions)
+                                        && isCallOrderFree(joinFilter)
+                                        && isCallOrderFree(windowLoFunc)
+                                        && isCallOrderFree(windowHiFunc)
                                         && slaveToFree.supportsTimeFrameCursor()) {
                                     // try to steal master filter
                                     CompiledFilter compiledFilter = null;
@@ -14597,9 +14609,57 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 || (!function.hasPerCallState() && !function.shouldMemoize() && !function.isRandom() && function.isStableWithinExecution());
     }
 
-    // A window function does not carry the properties up from its argument: asks it of both.
+    // A window function carries the properties up from its argument (BaseWindowFunction), but not
+    // from the rest of the expression: see isWindowExpressionRowPure().
     private static boolean isWindowRowPure(Function function) {
         return isRowPure(function) && (!(function instanceof BaseWindowFunction window) || isRowPure(window.getWindowArgument()));
+    }
+
+    // Whether every argument of the window function, and every PARTITION BY and ORDER BY
+    // expression, is the row's alone (isRowPure()): the window's compiled function does not carry
+    // their properties up (a lag()'s offset and default, the partition keys of its map). Each one
+    // that is not a column or a constant is compiled again against the window's input, checked
+    // and freed. One that does not compile on its own is taken as impure.
+    private boolean isWindowExpressionRowPure(WindowExpression window, RecordMetadata metadata, SqlExecutionContext executionContext) {
+        final ExpressionNode ast = window.getAst();
+        if (ast != null) {
+            if (!isNodeRowPure(ast.lhs, metadata, executionContext) || !isNodeRowPure(ast.rhs, metadata, executionContext)) {
+                return false;
+            }
+            for (int i = 0, n = ast.args.size(); i < n; i++) {
+                if (!isNodeRowPure(ast.args.getQuick(i), metadata, executionContext)) {
+                    return false;
+                }
+            }
+        }
+        final ObjList<ExpressionNode> partitionBy = window.getPartitionBy();
+        for (int i = 0, n = partitionBy.size(); i < n; i++) {
+            if (!isNodeRowPure(partitionBy.getQuick(i), metadata, executionContext)) {
+                return false;
+            }
+        }
+        final ObjList<ExpressionNode> orderBy = window.getOrderBy();
+        for (int i = 0, n = orderBy.size(); i < n; i++) {
+            if (!isNodeRowPure(orderBy.getQuick(i), metadata, executionContext)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isNodeRowPure(@Nullable ExpressionNode node, RecordMetadata metadata, SqlExecutionContext executionContext) {
+        if (node == null || node.type == LITERAL || node.type == CONSTANT) {
+            return true;
+        }
+        Function function = null;
+        try {
+            function = functionParser.parseFunction(node, metadata, executionContext);
+            return isRowPure(function);
+        } catch (SqlException | CairoException e) {
+            return false;
+        } finally {
+            Misc.free(function);
+        }
     }
 
     static boolean isRowPure(@Nullable ObjList<? extends Function> functions) {
@@ -14807,7 +14867,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (!isPartitionedByKey && !(singleKey && partitionBy.size() == 0)) {
                 return null;
             }
-            if (hasRandomFunction(qc.getAst()) || hasRandomFunction(partitionBy) || !isWindowRowPure(functions.getQuick(i))) {
+            if (hasRandomFunction(qc.getAst())
+                    || hasRandomFunction(partitionBy)
+                    || !isWindowRowPure(functions.getQuick(i))
+                    || !isWindowExpressionRowPure((WindowExpression) qc, baseMetadata, executionContext)) {
                 return null;
             }
         }
@@ -15227,7 +15290,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (window.getPartitionBy().size() > 0
                     || ColumnType.isSymbol(functions.getQuick(i).getType())
                     || hasRandomFunction(qc.getAst())
-                    || !isWindowRowPure(functions.getQuick(i))) {
+                    || !isWindowRowPure(functions.getQuick(i))
+                    || !isWindowExpressionRowPure(window, baseMetadata, executionContext)) {
                 return null;
             }
         }
@@ -15457,7 +15521,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
             // A random function draws from the query's one Rnd, which is not thread safe, and its
             // values would depend on which thread computed which key first.
-            if (hasRandomFunction(qc.getAst()) || hasRandomFunction(partitionBy) || !isWindowRowPure(functions.getQuick(i))) {
+            if (hasRandomFunction(qc.getAst())
+                    || hasRandomFunction(partitionBy)
+                    || !isWindowRowPure(functions.getQuick(i))
+                    || !isWindowExpressionRowPure((WindowExpression) qc, baseMetadata, executionContext)) {
                 return null;
             }
         }

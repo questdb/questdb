@@ -35,6 +35,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlExecutionSuspension;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.mp.continuation.CancellationBinding;
 import io.questdb.mp.continuation.Fiber;
 import io.questdb.mp.continuation.FiberCancellationSignal;
@@ -267,4 +268,13 @@ class WaitWalFunction extends BooleanFunction implements Function {
         return true;
     }
 
+    @Override
+    public boolean hasPerCallState() {
+        return FunctionFlags.hasPerCallState(seqTxnArg);
+    }
+
+    @Override
+    public boolean isRandom() {
+        return FunctionFlags.isRandom(seqTxnArg);
+    }
 }

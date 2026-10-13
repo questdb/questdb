@@ -264,6 +264,7 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
         public boolean isNonDeterministic() {
             return latFunc.isNonDeterministic() || lonFunc.isNonDeterministic();
         }
+
         @Override
         public boolean hasPerCallState() {
             return latFunc.hasPerCallState() || lonFunc.hasPerCallState();
@@ -457,6 +458,7 @@ public class GeoWithinRadiusLatLonFunctionFactory implements FunctionFactory {
                     || centerLonFunc.isNonDeterministic()
                     || radiusFunc.isNonDeterministic();
         }
+
         @Override
         public boolean hasPerCallState() {
             return latFunc.hasPerCallState()

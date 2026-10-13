@@ -32,6 +32,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 
 /**
  * {@code symbol = value} by the symbol's key, resolved at init: the filter a single-symbol index
@@ -74,5 +75,25 @@ public class SymbolKeyEqualsFunction extends BooleanFunction {
     @Override
     public void close() {
         // the scan frees the key function
+    }
+
+    @Override
+    public boolean hasPerCallState() {
+        return FunctionFlags.hasPerCallState(symbolFunc);
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return FunctionFlags.isNonDeterministic(symbolFunc);
+    }
+
+    @Override
+    public boolean isRandom() {
+        return FunctionFlags.isRandom(symbolFunc);
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return FunctionFlags.isStableWithinExecution(symbolFunc);
     }
 }

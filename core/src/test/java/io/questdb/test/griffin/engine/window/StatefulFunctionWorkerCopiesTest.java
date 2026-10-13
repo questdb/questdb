@@ -117,6 +117,45 @@ public class StatefulFunctionWorkerCopiesTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLiteralResults() throws Exception {
+        // the shapes the review reproduced, each folded to a line the serial plan gives: the six
+        // master shapes (Async Filter, parallel GROUP BY filter, aggregate and key), a wrapper
+        // that did not carry the property up (geo_distance_meters, json_extract), the window
+        // min/max filter and the window join's ON clause
+        final String[][] cases = {
+                {"SELECT count() c, sum(price) p FROM (SELECT time, sym, price FROM trade WHERE timestamp_sequence(0, 1) < 5_000::timestamp)", "c\tp\n5000\t463684.0\n"},
+                {"SELECT count() c, sum(price) p FROM (SELECT time, sym, price FROM trade WHERE price > 101 AND timestamp_sequence(0, 1) < 5_000::timestamp)", "c\tp\n5000\t514998.0\n"},
+                {"SELECT count() c FROM (SELECT time, sym FROM trade WHERE coalesce(price, 0) + timestamp_sequence(0, 1)::long % 7 > 103)", "c\n12984\n"},
+                {"SELECT sym, count() n FROM trade WHERE timestamp_sequence(0, 1) < 5_000::timestamp ORDER BY sym LIMIT 3", "sym\tn\n\t231\nBIG\t2000\nK12\t230\n"},
+                {"SELECT sym, sum(timestamp_sequence(0, 1)::long) s FROM trade ORDER BY sym LIMIT 3", "sym\ts\n\t9230312\nBIG\t79996000\nK12\t9236313\n"},
+                {"SELECT timestamp_sequence(0, 1)::long % 3 k, count() n FROM trade ORDER BY k", "k\tn\n0\t6667\n1\t6667\n2\t6666\n"},
+                {"SELECT count() c, sum(price) p FROM (SELECT time, sym, price FROM trade WHERE geo_distance_meters(timestamp_sequence(0, 1)::long::double / 1e6, 0.0, 0.0, 0.0) < 556)", "c\tp\n4995\t463166.0\n"},
+                {"SELECT count() c, sum(price) p FROM (SELECT time, sym, price FROM trade WHERE json_extract('{\"a\":' || timestamp_sequence(0, 1)::long || '}', '$.a')::long < 5000)", "c\tp\n5000\t463684.0\n"},
+                {"SELECT count() c, sum(price) p FROM (SELECT time, sym, price FROM (SELECT time, sym, price, min(price) OVER (PARTITION BY sym) mn FROM trade) WHERE price = mn OR timestamp_sequence(0, 1)::long % 3 = 0)", "c\tp\n9094\t853636.0\n"},
+                {"SELECT count() c, sum(s) s FROM (SELECT t.time, t.sym, sum(q.size) s FROM trade t WINDOW JOIN trade q ON (t.sym = q.sym AND timestamp_sequence(0, 1) < 50_000::timestamp) RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW)", "c\ts\n20000\t199998.25\n"},
+        };
+        assertMemoryLeak(() -> inPool((engine, ctx) -> {
+            final StringSink failures = new StringSink();
+            for (String[] c : cases) {
+                final String serial = run(engine, ctx, c[0], false);
+                if (!c[1].equals(serial)) {
+                    failures.put("SERIAL ").put(c[0]).put("\n").put(serial).put("--\n");
+                }
+                for (int i = 0; i < 3; i++) {
+                    final String parallel = run(engine, ctx, c[0], true);
+                    if (!c[1].equals(parallel)) {
+                        failures.put("PARALLEL ").put(c[0]).put("\n").put(parallel).put(plan(engine, ctx, c[0])).put("--\n");
+                        break;
+                    }
+                }
+            }
+            if (failures.length() > 0) {
+                Assert.fail(failures.toString());
+            }
+        }));
+    }
+
+    @Test
     public void testParallelGroupBy() throws Exception {
         assertAllMatchSerial(
                 "SELECT sym, count() n FROM trade WHERE timestamp_sequence(0, 1) < 5_000::timestamp ORDER BY sym",
@@ -141,6 +180,8 @@ public class StatefulFunctionWorkerCopiesTest extends AbstractCairoTest {
         ctx.setParallelWindowEnabled(parallel);
         ctx.setParallelFilterEnabled(parallel);
         ctx.setParallelGroupByEnabled(parallel);
+        ctx.setParallelWindowJoinEnabled(parallel);
+        ctx.setParallelWindowMinMaxRewriteEnabled(parallel);
         try {
             final StringSink sink = new StringSink();
             engine.print(query, sink, ctx);
@@ -149,6 +190,8 @@ public class StatefulFunctionWorkerCopiesTest extends AbstractCairoTest {
             ctx.setParallelWindowEnabled(false);
             ctx.setParallelFilterEnabled(true);
             ctx.setParallelGroupByEnabled(true);
+            ctx.setParallelWindowJoinEnabled(true);
+            ctx.setParallelWindowMinMaxRewriteEnabled(true);
         }
     }
 
