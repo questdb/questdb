@@ -531,11 +531,19 @@ public class GreatestNumericFunctionFactory implements FunctionFactory {
 
         @Override
         public long getTimestamp(Record rec) {
-            long value = timestampDriver.from(args.getQuick(0).getTimestamp(rec), timestampTypes.getQuick(0));
+            long value = load(rec, 0);
             for (int i = 1; i < n; i++) {
-                value = Math.max(value, timestampDriver.from(args.getQuick(i).getTimestamp(rec), timestampTypes.getQuick(i)));
+                value = Math.max(value, load(rec, i));
             }
             return value;
+        }
+
+        private long load(Record rec, int index) {
+            final Function arg = args.getQuick(index);
+            final int timestampType = timestampTypes.getQuick(index);
+            return timestampType == ColumnType.UNDEFINED
+                    ? arg.getLong(rec)
+                    : timestampDriver.from(arg.getTimestamp(rec), timestampType);
         }
     }
 }

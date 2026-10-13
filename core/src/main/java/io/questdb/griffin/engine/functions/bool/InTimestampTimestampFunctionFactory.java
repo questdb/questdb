@@ -46,7 +46,6 @@ import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
-import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
@@ -140,9 +139,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
             SqlExecutionContext sqlExecutionContext) throws SqlException {
         final int listKind = listKind(args, argPositions);
         if (listKind == LIST_INTERVAL) {
-            for (int i = 2, n = args.size(); i < n; i++) {
-                args.setQuick(i, Misc.free(args.getQuick(i)));
-            }
             return new InTimestampIntervalFunctionFactory.Func(args.getQuick(0), args.getQuick(1));
         }
 
@@ -259,13 +255,15 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
 
     /**
      * The kind of IN list the call builds over: an INTERVAL element, constants, constants mixed with runtime
-     * constants, or anything else. Raises the error for an element that does not compare with TIMESTAMP, up to the
-     * first element that decides the kind.
+     * constants, or anything else. Raises the error for any element that does not compare with TIMESTAMP.
      */
     private static int listKind(ObjList<Function> args, IntList argPositions) throws SqlException {
+        if (args.size() == 2 && ColumnType.isInterval(args.getQuick(1).getType())) {
+            return LIST_INTERVAL;
+        }
         boolean allConst = true;
         boolean allRuntimeConst = true;
-        for (int i = 1, n = args.size(); i < n && (allConst || allRuntimeConst); i++) {
+        for (int i = 1, n = args.size(); i < n; i++) {
             Function func = args.getQuick(i);
             switch (ColumnType.tagOf(func.getType())) {
                 case ColumnType.NULL:
@@ -278,8 +276,6 @@ public class InTimestampTimestampFunctionFactory implements FunctionFactory {
                 case ColumnType.VARCHAR:
                 case ColumnType.UNDEFINED:
                     break;
-                case ColumnType.INTERVAL:
-                    return LIST_INTERVAL;
                 default:
                     throw SqlException.position(argPositions.getQuick(i))
                             .put("cannot compare TIMESTAMP with type ")

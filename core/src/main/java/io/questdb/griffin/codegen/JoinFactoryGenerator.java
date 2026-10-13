@@ -536,6 +536,7 @@ final class JoinFactoryGenerator {
         );
     }
 
+    @SuppressWarnings("resource")
     private @NotNull SymbolShortCircuit createSymbolShortCircuit(
             GenerationFrame frame,
             RecordMetadata masterMetadata,
@@ -1814,7 +1815,7 @@ final class JoinFactoryGenerator {
             ObjList<CharSequence> columnAliases,
             boolean isStandalone,
             boolean hasOrdinality
-    ) throws SqlException {
+    ) {
         JoinRecordMetadata outputMetadata = null;
         final ObjList<UnnestSource> sources = new ObjList<>(functions.size());
         final int columnSplit;
@@ -2072,7 +2073,7 @@ final class JoinFactoryGenerator {
             if (ParanoiaState.PLAN_PARANOIA_MODE && (isParallel != (executionContext.isParallelWindowJoinEnabled()
                     && (master.supportsPageFrameCursor() || stolenFilter != null)
                     && GroupByUtils.isParallelismSupported(groupByFunctions)
-                    && slave.supportsTimeFrameCursor()) || (stolenFilter != null) != (step.getAlgorithm() == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER))) {
+                    && slave.supportsTimeFrameCursor()) || (stolenFilter == null) == (step.getAlgorithm() == WindowJoinStep.Algorithm.PARALLEL_STOLEN_FILTER))) {
                 throw new AssertionError("recorded window join algorithm differs from the generator's parallel choice");
             }
             if (isParallel) {

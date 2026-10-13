@@ -270,6 +270,38 @@ public class LeastNumericFunctionFactoryTest extends AbstractFunctionFactoryTest
     }
 
     @Test
+    public void testLeastNumericFunctionFactoryMixedTimestampIntegers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT 1::date d, 999::timestamp ts, 999_999::timestamp_ns tn, 1::byte b, 2::short s, 3 i, 4L l FROM long_sequence(1))");
+            assertQuery("SELECT least(null::timestamp, null::short, '2020-01-01T00:00:00.000000000Z'::timestamp_ns) FROM t")
+                    .expectSize()
+                    .columnType(0, ColumnType.TIMESTAMP_NANO)
+                    .returns("least\n1970-01-01T00:00:00.000000000Z\n");
+            assertQuery("SELECT least(1::byte, 2::short, 1::timestamp, 1001::timestamp_ns)")
+                    .expectSize()
+                    .returns("least\n1970-01-01T00:00:00.000000001Z\n");
+            assertQuery("SELECT least(d, ts, tn, b, s, i, l, null) nano, least(d, ts, b, s, i, l, null) micro FROM t")
+                    .expectSize()
+                    .columnType(0, ColumnType.TIMESTAMP_NANO)
+                    .columnType(1, ColumnType.TIMESTAMP_MICRO)
+                    .returns("nano\tmicro\n1970-01-01T00:00:00.000000001Z\t1970-01-01T00:00:00.000001Z\n");
+            assertQuery("SELECT least(null::short, null::byte, null::date, null::timestamp_ns) zero, least(null, null::date, null::timestamp_ns, null::int, null::long) missing")
+                    .expectSize()
+                    .returns("zero\tmissing\n1970-01-01T00:00:00.000000000Z\t\n");
+
+            bindVariableService.setDate(0, 1);
+            bindVariableService.setTimestamp(1, 999);
+            bindVariableService.setTimestampNano(2, 999_999);
+            bindVariableService.setByte(3, (byte) 1);
+            bindVariableService.setShort(4, (short) 2);
+            assertQuery("SELECT least($1, $2, $3, $4, $5)")
+                    .expectSize()
+                    .columnType(0, ColumnType.TIMESTAMP_NANO)
+                    .returns("least\n1970-01-01T00:00:00.000000001Z\n");
+        });
+    }
+
+    @Test
     public void testLeastNumericFunctionFactoryNulls() throws Exception {
         assertSqlWithTypes("least\n1:LONG\n", "select least(1L, null, 2L)");
         assertSqlWithTypes("least\n1:LONG\n", "select least(null, 1L, 2L)");

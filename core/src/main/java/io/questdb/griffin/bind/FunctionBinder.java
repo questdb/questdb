@@ -1745,11 +1745,17 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     }
 
     private long temporalConstantValue(ObjList<Function> args, int index, int type) throws NumericException {
+        final Function constant = args.getQuick(index);
         final CharSequence text = literalText(arguments.getQuick(index));
         if (text != null) {
-            return ColumnType.getTimestampDriver(type).parseFloorLiteral(text);
+            final TimestampDriver driver = ColumnType.getTimestampDriver(type);
+            final long value = driver.parseFloorLiteral(text);
+            if (ColumnType.isTimestampNano(type) && ColumnType.isTimestampMicro(constant.getType())
+                    && Math.floorDiv(value, 1_000) != constant.getTimestamp(null)) {
+                return driver.from(constant.getTimestamp(null), constant.getType());
+            }
+            return value;
         }
-        final Function constant = args.getQuick(index);
         return type == ColumnType.DATE ? constant.getDate(null) : constant.getTimestamp(null);
     }
 

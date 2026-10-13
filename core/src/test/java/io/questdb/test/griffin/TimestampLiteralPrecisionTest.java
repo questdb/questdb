@@ -25,6 +25,8 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
@@ -274,6 +276,107 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
                             id
                             1
                             """);
+        });
+    }
+
+    @Test
+    public void testNanoProjectionKeepsMicrosecondsBeyondNanosecondRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n (ts TIMESTAMP_NS)");
+            execute("INSERT INTO n VALUES (0), (9_223_372_036_854_775_000), (9_223_372_036_854_775_807), (null)");
+            final ObjList<String> literals = new ObjList<>(
+                    "'2262-04-11T23:47:16.854775808Z'",
+                    "'2262-04-11T23:47:16.854775809Z'"
+            );
+            for (int i = 0; i < literals.size(); i++) {
+                final String text = literals.getQuick(i);
+                assertQuery("SELECT ts = " + text + " AS eq, ts < " + text + " AS lt, ts > " + text + " AS gt FROM n")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                eq\tlt\tgt
+                                false\ttrue\tfalse
+                                true\tfalse\tfalse
+                                false\tfalse\ttrue
+                                false\tfalse\tfalse
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testNanoProjectionPreservesLiteralPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n (ts TIMESTAMP_NS, id INT)");
+            execute("""
+                    INSERT INTO n VALUES
+                    (1_577_836_800_000_000_001, 0),
+                    (9_214_646_400_000_000_001, 1),
+                    (9_223_372_036_854_775_807, 2)
+                    """);
+            final ObjList<String> literals = new ObjList<>(
+                    "'2020-01-01T00:00:00.000000001+00:00'",
+                    "'2262-01-01T00:00:00.000000001Z'",
+                    "'2262-04-11T23:47:16.854775807Z'"
+            );
+            for (int i = 0; i < literals.size(); i++) {
+                final String text = literals.getQuick(i);
+                assertQuery("SELECT ts = " + text + " AS eq, ts < " + text + " AS lt, ts > " + text + " AS gt, "
+                        + text + " = ts AS rev_eq, " + text + " < ts AS rev_lt, " + text + " > ts AS rev_gt, "
+                        + "ts BETWEEN " + text + " AND " + text + " AS between_match FROM n WHERE id = " + i)
+                        .noLeakCheck()
+                        .returns("""
+                                eq\tlt\tgt\trev_eq\trev_lt\trev_gt\tbetween_match
+                                true\tfalse\tfalse\ttrue\tfalse\tfalse\ttrue
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testNanoProjectionRejectsOutOfRangeLiterals() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE n (ts TIMESTAMP_NS)");
+            execute("INSERT INTO n VALUES (0), (1), (null)");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final ObjList<String> literals = new ObjList<>(
+                        "'2263-01-01'",
+                        "'2263-01-01T00:00:00.000000001Z'",
+                        "'2262-04-11T23:47:16.854776Z'",
+                        "'1677-09-21T00:12:43.145224Z'"
+                );
+                for (int i = 0; i < literals.size(); i++) {
+                    final String text = literals.getQuick(i);
+                    for (String operator : OPERATORS) {
+                        assertQuery("SELECT ts " + operator + " " + text + " FROM n")
+                                .withCompiler(compiler)
+                                .noLeakCheck()
+                                .failsWith("[TIMESTAMP -> TIMESTAMP_NS]");
+                        assertQuery("SELECT " + text + " " + operator + " ts FROM n")
+                                .withCompiler(compiler)
+                                .noLeakCheck()
+                                .failsWith("[TIMESTAMP -> TIMESTAMP_NS]");
+                    }
+                    assertQuery("SELECT ts BETWEEN '1970-01-01' AND " + text + " FROM n")
+                            .withCompiler(compiler)
+                            .noLeakCheck()
+                            .failsWith("[TIMESTAMP -> TIMESTAMP_NS]");
+                    assertQuery("SELECT ts BETWEEN " + text + " AND '1970-01-01' FROM n")
+                            .withCompiler(compiler)
+                            .noLeakCheck()
+                            .failsWith("[TIMESTAMP -> TIMESTAMP_NS]");
+                    assertQuery("SELECT ts < '2261-01-01', ts = '1970-01-01T00:00:00.000000001Z', ts = null FROM n")
+                            .withCompiler(compiler)
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    column\tcolumn1\tcolumn2
+                                    true\tfalse\tfalse
+                                    true\ttrue\tfalse
+                                    false\tfalse\ttrue
+                                    """);
+                }
+            }
         });
     }
 

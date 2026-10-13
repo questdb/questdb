@@ -16080,15 +16080,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testRewritePgNumericNotCast() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("select (123.456 + 1)::decimal(16, 5)")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            VirtualRecord
-                              functions: [124.45600]
-                                long_sequence count: 1
-                            """);
-        });
+        assertQuery("select (123.456 + 1)::decimal(16, 5)")
+                .assertsPlan("""
+                        VirtualRecord
+                          functions: [124.45600]
+                            long_sequence count: 1
+                        """);
     }
 
     @Test

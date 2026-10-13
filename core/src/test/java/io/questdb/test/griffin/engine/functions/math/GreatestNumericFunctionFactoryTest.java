@@ -270,6 +270,38 @@ public class GreatestNumericFunctionFactoryTest extends AbstractFunctionFactoryT
     }
 
     @Test
+    public void testGreatestNumericFunctionFactoryMixedTimestampIntegers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT 1::date d, 999::timestamp ts, 999_999::timestamp_ns tn, 1::byte b, 2::short s, 3 i, 4L l FROM long_sequence(1))");
+            assertQuery("SELECT greatest(null::timestamp, null::short, '2020-01-01T00:00:00.000000000Z'::timestamp_ns) FROM t")
+                    .expectSize()
+                    .columnType(0, ColumnType.TIMESTAMP_NANO)
+                    .returns("greatest\n2020-01-01T00:00:00.000000000Z\n");
+            assertQuery("SELECT greatest(2001::short, 1::byte, 1::timestamp, 1001::timestamp_ns)")
+                    .expectSize()
+                    .returns("greatest\n1970-01-01T00:00:00.000002001Z\n");
+            assertQuery("SELECT greatest(d, ts, tn, b, s, i, l, null) nano, greatest(d, ts, b, s, i, l, null) micro FROM t")
+                    .expectSize()
+                    .columnType(0, ColumnType.TIMESTAMP_NANO)
+                    .columnType(1, ColumnType.TIMESTAMP_MICRO)
+                    .returns("nano\tmicro\n1970-01-01T00:00:00.001000000Z\t1970-01-01T00:00:00.001000Z\n");
+            assertQuery("SELECT greatest(null::short, null::byte, null::date, null::timestamp_ns) zero, greatest(null, null::date, null::timestamp_ns, null::int, null::long) missing")
+                    .expectSize()
+                    .returns("zero\tmissing\n1970-01-01T00:00:00.000000000Z\t\n");
+
+            bindVariableService.setDate(0, 1);
+            bindVariableService.setTimestamp(1, 999);
+            bindVariableService.setTimestampNano(2, 999_999);
+            bindVariableService.setByte(3, (byte) 1);
+            bindVariableService.setShort(4, (short) 2);
+            assertQuery("SELECT greatest($1, $2, $3, $4, $5)")
+                    .expectSize()
+                    .columnType(0, ColumnType.TIMESTAMP_NANO)
+                    .returns("greatest\n1970-01-01T00:00:00.001000000Z\n");
+        });
+    }
+
+    @Test
     public void testGreatestNumericFunctionFactoryNulls() throws Exception {
         assertSqlWithTypes("greatest\n2:LONG\n", "select greatest(1L, null, 2L)");
         assertSqlWithTypes("greatest\n2:LONG\n", "select greatest(null, 1L, 2L)");

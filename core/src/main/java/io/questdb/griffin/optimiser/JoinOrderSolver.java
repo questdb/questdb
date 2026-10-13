@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.optimiser;
 
+import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.plan.logical.JoinDependency;
 import io.questdb.griffin.plan.logical.JoinEquality;
@@ -40,7 +41,7 @@ import io.questdb.std.ObjectPool;
 
 /**
  * Selects the order of a join of more than two inputs from the {@link JoinGraph} binding collected for it, with the
- * first input first, and publishes the keys, join types and ordered inputs ({@link #order(JoinPlan)}). Dependencies
+ * first input fixed when its order carries semantics, and publishes the keys, join types and ordered inputs ({@link #order(JoinPlan)}). Dependencies
  * come from the statement's plan-node pools; the lists it owns stay until {@link #clear()}, and the borrowed ones are
  * temporaries of one ordering.
  */
@@ -63,6 +64,7 @@ final class JoinOrderSolver implements Mutable {
     private final IntList stagedIndexes;
     private ObjList<JoinDependency> dependencies;
     private JoinGraph graph;
+    private boolean isFirstInputFixed;
 
     /**
      * Borrows {@code markedIndexes}, {@code stagedIndexes}, {@code bestOrder}, {@code roots}, {@code inCounts},
@@ -106,10 +108,11 @@ final class JoinOrderSolver implements Mutable {
         movedKeys.clear();
         dependencies = null;
         graph = null;
+        isFirstInputFixed = false;
     }
 
     /**
-     * Selects the order of a join binding left a graph for, with its first input first, and publishes
+     * Selects the order of a join binding left a graph for and publishes
      * the keys, join types and ordered inputs; the caller places the graph's filter conjuncts. An input binding added
      * after the graph joins as an unkeyed CROSS step.
      */
@@ -286,10 +289,18 @@ final class JoinOrderSolver implements Mutable {
         joinTypes.clear();
         this.graph = graph;
         this.dependencies = graph.getDependencies();
+        isFirstInputFixed = join.hasExplicitTimestamp() || graph.getLateralDependencies().size() > 0
+                || graph.getOrderingConstraints().size() > 0;
         final ObjList<JoinInput> inputs = join.getInputs();
         for (int i = 0, n = inputs.size(); i < n; i++) {
+            final JoinInput input = inputs.getQuick(i);
             children.add(childrenPool.next());
-            joinTypes.add(inputs.getQuick(i).getJoinType());
+            joinTypes.add(input.getJoinType());
+            isFirstInputFixed = isFirstInputFixed || input.getJoinType().isBarrier() || input.isDependent()
+                    || input.getSourceOutput().getTimestampIndex() >= 0 || !LogicalPlans.isResultStable(input.getInput(), true);
+        }
+        for (int i = 0, n = graph.getResiduals().size(); !isFirstInputFixed && i < n; i++) {
+            isFirstInputFixed = !LogicalPlans.isOrderIndependent(graph.getResiduals().getQuick(i));
         }
     }
 
@@ -454,7 +465,7 @@ final class JoinOrderSolver implements Mutable {
     }
 
     /**
-     * Kahn's order with the first input first; returns the order's cost, or {@link Integer#MAX_VALUE} when the
+     * Kahn's order; returns the order's cost, or {@link Integer#MAX_VALUE} when the
      * dependencies are cyclic. An unkeyed CROSS step, or a late input that nothing waits for, joins only when no
      * other input is ready, and an input that no edge ties to another joins last.
      */
@@ -469,7 +480,7 @@ final class JoinOrderSolver implements Mutable {
             final JoinDependency dependency = dependencies.getQuick(i);
             if (dependency != null && dependency.getParents().size() > 0) {
                 inCounts.setQuick(i, dependency.getParents().size());
-            } else if (i > 0) {
+            } else if (i > 0 || !isFirstInputFixed) {
                 if (children.getQuick(i).size() > 0) {
                     ready.add(i);
                 } else {
@@ -477,7 +488,7 @@ final class JoinOrderSolver implements Mutable {
                 }
             }
         }
-        int cost = appendToOrder(0);
+        int cost = isFirstInputFixed ? appendToOrder(0) : 0;
         int heldCount = 0;
         while (true) {
             final int source;
@@ -506,7 +517,7 @@ final class JoinOrderSolver implements Mutable {
 
     private void validateOrder() {
         markedIndexes.clear();
-        if (bestOrder.getQuick(0) != 0) {
+        if (isFirstInputFixed && bestOrder.getQuick(0) != 0) {
             throw new IllegalStateException("the first join input is not ordered first");
         }
         for (int i = 0, n = bestOrder.size(); i < n; i++) {

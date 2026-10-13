@@ -455,6 +455,14 @@ public final class LogicalPlans {
     }
 
     /**
+     * Whether every evaluation of the plan within one execution yields the same multiset of rows, which is all the
+     * value of a sub-query depends on: its consumers read a set or a single row.
+     */
+    public static boolean isResultStable(LogicalPlan plan, boolean isParallelGroupByEnabled) {
+        return (stability(plan, isParallelGroupByEnabled) & RESULT_STABLE) != 0;
+    }
+
+    /**
      * Whether every evaluation of the expression within one execution yields the same value.
      */
     public static boolean isStableWithinExecution(BoundExpression expression) {
@@ -865,13 +873,5 @@ public final class LogicalPlans {
      */
     static boolean hasExternalDataSource(LogicalPlan plan) {
         return !plan.walkTopDown(EXTERNAL_SOURCES);
-    }
-
-    /**
-     * Whether every evaluation of the plan within one execution yields the same multiset of rows, which is all the
-     * value of a sub-query depends on: its consumers read a set or a single row.
-     */
-    static boolean isResultStable(LogicalPlan plan, boolean isParallelGroupByEnabled) {
-        return (stability(plan, isParallelGroupByEnabled) & RESULT_STABLE) != 0;
     }
 }
