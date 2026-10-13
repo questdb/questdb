@@ -34,6 +34,9 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.RecordSinkSPI;
 import io.questdb.cairo.arr.ArrayView;
+import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapFactory;
+import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.FunctionExtension;
 import io.questdb.cairo.sql.Record;
@@ -64,6 +67,11 @@ import org.junit.Test;
 public class RecordSinkFactoryTest extends AbstractCairoTest {
     // what TestRecordSink records for skipVarSize(); no column type is negative
     private static final int SKIP_VAR_SIZE = -1;
+    private static final int[] SINK_TYPES = {
+            RecordSinkFactory.SINK_TYPE_SINGLE_METHOD,
+            RecordSinkFactory.SINK_TYPE_CHUNKED,
+            RecordSinkFactory.SINK_TYPE_LOOPING
+    };
 
     @Test
     public void testColumnKeysAllSupportedTypes() {
@@ -871,6 +879,89 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSinkWithOnlySkippedColumns() {
+        // A row made of nothing but window outputs: the sink reads nothing from the record and
+        // steps past every column in order, the var-size ones included.
+        final int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+        // enough skips for the chunked generator to split the copy across two methods
+        final int paddingCount = 700;
+        for (int sinkType : SINK_TYPES) {
+            final ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+            final ListColumnFilter columnFilter = new ListColumnFilter();
+            final IntList expectedPutTypes = new IntList();
+
+            addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, arrayType);
+            addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, ColumnType.VARCHAR);
+            for (int i = 0; i < paddingCount; i++) {
+                addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, ColumnType.INT);
+            }
+            addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, ColumnType.NULL);
+            addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, ColumnType.LONG256);
+            addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, ColumnType.STRING);
+            addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, ColumnType.BINARY);
+
+            final RecordSink sink = RecordSinkFactory.getInstance(
+                    copierConfiguration(sinkType),
+                    new BytecodeAssembler(),
+                    columnTypes,
+                    columnFilter,
+                    null,
+                    null,
+                    null,
+                    null
+            );
+            assertSinkKind(sink, sinkType);
+
+            final TestRecord testRecord = new TestRecord();
+            final TestRecordSink testRecordSink = new TestRecordSink();
+            sink.copy(testRecord, testRecordSink);
+            Assert.assertEquals(0, testRecord.recordedIndexes.size());
+            Assert.assertEquals(expectedPutTypes, testRecordSink.recordedTypes);
+        }
+    }
+
+    @Test
+    public void testSkipVarSizeFailsOnMapKeys() throws Exception {
+        // Only RecordChain gives a var-size column a slot to step past. A map key has none, so
+        // a sink that skips a var-size column fails on it rather than build a key that
+        // silently lacks the column.
+        assertMemoryLeak(() -> {
+            final ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+            columnTypes.add(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
+            columnTypes.add(ColumnType.INT);
+            final ListColumnFilter columnFilter = new ListColumnFilter();
+            columnFilter.add(-1);
+            columnFilter.add(2);
+            final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+            keyTypes.add(ColumnType.INT);
+            final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
+            valueTypes.add(ColumnType.LONG);
+
+            for (int sinkType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+                final RecordSink sink = RecordSinkFactory.getInstance(
+                        copierConfiguration(sinkType),
+                        new BytecodeAssembler(),
+                        columnTypes,
+                        columnFilter,
+                        null,
+                        null,
+                        null,
+                        null
+                );
+                try (Map map = MapFactory.createOrderedMap(configuration, keyTypes, valueTypes)) {
+                    final MapKey key = map.withKey();
+                    try {
+                        key.put(new TestRecord(), sink);
+                        Assert.fail("a map key accepted a var-size skip");
+                    } catch (UnsupportedOperationException ignore) {
+                        // RecordSinkSPI.skipVarSize() rejects it by default
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testSkippedColumnsConsumeTheirChainSpace() {
         // A negative filter entry marks a column the sink leaves for its caller to fill, a
         // window output. Every sink kind must step past it - skip(size) when it is fixed-size,
@@ -880,12 +971,7 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         final int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
         // enough columns for the chunked generator to split the copy across two methods
         final int paddingCount = 500;
-        final int[] sinkTypes = {
-                RecordSinkFactory.SINK_TYPE_SINGLE_METHOD,
-                RecordSinkFactory.SINK_TYPE_CHUNKED,
-                RecordSinkFactory.SINK_TYPE_LOOPING
-        };
-        for (int sinkType : sinkTypes) {
+        for (int sinkType : SINK_TYPES) {
             final ArrayColumnTypes columnTypes = new ArrayColumnTypes();
             final ListColumnFilter columnFilter = new ListColumnFilter();
             final IntList skewIndex = new IntList();
@@ -905,14 +991,8 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             addCopiedColumn(columnTypes, columnFilter, skewIndex, expectedGetIndexes, expectedPutTypes, ColumnType.BINARY);
             addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, ColumnType.VARCHAR);
 
-            final CairoConfiguration copierConfiguration = new CairoConfigurationWrapper(configuration) {
-                @Override
-                public int getCopierType() {
-                    return sinkType;
-                }
-            };
             final RecordSink sink = RecordSinkFactory.getInstance(
-                    copierConfiguration,
+                    copierConfiguration(sinkType),
                     new BytecodeAssembler(),
                     columnTypes,
                     columnFilter,
@@ -921,14 +1001,61 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
                     null,
                     null
             );
-            // a generated sink is a hidden class: its name carries a '/' suffix
-            final String expectedSinkClass = switch (sinkType) {
-                case RecordSinkFactory.SINK_TYPE_SINGLE_METHOD -> "io.questdb.cairo.sink/";
-                case RecordSinkFactory.SINK_TYPE_CHUNKED -> "io.questdb.cairo.chunkedsink/";
-                default -> LoopingRecordSink.class.getName();
-            };
-            final String sinkClass = sink.getClass().getName();
-            Assert.assertTrue(sinkClass, sinkClass.startsWith(expectedSinkClass));
+            assertSinkKind(sink, sinkType);
+
+            final TestRecord testRecord = new TestRecord();
+            final TestRecordSink testRecordSink = new TestRecordSink();
+            sink.copy(testRecord, testRecordSink);
+            Assert.assertEquals(expectedGetIndexes, testRecord.recordedIndexes);
+            Assert.assertEquals(expectedPutTypes, testRecordSink.recordedTypes);
+        }
+    }
+
+    @Test
+    public void testSkippedColumnsIgnoreConversionFlags() {
+        // The conversion flags are indexed by column, so a skipped column can carry one. The
+        // skip takes precedence: a skipped STRING flagged as VARCHAR still takes one var-size
+        // slot, and a skipped SYMBOL or TIMESTAMP still steps over its fixed width.
+        final int paddingCount = 500;
+        for (int sinkType : SINK_TYPES) {
+            final ArrayColumnTypes columnTypes = new ArrayColumnTypes();
+            final ListColumnFilter columnFilter = new ListColumnFilter();
+            final IntList skewIndex = new IntList();
+            final IntList expectedGetIndexes = new IntList();
+            final IntList expectedPutTypes = new IntList();
+            final BitSet symbolAsString = new BitSet();
+            final BitSet stringAsVarchar = new BitSet();
+            final BitSet timestampAsNanos = new BitSet();
+
+            symbolAsString.set(columnTypes.getColumnCount());
+            addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, ColumnType.SYMBOL);
+            stringAsVarchar.set(columnTypes.getColumnCount());
+            addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, ColumnType.STRING);
+            timestampAsNanos.set(columnTypes.getColumnCount());
+            addSkippedColumn(columnTypes, columnFilter, expectedPutTypes, ColumnType.TIMESTAMP);
+            for (int i = 0; i < paddingCount; i++) {
+                addCopiedColumn(columnTypes, columnFilter, skewIndex, expectedGetIndexes, expectedPutTypes, ColumnType.INT);
+            }
+            // the same flags convert the copied columns
+            symbolAsString.set(columnTypes.getColumnCount());
+            addCopiedColumn(columnTypes, columnFilter, skewIndex, expectedGetIndexes, expectedPutTypes, ColumnType.SYMBOL, ColumnType.STRING);
+            stringAsVarchar.set(columnTypes.getColumnCount());
+            addCopiedColumn(columnTypes, columnFilter, skewIndex, expectedGetIndexes, expectedPutTypes, ColumnType.STRING, ColumnType.VARCHAR);
+            timestampAsNanos.set(columnTypes.getColumnCount());
+            addCopiedColumn(columnTypes, columnFilter, skewIndex, expectedGetIndexes, expectedPutTypes, ColumnType.TIMESTAMP);
+
+            final RecordSink sink = RecordSinkFactory.getInstance(
+                    copierConfiguration(sinkType),
+                    new BytecodeAssembler(),
+                    columnTypes,
+                    columnFilter,
+                    null,
+                    skewIndex,
+                    symbolAsString,
+                    stringAsVarchar,
+                    timestampAsNanos
+            );
+            assertSinkKind(sink, sinkType);
 
             final TestRecord testRecord = new TestRecord();
             final TestRecordSink testRecordSink = new TestRecordSink();
@@ -946,13 +1073,25 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
             IntList expectedPutTypes,
             int type
     ) {
+        addCopiedColumn(columnTypes, columnFilter, skewIndex, expectedGetIndexes, expectedPutTypes, type, type);
+    }
+
+    private static void addCopiedColumn(
+            ArrayColumnTypes columnTypes,
+            ListColumnFilter columnFilter,
+            IntList skewIndex,
+            IntList expectedGetIndexes,
+            IntList expectedPutTypes,
+            int type,
+            int putType
+    ) {
         final int index = columnTypes.getColumnCount();
         columnTypes.add(type);
         columnFilter.add(index + 1);
         // like the window path, where only copied columns map to a base column
         skewIndex.extendAndSet(index, index + 1_000);
         expectedGetIndexes.add(index + 1_000);
-        expectedPutTypes.add(type);
+        expectedPutTypes.add(putType);
     }
 
     private static void addSkippedColumn(
@@ -1040,6 +1179,26 @@ public class RecordSinkFactoryTest extends AbstractCairoTest {
         keyFunctions.add(new TestFunction(ColumnType.DECIMAL128));
         keyFunctions.add(new TestFunction(ColumnType.DECIMAL256));
         return keyFunctions;
+    }
+
+    private static void assertSinkKind(RecordSink sink, int sinkType) {
+        // a generated sink is a hidden class: its name carries a '/' suffix
+        final String expectedSinkClass = switch (sinkType) {
+            case RecordSinkFactory.SINK_TYPE_SINGLE_METHOD -> "io.questdb.cairo.sink/";
+            case RecordSinkFactory.SINK_TYPE_CHUNKED -> "io.questdb.cairo.chunkedsink/";
+            default -> LoopingRecordSink.class.getName();
+        };
+        final String sinkClass = sink.getClass().getName();
+        Assert.assertTrue(sinkClass, sinkClass.startsWith(expectedSinkClass));
+    }
+
+    private static CairoConfiguration copierConfiguration(int copierType) {
+        return new CairoConfigurationWrapper(configuration) {
+            @Override
+            public int getCopierType() {
+                return copierType;
+            }
+        };
     }
 
     private static void prepareExpectedIndexesAndTypes(

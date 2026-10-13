@@ -106,6 +106,131 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiPercentileBeforeVarSizeColumnsEdgeValues() throws Exception {
+        // NULLs, empty values, multi-byte UTF-8, a single row, no rows and zero-length array
+        // outputs, all behind an array output. NULL and '' stay different partition keys and
+        // every var-size column reads its own value.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE e (x DOUBLE, a VARCHAR, s STRING, arr DOUBLE[], b VARCHAR)");
+            execute("""
+                    INSERT INTO e VALUES
+                    (1.0, null, null, null, null),
+                    (2.0, '', '', ARRAY[]::DOUBLE[], ''),
+                    (2.5, '', '', '{}'::DOUBLE[], ''),
+                    (3.0, '\u00e4\u20ac\ud83d\ude00', '\u00df\u6f22\u5b57', ARRAY[3.0], 'ok'),
+                    (null, '\u00e4\u20ac\ud83d\ude00', 'x', ARRAY[4.0, 5.0], null)
+                    """);
+            for (int copierType = 0; copierType < 4; copierType++) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertQuery("SELECT percentile_disc(x, ARRAY[0.5]) OVER () p, * FROM e")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p\tx\ta\ts\tarr\tb
+                                [2.0]\t1.0\t\t\tnull\t
+                                [2.0]\t2.0\t\t\t[]\t
+                                [2.0]\t2.5\t\t\t[]\t
+                                [2.0]\t3.0\t\u00e4\u20ac\ud83d\ude00\t\u00df\u6f22\u5b57\t[3.0]\tok
+                                [2.0]\tnull\t\u00e4\u20ac\ud83d\ude00\tx\t[4.0,5.0]\t
+                                """);
+                // NULL and '' print alike, the partitions they form do not
+                assertQuery("SELECT percentile_disc(x, ARRAY[0.5, 1.0]) OVER (PARTITION BY a) p, a, b FROM e")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p\ta\tb
+                                [1.0,1.0]\t\t
+                                [2.0,2.5]\t\t
+                                [2.0,2.5]\t\t
+                                [3.0,3.0]\t\u00e4\u20ac\ud83d\ude00\tok
+                                [3.0,3.0]\t\u00e4\u20ac\ud83d\ude00\t
+                                """);
+                assertQuery("SELECT percentile_cont(x, ARRAY[0.5]) OVER (PARTITION BY s) p, s, a FROM e")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p\ts\ta
+                                [1.0]\t\t
+                                [2.25]\t\t
+                                [2.25]\t\t
+                                [3.0]\t\u00df\u6f22\u5b57\t\u00e4\u20ac\ud83d\ude00
+                                null\tx\t\u00e4\u20ac\ud83d\ude00
+                                """);
+                assertQuery("SELECT percentile_disc(x, ARRAY[0.5]) OVER () p, a, s, b FROM e WHERE x = 3.0")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p\ta\ts\tb
+                                [3.0]\t\u00e4\u20ac\ud83d\ude00\t\u00df\u6f22\u5b57\tok
+                                """);
+                assertQuery("SELECT percentile_disc(x, ARRAY[0.5]) OVER () p, a, s, b FROM e WHERE x > 100")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("p\ta\ts\tb\n");
+                // an empty percentile list writes a zero-length array into every output slot
+                assertQuery("SELECT percentile_disc(x, ARRAY[]::DOUBLE[]) OVER () p, a FROM e")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p\ta
+                                []\t
+                                []\t
+                                []\t
+                                []\t\u00e4\u20ac\ud83d\ude00
+                                []\t\u00e4\u20ac\ud83d\ude00
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testMultiPercentileBeforeVarSizeColumnsLargeValues() throws Exception {
+        // Values of several kilobytes and 99-element outputs make every row, and every output
+        // pass 2 appends behind the rows, grow the chain's memory. The scalar forms on the
+        // light path, which builds no RecordSink, give the expected answer.
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE big AS (
+                        SELECT
+                            x id,
+                            rnd_double() v,
+                            rnd_varchar('k1', 'k2', 'k3') k,
+                            rnd_varchar(2_000, 8_000, 5) u,
+                            rnd_str(1_000, 4_000, 5) s,
+                            rnd_double_array(1, 0, 0, 2_000) arr
+                        FROM long_sequence(300)
+                    )
+                    """);
+            final StringSink percentiles = new StringSink();
+            percentiles.put("ARRAY[");
+            for (int i = 1; i <= 99; i++) {
+                if (i > 1) {
+                    percentiles.put(", ");
+                }
+                percentiles.put(i / 100.0);
+            }
+            percentiles.put(']');
+            final String scalarForm = """
+                    SELECT
+                        percentile_disc(v, 0.01) OVER (PARTITION BY k) p01,
+                        percentile_disc(v, 0.99) OVER (PARTITION BY k) p99,
+                        percentile_cont(v, 0.5) OVER (PARTITION BY k) c50,
+                        id, k, u, s, arr
+                    FROM big
+                    """;
+            final String arrayForm = "SELECT d[1] p01, d[99] p99, c[1] c50, id, k, u, s, arr FROM ("
+                    + "SELECT percentile_disc(v, " + percentiles + ") OVER (PARTITION BY k) d, "
+                    + "percentile_cont(v, ARRAY[0.5]) OVER (PARTITION BY k) c, id, k, u, s, arr FROM big)";
+            assertWindowFactory(scalarForm, CachedWindowLightRecordCursorFactory.class, "p01,p99,c50,id,k,u,s,arr");
+            assertWindowFactory(arrayForm, CachedWindowRecordCursorFactory.class, "d,c,id,k,u,s,arr");
+            for (int copierType = 0; copierType < 4; copierType++) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertSqlCursors(scalarForm, arrayForm);
+            }
+        });
+    }
+
+    @Test
     public void testMultiPercentileBeforeVarSizeColumnsMatchesScalarForm() throws Exception {
         // A randomized cross-check over enough rows to grow the record chain many times. The
         // array forms read every var-size column through the chain, behind their own output.
@@ -155,6 +280,89 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMultiPercentileBeforeVarSizeColumnsReadDownstream() throws Exception {
+        // The operators above the window read its chain record too: an outer sort and LIMIT,
+        // a negative one through random access, GROUP BY and JOIN keys, and CREATE TABLE AS
+        // SELECT, which persists whatever the record holds.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x DOUBLE, a VARCHAR, s STRING, b VARCHAR)");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'g1', 's1', 'h1'),
+                    (2.0, 'g1', 's2', 'h2'),
+                    (10.0, 'g2', null, 'h1'),
+                    (20.0, 'g2', 's4', null)
+                    """);
+            execute("CREATE TABLE u (a VARCHAR, y INT)");
+            execute("INSERT INTO u VALUES ('g1', 100), ('g2', 200)");
+            final String window = "SELECT percentile_disc(x, ARRAY[0.5]) OVER (PARTITION BY a) p, a, b FROM t";
+            for (int copierType = 0; copierType < 4; copierType++) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertQuery("SELECT p, a, b FROM (" + window + ") ORDER BY b DESC, a")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p\ta\tb
+                                [1.0]\tg1\th2
+                                [1.0]\tg1\th1
+                                [10.0]\tg2\th1
+                                [10.0]\tg2\t
+                                """);
+                assertQuery(window + " LIMIT 2")
+                        .noLeakCheck()
+                        .returns("""
+                                p\ta\tb
+                                [1.0]\tg1\th1
+                                [1.0]\tg1\th2
+                                """);
+                assertQuery(window + " LIMIT -2")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p\ta\tb
+                                [10.0]\tg2\th1
+                                [10.0]\tg2\t
+                                """);
+                assertQuery("SELECT sum(p[1]) sp, b FROM (" + window + ") GROUP BY b ORDER BY b")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                sp\tb
+                                10.0\t
+                                11.0\th1
+                                1.0\th2
+                                """);
+                assertQuery("""
+                        SELECT w.p, w.a, u.y
+                        FROM (SELECT percentile_disc(x, ARRAY[0.5]) OVER (PARTITION BY b) p, a FROM t) w
+                        JOIN u ON (a)
+                        """)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                p\ta\ty
+                                [1.0]\tg1\t100
+                                [2.0]\tg1\t100
+                                [1.0]\tg2\t200
+                                [20.0]\tg2\t200
+                                """);
+                execute("CREATE TABLE snap AS (" + window + ")");
+                assertQuery("SELECT * FROM snap")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p\ta\tb
+                                [1.0]\tg1\th1
+                                [1.0]\tg1\th2
+                                [10.0]\tg2\th1
+                                [10.0]\tg2\t
+                                """);
+                execute("DROP TABLE snap");
+            }
+        });
+    }
+
+    @Test
     public void testMultiPercentileBeforeVarSizeColumnsWideTable() throws Exception {
         // Over 600 columns the chain's RecordSink no longer fits one method, so the default
         // configuration generates it in chunks. The array output must take its var-size slot
@@ -199,6 +407,63 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                         .expectSize()
                         .returns(windowLast);
             }
+        });
+    }
+
+    @Test
+    public void testMultiPercentileBeforeVarSizeColumnsWindowCacheCap() throws Exception {
+        // The window cache cap can stop the query in pass 1, while the rows are copied, or in
+        // pass 2, while the array outputs are appended behind them, after the copy has stepped
+        // past their slots. Either way the query fails cleanly, frees what it allocated, and
+        // the next run with room enough returns the right answer.
+        setProperty(PropertyKey.CAIRO_SQL_WINDOW_STORE_PAGE_SIZE, 4096);
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t AS (
+                        SELECT x::DOUBLE x, ('g' || (x % 3))::VARCHAR a, ('h' || x)::VARCHAR b
+                        FROM long_sequence(1_000)
+                    )
+                    """);
+            final StringSink percentiles = new StringSink();
+            percentiles.put("ARRAY[");
+            for (int i = 1; i <= 99; i++) {
+                if (i > 1) {
+                    percentiles.put(", ");
+                }
+                percentiles.put(i / 100.0);
+            }
+            percentiles.put(']');
+            // 99 percentiles make each output 808 bytes; one percentile makes it 24 bytes
+            final String wideOutputs = "SELECT d[1] p01, d[99] p99, a, b FROM (SELECT percentile_disc(x, "
+                    + percentiles + ") OVER (PARTITION BY a) d, a, b FROM t)";
+            final String narrowOutputs = "SELECT d[1] p50, a, b FROM ("
+                    + "SELECT percentile_disc(x, ARRAY[0.5]) OVER (PARTITION BY a) d, a, b FROM t)";
+            final String breach = "breached in VirtualMemory (raise cairo.sql.window.cache.max.bytes)";
+
+            // a single page cannot hold the rows themselves
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, 4096);
+            assertExceptionNoLeakCheck(wideOutputs, 0, breach);
+
+            // 256 KiB holds the 1,000 rows and 24-byte outputs, so with 808-byte outputs the
+            // cap can only be breached in pass 2
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, 256 * 1024);
+            assertSqlCursors(
+                    "SELECT percentile_disc(x, 0.5) OVER (PARTITION BY a) p50, a, b FROM t",
+                    narrowOutputs
+            );
+            assertExceptionNoLeakCheck(wideOutputs, 0, breach);
+
+            setProperty(PropertyKey.CAIRO_SQL_WINDOW_CACHE_MAX_BYTES, 16 * 1024 * 1024);
+            assertSqlCursors(
+                    """
+                            SELECT
+                                percentile_disc(x, 0.01) OVER (PARTITION BY a) p01,
+                                percentile_disc(x, 0.99) OVER (PARTITION BY a) p99,
+                                a, b
+                            FROM t
+                            """,
+                    wideOutputs
+            );
         });
     }
 
@@ -982,6 +1247,53 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t[5.0]
                             10.0\t[5.0]
                             """);
+        });
+    }
+
+    @Test
+    public void testMultiPercentileInterleavedWithVarSizeColumns() throws Exception {
+        // Array outputs between base VARCHAR, STRING, SYMBOL and DOUBLE[] columns, and over a
+        // base that computes its VARCHAR partition key: each column keeps its own chain slot.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (x DOUBLE, a VARCHAR, b VARCHAR, s STRING, sym SYMBOL, arr DOUBLE[])");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1.0, 'g1', 'h1', 's1', 'A', ARRAY[1.0]),
+                    (2.0, 'g1', 'h2', 's2', 'B', ARRAY[2.0]),
+                    (10.0, 'g2', 'h1', 's3', 'A', ARRAY[3.0]),
+                    (20.0, 'g2', 'h2', 's4', 'B', ARRAY[4.0])
+                    """);
+            for (int copierType = 0; copierType < 4; copierType++) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertQuery("""
+                        SELECT percentile_disc(x, ARRAY[0.5]) OVER () p1, a,
+                        percentile_cont(x, ARRAY[0.5]) OVER (PARTITION BY b) p2, sym, b,
+                        quantile_disc(x, ARRAY[0.25, 0.75]) OVER (PARTITION BY a) p3, s, arr
+                        FROM t
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p1\ta\tp2\tsym\tb\tp3\ts\tarr
+                                [2.0]\tg1\t[5.5]\tA\th1\t[1.0,2.0]\ts1\t[1.0]
+                                [2.0]\tg1\t[11.0]\tB\th2\t[1.0,2.0]\ts2\t[2.0]
+                                [2.0]\tg2\t[5.5]\tA\th1\t[10.0,20.0]\ts3\t[3.0]
+                                [2.0]\tg2\t[11.0]\tB\th2\t[10.0,20.0]\ts4\t[4.0]
+                                """);
+                assertQuery("""
+                        SELECT percentile_disc(x, ARRAY[0.5]) OVER (PARTITION BY ab) p, ab, sym
+                        FROM (SELECT x, a || '-' || b ab, sym FROM t)
+                        """)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("""
+                                p\tab\tsym
+                                [1.0]\tg1-h1\tA
+                                [2.0]\tg1-h2\tB
+                                [10.0]\tg2-h1\tA
+                                [20.0]\tg2-h2\tB
+                                """);
+            }
         });
     }
 
