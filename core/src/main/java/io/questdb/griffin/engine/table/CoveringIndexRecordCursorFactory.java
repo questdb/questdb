@@ -260,6 +260,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // factory that carries one advertises no page-frame cursor, because no index-scan backup
     // exposes frames.
     private final RecordCursorFactory backup;
+    // the rows of a large scan decoded on the workers, see setParallelRows()
+    static final long PARALLEL_ROWS_MIN = 262_144;
+    private final long[] parallelRowsEstimate = new long[2];
+    private RecordCursorFactory parallelRows;
+    private long parallelRowsOpens;
     private final IntList columnIndexes;
 
     private final PartitionFrameCursorFactory dfcFactory;
@@ -587,6 +592,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public void close() {
+        parallelRows = Misc.free(parallelRows);
         // The backup runs the same scan over the same table with the same key, so the two
         // share the partition-frame factory, the LATEST ON filter and the key functions rather
         // than duplicating them. The BACKUP owns that shared set -- there is no non-owning
@@ -808,6 +814,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
+        if (parallelRows != null && isParallelRowsWorthIt(executionContext)) {
+            parallelRowsOpens++;
+            return parallelRows.getCursor(executionContext);
+        }
         PartitionFrameCursor frameCursor = dfcFactory.getCursor(
                 executionContext,
                 columnIndexes,
@@ -993,6 +1003,31 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             Misc.free(frameCursor);
             throw th;
         }
+    }
+
+    @TestOnly
+    public long getParallelRowsOpens() {
+        return parallelRowsOpens;
+    }
+
+    /**
+     * Takes the parallel plan of this scan's rows: an Async Filter that passes every row of this
+     * scan's page frames, decoded on the workers rather than on the cursor's thread. An open whose
+     * scan selects at least {@link #PARALLEL_ROWS_MIN} rows by the posting index's counts takes it,
+     * while the frames keep the scan's order; the factory frees it.
+     */
+    public void setParallelRows(RecordCursorFactory parallelRows) {
+        this.parallelRows = parallelRows;
+    }
+
+    // An open reads its rows through the parallel plan when the frames are ordered and the scan
+    // selects enough rows to pay for the dispatch.
+    private boolean isParallelRowsWorthIt(SqlExecutionContext executionContext) throws SqlException {
+        if (unorderedFramesPermitted || latestBy || !supportsPageFrameCursor()) {
+            return false;
+        }
+        return estimateSelection(executionContext, PARALLEL_ROWS_MIN, parallelRowsEstimate)
+                && parallelRowsEstimate[0] >= PARALLEL_ROWS_MIN;
     }
 
     @Override

@@ -158,6 +158,7 @@ import io.questdb.griffin.engine.functions.columns.TimestampColumn;
 import io.questdb.griffin.engine.functions.columns.UuidColumn;
 import io.questdb.griffin.engine.functions.columns.VarcharColumn;
 import io.questdb.griffin.engine.functions.conditional.CaseBranches;
+import io.questdb.griffin.engine.functions.constants.BooleanConstant;
 import io.questdb.griffin.engine.functions.constants.ConstantFunction;
 import io.questdb.griffin.engine.functions.constants.LongConstant;
 import io.questdb.griffin.engine.functions.constants.NullConstant;
@@ -321,6 +322,7 @@ import io.questdb.griffin.engine.table.IndexKeyScanFrameFactory;
 import io.questdb.griffin.engine.table.SymbolKeyEqualsFunction;
 import io.questdb.griffin.engine.table.ProjectedColumnFunction;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
+import io.questdb.griffin.engine.table.CoveringFrameFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexFilteredRowCursorFactory;
@@ -16941,6 +16943,49 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         );
     }
 
+    /**
+     * Gives a covering-index scan that returns its rows the parallel plan of them: an Async Filter
+     * that passes every row of the scan's frames, so that its workers decode the covered columns,
+     * see CoveringIndexRecordCursorFactory.setParallelRows(). A consumer that reads the scan's page
+     * frames, such as a GROUP BY, reads them as before.
+     */
+    private RecordCursorFactory withParallelCoveredRows(RecordCursorFactory factory, IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        // a LIMIT reads few of the rows, which the serial cursor decodes as it reads them
+        if (!(factory instanceof CoveringIndexRecordCursorFactory covering)
+                || model.getLimitLo() != null || model.getLimitHi() != null
+                || model.getLimitAdviceLo() != null || model.getLimitAdviceHi() != null
+                || !configuration.isSqlParallelFrameDispatchEnabled()
+                || !executionContext.isParallelFilterEnabled()
+                || executionContext.getSharedQueryWorkerCount() < 1
+                || !covering.supportsPageFrameCursor()
+                || covering.getScanDirection() != RecordCursorFactory.SCAN_DIRECTION_FORWARD) {
+            return factory;
+        }
+        final CoveringFrameFactory frames = new CoveringFrameFactory(covering);
+        try {
+            covering.setParallelRows(new AsyncFilteredRecordCursorFactory(
+                    executionContext.getCairoEngine(),
+                    configuration,
+                    executionContext.getMessageBus(),
+                    frames,
+                    BooleanConstant.TRUE,
+                    new IntHashSet(),
+                    reduceTaskFactory,
+                    null,
+                    expressionNodePool.next().of(CONSTANT, "true", 0, 0),
+                    null,
+                    0,
+                    executionContext.getSharedQueryWorkerCount(),
+                    false
+            ));
+        } catch (Throwable th) {
+            Misc.free(frames);
+            Misc.free(factory, th);
+            throw th;
+        }
+        return factory;
+    }
+
     // Whether the factory, or a projection of it, is a Min/Max Filter.
     private static boolean readsMinMaxFilter(RecordCursorFactory factory) {
         for (int depth = 0; factory != null && depth < 4; depth++) {
@@ -17779,7 +17824,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         if (filter != null) {
                                             return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
                                         }
-                                        return coveringFactory;
+                                        return withParallelCoveredRows(coveringFactory, model, executionContext);
                                     }
                                 }
 
@@ -17991,7 +18036,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 if (filter != null) {
                                     return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
                                 }
-                                return coveringFactory;
+                                return withParallelCoveredRows(coveringFactory, model, executionContext);
                             }
                         }
 
