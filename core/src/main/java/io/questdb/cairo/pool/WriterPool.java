@@ -500,6 +500,13 @@ public class WriterPool extends AbstractPool {
             e.owner = UNALLOCATED;
             notifyListener(e.owner, tableToken, PoolListener.EV_CREATE_EX);
             throw ex;
+        } catch (Throwable th) {
+            // Required completion during construction can fail outside the Cairo exception hierarchy too.
+            // Release ownership even when no writer was published.
+            e.ownershipReason = OWNERSHIP_REASON_WRITER_ERROR;
+            e.owner = UNALLOCATED;
+            notifyListener(e.owner, tableToken, PoolListener.EV_CREATE_EX);
+            throw th;
         }
     }
 
