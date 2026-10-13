@@ -265,6 +265,32 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncSubQueryWithLatestOnInWorkerFilterCopies() throws Exception {
+        // rnd_int() is not thread safe, so each worker compiles its own copy of the filter, and
+        // with it of the sub-query: every copy must get back the sub-query's LATEST ON, which
+        // the first compile consumed, or it reads every k1 row ("more than one row")
+        WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+        TestUtils.execute(
+                pool,
+                (engine, _, sqlExecutionContext) -> {
+                    engine.execute("CREATE TABLE w (ts TIMESTAMP, k SYMBOL, v LONG) timestamp (ts) PARTITION BY DAY", sqlExecutionContext);
+                    engine.execute("insert into w select (x * 1_000_000L)::timestamp, 'k' || (x % 5), x from long_sequence(100000)", sqlExecutionContext);
+                    // the latest k1 under 50,000 is 49,996: multiples of 3 below it
+                    assertQuery("SELECT count(*) FROM w WHERE (v % 3 = 0 OR rnd_int(1, 2, 0) = 3)"
+                            + " AND v < (SELECT v FROM w WHERE k = 'k1' AND v < 50000 LATEST ON ts PARTITION BY k)")
+                            .withEngine(engine)
+                            .withContext(sqlExecutionContext)
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("count\n16665\n");
+                },
+                configuration,
+                LOG
+        );
+    }
+
+    @Test
     public void testAsyncTimestampSubQueryWithEqFilter() throws Exception {
         String query = "select * from x where ts2 = (select min(ts) from x)";
         String expected = """

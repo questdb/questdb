@@ -2163,7 +2163,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      */
     private void backupWhereClause(ExpressionNode node) {
         if (node != null) {
-            modelSnapshots.save(node);
+            modelSnapshots.saveSubQueries(node);
         }
     }
 
@@ -19492,12 +19492,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
-     * Puts the sub-query models an expression reaches back as they were before its first compile,
-     * every part of their state a compile consumes (LATEST BY too, not only the where clause), for
-     * another compile of the same expression, see {@link #backupWhereClause(ExpressionNode)}.
+     * Puts the sub-query models of an expression back as they were before its first compile, every
+     * part of their state a compile consumes (LATEST BY too, not only the where clause), for
+     * another compile of the same expression, see {@link #backupWhereClause(ExpressionNode)} and
+     * {@link QueryModelSnapshots#restoreSubQueries}.
      */
     private void restoreWhereClause(ExpressionNode node) {
-        modelSnapshots.restoreReachable(node, expressionNodePool);
+        modelSnapshots.restoreSubQueries(node, expressionNodePool);
     }
 
     /**

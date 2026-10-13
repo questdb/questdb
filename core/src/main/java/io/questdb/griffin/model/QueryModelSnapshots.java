@@ -46,7 +46,9 @@ import java.util.IdentityHashMap;
  * the models hold, the same graph {@link QueryModelGenerationState} walks for shared models.
  * <p>
  * {@link #save} returns an id; {@link #restore} puts back the state of every model that snapshot
- * reached, as many times as needed; {@link #release} drops it. Snapshots are independent of each
+ * reached, as many times as needed; {@link #release} drops it. An expression compiled more than once
+ * (per worker) takes {@link #saveSubQueries} and {@link #restoreSubQueries} instead, which reach
+ * only the sub-queries the expression holds itself. Snapshots are independent of each
  * other, so releasing one leaves those taken during its life. A snapshot that is not released,
  * such as the one a filter takes before its first compile for the per-worker compiles that may
  * follow much later, lives until {@link #clear()}, when the compilation ends.
@@ -131,15 +133,21 @@ public final class QueryModelSnapshots implements Mutable {
     }
 
     /**
-     * Puts back, for every model that {@code scope} reaches, the state the latest held snapshot
-     * that saved it recorded. This is how an expression compiled more than once, say once per worker,
-     * gets its sub-queries back for each compile, from the snapshot taken before its first one.
+     * Puts back, for the sub-query models of an expression, the state the latest held snapshot
+     * that saved them recorded ({@link #saveSubQueries}). This is how an expression compiled more
+     * than once, say once per worker, gets its sub-queries back for each compile, from the
+     * snapshot taken before its first one.
+     * <p>
+     * Only the sub-queries the expression holds itself, with their nested, union, join and UPDATE
+     * models, are put back, not the sub-queries of their own expressions: each compile of a
+     * sub-query takes its filter's snapshot again. Putting every level back for every per-worker
+     * copy would compile a chain of D nested sub-queries (workers + 1)^D times.
      */
-    public void restoreReachable(ExpressionNode scope, ObjectPool<ExpressionNode> pool) {
+    public void restoreSubQueries(ExpressionNode scope, ObjectPool<ExpressionNode> pool) {
         if (scope == null || models.size() == 0) {
             return;
         }
-        collect(scope);
+        collect(scope, false);
         copies.clear();
         try {
             for (int i = 0, n = pending.size(); i < n; i++) {
@@ -163,17 +171,29 @@ public final class QueryModelSnapshots implements Mutable {
     }
 
     /**
-     * Saves the state of every model {@code root} reaches, a model or an expression, the model
-     * itself included. Returns the snapshot's id.
+     * Saves the state of every model {@code root} reaches at any depth, the model itself included.
+     * Returns the snapshot's id.
      */
-    public int save(Object root) {
+    public int save(IQueryModel root) {
+        return save(root, true);
+    }
+
+    /**
+     * Saves the state of the sub-query models {@code expression} holds, with their nested, union,
+     * join and UPDATE models, for {@link #restoreSubQueries}. Returns the snapshot's id.
+     */
+    public int saveSubQueries(ExpressionNode expression) {
+        return save(expression, false);
+    }
+
+    private int save(Object root, boolean isDeep) {
         final int id = saveBounds.size() / 2;
         final int start = models.size();
         saveBounds.add(start);
         saveBounds.add(start);
         saveLive.add(true);
         if (root != null) {
-            collect(root);
+            collect(root, isDeep);
             copies.clear();
             try {
                 for (int i = 0, n = pending.size(); i < n; i++) {
@@ -195,9 +215,10 @@ public final class QueryModelSnapshots implements Mutable {
     }
 
     /**
-     * Leaves in {@link #pending} every model {@code root} reaches, each once.
+     * Leaves in {@link #pending} every model {@code root} reaches, each once. Not deep, the walk
+     * does not enter the expressions of the models it finds, only their model chain.
      */
-    private void collect(Object root) {
+    private void collect(Object root, boolean isDeep) {
         visited.clear();
         pending.clear();
         edges.clear();
@@ -211,6 +232,16 @@ public final class QueryModelSnapshots implements Mutable {
                 }
                 if (node instanceof IQueryModel model) {
                     pending.add(model);
+                    if (!isDeep) {
+                        QueryModelGenerationState.add(edges, model.getNestedModel());
+                        QueryModelGenerationState.add(edges, model.getUnionModel());
+                        QueryModelGenerationState.add(edges, model.getUpdateTableModel());
+                        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+                        for (int i = 1, n = joinModels.size(); i < n; i++) {
+                            QueryModelGenerationState.add(edges, joinModels.getQuick(i));
+                        }
+                        continue;
+                    }
                 }
                 QueryModelGenerationState.addEdges(node, edges, windowArguments);
             }
