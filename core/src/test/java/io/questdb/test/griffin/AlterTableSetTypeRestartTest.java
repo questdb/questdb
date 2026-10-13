@@ -30,7 +30,10 @@ import io.questdb.ServerMain;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableToken;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.str.Path;
+import io.questdb.test.QueryAssertion;
+import io.questdb.test.TestServerMain;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
@@ -440,6 +443,126 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
     }
 
     @Test
+    public void testWalRoundTripKeepsMetaHeaderFields() throws Exception {
+        // SET TYPE BYPASS WAL followed by SET TYPE WAL is the way out of a WAL transaction that keeps
+        // failing. Converting back to WAL resets the metadata version in _meta. The header fields that the
+        // Metadata Format Minor Version checksum guards (dedup mode, TTL, table format, Parquet encoding
+        // config) must survive the reset. The ALTERs on t and p take the metadata version above zero, so a
+        // reset that left the checksum as it was made readers fall back to the defaults. Table c gets DEDUP
+        // SKIP from CREATE TABLE and no ALTER touches it, so it stays at metadata version zero. TableConverter
+        // runs at startup, so each conversion step needs a real restart.
+        final String tDdl = """
+                ddl
+                CREATE TABLE 't' (\s
+                \tts TIMESTAMP,
+                \tk INT,
+                \tv LONG PARQUET(delta_binary_packed, zstd(3))
+                ) timestamp(ts) PARTITION BY DAY TTL 2 DAYS
+                DEDUP SKIP KEYS(ts,k);
+                """;
+        final String pDdl = """
+                ddl
+                CREATE TABLE 'p' (\s
+                \tts TIMESTAMP,
+                \tv LONG
+                ) timestamp(ts) PARTITION BY DAY FORMAT PARQUET;
+                """;
+        final String cDdl = """
+                ddl
+                CREATE TABLE 'c' (\s
+                \tts TIMESTAMP,
+                \tk INT,
+                \tv LONG
+                ) timestamp(ts) PARTITION BY DAY
+                DEDUP SKIP KEYS(ts,k);
+                """;
+        assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = startWithWalApplyDisabled()) {
+                serverMain.execute("CREATE TABLE t (ts TIMESTAMP, k INT, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts, k)");
+                serverMain.execute("ALTER TABLE t SET TTL 2 DAYS");
+                serverMain.execute("ALTER TABLE t ALTER COLUMN v SET PARQUET(delta_binary_packed, zstd(3))");
+                serverMain.execute("CREATE TABLE p (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                serverMain.execute("ALTER TABLE p SET FORMAT PARQUET");
+                serverMain.execute("CREATE TABLE c (ts TIMESTAMP, k INT, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, k)");
+                serverMain.execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, 10)");
+                serverMain.execute("INSERT INTO c VALUES ('2024-01-01T00:00:00.000000Z', 1, 10)");
+                final CairoEngine engine = serverMain.getEngine();
+                drainWalQueue(engine);
+                assertShowCreateTable(engine, "t", tDdl);
+                assertShowCreateTable(engine, "p", pDdl);
+                assertShowCreateTable(engine, "c", cDdl);
+                serverMain.execute("ALTER TABLE t SET TYPE BYPASS WAL");
+                serverMain.execute("ALTER TABLE p SET TYPE BYPASS WAL");
+                serverMain.execute("ALTER TABLE c SET TYPE BYPASS WAL");
+            }
+
+            try (TestServerMain serverMain = startWithWalApplyDisabled()) {
+                final CairoEngine engine = serverMain.getEngine();
+                assertFalse(engine.verifyTableName("t").isWal());
+                assertFalse(engine.verifyTableName("p").isWal());
+                assertFalse(engine.verifyTableName("c").isWal());
+                // the conversion to non-WAL leaves the metadata version as it is
+                assertShowCreateTable(
+                        engine,
+                        "t",
+                        """
+                                ddl
+                                CREATE TABLE 't' (\s
+                                \tts TIMESTAMP,
+                                \tk INT,
+                                \tv LONG PARQUET(delta_binary_packed, zstd(3))
+                                ) timestamp(ts) PARTITION BY DAY TTL 2 DAYS BYPASS WAL
+                                DEDUP SKIP KEYS(ts,k);
+                                """
+                );
+                assertShowCreateTable(
+                        engine,
+                        "p",
+                        """
+                                ddl
+                                CREATE TABLE 'p' (\s
+                                \tts TIMESTAMP,
+                                \tv LONG
+                                ) timestamp(ts) PARTITION BY DAY FORMAT PARQUET BYPASS WAL;
+                                """
+                );
+                serverMain.execute("ALTER TABLE t SET TYPE WAL");
+                serverMain.execute("ALTER TABLE p SET TYPE WAL");
+                serverMain.execute("ALTER TABLE c SET TYPE WAL");
+            }
+
+            try (TestServerMain serverMain = startWithWalApplyDisabled()) {
+                final CairoEngine engine = serverMain.getEngine();
+                assertTrue(engine.verifyTableName("t").isWal());
+                assertTrue(engine.verifyTableName("p").isWal());
+                assertTrue(engine.verifyTableName("c").isWal());
+                assertShowCreateTable(engine, "t", tDdl);
+                assertShowCreateTable(engine, "p", pDdl);
+                assertShowCreateTable(engine, "c", cDdl);
+
+                // SKIP keeps the stored row when a row with the same dedup key values arrives again
+                serverMain.execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 1, 30)");
+                serverMain.execute("INSERT INTO c VALUES ('2024-01-01T00:00:00.000000Z', 1, 30)");
+                drainWalQueue(engine);
+                final String expectedRows = """
+                        ts\tk\tv
+                        2024-01-01T00:00:00.000000Z\t1\t10
+                        """;
+                assertRows(engine, "t", expectedRows);
+                assertRows(engine, "c", expectedRows);
+            }
+
+            try (TestServerMain serverMain = startWithWalApplyDisabled()) {
+                final CairoEngine engine = serverMain.getEngine();
+                assertShowCreateTable(engine, "t", tDdl);
+                assertShowCreateTable(engine, "p", pDdl);
+                assertShowCreateTable(engine, "c", cDdl);
+            }
+        });
+    }
+
+    @Test
     @Ignore
     public void testWalToNonWal() throws Exception {
         final String tableName = testName.getMethodName();
@@ -545,5 +668,35 @@ public class AlterTableSetTypeRestartTest extends AbstractAlterTableSetTypeResta
                 }
             }
         });
+    }
+
+    // The memory usage check reads process-wide counters per memory tag, which the threads of a running
+    // server change on their own (e.g. NATIVE_HTTP_CONN when the HTTP server sets up connections), so
+    // the assertions against a live server skip it.
+    private static void assertRows(CairoEngine engine, String tableName, String expected) throws Exception {
+        try (SqlExecutionContext context = createSqlExecutionContext(engine)) {
+            new QueryAssertion(engine, context, () -> {
+            }, tableName)
+                    .noLeakCheck()
+                    .noMemoryUsageCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns(expected);
+        }
+    }
+
+    private static void assertShowCreateTable(CairoEngine engine, String tableName, String expectedDdl) throws Exception {
+        try (SqlExecutionContext context = createSqlExecutionContext(engine)) {
+            new QueryAssertion(engine, context, () -> {
+            }, "SHOW CREATE TABLE " + tableName)
+                    .noLeakCheck()
+                    .noMemoryUsageCheck()
+                    .noRandomAccess()
+                    .returns(expectedDdl);
+        }
+    }
+
+    private static TestServerMain startWithWalApplyDisabled() {
+        return startWithEnvVariables(PropertyKey.CAIRO_WAL_APPLY_ENABLED.getEnvVarName(), "false");
     }
 }

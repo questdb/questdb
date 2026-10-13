@@ -41,6 +41,7 @@ import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCMR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryMAR;
@@ -2750,6 +2751,34 @@ public final class TableUtils {
         return symbolKey == SymbolTable.VALUE_IS_NULL ? 0 : symbolKey + 1;
     }
 
+    /**
+     * Overwrites the metadata version of an existing _meta file in place, e.g. when the table gets a fresh
+     * sequencer. The Metadata Format Minor Version field holds a checksum of the metadata version and the
+     * column count, and readers trust the header fields it gates (TTL, table format, dedup mode, Parquet
+     * encoding config) only while the checksum matches, see {@code isMetaFormatAtLeast()}. Writing the
+     * version alone would make readers fall back to the defaults of those fields. This method re-stamps the
+     * checksum for the new version and keeps the stored minor version, so a trusted field stays trusted and an
+     * untrusted one stays untrusted: a release that predates the field, or one that does not maintain it,
+     * leaves a checksum that cannot match.
+     * <p>
+     * This method writes the checksum before the version. Should the process die between the two writes, the
+     * file stays untrusted, and a repeated call with the same version, which the table type conversion makes
+     * when it runs again at the next startup, completes the stamp.
+     */
+    public static void updateMetadataVersion(MemoryARW metaMem, long metadataVersion) {
+        final int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
+        if (isMetaFormatMinorVersionFieldValid(metaMem, metaFormatMinorVersionField)) {
+            metaMem.putInt(
+                    META_OFFSET_META_FORMAT_MINOR_VERSION,
+                    Numbers.encodeLowHighShorts(
+                            checksumForMetaFormatMinorVersionField(metadataVersion, metaMem.getInt(META_OFFSET_COUNT)),
+                            Numbers.decodeHighShort(metaFormatMinorVersionField)
+                    )
+            );
+        }
+        metaMem.putLong(META_OFFSET_METADATA_VERSION, metadataVersion);
+    }
+
     public static void validateIndexValueBlockSize(int position, int indexValueBlockSize) throws SqlException {
         if (indexValueBlockSize < MIN_INDEX_VALUE_BLOCK_SIZE) {
             throw SqlException.$(position, "min index block capacity is ").put(MIN_INDEX_VALUE_BLOCK_SIZE);
@@ -3024,14 +3053,18 @@ public final class TableUtils {
     }
 
     static boolean isMetaFormatAtLeast(MemoryR metaMem, short minorVersion) {
-        int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
-        short savedChecksum = Numbers.decodeLowShort(metaFormatMinorVersionField);
-        short actualChecksum = checksumForMetaFormatMinorVersionField(
-                metaMem.getLong(TableUtils.META_OFFSET_METADATA_VERSION),
-                metaMem.getInt(TableUtils.META_OFFSET_COUNT)
+        final int metaFormatMinorVersionField = metaMem.getInt(META_OFFSET_META_FORMAT_MINOR_VERSION);
+        return isMetaFormatMinorVersionFieldValid(metaMem, metaFormatMinorVersionField)
+                && Numbers.decodeHighShort(metaFormatMinorVersionField) >= minorVersion;
+    }
+
+    // The checksum in the low short of the Metadata Format Minor Version field matches the metadata version and
+    // the column count of the header only when a version that maintains the field wrote it.
+    private static boolean isMetaFormatMinorVersionFieldValid(MemoryR metaMem, int metaFormatMinorVersionField) {
+        return Numbers.decodeLowShort(metaFormatMinorVersionField) == checksumForMetaFormatMinorVersionField(
+                metaMem.getLong(META_OFFSET_METADATA_VERSION),
+                metaMem.getInt(META_OFFSET_COUNT)
         );
-        short savedMetaFormatMinorVersion = Numbers.decodeHighShort(metaFormatMinorVersionField);
-        return savedChecksum == actualChecksum && savedMetaFormatMinorVersion >= minorVersion;
     }
 
     private static boolean isOlderThanTtl(TimestampDriver timestampDriver, long partitionBoundary, long maxTimestamp, int ttl) {

@@ -125,7 +125,7 @@ public class TableConverter {
                                     }
 
                                     // Reset structure version in _meta and _txn files
-                                    metaMem.putLong(TableUtils.META_OFFSET_METADATA_VERSION, 0);
+                                    TableUtils.updateMetadataVersion(metaMem, 0);
                                     path.trimTo(rootLen).concat(dirNameSink);
                                     txWriter.resetStructureVersionUnsafe();
                                 } else {

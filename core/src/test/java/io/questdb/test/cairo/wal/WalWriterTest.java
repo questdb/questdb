@@ -33,6 +33,7 @@ import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -5676,6 +5677,74 @@ public class WalWriterTest extends AbstractCairoTest {
             // Only the applied row survives; the pending insert AND the structural add-column are discarded.
             assertQuery("select count() from t").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
             assertQuery("select count() from table_columns('t')").noLeakCheck().expectSize().noRandomAccess().returns("count\n2\n");
+        });
+    }
+
+    @Test
+    public void testRebaseWalKeepsMetaHeaderFields() throws Exception {
+        // REBASE resets the metadata version of the cloned _meta. The header fields that the
+        // Metadata Format Minor Version checksum guards (dedup mode, TTL, Parquet encoding config)
+        // must survive the reset. The ALTERs take the metadata version above zero, so a reset that
+        // left the checksum as it was made readers fall back to the defaults.
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t DEDUP ENABLE SKIP KEYS(ts)");
+            execute("ALTER TABLE t SET TTL 2 DAYS");
+            execute("ALTER TABLE t ALTER COLUMN v SET PARQUET(delta_binary_packed, zstd(3))");
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 10)");
+            drainWalQueue();
+
+            final String expectedDdl = """
+                    ddl
+                    CREATE TABLE 't' (\s
+                    \tts TIMESTAMP,
+                    \tv LONG PARQUET(delta_binary_packed, zstd(3))
+                    ) timestamp(ts) PARTITION BY DAY TTL 2 DAYS
+                    DEDUP SKIP KEYS(ts);
+                    """;
+            assertQuery("SHOW CREATE TABLE t").noLeakCheck().noRandomAccess().returns(expectedDdl);
+            final int encodingConfig;
+            try (TableReader reader = engine.getReader(engine.verifyTableName("t"))) {
+                encodingConfig = reader.getMetadata().getColumnMetadata(1).getParquetEncodingConfig();
+            }
+            Assert.assertNotEquals(0, encodingConfig);
+
+            execute("ALTER TABLE t SUSPEND WAL");
+            execute("ALTER TABLE t REBASE WAL");
+            drainWalQueue();
+
+            assertQuery("SHOW CREATE TABLE t").noLeakCheck().noRandomAccess().returns(expectedDdl);
+
+            // Replicas rebuild _meta from the sequencer's initial metadata, which REBASE writes from the
+            // reset _meta, so it must carry the same header fields.
+            try (
+                    Path path = new Path();
+                    TableReaderMetadata initialMetadata = new TableReaderMetadata(configuration)
+            ) {
+                initialMetadata.loadMetadata(
+                        path.of(configuration.getDbRoot())
+                                .concat(engine.verifyTableName("t"))
+                                .concat(WalUtils.SEQ_DIR)
+                                .concat(WalUtils.INITIAL_META_FILE_NAME)
+                                .$()
+                );
+                Assert.assertEquals(TableUtils.DEDUP_MODE_SKIP, initialMetadata.getDedupMode());
+                Assert.assertEquals(48, initialMetadata.getTtlHoursOrMonths());
+                Assert.assertEquals(encodingConfig, initialMetadata.getColumnMetadata(1).getParquetEncodingConfig());
+            }
+
+            // The rebased table still discards a row that repeats the dedup key of a stored row.
+            execute("INSERT INTO t VALUES ('2024-01-01T00:00:00.000000Z', 30)");
+            drainWalQueue();
+            assertQuery("t")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t10
+                            """);
         });
     }
 
