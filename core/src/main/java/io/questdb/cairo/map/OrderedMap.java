@@ -141,12 +141,6 @@ public class OrderedMap implements Map, Reopenable {
     private final long[] batchKeyCache = new long[BATCH_KEY_CACHE_SIZE];
     private long batchEmptyValueStart;
     private int batchKeyCacheHits;
-    // the value offset of the key the batch key cache gave last, -1 when none: rows of one group
-    // often come one after another, and a repeat of the last key needs no hash
-    private long batchKeyCacheLast = -1;
-    // whether the last two probes gave the same key: only then does a probe compare the key with
-    // the last one first, so that rows whose keys alternate pay no extra compare
-    private boolean batchKeyCacheRepeating;
     private int free;
     // The map owns the heap range [heapAddr, heapLimit) and derives the heap size from that pair
     // rather than caching it in a field of its own. No ordering of assignments can then commit a
@@ -951,13 +945,25 @@ public class OrderedMap implements Map, Reopenable {
                 batchAddr += Long.BYTES;
             }
             if (batchKeyCacheHits >= BATCH_KEY_CACHE_TRIAL_ROWS / 2) {
+                // see probeBatchFixedSize()
+                long last = -1;
+                boolean repeating = false;
                 for (; p < batchEnd; p++) {
                     final long r = Unsafe.getLong(rowIdsAddr + (p << 3));
                     record.setRowIndex(r);
                     k.startAddr = kPos;
                     k.appendAddr = kPos;
                     mapSink.copy(record, k);
-                    Unsafe.putLong(batchAddr, probeCached(k, cache, r));
+                    final long encoded;
+                    if (repeating && keyEquals(kPos, heapAddr + last - keySize, keySize)) {
+                        encoded = Map.encodeBatchEntry(r, last, false);
+                    } else {
+                        encoded = probeCached(k, cache, r);
+                        final long offset = Map.decodeBatchOffset(encoded);
+                        repeating = offset == last;
+                        last = offset;
+                    }
+                    Unsafe.putLong(batchAddr, encoded);
                     batchAddr += Long.BYTES;
                 }
                 return heapAddr;
@@ -988,17 +994,10 @@ public class OrderedMap implements Map, Reopenable {
      */
     private long probeCached(Key k, long[] cache, long rowIndex) {
         final long keyAddr = kPos;
-        final long last = batchKeyCacheLast;
-        if (batchKeyCacheRepeating && keyEquals(keyAddr, heapAddr + last - keySize, keySize)) {
-            batchKeyCacheHits++;
-            return Map.encodeBatchEntry(rowIndex, last, false);
-        }
         final int slot = batchKeyCacheSlot(keyAddr, keySize);
         final long cached = cache[slot];
         if (cached != -1 && keyEquals(keyAddr, heapAddr + cached - keySize, keySize)) {
             batchKeyCacheHits++;
-            batchKeyCacheRepeating = cached == last;
-            batchKeyCacheLast = cached;
             return Map.encodeBatchEntry(rowIndex, cached, false);
         }
         final FlyweightPackedMapValue v = (FlyweightPackedMapValue) k.createValue();
@@ -1007,16 +1006,12 @@ public class OrderedMap implements Map, Reopenable {
         }
         final long offset = v.getValueAddress() - heapAddr;
         cache[slot] = offset;
-        batchKeyCacheRepeating = false;
-        batchKeyCacheLast = offset;
         return Map.encodeBatchEntry(rowIndex, offset, v.isNew());
     }
 
     private long[] resetBatchKeyCache() {
         final long[] cache = batchKeyCache;
         java.util.Arrays.fill(cache, -1L);
-        batchKeyCacheLast = -1;
-        batchKeyCacheRepeating = false;
         return cache;
     }
 
@@ -1075,12 +1070,25 @@ public class OrderedMap implements Map, Reopenable {
                 batchAddr += Long.BYTES;
             }
             if (batchKeyCacheHits >= BATCH_KEY_CACHE_TRIAL_ROWS / 2) {
+                // rows of one group often come one after another: while the last two rows had the
+                // same key, a row's key is compared with it before the hash
+                long last = -1;
+                boolean repeating = false;
                 for (; r < batchEnd; r++) {
                     record.setRowIndex(r);
                     k.startAddr = kPos;
                     k.appendAddr = kPos;
                     mapSink.copy(record, k);
-                    Unsafe.putLong(batchAddr, probeCached(k, cache, r));
+                    final long encoded;
+                    if (repeating && keyEquals(kPos, heapAddr + last - keySize, keySize)) {
+                        encoded = Map.encodeBatchEntry(r, last, false);
+                    } else {
+                        encoded = probeCached(k, cache, r);
+                        final long offset = Map.decodeBatchOffset(encoded);
+                        repeating = offset == last;
+                        last = offset;
+                    }
+                    Unsafe.putLong(batchAddr, encoded);
                     batchAddr += Long.BYTES;
                 }
                 return heapAddr;

@@ -407,9 +407,85 @@ static void unpack_values_from(const uint8_t *src, int32_t start_index, int32_t 
     unpack_from_scalar(src, start_index, value_count, bit_width, min_value, dest);
 }
 
+// ============= Unpack from an arbitrary start index to 32-bit values =============
+// For the covered columns of a posting index: a FOR-coded INT block and an ALP-coded FLOAT block
+// decode their packed values straight to the column's 4-byte values, without the int64 workspace.
+// total_count is the packed buffer's value count: an 8-byte load is safe while it stays within
+// ceil(total_count * bit_width / 8) bytes, so only the buffer's last values take the byte-wise read.
+
+template<typename Out>
+static inline void unpack32_from(const uint8_t *src, int32_t start_index, int32_t value_count,
+                                 int32_t total_count, int32_t bit_width, Out out) {
+    const uint32_t mask32 = (bit_width == 32) ? ~0u : (1u << bit_width) - 1;
+    const int64_t total_bytes = ((int64_t) total_count * bit_width + 7) >> 3;
+    const int64_t start64 = static_cast<int64_t>(start_index);
+    int32_t i = 0;
+    for (; i < value_count; i++) {
+        const int64_t bp = (start64 + i) * (int64_t) bit_width;
+        const int64_t bo = bp >> 3;
+        if (bo + 8 > total_bytes) {
+            break;
+        }
+        uint64_t raw;
+        std::memcpy(&raw, src + bo, sizeof(raw));
+        out(i, (uint32_t) (raw >> (bp & 7)) & mask32);
+    }
+    for (; i < value_count; i++) {
+        const int64_t bp = (start64 + i) * (int64_t) bit_width;
+        const int64_t bo = bp >> 3;
+        const int bs = (int) (bp & 7);
+        uint64_t raw = 0;
+        for (int k = 0, n = (bs + bit_width + 7) >> 3; k < n; k++) {
+            raw |= (uint64_t) src[bo + k] << (k * 8);
+        }
+        out(i, (uint32_t) (raw >> bs) & mask32);
+    }
+}
+
 // ============= JNI Exports =============
 
 extern "C" {
+
+JNIEXPORT void JNICALL
+Java_io_questdb_cairo_idx_PostingIndexNative_unpackIntsFrom0(
+        JNIEnv * /*env*/,
+        jclass /*cl*/,
+        jlong srcAddr,
+        jint startIndex,
+        jint valueCount,
+        jint totalCount,
+        jint bitWidth,
+        jint base,
+        jlong destAddr
+) {
+    auto *dest = reinterpret_cast<int32_t *>(destAddr);
+    const uint32_t b = (uint32_t) base;
+    unpack32_from(reinterpret_cast<const uint8_t *>(srcAddr), startIndex, valueCount, totalCount, bitWidth,
+                  [dest, b](int32_t i, uint32_t v) { dest[i] = (int32_t) (b + v); });
+}
+
+JNIEXPORT void JNICALL
+Java_io_questdb_cairo_idx_PostingIndexNative_unpackAlpFloatsFrom0(
+        JNIEnv * /*env*/,
+        jclass /*cl*/,
+        jlong srcAddr,
+        jint startIndex,
+        jint valueCount,
+        jint totalCount,
+        jint bitWidth,
+        jint base,
+        jfloat factor,
+        jfloat inverseExponent,
+        jlong destAddr
+) {
+    auto *dest = reinterpret_cast<float *>(destAddr);
+    const uint32_t b = (uint32_t) base;
+    // CoveringCompressor.alpDecodeFloat(): (float) encoded * F10F[f] * IF10F[e], in float, left to right
+    unpack32_from(reinterpret_cast<const uint8_t *>(srcAddr), startIndex, valueCount, totalCount, bitWidth,
+                  [dest, b, factor, inverseExponent](int32_t i, uint32_t v) {
+                      dest[i] = (float) (int32_t) (b + v) * factor * inverseExponent;
+                  });
+}
 
 JNIEXPORT void JNICALL
 Java_io_questdb_cairo_idx_PostingIndexNative_packValues0(
