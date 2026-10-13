@@ -1028,11 +1028,11 @@ public final class AsyncHashJoinGroupByAtom implements StatefulAtom, PerWorkerLo
         FrozenHashJoinBuild.RecordProbe partitionedRecordProbe;
         FrozenHashJoinBuild.RecordProbe recordProbe;
         SimpleMapValue value;
-        // The map value of each build key's group when the grouping keys read only build columns
-        // (HashJoinGroupByFunctions.isKeysReadBuildOnly()): index 0 is the outer join's no-match group, index
-        // k + 1 is translated build key k. A value's address, valid until the map adds a group (which may move
-        // its heap, so adding one clears the cache) or the slot aggregates into another map.
-        long[] groupValueByBuildKey;
+        // The map value address of each group when the grouping keys read only build columns, plus at most one
+        // probe SYMBOL (HashJoinGroupByFunctions.isKeysReadBuildOnly()), keyed by the build key (+1, 0 for the outer
+        // no-match group), combined with the probe symbol key. Valid until the map adds a group (which may move its
+        // heap, so adding one clears the cache) or the slot aggregates into another map.
+        final GroupValueCache groupValueCache = new GroupValueCache();
         Map groupValueMap;
         // The map's size when the cache was last valid: a cleared or reused map has another size, so a stale
         // address is never read.

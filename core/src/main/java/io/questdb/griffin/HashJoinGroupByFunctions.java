@@ -78,6 +78,9 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
     // True when every grouping key reads only build-side columns (or constants): a probe row's group then
     // follows from which build row it joined, so the aggregation loops can reuse that group's map value.
     private boolean keysReadBuildOnly;
+    // With keysReadBuildOnly, the one probe SYMBOL column the keys also read (its symbol key then joins the build
+    // key in the group cache), or -1 when they read build columns only.
+    private int keyProbeSymbolColumn = -1;
     private Function filter;
     private ObjList<Function> outputOnlyFunctions;
     private ObjList<Function> workerFilters;
@@ -124,7 +127,13 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
                 }
             }
             outputOnlyFunctions = GroupByUtils.extractNonGroupByFunctions(outputFunctions);
-            keysReadBuildOnly = isKeyed() && keysReadBuildOnly(columnFilter, keyFunctions, metadata.getProbeColumnCount());
+            if (isKeyed()) {
+                final int probeSymbolColumn = keyProbeSymbolColumn(columnFilter, joined, metadata.getProbeColumnCount());
+                if (probeSymbolColumn != -2 && keyFunctionsReadBuildOnly(keyFunctions, metadata.getProbeColumnCount())) {
+                    keysReadBuildOnly = true;
+                    keyProbeSymbolColumn = probeSymbolColumn;
+                }
+            }
             SqlCodeGenerator.WorkerFunctionLists workers = generator.compilePerWorkerInnerProjectionFunctions(
                     executionContext, metadata.getColumns(), innerFunctions, workerCount, joined, flags);
             if (workers != null) {
@@ -244,6 +253,10 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
         return workerCount;
     }
 
+    public int getKeyProbeSymbolColumn() {
+        return keyProbeSymbolColumn;
+    }
+
     public boolean isKeysReadBuildOnly() {
         return keysReadBuildOnly;
     }
@@ -335,13 +348,24 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
     }
 
 
-    private static boolean keysReadBuildOnly(ListColumnFilter columnFilter, ObjList<Function> keyFunctions, int probeColumnCount) {
+    // The probe column among the plain key columns: -1 when there is none, -2 when there are several or it is not
+    // a SYMBOL (the group cache then stays off).
+    private static int keyProbeSymbolColumn(ListColumnFilter columnFilter, RecordMetadata joined, int probeColumnCount) {
+        int probeColumn = -1;
         for (int i = 0, n = columnFilter.getColumnCount(); i < n; i++) {
             final int factored = columnFilter.getColumnIndex(i);
-            if ((factored > 0 ? factored : -factored) - 1 < probeColumnCount) {
-                return false;
+            final int column = (factored > 0 ? factored : -factored) - 1;
+            if (column < probeColumnCount) {
+                if (probeColumn != -1 || joined.getColumnType(column) != ColumnType.SYMBOL) {
+                    return -2;
+                }
+                probeColumn = column;
             }
         }
+        return probeColumn;
+    }
+
+    private static boolean keyFunctionsReadBuildOnly(ObjList<Function> keyFunctions, int probeColumnCount) {
         final IntList columns = new IntList();
         for (int i = 0, n = keyFunctions.size(); i < n; i++) {
             columns.clear();

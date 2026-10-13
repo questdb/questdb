@@ -61,7 +61,6 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
-import java.util.Arrays;
 
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
@@ -1141,20 +1140,21 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final int probeKeyColumn = atom.getProbeKeyColumn();
         final boolean outer = atom.isOuter();
         final boolean byBuildKey = functions.isKeysReadBuildOnly() && fragment.isNotSharded() && slot.value == null;
+        final int keyProbeSymbolColumn = functions.getKeyProbeSymbolColumn();
         for (long p = 0, n = rows.size(); p < n; p++) {
             probeRecord.setRowIndex(rows.get(p));
             final int buildKey = translator.translate(probeRecord.getInt(probeKeyColumn));
             if (probe.findSingleUnchecked(buildKey)) {
                 record.setHasMatch(true);
                 if (byBuildKey && buildKey >= 0) {
-                    updateByBuildKey(slot, buildKey + 1, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                    updateByBuildKey(slot, groupCacheKey(probeRecord, keyProbeSymbolColumn, buildKey + 1), map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
             } else if (outer) {
                 record.setHasMatch(false);
                 if (byBuildKey) {
-                    updateByBuildKey(slot, 0, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                    updateByBuildKey(slot, groupCacheKey(probeRecord, keyProbeSymbolColumn, 0), map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
@@ -1289,20 +1289,21 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final int probeKeyColumn = atom.getProbeKeyColumn();
         final boolean outer = atom.isOuter();
         final boolean byBuildKey = functions.isKeysReadBuildOnly() && fragment.isNotSharded() && slot.value == null;
+        final int keyProbeSymbolColumn = functions.getKeyProbeSymbolColumn();
         for (long p = 0, n = rows.size(); p < n; p++) {
             probeRecord.setRowIndex(rows.get(p));
             final int buildKey = translator.translate(probeRecord.getInt(probeKeyColumn));
             if (probe.findSingleUnchecked(buildKey)) {
                 record.setHasMatch(true);
                 if (byBuildKey && buildKey >= 0) {
-                    updateByBuildKey(slot, buildKey + 1, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                    updateByBuildKey(slot, groupCacheKey(probeRecord, keyProbeSymbolColumn, buildKey + 1), map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
             } else if (outer) {
                 record.setHasMatch(false);
                 if (byBuildKey) {
-                    updateByBuildKey(slot, 0, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                    updateByBuildKey(slot, groupCacheKey(probeRecord, keyProbeSymbolColumn, 0), map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
@@ -1333,20 +1334,21 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final int probeKeyColumn = atom.getProbeKeyColumn();
         final boolean outer = atom.isOuter();
         final boolean byBuildKey = functions.isKeysReadBuildOnly() && fragment.isNotSharded() && slot.value == null;
+        final int keyProbeSymbolColumn = functions.getKeyProbeSymbolColumn();
         for (long r = 0; r < rowCount; r++) {
             probeRecord.setRowIndex(r);
             final int buildKey = translator.translate(probeRecord.getInt(probeKeyColumn));
             if (probe.findSingleUnchecked(buildKey)) {
                 record.setHasMatch(true);
                 if (byBuildKey && buildKey >= 0) {
-                    updateByBuildKey(slot, buildKey + 1, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                    updateByBuildKey(slot, groupCacheKey(probeRecord, keyProbeSymbolColumn, buildKey + 1), map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
             } else if (outer) {
                 record.setHasMatch(false);
                 if (byBuildKey) {
-                    updateByBuildKey(slot, 0, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                    updateByBuildKey(slot, groupCacheKey(probeRecord, keyProbeSymbolColumn, 0), map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
@@ -1374,20 +1376,21 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         final int probeKeyColumn = atom.getProbeKeyColumn();
         final boolean outer = atom.isOuter();
         final boolean byBuildKey = functions.isKeysReadBuildOnly() && fragment.isNotSharded() && slot.value == null;
+        final int keyProbeSymbolColumn = functions.getKeyProbeSymbolColumn();
         for (long r = 0; r < rowCount; r++) {
             probeRecord.setRowIndex(r);
             final int buildKey = translator.translate(probeRecord.getInt(probeKeyColumn));
             if (probe.findSingleUnchecked(buildKey)) {
                 record.setHasMatch(true);
                 if (byBuildKey && buildKey >= 0) {
-                    updateByBuildKey(slot, buildKey + 1, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                    updateByBuildKey(slot, groupCacheKey(probeRecord, keyProbeSymbolColumn, buildKey + 1), map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
             } else if (outer) {
                 record.setHasMatch(false);
                 if (byBuildKey) {
-                    updateByBuildKey(slot, 0, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
+                    updateByBuildKey(slot, groupCacheKey(probeRecord, keyProbeSymbolColumn, 0), map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 } else {
                     rowUpdater.update(slot, fragment, map, sink, updater, record, postJoinFilter, probeRecord.getRowId());
                 }
@@ -1548,9 +1551,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
      * key's map value is looked up once per key and reused instead of being rebuilt and hashed per row.
      * Adding a group may move the map's heap, so it clears every cached address.
      */
+    private static long groupCacheKey(PageFrameMemoryRecord probeRecord, int keyProbeSymbolColumn, int buildIndex) {
+        return keyProbeSymbolColumn < 0 ? buildIndex : ((long) probeRecord.getInt(keyProbeSymbolColumn) << 32) | (buildIndex & 0xFFFF_FFFFL);
+    }
+
     private static void updateByBuildKey(
             AsyncHashJoinGroupByAtom.Slot slot,
-            int cacheIndex,
+            long cacheKey,
             Map map,
             RecordSink sink,
             GroupByFunctionsUpdater updater,
@@ -1561,20 +1568,13 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         if (filter != null && !filter.getBool(record)) {
             return;
         }
-        long[] cache = slot.groupValueByBuildKey;
-        if (cache == null || cacheIndex >= cache.length) {
-            final long[] grown = new long[Math.max(cacheIndex + 1, cache == null ? 64 : cache.length * 2)];
-            if (cache != null && slot.groupValueMap == map) {
-                System.arraycopy(cache, 0, grown, 0, cache.length);
-            }
-            slot.groupValueByBuildKey = cache = grown;
-        }
+        final GroupValueCache cache = slot.groupValueCache;
         if (slot.groupValueMap != map || slot.groupValueMapSize != map.size()) {
-            Arrays.fill(cache, 0L);
+            cache.clear();
             slot.groupValueMap = map;
             slot.groupValueMapSize = map.size();
         }
-        final long address = cache[cacheIndex];
+        final long address = cache.get(cacheKey);
         if (address != 0) {
             updater.updateExisting(map.valueAt(address), record, rowId);
             return;
@@ -1583,12 +1583,12 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
         sink.copy(record, key);
         final MapValue value = key.createValue();
         if (value.isNew()) {
-            Arrays.fill(cache, 0L);
+            cache.clear();
             slot.groupValueMapSize = map.size();
             updater.updateNew(value, record, rowId);
         } else {
             updater.updateExisting(value, record, rowId);
         }
-        cache[cacheIndex] = value.getStartAddress();
+        cache.put(cacheKey, value.getStartAddress());
     }
 }
