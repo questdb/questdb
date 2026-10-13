@@ -436,6 +436,20 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         });
     }
 
+    private static String asOfSlave(String table, String alias, boolean keyed, String slaveFilter) {
+        return " ASOF JOIN " + slaveTable(table, slaveFilter) + " " + alias
+                + (keyed ? " ON (t.sym = " + alias + ".sym)" : "");
+    }
+
+    private static String horizonSlave(String table, String alias, boolean keyed, String slaveFilter, boolean isOnFilter) {
+        final String onFilter = isOnFilter && slaveFilter != null ? slaveFilter.replace("$", alias + ".") : null;
+        final String keyCondition = keyed ? "t.sym = " + alias + ".sym" : null;
+        final String on = keyCondition != null && onFilter != null ? keyCondition + " AND " + onFilter
+                : keyCondition != null ? keyCondition : onFilter;
+        return " HORIZON JOIN " + slaveTable(table, isOnFilter ? null : slaveFilter) + " AS " + alias
+                + (on != null ? " ON (" + on + ")" : "");
+    }
+
     private static long[] rangeOffsets(int fromSec, int toSec) {
         int count = (toSec - fromSec) + 1;
         long[] offsets = new long[count];
@@ -443,6 +457,19 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             offsets[i] = (fromSec + (long) i) * 1_000_000L;
         }
         return offsets;
+    }
+
+    private static String slaveTable(String table, String slaveFilter) {
+        return slaveFilter != null ? "(" + table + " WHERE " + slaveFilter.replace("$", "") + ")" : table;
+    }
+
+    private String generateSlaveFilter() {
+        return switch (rnd.nextInt(5)) {
+            case 0, 1 -> null;
+            case 2 -> "$bid > " + (5 + rnd.nextInt(1_000) / 100.0);
+            case 3 -> "$ask < " + (5 + rnd.nextInt(1_000) / 100.0);
+            default -> "$bid > $ask";
+        };
     }
 
     private void testParallelHorizonJoin(
@@ -461,13 +488,15 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             boolean keyed,
             String filter
     ) throws Exception {
+        final String slaveFilter = generateSlaveFilter();
+        final boolean isOnFilter = keyed && rnd.nextBoolean();
+
         // Build HORIZON JOIN query.
         String horizonQuery = "SELECT h.offset AS h_offset"
                 + (keyed ? ", t.sym" : "")
                 + ", count(p.bid) AS cnt_bid, max(p.ask) AS max_ask"
                 + " FROM trades t"
-                + " HORIZON JOIN prices p"
-                + (keyed ? " ON (t.sym = p.sym)" : "")
+                + horizonSlave("prices", "p", keyed, slaveFilter, isOnFilter)
                 + " " + horizonClause
                 + (filter != null ? " WHERE " + filter : "")
                 + " ORDER BY h_offset"
@@ -499,10 +528,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             if (innerFilter != null) {
                 ref.append(" WHERE ").append(innerFilter);
             }
-            ref.append(") TIMESTAMP(ts)) t ASOF JOIN prices p");
-            if (keyed) {
-                ref.append(" ON (t.sym = p.sym)");
-            }
+            ref.append(") TIMESTAMP(ts)) t").append(asOfSlave("prices", "p", keyed, slaveFilter));
         }
 
         ref.append(") GROUP BY h_offset");
@@ -724,6 +750,12 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
     ) throws Exception {
         // Randomize 2-4 slave tables
         int slaveCount = 2 + rnd.nextInt(3);
+        final String[] slaveFilters = new String[slaveCount];
+        final boolean[] isOnFilters = new boolean[slaveCount];
+        for (int s = 0; s < slaveCount; s++) {
+            slaveFilters[s] = generateSlaveFilter();
+            isOnFilters[s] = keyed && rnd.nextBoolean();
+        }
 
         // Build multi-slave HORIZON JOIN query
         StringBuilder hq = new StringBuilder();
@@ -737,10 +769,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
         }
         hq.append(" FROM trades t");
         for (int s = 0; s < slaveCount; s++) {
-            hq.append(" HORIZON JOIN prices").append(s).append(" AS p").append(s);
-            if (keyed) {
-                hq.append(" ON (t.sym = p").append(s).append(".sym)");
-            }
+            hq.append(horizonSlave("prices" + s, "p" + s, keyed, slaveFilters[s], isOnFilters[s]));
         }
         hq.append(' ').append(horizonClause);
         if (filter != null) {
@@ -785,10 +814,7 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             }
             ref.append(") TIMESTAMP(ts)) t");
             for (int s = 0; s < slaveCount; s++) {
-                ref.append(" ASOF JOIN prices").append(s).append(" p").append(s);
-                if (keyed) {
-                    ref.append(" ON (t.sym = p").append(s).append(".sym)");
-                }
+                ref.append(asOfSlave("prices" + s, "p" + s, keyed, slaveFilters[s]));
             }
         }
 

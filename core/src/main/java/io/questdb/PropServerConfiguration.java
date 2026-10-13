@@ -54,10 +54,14 @@ import io.questdb.cutlass.line.tcp.LineTcpReceiverConfigurationHelper;
 import io.questdb.cutlass.line.udp.LineUdpReceiverConfiguration;
 import io.questdb.cutlass.pgwire.PGConfiguration;
 import io.questdb.cutlass.qwp.protocol.QwpConstants;
+import io.questdb.cutlass.qwp.server.QwpBrowserAllowedOrigins;
 import io.questdb.cutlass.qwp.server.QwpUdpReceiverConfiguration;
 import io.questdb.cutlass.text.CsvFileIndexer;
 import io.questdb.cutlass.text.TextConfiguration;
 import io.questdb.cutlass.text.types.InputFormatConfiguration;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlParser;
+import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.griffin.engine.table.parquet.ParquetCompression;
 import io.questdb.griffin.engine.table.parquet.ParquetVersion;
@@ -84,6 +88,7 @@ import io.questdb.std.ConcurrentCacheConfiguration;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.GenericLexer;
 import io.questdb.std.LowerCaseCharSequenceHashSet;
 import io.questdb.std.LowerCaseCharSequenceIntHashMap;
 import io.questdb.std.MemoryTag;
@@ -132,6 +137,8 @@ import java.util.Properties;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.LongSupplier;
+import java.util.regex.Pattern;
+import java.util.regex.PatternSyntaxException;
 
 import static io.questdb.PropServerConfiguration.JsonPropertyValueFormatter.*;
 
@@ -413,6 +420,13 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final int metadataStringPoolCapacity;
     private final MetricsConfiguration metricsConfiguration = new PropMetricsConfiguration();
     private final boolean metricsEnabled;
+    private final String metricsPersistExclude;
+    private final boolean metricsPersistEnabled;
+    private final long metricsPersistIntervalMicros;
+    private final boolean metricsPersistParquetEnabled;
+    private final long metricsPersistSyncIntervalMicros;
+    private final String metricsPersistTtl;
+    private final long metricsPersistVirtualIntervalMicros;
     private final MicrosecondClock microsecondClock;
     private final int mkdirMode;
     private final int o3CallbackQueueCapacity;
@@ -473,6 +487,7 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long queryContinuationWakeIntervalMillis;
     private final long queryMemoryLimitBytes;
     private final boolean queryWithinLatestByOptimisationEnabled;
+    private final QwpBrowserAllowedOrigins qwpBrowserAllowedOrigins;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int qwpEgressForcedZstdLevel;
     private final int qwpMaxRowsPerTable;
@@ -907,7 +922,76 @@ public class PropServerConfiguration implements ServerConfiguration {
     ) throws ServerConfigurationException, JsonException {
         this.log = log;
         this.metricsEnabled = getBoolean(properties, env, PropertyKey.METRICS_ENABLED, false);
-        this.metrics = metricsEnabled ? new Metrics(true, new MetricsRegistryImpl()) : Metrics.DISABLED;
+        this.metricsPersistEnabled = getBoolean(properties, env, PropertyKey.METRICS_PERSIST_ENABLED, true);
+        this.metricsPersistExclude = getString(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_EXCLUDE,
+                MetricsConfiguration.DEFAULT_PERSIST_EXCLUDE
+        );
+        this.metricsPersistIntervalMicros = getMillis(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_INTERVAL,
+                1_000
+        ) * 1_000;
+        this.metricsPersistParquetEnabled = getBoolean(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_PARQUET_ENABLED,
+                true
+        );
+        final long metricsPersistSyncIntervalMillis = getMillis(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_SYNC_INTERVAL,
+                -1
+        );
+        this.metricsPersistSyncIntervalMicros = metricsPersistSyncIntervalMillis < 0 ? -1 : metricsPersistSyncIntervalMillis * 1_000;
+        this.metricsPersistTtl = getString(properties, env, PropertyKey.METRICS_PERSIST_TTL, "1 WEEK");
+        this.metricsPersistVirtualIntervalMicros = getMillis(
+                properties,
+                env,
+                PropertyKey.METRICS_PERSIST_VIRTUAL_INTERVAL,
+                60_000
+        ) * 1_000;
+        if (metricsPersistIntervalMicros <= 0) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_INTERVAL.getPropertyPath(),
+                    Long.toString(metricsPersistIntervalMicros / 1_000)
+            );
+        }
+        if (metricsPersistVirtualIntervalMicros <= 0) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_VIRTUAL_INTERVAL.getPropertyPath(),
+                    Long.toString(metricsPersistVirtualIntervalMicros / 1_000)
+            );
+        }
+        final GenericLexer metricsPersistTtlLexer = new GenericLexer(4);
+        metricsPersistTtlLexer.of(metricsPersistTtl);
+        try {
+            final int ttlHoursOrMonths = SqlParser.parseTtlHoursOrMonths(metricsPersistTtlLexer);
+            PartitionBy.validateTtlGranularity(PartitionBy.DAY, ttlHoursOrMonths, 0);
+            if (SqlUtil.fetchNext(metricsPersistTtlLexer) != null) {
+                throw SqlException.$(metricsPersistTtlLexer.lastTokenPosition(), "unexpected token");
+            }
+        } catch (SqlException e) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(),
+                    metricsPersistTtl
+            );
+        }
+        try {
+            Pattern.compile(metricsPersistExclude);
+        } catch (PatternSyntaxException e) {
+            throw ServerConfigurationException.forInvalidKey(
+                    PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(),
+                    metricsPersistExclude
+            );
+        }
+        this.metrics = metricsEnabled || metricsPersistEnabled
+                ? new Metrics(true, metricsEnabled, new MetricsRegistryImpl())
+                : Metrics.DISABLED;
         this.logSqlQueryProgressExe = getBoolean(properties, env, PropertyKey.LOG_SQL_QUERY_PROGRESS_EXE, true);
         this.logLevelVerbose = getBoolean(properties, env, PropertyKey.LOG_LEVEL_VERBOSE, false);
         this.logTimestampTimezone = getString(properties, env, PropertyKey.LOG_TIMESTAMP_TIMEZONE, "Z");
@@ -2033,6 +2117,13 @@ public class PropServerConfiguration implements ServerConfiguration {
                 this.qwpUdpPort = p;
             });
             this.qwpUdpGroupIPv4Address = getIPv4Address(properties, env, PropertyKey.QWP_UDP_JOIN, "224.1.1.1");
+            try {
+                this.qwpBrowserAllowedOrigins = QwpBrowserAllowedOrigins.parse(
+                        getString(properties, env, PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS, "")
+                );
+            } catch (IllegalArgumentException e) {
+                throw new ServerConfigurationException(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath() + ": " + e.getMessage());
+            }
             this.qwpBrowserTlsTerminationEnabled = getBoolean(
                     properties,
                     env,
@@ -6372,6 +6463,11 @@ public class PropServerConfiguration implements ServerConfiguration {
         }
 
         @Override
+        public QwpBrowserAllowedOrigins getQwpBrowserAllowedOrigins() {
+            return qwpBrowserAllowedOrigins;
+        }
+
+        @Override
         public int getRecvBufferSize() {
             return httpRecvBufferSize;
         }
@@ -7202,8 +7298,43 @@ public class PropServerConfiguration implements ServerConfiguration {
     private class PropMetricsConfiguration implements MetricsConfiguration {
 
         @Override
+        public CharSequence getPersistExclude() {
+            return metricsPersistExclude;
+        }
+
+        @Override
+        public long getPersistIntervalMicros() {
+            return metricsPersistIntervalMicros;
+        }
+
+        @Override
+        public long getPersistSyncIntervalMicros() {
+            return metricsPersistSyncIntervalMicros;
+        }
+
+        @Override
+        public CharSequence getPersistTtl() {
+            return metricsPersistTtl;
+        }
+
+        @Override
+        public long getPersistVirtualIntervalMicros() {
+            return metricsPersistVirtualIntervalMicros;
+        }
+
+        @Override
         public boolean isEnabled() {
             return metricsEnabled;
+        }
+
+        @Override
+        public boolean isPersistEnabled() {
+            return metricsPersistEnabled;
+        }
+
+        @Override
+        public boolean isPersistParquetEnabled() {
+            return metricsPersistParquetEnabled;
         }
     }
 
