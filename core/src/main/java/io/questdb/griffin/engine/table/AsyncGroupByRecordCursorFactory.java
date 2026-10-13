@@ -76,6 +76,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory {
+    private static final java.util.concurrent.atomic.LongAdder CONSTANT_KEY_FRAMES = new java.util.concurrent.atomic.LongAdder();
+    private static volatile boolean constantKeyFrameCounting;
     private static final UnorderedPageFrameReducer AGGREGATE = AsyncGroupByRecordCursorFactory::aggregate;
     private static final UnorderedPageFrameReducer FILTER_AND_AGGREGATE = AsyncGroupByRecordCursorFactory::filterAndAggregate;
     // rows an index gather task reads per batch, see gatherAndAggregate()
@@ -173,6 +175,21 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             Misc.free(this, th);
             throw th;
         }
+    }
+
+    /**
+     * The frames aggregated as one group, see {@link #aggregateConstantKeyNonSharded}, since
+     * {@link #setConstantKeyFrameCountingForTesting(boolean)} turned counting on.
+     */
+    @TestOnly
+    public static long getConstantKeyFramesForTesting() {
+        return CONSTANT_KEY_FRAMES.sum();
+    }
+
+    @TestOnly
+    public static void setConstantKeyFrameCountingForTesting(boolean enabled) {
+        CONSTANT_KEY_FRAMES.reset();
+        constantKeyFrameCounting = enabled;
     }
 
     @Override
@@ -324,7 +341,6 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             final int singleKeyColumn = atom.getSingleKeyColumnIndex();
             if (fragment.isNotSharded()
                     && singleKeyColumn != -1
-                    && atom.getBatchKernels(slotId) != null
                     && frameMemoryPool.isConstantColumn(frameIndex, singleKeyColumn)) {
                 aggregateConstantKeyNonSharded(record, frameRowCount, baseRowId, atom, slotId, fragment, mapSink);
             } else if (fragment.isNotSharded()) {
@@ -358,6 +374,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             GroupByMapFragment fragment,
             RecordSink mapSink
     ) {
+        if (constantKeyFrameCounting) {
+            CONSTANT_KEY_FRAMES.increment();
+        }
         final Map map = fragment.reopenMap();
         final ObjList<GroupByFunction> functions = atom.getGroupByFunctions(slotId);
         final DirectLongList batchList = atom.getBatchList(slotId);
@@ -376,13 +395,23 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
         }
         // no other key is inserted for this frame, so the value stays where the probe found it
         mapValue.of(baseValueAddress + Map.decodeBatchOffset(Unsafe.getLong(batchAddr)));
+        if (kernels == null) {
+            final GroupByFunctionsUpdater functionUpdater = atom.getFunctionUpdater(slotId);
+            for (long r = 1; r < frameRowCount; r++) {
+                record.setRowIndex(r);
+                functionUpdater.updateExisting(mapValue, record, baseRowId + r);
+            }
+            return;
+        }
         final int capacity = kernels.getCapacity();
         for (long p = 1; p < frameRowCount; p += capacity) {
             final int n = (int) Math.min(capacity, frameRowCount - p);
             kernels.of(record, GroupByBatchKernels.MODE_RANGE, 0, p, n);
             for (int i = 0; i < functionCount; i++) {
                 final GroupByFunction function = functions.getQuick(i);
-                final GroupByBatchKernels.Args args = kernels.isKernel(i) ? kernels.prepare(i) : null;
+                final GroupByBatchKernels.Args args = !kernels.isKernel(i)
+                        ? null
+                        : function.supportsRawKernelArgs() ? kernels.prepareRaw(i) : kernels.prepare(i);
                 if (args != null) {
                     function.computeBatchKernel(mapValue, n, args);
                 } else {

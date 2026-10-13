@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.griffin.engine.table.AsyncGroupByRecordCursorFactory;
 import io.questdb.std.str.StringSink;
 import org.junit.Assert;
 import org.junit.Test;
@@ -55,6 +56,9 @@ public class CoveringIndexConstantKeyGroupByTest extends AbstractCoveringIndexQu
                     "select sym, sum((asize * ask)::double) s1, sum((bid * bsize)::double) s2, stddev_samp(asize) sd1, stddev_samp(bid) sd2,"
                             + " corr(ask, bid) c1, corr(asize, bsize) c2 from q where sym in " + KEYS + " order by sym",
                     "select sym, count() c, min(bid) mn, max(ask) mx, avg(bsize) ab, sum(asize) sa from q where sym in " + KEYS + " order by sym",
+                    // the raw kernel arguments' other type pairs, and expression arguments
+                    "select sym, weighted_avg(bsize, bid) w1, weighted_avg(bid * 2.0, asize + 1) w2, stddev_samp(bsize::long) s1,"
+                            + " stddev_samp(ask * 1.0) s2, corr(bid, bsize) c1, corr(ask * 1.0, ask * 1.0) c2 from q where sym in " + KEYS + " order by sym",
                     // a single key, and a key with one row
                     "select sym, count() c, avg(bid) a from q where sym = 'k3' order by sym",
                     "select sym, count() c, avg(bid) a, sum(bsize) s from q where sym in ('k1', 'lone') order by sym",
@@ -70,10 +74,12 @@ public class CoveringIndexConstantKeyGroupByTest extends AbstractCoveringIndexQu
         assertMemoryLeak(() -> {
             createQuotes();
             assertCoveringAgreesWithScan(
-                    "select sym, timestamp_floor('10m', ts) m, avg(ask - bid) sp, count() c from q where sym in " + KEYS + " order by sym, m"
+                    "select sym, timestamp_floor('10m', ts) m, avg(ask - bid) sp, count() c from q where sym in " + KEYS + " order by sym, m",
+                    false
             );
             assertCoveringAgreesWithScan(
-                    "select timestamp_floor('1h', ts) h, sym, sum(bsize) s from q where sym in " + KEYS + " order by h, sym"
+                    "select timestamp_floor('1h', ts) h, sym, sum(bsize) s from q where sym in " + KEYS + " order by h, sym",
+                    false
             );
         });
     }
@@ -115,13 +121,31 @@ public class CoveringIndexConstantKeyGroupByTest extends AbstractCoveringIndexQu
     }
 
     private void assertCoveringAgreesWithScan(String sql) throws Exception {
+        assertCoveringAgreesWithScan(sql, true);
+    }
+
+    // isOneGroupPerFrame: whether the covering arm must aggregate its frames as one group each,
+    // see AsyncGroupByRecordCursorFactory.aggregateConstantKeyNonSharded(); checked by the frames
+    // that path counted, so that a fixture or a gate that stops reaching it fails here
+    private void assertCoveringAgreesWithScan(String sql, boolean isOneGroupPerFrame) throws Exception {
         final String covering = sql.replace("select ", "select /*+ use_index */ ");
         final String scan = sql.replace("select ", "select /*+ no_index */ ");
         assertPlanContains(covering, "CoveringIndex");
         assertPlanContains(covering, "Async Group By");
         final StringSink coveringResult = new StringSink();
         final StringSink scanResult = new StringSink();
-        printSql(covering, coveringResult);
+        AsyncGroupByRecordCursorFactory.setConstantKeyFrameCountingForTesting(true);
+        try {
+            printSql(covering, coveringResult);
+            final long frames = AsyncGroupByRecordCursorFactory.getConstantKeyFramesForTesting();
+            if (isOneGroupPerFrame) {
+                Assert.assertTrue("the one-group path did not run: " + covering, frames > 0);
+            } else {
+                Assert.assertEquals("the one-group path ran: " + covering, 0, frames);
+            }
+        } finally {
+            AsyncGroupByRecordCursorFactory.setConstantKeyFrameCountingForTesting(false);
+        }
         printSql(scan, scanResult);
         Assert.assertTrue("no rows: " + sql, scanResult.toString().split("\n").length > 1);
         assertNumericallyEqual(scanResult.toString(), coveringResult.toString());

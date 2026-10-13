@@ -444,13 +444,77 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
             return null;
         }
         for (int i = 0, n = a.nodes.length; i < n; i++) {
-            if (!evaluate(a.nodes[i])) {
+            final Node node = a.nodes[i];
+            if (!evaluate(node)) {
                 rowPathBatchCount++;
                 return null;
+            }
+            a.addresses[i] = scratchAddr + node.offset;
+            a.types[i] = node.type;
+        }
+        kernelBatchCount++;
+        return a;
+    }
+
+    /**
+     * {@link #prepare(int)} for an aggregate whose kernel reads its arguments by
+     * {@link Args#type(int)} (see {@link GroupByFunction#supportsRawKernelArgs()}): in
+     * {@link #MODE_RANGE} over a frame, an argument that is a column is not loaded, its address is
+     * the column's own values at the batch's first row, typed by the column's type. The kernel
+     * converts them as the column's getter would.
+     */
+    public @Nullable Args prepareRaw(int functionIndex) {
+        if (mode != MODE_RANGE || block != null) {
+            return prepare(functionIndex);
+        }
+        final Args a = args.getQuiet(functionIndex);
+        if (a == null) {
+            return null;
+        }
+        for (int i = 0, n = a.nodes.length; i < n; i++) {
+            final Node node = a.nodes[i];
+            if (node.kind == KIND_COLUMN) {
+                final long addr = record.getPageAddress(node.columnIndex);
+                if (addr == 0) {
+                    rowPathBatchCount++;
+                    return null;
+                }
+                a.addresses[i] = addr + lo * ColumnType.sizeOf(node.op);
+                a.types[i] = node.op;
+            } else {
+                if (!evaluate(node)) {
+                    rowPathBatchCount++;
+                    return null;
+                }
+                a.addresses[i] = scratchAddr + node.offset;
+                a.types[i] = node.type;
             }
         }
         kernelBatchCount++;
         return a;
+    }
+
+    /**
+     * Value {@code i} of a raw kernel argument of type {@code type} (see {@link #prepareRaw(int)}),
+     * as the getDouble() of a column of that type returns it.
+     */
+    public static double rawDouble(long addr, int type, int i) {
+        switch (type) {
+            case ColumnType.DOUBLE:
+                return Unsafe.getDouble(addr + ((long) i << 3));
+            case ColumnType.FLOAT:
+                return Unsafe.getFloat(addr + ((long) i << 2));
+            case ColumnType.INT:
+                return Numbers.intToDouble(Unsafe.getInt(addr + ((long) i << 2)));
+            case ColumnType.LONG: {
+                final long value = Unsafe.getLong(addr + ((long) i << 3));
+                return value != Numbers.LONG_NULL ? value : Double.NaN;
+            }
+            case ColumnType.SHORT:
+                return Unsafe.getShort(addr + ((long) i << 1));
+            default:
+                return Unsafe.getByte(addr + i);
+        }
     }
 
     /**
@@ -1307,14 +1371,27 @@ public final class GroupByBatchKernels implements QuietCloseable, Mutable {
     public static final class Args {
         private final long[] addresses;
         private final Node[] nodes;
+        private final int[] types;
 
         private Args(Node[] nodes) {
             this.nodes = nodes;
             this.addresses = new long[nodes.length];
+            this.types = new int[nodes.length];
+            for (int i = 0; i < nodes.length; i++) {
+                types[i] = nodes[i].type;
+            }
         }
 
         public long address(int argIndex) {
             return addresses[argIndex];
+        }
+
+        /**
+         * The type of the values at {@link #address(int)}: the aggregate's argument type, except
+         * for a raw column argument, see {@link GroupByBatchKernels#prepareRaw(int)}.
+         */
+        public int type(int argIndex) {
+            return types[argIndex];
         }
     }
 

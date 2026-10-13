@@ -1564,6 +1564,12 @@ public interface CairoConfiguration {
     double getSqlCoveringScanChoiceMaxSelectivity();
 
     /**
+     * {@link #getSqlCoveringScanChoiceMaxSelectivity()} for a covering scan whose rows a GROUP BY
+     * aggregates rather than the query returning them.
+     */
+    double getSqlCoveringGroupByScanChoiceMaxSelectivity();
+
+    /**
      * Rows of a covering-index scan's page frames, up to the page frame row cap: each frame holds
      * the rows of one key in one partition, which a worker of a parallel GROUP BY or filter reads
      * from the index, row ids and covered values, so a key's rows of a partition spread over the

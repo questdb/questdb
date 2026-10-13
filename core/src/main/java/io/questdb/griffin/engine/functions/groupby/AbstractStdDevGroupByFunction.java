@@ -58,11 +58,14 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     public void computeBatchKernel(MapValue mapValue, int rowCount, GroupByBatchKernels.Args args) {
         // aggregate() per finite value, with the state held in locals
         final long valuesAddr = args.address(0);
+        final int type = args.type(0);
         double mean = mapValue.getDouble(valueIndex);
         double sum = mapValue.getDouble(valueIndex + 1);
         long count = mapValue.getLong(valueIndex + 2);
         for (int i = 0; i < rowCount; i++) {
-            final double value = Unsafe.getDouble(valuesAddr + ((long) i << 3));
+            final double value = type == ColumnType.DOUBLE
+                    ? Unsafe.getDouble(valuesAddr + ((long) i << 3))
+                    : GroupByBatchKernels.rawDouble(valuesAddr, type, i);
             if (Numbers.isFinite(value)) {
                 count++;
                 final double oldMean = mean;
@@ -133,6 +136,11 @@ public abstract class AbstractStdDevGroupByFunction extends DoubleFunction imple
     @Override
     public Function getArg() {
         return arg;
+    }
+
+    @Override
+    public boolean supportsRawKernelArgs() {
+        return true;
     }
 
     @Override

@@ -548,6 +548,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> nsumConstructors = new IntObjHashMap<>();
     private static final IntObjHashMap<VectorAggregateFunctionConstructor> sumConstructors = new IntObjHashMap<>();
     public static boolean ALLOW_FUNCTION_MEMOIZATION = true;
+    // the model a GROUP BY being generated reads, see isGroupByInput()
+    private IQueryModel groupByNestedModel;
     private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
     // the plan-time row estimates of the ASOF JOIN being compiled, each read once
     private final AsOfJoinRowEstimates asOfJoinRowEstimates = new AsOfJoinRowEstimates();
@@ -12252,6 +12254,27 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * otherwise take, and the cached factory holds both plans, each with its per-worker state.
      */
     private RecordCursorFactory generateSelectGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final IQueryModel prevGroupByNestedModel = groupByNestedModel;
+        groupByNestedModel = model.getNestedModel();
+        try {
+            return generateSelectGroupByChoice(model, executionContext);
+        } finally {
+            groupByNestedModel = prevGroupByNestedModel;
+        }
+    }
+
+    // Whether model is the table a GROUP BY reads, down its chain of nested models: its rows are
+    // aggregated, not returned, see scanInPlaceOfFrequentCovering().
+    private boolean isGroupByInput(IQueryModel model) {
+        for (IQueryModel m = groupByNestedModel; m != null; m = m.getNestedModel()) {
+            if (m == model) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private RecordCursorFactory generateSelectGroupByChoice(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final IQueryModel nested = model.getNestedModel();
         if (!configuration.isSqlIndexScanChoiceEnabled()
                 || forcedScanModel != null
@@ -20297,9 +20320,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final CoveringIndexRecordCursorFactory covering = coveringBaseOf(coveringPlan);
         try {
             // the one estimate of this compilation, bounded, see estimateSelection()
+            // a GROUP BY's input is aggregated as the covered values are decoded, which pays off up to
+            // a larger share of the table than rows the query returns
+            final double maxSelectivity = isGroupByInput(model)
+                    ? configuration.getSqlCoveringGroupByScanChoiceMaxSelectivity()
+                    : configuration.getSqlCoveringScanChoiceMaxSelectivity();
             if (covering == null
                     || !covering.estimateSelection(executionContext, COVERING_CHOICE_MIN_SCANNED_ROWS, coveringEstimate)
-                    || coveringEstimate[0] <= configuration.getSqlCoveringScanChoiceMaxSelectivity() * coveringEstimate[1]) {
+                    || coveringEstimate[0] <= maxSelectivity * coveringEstimate[1]) {
                 return coveringPlan;
             }
         } catch (Throwable th) {
