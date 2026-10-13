@@ -47,17 +47,13 @@ public enum PropertyKey implements ConfigPropertyKey {
     CAIRO_SQL_JIT_MODE("cairo.sql.jit.mode"),
     CAIRO_COMMIT_MODE("cairo.commit.mode"),
     CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED("cairo.adaptive.epoch.column.sync.batched"),
-    // See CairoConfiguration.isWalCommitWritebackDrainEnabled.
     CAIRO_WAL_COMMIT_WRITEBACK_DRAIN("cairo.wal.commit.writeback.drain"),
-    // See CairoConfiguration.getAdaptiveEpochIntervalMs.
     CAIRO_ADAPTIVE_EPOCH_INTERVAL("cairo.adaptive.epoch.interval"),
-    // See CairoConfiguration.getAdaptiveEpochMaxRows.
     CAIRO_ADAPTIVE_EPOCH_MAX_ROWS("cairo.adaptive.epoch.max.rows"),
-    // See CairoConfiguration.isAdaptiveRecoveryRollForwardEnabled.
-    CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED("cairo.adaptive.recovery.roll.forward.enabled"),
-    // See CairoConfiguration.isAdaptiveEpochFlushOnClose.
+    // Test-oriented only: not on the documented server property surface, so it is kept out of `show
+    // parameters` and server.conf.
+    CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED("cairo.adaptive.recovery.roll.forward.enabled", false, true),
     CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE("cairo.adaptive.epoch.flush.on.close"),
-    // See CairoConfiguration.getAdaptiveCommitGroupWindowUs.
     CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW("cairo.adaptive.commit.group.window"),
     CAIRO_CREATE_AS_SELECT_RETRY_COUNT("cairo.create.as.select.retry.count"),
     CAIRO_DEFAULT_MAP_TYPE("cairo.default.map.type"),

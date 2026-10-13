@@ -891,7 +891,6 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.adaptive.epoch.flush.on.close\tQDB_CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.adaptive.epoch.interval\tQDB_CAIRO_ADAPTIVE_EPOCH_INTERVAL\t60000\tdefault\tfalse\tfalse\n" +
                                     "cairo.adaptive.epoch.max.rows\tQDB_CAIRO_ADAPTIVE_EPOCH_MAX_ROWS\t5000000\tdefault\tfalse\tfalse\n" +
-                                    "cairo.adaptive.recovery.roll.forward.enabled\tQDB_CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.copy\tQDB_CAIRO_ATTACH_PARTITION_COPY\tfalse\tdefault\tfalse\tfalse\n" +
                                     "cairo.attach.partition.suffix\tQDB_CAIRO_ATTACH_PARTITION_SUFFIX\t.attachable\tdefault\tfalse\tfalse\n" +
                                     "cairo.character.store.capacity\tQDB_CAIRO_CHARACTER_STORE_CAPACITY\t1024\tdefault\tfalse\tfalse\n" +
