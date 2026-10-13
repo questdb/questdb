@@ -484,6 +484,14 @@ public class PageFrameAddressCache implements QuietCloseable, Mutable {
         return coveredColumns.getQuick(frameIndex) != null;
     }
 
+    /**
+     * Whether the frame can decode a declared subset of its rows alone, see
+     * {@link PageFrameMemoryPool#setRecordAtRows}: a Parquet or a single-key covered frame.
+     */
+    public boolean isFrameRowFilterable(int frameIndex) {
+        return getFrameFormat(frameIndex) == PartitionFormat.PARQUET || isFrameSingleKeyCovered(frameIndex);
+    }
+
     public boolean isFrameSingleKeyCovered(int frameIndex) {
         return isFrameCovered(frameIndex) && coveredKeys.getQuick(frameIndex) != SymbolTable.VALUE_NOT_FOUND;
     }

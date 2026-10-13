@@ -1793,6 +1793,11 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         }
 
         @Override
+        public void setRecordAtRows(@Nullable RowIdSource source) {
+            baseCursor.setRecordAtRows(source);
+        }
+
+        @Override
         public long size() {
             return baseCursor.size();
         }
