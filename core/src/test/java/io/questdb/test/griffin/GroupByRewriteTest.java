@@ -311,7 +311,7 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSumDeclaredOperandReusedOutsideAggregate() throws Exception {
+    public void testSumDeclaredOperandMatchesLiteral() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x INT)");
             execute("INSERT INTO t VALUES (1), (1), (2)");

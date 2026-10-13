@@ -9541,8 +9541,6 @@ public class SqlOptimiser implements Mutable {
                 return agg;
             }
 
-            agg = ExpressionNode.deepClone(expressionNodePool, agg);
-            op = agg.rhs;
             final ExpressionNode column = isColumnLhs ? op.lhs : op.rhs;
             final ExpressionNode constant = isColumnLhs ? op.rhs : op.lhs;
             if (Chars.equals(op.token, '*')) { // sum(x*10) == sum(x)*10
