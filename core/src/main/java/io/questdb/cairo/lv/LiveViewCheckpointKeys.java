@@ -26,6 +26,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.std.Hash;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 import java.nio.ByteOrder;
 
@@ -43,8 +44,9 @@ import java.nio.ByteOrder;
  * {@link LiveViewCheckpointMetadata#compareBytes}, unsigned byte by byte and then by
  * length, which is the order every persisted partition map is sorted in.
  * <p>
- * The compare and equality loops stay in Java and read eight bytes at a time: a key is
- * tens of bytes, so a native call per probe would cost more than the comparison.
+ * The compare loop stays in Java and reads eight bytes at a time: a key is tens of bytes,
+ * so a native call per probe would cost more than the comparison. Equality goes through
+ * {@link Vect#memeq}, which stays in Java below 128 bytes for the same reason.
  */
 final class LiveViewCheckpointKeys {
     private static final boolean IS_LITTLE_ENDIAN = ByteOrder.nativeOrder() == ByteOrder.LITTLE_ENDIAN;
@@ -80,21 +82,7 @@ final class LiveViewCheckpointKeys {
     }
 
     static boolean equals(long left, int leftLength, long right, int rightLength) {
-        if (leftLength != rightLength) {
-            return false;
-        }
-        int i = 0;
-        for (; i <= leftLength - Long.BYTES; i += Long.BYTES) {
-            if (Unsafe.getLong(left + i) != Unsafe.getLong(right + i)) {
-                return false;
-            }
-        }
-        for (; i < leftLength; i++) {
-            if (Unsafe.getByte(left + i) != Unsafe.getByte(right + i)) {
-                return false;
-            }
-        }
-        return true;
+        return leftLength == rightLength && Vect.memeq(left, right, leftLength);
     }
 
     /**
