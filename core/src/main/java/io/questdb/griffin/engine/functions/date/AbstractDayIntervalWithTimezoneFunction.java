@@ -28,6 +28,7 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.std.Interval;
@@ -124,5 +125,25 @@ public abstract class AbstractDayIntervalWithTimezoneFunction extends AbstractDa
         } catch (NumericException e) {
             return interval.of(Interval.NULL.getLo(), Interval.NULL.getHi());
         }
+    }
+
+    @Override
+    public boolean hasPerCallState() {
+        return super.hasPerCallState() || FunctionFlags.hasPerCallState(tzFunc);
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(tzFunc);
+    }
+
+    @Override
+    public boolean isRandom() {
+        return super.isRandom() || FunctionFlags.isRandom(tzFunc);
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(tzFunc);
     }
 }

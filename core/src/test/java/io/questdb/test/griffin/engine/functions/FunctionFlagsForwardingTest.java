@@ -51,12 +51,18 @@ import java.util.stream.Stream;
  * and isRowPure()). A function that holds other functions and inherits Function's defaults hides
  * an argument's properties: json_extract('{"a":' || timestamp_sequence(0, 1) || '}', '$.a') would
  * be copied per worker, and each copy would count from its own start. So every concrete function
- * class under io.questdb that holds a Function, an array of them or a collection of them must
- * forward the three, through UnaryFunction and its siblings or by its own override, or be in
- * {@link #ALLOWED} with the reason forwarding would be wrong.
+ * class under io.questdb that holds a Function, an array or a collection of them, or a
+ * VirtualRecord over them (a window's PARTITION BY keys), must forward the three, or be in
+ * {@link #ALLOWED} with the reason forwarding would be wrong. A forward through UnaryFunction and
+ * its siblings covers their args(). A class's own override must be declared in the class that
+ * declares the last of its function fields, or below it: an override in a base class does not
+ * know the fields a subclass adds (lag()'s default value over BaseWindowFunction's arg). An
+ * anonymous class's captured locals (val$x) count as its fields.
  */
 public class FunctionFlagsForwardingTest {
     private static final Map<String, String> ALLOWED = new HashMap<>();
+    // function fields an override need not read, with the reason
+    private static final Map<String, String> ALLOWED_FIELDS = new HashMap<>();
 
     static {
         // A scalar sub-query is run once per execution: the function's value is one per
@@ -65,6 +71,8 @@ public class FunctionFlagsForwardingTest {
         ALLOWED.put("io.questdb.griffin.engine.functions.bind.CompiledFilterScalarSubQuery$DoubleLink", "one value per execution");
         ALLOWED.put("io.questdb.griffin.engine.functions.bind.CompiledFilterScalarSubQuery$IntLink", "one value per execution");
         ALLOWED.put("io.questdb.griffin.engine.functions.bind.CompiledFilterScalarSubQuery$LongLink", "one value per execution");
+        // built from keyBranches, which the forward reads
+        ALLOWED_FIELDS.put("io.questdb.griffin.engine.functions.conditional.SwitchFunctionFactory$SymbolSwitchPicker#intMap", "alias of keyBranches");
     }
     private static final String[] METHODS = {"hasPerCallState", "isRandom", "isNonDeterministic"};
 
@@ -94,9 +102,22 @@ public class FunctionFlagsForwardingTest {
                     continue;
                 }
                 for (String m : METHODS) {
-                    final Method method = clazz.getMethod(m);
-                    if (method.getDeclaringClass() == Function.class) {
+                    final Class<?> declaring = declaringClass(clazz, m);
+                    if (declaring == Function.class) {
                         missing.add(name + "." + m + "() inherits Function's default, holds " + held);
+                    } else if (!declaring.isInterface()) {
+                        final String unread = unreadFields(declaring, m);
+                        if (unread != null) {
+                            missing.add(name + "." + m + "(), declared in " + declaring.getName() + ", " + unread);
+                        }
+                        // the override must see every field: none may be declared below it
+                        for (Class<?> c = clazz; c != declaring; c = c.getSuperclass()) {
+                            final List<String> below = declaredFunctionFields(c);
+                            if (!below.isEmpty()) {
+                                missing.add(name + "." + m + "() is declared in " + declaring.getName() + ", above the fields " + below + " of " + c.getName());
+                                break;
+                            }
+                        }
                     }
                 }
             }
@@ -107,21 +128,72 @@ public class FunctionFlagsForwardingTest {
         }
     }
 
+    // The function fields the class's own m() neither reads (GETFIELD) nor leaves to the
+    // superclass's m() through super.m(): null for none. An m() that returns true outright needs
+    // no field.
+    private static String unreadFields(Class<?> declaring, String m) throws Exception {
+        final ClassFile cf = ClassFile.read(declaring);
+        final byte[] code = cf.code(m, "()Z");
+        if (code == null || (code.length == 2 && code[0] == 0x04 && (code[1] & 0xff) == 0xac)) {
+            return null;
+        }
+        final java.util.Set<String> read = cf.refs(code, 0xb4, 9);
+        final boolean callsSuper = cf.refs(code, 0xb7, 10).contains(m);
+        final List<String> unread = new ArrayList<>();
+        for (Class<?> c = declaring; c != null && c != Object.class; c = c.getSuperclass()) {
+            if (c != declaring && callsSuper) {
+                break;
+            }
+            for (String field : declaredFunctionFields(c)) {
+                if (!read.contains(field) && !ALLOWED_FIELDS.containsKey(c.getName() + "#" + field)) {
+                    unread.add(c.getSimpleName() + "." + field);
+                }
+            }
+        }
+        return unread.isEmpty() ? null : "does not read " + unread;
+    }
+
+    // The class whose own code is the m() the class runs. javac adds a synthetic bridge to a
+    // public class for a public method it inherits from a package-private one, which calls
+    // super.m(): that bridge is skipped.
+    private static Class<?> declaringClass(Class<?> clazz, String m) throws Exception {
+        for (Class<?> c = clazz; c != null; c = c.getSuperclass()) {
+            for (Method method : c.getDeclaredMethods()) {
+                if (method.getName().equals(m) && method.getParameterCount() == 0 && !method.isSynthetic() && !method.isBridge()) {
+                    return c;
+                }
+            }
+        }
+        return clazz.getMethod(m).getDeclaringClass();
+    }
+
+    private static List<String> declaredFunctionFields(Class<?> c) {
+        final List<String> held = new ArrayList<>();
+        for (Field field : c.getDeclaredFields()) {
+            // a synthetic field is an anonymous or local class's captured local (val$x), or its
+            // outer instance (this$0), which is not an argument
+            if (!Modifier.isStatic(field.getModifiers())
+                    && (!field.isSynthetic() || field.getName().startsWith("val$"))
+                    && holdsFunction(field.getGenericType())) {
+                held.add(field.getName());
+            }
+        }
+        return held;
+    }
+
     private static List<String> heldFunctionFields(Class<?> clazz) {
         final List<String> held = new ArrayList<>();
         for (Class<?> c = clazz; c != null && c != Object.class; c = c.getSuperclass()) {
-            for (Field field : c.getDeclaredFields()) {
-                if (!Modifier.isStatic(field.getModifiers()) && !field.isSynthetic() && holdsFunction(field.getGenericType())) {
-                    held.add(field.getName());
-                }
-            }
+            held.addAll(declaredFunctionFields(c));
         }
         return held;
     }
 
     private static boolean holdsFunction(Type type) {
         if (type instanceof Class<?> c) {
-            return Function.class.isAssignableFrom(c) || (c.isArray() && holdsFunction(c.getComponentType()));
+            return Function.class.isAssignableFrom(c)
+                    || io.questdb.cairo.sql.VirtualRecord.class.isAssignableFrom(c)
+                    || (c.isArray() && holdsFunction(c.getComponentType()));
         }
         if (type instanceof GenericArrayType g) {
             return holdsFunction(g.getGenericComponentType());
@@ -142,5 +214,107 @@ public class FunctionFlagsForwardingTest {
             }
         }
         return false;
+    }
+
+    // A minimal class file reader: the constant pool, and a no-argument method's bytecode.
+    private static final class ClassFile {
+        private final byte[] b;
+        private final int[] offsets;
+        private final byte[] tags;
+        private int methodsAt;
+
+        private ClassFile(byte[] b) {
+            this.b = b;
+            final int count = u2(8);
+            offsets = new int[count];
+            tags = new byte[count];
+            int p = 10;
+            for (int i = 1; i < count; i++) {
+                tags[i] = b[p];
+                offsets[i] = p + 1;
+                switch (b[p]) {
+                    case 1 -> p += 3 + u2(p + 1);
+                    case 3, 4, 9, 10, 11, 12, 17, 18 -> p += 5;
+                    case 5, 6 -> {
+                        p += 9;
+                        i++;
+                    }
+                    case 7, 8, 16, 19, 20 -> p += 3;
+                    case 15 -> p += 4;
+                    default -> throw new IllegalStateException("constant tag " + b[p]);
+                }
+            }
+            p += 6;
+            p += 2 + 2 * u2(p);
+            p = skipMembers(p);
+            methodsAt = p;
+        }
+
+        static ClassFile read(Class<?> c) throws Exception {
+            try (java.io.InputStream in = c.getClassLoader().getResourceAsStream(c.getName().replace('.', '/') + ".class")) {
+                Assert.assertNotNull(c.getName(), in);
+                return new ClassFile(in.readAllBytes());
+            }
+        }
+
+        byte[] code(String name, String desc) {
+            int p = methodsAt;
+            final int n = u2(p);
+            p += 2;
+            for (int i = 0; i < n; i++) {
+                final boolean match = utf8(u2(p + 2)).equals(name) && utf8(u2(p + 4)).equals(desc);
+                final int attrs = u2(p + 6);
+                p += 8;
+                for (int a = 0; a < attrs; a++) {
+                    final int len = u4(p + 2);
+                    if (match && utf8(u2(p)).equals("Code")) {
+                        final int codeLen = u4(p + 10);
+                        return java.util.Arrays.copyOfRange(b, p + 14, p + 14 + codeLen);
+                    }
+                    p += 6 + len;
+                }
+            }
+            return null;
+        }
+
+        // the member names the instructions with the opcode reference through constants of the tag
+        java.util.Set<String> refs(byte[] code, int opcode, int tag) {
+            final java.util.Set<String> names = new java.util.HashSet<>();
+            for (int i = 0; i + 2 < code.length; i++) {
+                if ((code[i] & 0xff) == opcode) {
+                    final int index = ((code[i + 1] & 0xff) << 8) | (code[i + 2] & 0xff);
+                    if (index > 0 && index < tags.length && tags[index] == tag) {
+                        names.add(utf8(u2(offsets[u2(offsets[index] + 2)])));
+                    }
+                }
+            }
+            return names;
+        }
+
+        private int skipMembers(int p) {
+            final int n = u2(p);
+            p += 2;
+            for (int i = 0; i < n; i++) {
+                final int attrs = u2(p + 6);
+                p += 8;
+                for (int a = 0; a < attrs; a++) {
+                    p += 6 + u4(p + 2);
+                }
+            }
+            return p;
+        }
+
+        private int u2(int p) {
+            return ((b[p] & 0xff) << 8) | (b[p + 1] & 0xff);
+        }
+
+        private int u4(int p) {
+            return (u2(p) << 16) | u2(p + 2);
+        }
+
+        private String utf8(int index) {
+            final int p = offsets[index];
+            return new String(b, p + 2, u2(p), java.nio.charset.StandardCharsets.UTF_8);
+        }
     }
 }

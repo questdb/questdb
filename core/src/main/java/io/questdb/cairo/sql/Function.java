@@ -350,7 +350,6 @@ public interface Function extends Closeable, StatefulAtom, Plannable {
         return this == obj;
     }
 
-
     /**
      * Returns true if the function or one of its arguments keeps state from call to call within
      * an execution, so that its value at a row depends on how many calls came before it:

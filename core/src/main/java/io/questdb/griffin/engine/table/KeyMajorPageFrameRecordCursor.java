@@ -836,7 +836,11 @@ public class KeyMajorPageFrameRecordCursor extends AbstractPageFrameRecordCursor
                 // workers' window CPU). Up to RANK_CHECK_MAX_ROWS the rank is checked by reading;
                 // past it by counting the key's rows before the found one, which the index answers
                 // per generation without reading them (countMatchesClamped()), and checking the
-                // found row is the key's: the same claim, at a bounded cost.
+                // found row is the key's. That check is consistent with the index's own counts,
+                // not independent of the seek: both read a generation's ordinals through
+                // clippedOrdinals(), so an error in a generation's lower ordinal for lo moves the
+                // row and the count alike and passes. The reading check below the bound, and
+                // PostingReaderSelectKthMatchTest's drain comparison, catch that.
                 assert rankLo > RANK_CHECK_MAX_ROWS
                         ? isRankRow(reader, indexKey, lo, hi, entryMax, row, rankLo)
                         : row == rankRowByReading(reader, indexKey, lo, hi, rankLo) : "rank seek found another row [keyIndex=" + keyIndex + ", frameIndex=" + frameIndex + ", rankLo=" + rankLo + ']';

@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.window;
 
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
+import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
 import io.questdb.std.Misc;
@@ -88,5 +89,25 @@ public class AsyncWindowFoldEcho extends SumDoubleWindowFunctionFactory.SumOverU
 
     @Override
     public void keyRunStart() {
+    }
+
+    @Override
+    public boolean hasPerCallState() {
+        return super.hasPerCallState() || FunctionFlags.hasPerCallState(function);
+    }
+
+    @Override
+    public boolean isNonDeterministic() {
+        return super.isNonDeterministic() || FunctionFlags.isNonDeterministic(function);
+    }
+
+    @Override
+    public boolean isRandom() {
+        return super.isRandom() || FunctionFlags.isRandom(function);
+    }
+
+    @Override
+    public boolean isStableWithinExecution() {
+        return super.isStableWithinExecution() && FunctionFlags.isStableWithinExecution(function);
     }
 }
