@@ -82,7 +82,8 @@ public interface HttpSessionStore {
     /**
      * Check if the credential carried by a request has already been verified for the session recently,
      * that is, within the credential revalidation interval. If it has, the request can use the session
-     * without verifying the credential again.
+     * without verifying the credential again. A credential whose verification cannot be reused, see
+     * {@link HttpSessionCredential#isVerificationReusable()}, is never verified for the session this way.
      *
      * @param session               session sent with the request
      * @param credentialFingerprint fingerprint of the Authorization header of the request
@@ -268,9 +269,11 @@ public interface HttpSessionStore {
         }
 
         void setVerifiedCredential(@Nullable HttpSessionCredential credential, byte @Nullable [] credentialFingerprint, long verifiedAt) {
+            // without a fingerprint, no request matches the credential, and each one that carries it verifies it again
+            final boolean isReusable = credentialFingerprint != null && (credential == null || credential.isVerificationReusable());
             verifiedCredential = new VerifiedCredential(
                     credential,
-                    credentialFingerprint != null ? credentialFingerprint.clone() : null,
+                    isReusable ? credentialFingerprint.clone() : null,
                     verifiedAt
             );
         }
@@ -294,8 +297,8 @@ public interface HttpSessionStore {
         /**
          * Immutable record of the credential that authenticated the principal of the session last:
          * the credential itself, the fingerprint of the Authorization header that carried it, if the store
-         * reuses verified credentials, and the time of the authentication. Replaced in a single volatile
-         * store, like {@link RotationInfo}.
+         * reuses verified credentials and the credential allows it, and the time of the authentication.
+         * Replaced in a single volatile store, like {@link RotationInfo}.
          */
         private record VerifiedCredential(HttpSessionCredential credential, byte[] fingerprint, long verifiedAt) {
         }

@@ -61,7 +61,8 @@ import static io.questdb.cutlass.http.HttpConstants.SESSION_ID_PREFIX;
  * the session verified the same credential within {@code credentialRevalidationInterval}. Otherwise, the
  * credential is verified again, and if it is rejected, the session is destroyed: a client can never fall
  * back to its session after presenting a credential the server refuses. A revalidation interval of 0
- * verifies the credential of every such request.
+ * verifies the credential of every such request, and so does a credential whose verification cannot be
+ * reused, see {@link HttpSessionCredential#isVerificationReusable()}.
  */
 public class HttpSessionStoreImpl implements HttpSessionStore {
     private static final Log LOG = LogFactory.getLog(HttpSessionStoreImpl.class);

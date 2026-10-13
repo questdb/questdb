@@ -44,4 +44,16 @@ public interface HttpSessionCredential {
      * @return false once the credential has been revoked, true otherwise
      */
     boolean isValid();
+
+    /**
+     * Tells whether the session can vouch for the credential once it has verified it: a later request of the
+     * session that carries the same credential is not verified again until the credential revalidation
+     * interval passes. A credential whose verification has a side effect the session must not skip, such as
+     * a token whose TTL slides each time it is verified, returns false, and is verified on every request.
+     *
+     * @return true if a verification of the credential can serve the later requests of the session
+     */
+    default boolean isVerificationReusable() {
+        return true;
+    }
 }

@@ -95,6 +95,33 @@ public class HttpSessionStoreImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCredentialWithoutReusableVerification() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(START_MICROS);
+            final HttpSessionStore store = newStore(REVALIDATION_INTERVAL);
+            try (HttpConnectionContext context = newContext()) {
+                // e.g. a REST token: verifying it slides its TTL, so the session never vouches for it
+                final AtomicBoolean tokenValid = new AtomicBoolean(true);
+                final HttpSessionCredential token = newNonReusableCredential(tokenValid);
+                final HttpSessionStore.SessionInfo session = createSession(store, context, "alice", token, fingerprint(1));
+                final String sessionId = session.getSessionId();
+                Assert.assertFalse(store.isCredentialVerified(session, fingerprint(1)));
+                store.setVerifiedCredential(session, token, fingerprint(1));
+                Assert.assertFalse(store.isCredentialVerified(session, fingerprint(1)));
+
+                // a credential the session can vouch for is reused as usual
+                store.setVerifiedCredential(session, () -> true, fingerprint(2));
+                Assert.assertTrue(store.isCredentialVerified(session, fingerprint(2)));
+
+                // the session still ends when the token it was opened with is revoked
+                tokenValid.set(false);
+                Assert.assertNull(store.verifySessionId(sessionId, context));
+                Assert.assertTrue(session.isInvalid());
+            }
+        });
+    }
+
+    @Test
     public void testDestroySessions() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(START_MICROS);
@@ -248,6 +275,20 @@ public class HttpSessionStoreImplTest extends AbstractCairoTest {
 
     private static HttpConnectionContext newContext() {
         return new HttpConnectionContext(new DefaultHttpServerConfiguration(configuration), PlainSocketFactory.INSTANCE);
+    }
+
+    private static HttpSessionCredential newNonReusableCredential(AtomicBoolean valid) {
+        return new HttpSessionCredential() {
+            @Override
+            public boolean isValid() {
+                return valid.get();
+            }
+
+            @Override
+            public boolean isVerificationReusable() {
+                return false;
+            }
+        };
     }
 
     private static HttpSessionStore newStore(long revalidationInterval) {
