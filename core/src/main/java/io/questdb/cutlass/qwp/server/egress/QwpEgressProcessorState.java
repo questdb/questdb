@@ -51,6 +51,7 @@ import io.questdb.log.LogFactory;
 import io.questdb.mp.SCSequence;
 import io.questdb.std.Chars;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.AssociativeCache;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.QuietCloseable;
@@ -284,6 +285,12 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * {@link QwpEgressUpgradeProcessor} reaches the cache-put site.
      */
     private String streamingSqlText;
+    // A finished query's factory waiting for endStreaming to close its cursor before it goes back to
+    // the select cache. The cache can be shared by every network worker, so a factory must never be
+    // visible in it while a cursor of it is still open on this connection.
+    private AssociativeCache<RecordCursorFactory> pendingCache;
+    private RecordCursorFactory pendingCacheFactory;
+    private String pendingCacheSqlText;
     private boolean wsHandshakeSent;
     // Native ZSTD_CCtx handle (pointer from Zstd.createCCtx). 0 means not yet
     // allocated. Lives across queries on the same connection because the
@@ -633,6 +640,24 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
      * Returns {@code null} if streaming isn't active or the factory has
      * already been detached; callers should null-check before caching.
      */
+    /**
+     * Hands the finished query's factory to {@code cache}: it leaves the state's ownership now and is
+     * put into the cache by {@link #endStreaming()}, after the query's cursors are closed (or freed,
+     * if closing them failed). Returns false, and leaves the factory to the state, when there is no
+     * factory or no SQL text to cache it under.
+     */
+    public boolean cacheStreamingFactoryOnEnd(AssociativeCache<RecordCursorFactory> cache) {
+        if (streamingFactory == null || streamingSqlText == null) {
+            return false;
+        }
+        Misc.free(pendingCacheFactory); // never set twice for one query; belt and braces
+        pendingCacheFactory = streamingFactory;
+        pendingCacheSqlText = streamingSqlText;
+        pendingCache = cache;
+        streamingFactory = null;
+        return true;
+    }
+
     public RecordCursorFactory detachStreamingFactory() {
         RecordCursorFactory detached = streamingFactory;
         streamingFactory = null;
@@ -693,6 +718,24 @@ public class QwpEgressProcessorState implements QuietCloseable, ConnectionAware 
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingCursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingPageFrameCursor);
         cleanupFailure = Misc.freeBestEffort(cleanupFailure, streamingFactory);
+        final RecordCursorFactory pendingFactory = this.pendingCacheFactory;
+        final AssociativeCache<RecordCursorFactory> pendingCache = this.pendingCache;
+        final String pendingSqlText = this.pendingCacheSqlText;
+        this.pendingCacheFactory = null;
+        this.pendingCache = null;
+        this.pendingCacheSqlText = null;
+        if (pendingFactory != null) {
+            if (cleanupFailure == null) {
+                // the cursors are closed: the factory is idle and can be reused by any worker
+                try {
+                    pendingCache.put(pendingSqlText, pendingFactory);
+                } catch (Throwable th) {
+                    cleanupFailure = th;
+                }
+            } else {
+                cleanupFailure = Misc.freeBestEffort(cleanupFailure, pendingFactory);
+            }
+        }
 
         streamingColumnCount = 0;
         streamingBatchSeq = 0;
