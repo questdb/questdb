@@ -2023,7 +2023,7 @@ public class PropServerConfiguration implements ServerConfiguration {
                     properties,
                     env,
                     PropertyKey.CAIRO_PARTITION_COMPACTION_TABLE_PRESSURE_DEAD_RATIO,
-                    Double.toString(Math.min(0.5, partitionCompactionDeadRowsRatio / 2))
+                    Double.toString(Math.min(0.5, partitionCompactionDeadRowsRatio / 2.0))
             );
             if (!Double.isFinite(partitionCompactionTablePressureDeadRatio)
                     || partitionCompactionTablePressureDeadRatio <= 0
