@@ -14619,7 +14619,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // expression, is the row's alone (isRowPure()): the window's compiled function does not carry
     // their properties up (a lag()'s offset and default, the partition keys of its map). Each one
     // that is not a column or a constant is compiled again against the window's input, checked
-    // and freed. One that does not compile on its own is taken as impure.
+    // and freed. A sub-query, or one that does not compile on its own, is taken as impure.
     private boolean isWindowExpressionRowPure(WindowExpression window, RecordMetadata metadata, SqlExecutionContext executionContext) {
         final ExpressionNode ast = window.getAst();
         if (ast != null) {
@@ -14650,6 +14650,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private boolean isNodeRowPure(@Nullable ExpressionNode node, RecordMetadata metadata, SqlExecutionContext executionContext) {
         if (node == null || node.type == LITERAL || node.type == CONSTANT) {
             return true;
+        }
+        // a copy would run the sub-query again: impure, without generating it a second time
+        if (hasSubQuery(node)) {
+            return false;
         }
         Function function = null;
         try {
