@@ -71,6 +71,13 @@ public class FrameProjectionTest extends AbstractCairoTest {
             "select ts, (bid + ask) / 2 mid from q where sym = 'C' order by mid, ts",
             // NULLs from a column top
             "select ts, n + 1 n1, (bid + ask) / 2 mid from q where x % 5 = 1",
+            // TAQ idx 15: an order over a projected column memoizes it, light and materialized sorts
+            "select ts, (bid + ask) / 2 mid from q where sym = 'A' order by mid desc",
+            "select ts, mid from (select ts, (bid + ask) / 2 mid from q where sym = 'A' union all " +
+                    "select ts, (bid + ask) / 2 mid from q where 1 = 0) order by mid desc",
+            "select ts, (bid + ask) / 2 mid, bsize * 2 b2 from q where sym = 'B' order by b2, mid desc, ts",
+            // a memoized column another column reads
+            "select ts, (bid + ask) / 2 mid, mid * 3 m3 from q where sym = 'A' order by mid desc",
     };
 
     @Test
@@ -155,6 +162,20 @@ public class FrameProjectionTest extends AbstractCairoTest {
                 createTable(engine, ctx);
                 assertArms(engine, ctx, true);
             }, configuration, LOG);
+        });
+    }
+
+    @Test
+    public void testMemoizedColumnIsProjected() throws Exception {
+        // the column the ORDER BY reads twice per row is memoized, the filtering threads compute it
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext);
+            setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+            try (RecordCursorFactory factory = select("select ts, (bid + ask) / 2 mid from q where sym = 'A' order by mid desc")) {
+                final FrameProjection projection = findProjection(factory);
+                Assert.assertNotNull(projection);
+                Assert.assertEquals(1, projection.getColumnCount());
+            }
         });
     }
 
