@@ -1683,8 +1683,9 @@ public class LateralJoinTest extends AbstractCairoTest {
                     .assertBinds(cases);
             bindVariableService.clear();
             bindVariableService.setInt(0, 5);
-            printSql("EXPLAIN " + sql);
-            Assert.assertFalse(sink.toString().contains("Lateral Null Check"));
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .assertsPlanNotContaining("Lateral Null Check");
         });
     }
 
@@ -1835,12 +1836,11 @@ public class LateralJoinTest extends AbstractCairoTest {
                 assertQuery(sql)
                         .noLeakCheck()
                         .expectSize()
+                        .withPlanNotContaining("Lateral Null Check")
                         .returns("""
                                 id\ttid\trid
                                 1\t10\t100
                                 """);
-                printSql("EXPLAIN " + sql);
-                Assert.assertFalse(sql, sink.toString().contains("Lateral Null Check"));
             }
         });
     }
