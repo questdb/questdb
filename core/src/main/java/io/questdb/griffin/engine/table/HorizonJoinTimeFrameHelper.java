@@ -705,10 +705,11 @@ public class HorizonJoinTimeFrameHelper implements QuietCloseable {
                         // Without the window switch, the lookup clears the cache at every new
                         // position. With it, this is the first lookup since toTop(), and an entry
                         // of an earlier walk may hold a row above this position. The clear keeps
-                        // the capacity, see HorizonJoinMatcher#toTop(), and leaves no entry from
-                        // before a drop of the key cache.
+                        // the capacity, see HorizonJoinMatcher#toTop(). restartRowId already holds
+                        // Long.MIN_VALUE here: only dropKeyCache() sets it, which neither a helper
+                        // without the window switch nor the first lookup since toTop() reaches,
+                        // and toTop() resets it.
                         keyToRowIdMap.clear();
-                        restartRowId = Long.MIN_VALUE;
                     } else {
                         dropKeyCache(keyToRowIdMap, asOfRowId);
                     }

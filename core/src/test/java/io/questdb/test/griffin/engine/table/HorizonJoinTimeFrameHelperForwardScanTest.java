@@ -211,7 +211,7 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
         // key at row 500, as a worker does when it walks an earlier page frame after a later one:
         // each key's latest row there lies below the row that the cache holds for it, so the first
         // lookup of every walk must empty the cache. The 10 entries fill the small cache densely
-        // and the two caches of 1,024 slots sparsely, as a cache that a deep lookup grew is after
+        // and the two caches of 2,048 slots sparsely, as a cache that a deep lookup grew is after
         // a walk of shallow lookups. The large caches run on two of the maps that the matcher can
         // pick for a key cache: Unordered4Map, for an INT or SYMBOL key, and OrderedMap, for a key
         // of several columns. Every lookup of all 300 walks must find the latest row of its key at
@@ -762,7 +762,6 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                         addDenseRun(positions, keys, batchPosition, 600);
                         addDenseRun(positions, keys, batchPosition + 1_000_000, 600);
                         helper.toTop();
-                        map.clear();
                         final long[] rows = lookupWithoutReset(helper, cursor, map, positions, keys);
                         Assert.assertTrue(helper.isForwardScanMode());
                         for (int i = 0, n = rows.length; i < n; i++) {
@@ -827,7 +826,6 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                 Assert.assertTrue(helper.isForwardScanMode());
 
                 helper.toTop();
-                map.clear();
                 Assert.assertFalse(helper.isForwardScanMode());
                 final long[] sparseRows = lookupWithoutReset(helper, cursor, map, sparsePositions, sparseKeys);
                 Assert.assertFalse(helper.isForwardScanMode());
