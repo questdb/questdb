@@ -241,11 +241,11 @@ public final class LiveViewCheckpointOpenSegmentCost {
     private long estimateKeyed(long scanCostRows, long keyCount) {
         final long scan = keyedScanNanos > 0 && keyedScanCostRows > 0
                 ? scale(keyedScanNanos, keyedScanCostRows, scanCostRows)
-                : saturatedMultiply(scanCostRows, COLD_KEYED_NANOS_PER_COST_ROW);
+                : Numbers.saturatedMultiplyNonNegative(scanCostRows, COLD_KEYED_NANOS_PER_COST_ROW);
         final long state = keyStateNanos > 0 && keyStateKeys > 0
                 ? scale(keyStateNanos, keyStateKeys, keyCount)
-                : saturatedMultiply(keyCount, COLD_KEY_STATE_NANOS_PER_KEY);
-        return saturatedAdd(scan, state);
+                : Numbers.saturatedMultiplyNonNegative(keyCount, COLD_KEY_STATE_NANOS_PER_KEY);
+        return Numbers.saturatedAddNonNegative(scan, state);
     }
 
     private long estimateWhole(boolean isRuntimeAnchorReusable, long logicalBytes, long rows) {
@@ -253,14 +253,14 @@ public final class LiveViewCheckpointOpenSegmentCost {
         final long sampleRows = isRuntimeAnchorReusable ? warmWholeScanRows : coldWholeScanRows;
         final long scan = sampleNanos > 0 && sampleRows > 0
                 ? scale(sampleNanos, sampleRows, rows)
-                : saturatedMultiply(rows, COLD_WHOLE_NANOS_PER_ROW);
+                : Numbers.saturatedMultiplyNonNegative(rows, COLD_WHOLE_NANOS_PER_ROW);
         if (isRuntimeAnchorReusable) {
             return scan;
         }
         final long restore = restoreNanos > 0 && restoreBytes > 0
                 ? scale(restoreNanos, restoreBytes, logicalBytes)
-                : saturatedMultiply(logicalBytes, COLD_RESTORE_NANOS_PER_BYTE);
-        return saturatedAdd(scan, restore);
+                : Numbers.saturatedMultiplyNonNegative(logicalBytes, COLD_RESTORE_NANOS_PER_BYTE);
+        return Numbers.saturatedAddNonNegative(scan, restore);
     }
 
     private static long foldEma(long previous, long sample) {
@@ -270,7 +270,7 @@ public final class LiveViewCheckpointOpenSegmentCost {
         if (previous == 0) {
             return sample;
         }
-        final long cap = saturatedMultiply(previous, EMA_OUTLIER_MULTIPLIER);
+        final long cap = Numbers.saturatedMultiplyNonNegative(previous, EMA_OUTLIER_MULTIPLIER);
         final long capped = Math.min(sample, cap);
         try {
             final long weighted = Math.multiplyExact(previous, EMA_ALPHA_INV - 1L);
@@ -295,17 +295,6 @@ public final class LiveViewCheckpointOpenSegmentCost {
             return 0;
         }
         return scale(value, 100, percent);
-    }
-
-    private static long saturatedAdd(long left, long right) {
-        return Long.MAX_VALUE - left < right ? Long.MAX_VALUE : left + right;
-    }
-
-    private static long saturatedMultiply(long value, long multiplier) {
-        if (value <= 0 || multiplier <= 0) {
-            return 0;
-        }
-        return value > Long.MAX_VALUE / multiplier ? Long.MAX_VALUE : value * multiplier;
     }
 
     private static long scale(long sampleValue, long sampleUnits, long targetUnits) {

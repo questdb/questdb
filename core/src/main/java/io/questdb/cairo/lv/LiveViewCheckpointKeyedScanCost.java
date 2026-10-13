@@ -317,11 +317,11 @@ public final class LiveViewCheckpointKeyedScanCost {
                 ? 1L
                 : 1L + (Integer.SIZE - Integer.numberOfLeadingZeros(keyCount - 1));
         final long merged = postingRows > Long.MAX_VALUE / merge ? Long.MAX_VALUE : postingRows * merge;
-        final long setup = saturatingSum(
-                saturatingProduct(indexOpens, indexOpenRows),
-                saturatingProduct(indexSeeks, indexSeekRows)
+        final long setup = Numbers.saturatedAddNonNegative(
+                Numbers.saturatedMultiplyNonNegative(indexOpens, indexOpenRows),
+                Numbers.saturatedMultiplyNonNegative(indexSeeks, indexSeekRows)
         );
-        return saturatingSum(merged, setup);
+        return Numbers.saturatedAddNonNegative(merged, setup);
     }
 
     /**
@@ -451,9 +451,9 @@ public final class LiveViewCheckpointKeyedScanCost {
                     // these keys would pay for an answer nothing reads. The figures take
                     // the partition's setup, so they price at the budget as the full count
                     // would, and every posting from this partition up is uncounted.
-                    final long seeksWithPartition = saturatingSum(
+                    final long seeksWithPartition = Numbers.saturatedAddNonNegative(
                             indexSeeks,
-                            saturatingProduct(partitionSeeks, keyCount)
+                            Numbers.saturatedMultiplyNonNegative(partitionSeeks, keyCount)
                     );
                     if (keyedScanCostRows(rows, indexOpens + 1, seeksWithPartition, keyCount, indexOpenRows, indexSeekRows)
                             >= budgetRows) {
@@ -498,23 +498,5 @@ public final class LiveViewCheckpointKeyedScanCost {
         }
         postingRows = rows;
         return rows;
-    }
-
-    /**
-     * {@code count * rows}, saturating instead of wrapping, and zero where either side is
-     * non-positive - a configured price of zero disables its term rather than pinning it.
-     */
-    private static long saturatingProduct(long count, long rows) {
-        if (count <= 0 || rows <= 0) {
-            return 0;
-        }
-        return count > Long.MAX_VALUE / rows ? Long.MAX_VALUE : count * rows;
-    }
-
-    /**
-     * {@code a + b}, saturating instead of wrapping, for two non-negative terms.
-     */
-    private static long saturatingSum(long a, long b) {
-        return Long.MAX_VALUE - a < b ? Long.MAX_VALUE : a + b;
     }
 }
