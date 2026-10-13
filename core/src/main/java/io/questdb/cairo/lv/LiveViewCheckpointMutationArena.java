@@ -526,8 +526,10 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         validate(keyLength, scalarLength, statePageRefCount);
         // Either copy below may move this arena, so neither a key nor a scalar it already
         // stages can be a source: the key's copy would leave the scalar's address stale.
-        assert !isArenaRange(keyAddress, keyLength) : "live view checkpoint mutation key aliases its own arena";
-        assert !isArenaRange(scalarAddress, scalarLength) : "live view checkpoint mutation scalar aliases its own arena";
+        assert !LiveViewCheckpointRecordArena.isArenaRange(bytes, keyAddress, keyLength)
+                : "live view checkpoint mutation key aliases its own arena";
+        assert !LiveViewCheckpointRecordArena.isArenaRange(bytes, scalarAddress, scalarLength)
+                : "live view checkpoint mutation scalar aliases its own arena";
         final long keyOffset = bytes.getAppendOffset();
         if (keyLength > 0) {
             bytes.putBlockOfBytes(keyAddress, keyLength);
@@ -623,11 +625,6 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         if (ordinals.getCapacity() == 0) {
             ordinals.reopen();
         }
-    }
-
-    private boolean isArenaRange(long address, int length) {
-        final long lo = bytes.getPageAddress(0);
-        return length > 0 && lo != 0 && address < bytes.addressHi() && address + length > lo;
     }
 
     private boolean isSortComparisonCountRecordedForTest() {

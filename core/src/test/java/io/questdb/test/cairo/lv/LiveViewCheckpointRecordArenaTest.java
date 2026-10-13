@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryR;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -37,13 +38,14 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.lang.reflect.AccessibleObject;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
 /**
- * The native arena checkpoint payloads move into must keep every promise a heap array made
- * and the few a native region adds. A payload's handle names its bytes across every growth
+ * The native arena checkpoint keys and payloads move into must keep every promise a heap
+ * array made and the few a native region adds. Most cases run on a payload arena, whose
+ * eight-byte records carry a pad word; a key arena differs only in its four-byte records
+ * and in allowing an empty one. A payload's handle names its bytes across every growth
  * of the region, while an address is only a view of the current region. A reserved record
  * reads as zeroes wherever its encoder writes nothing, however dirty the bytes a cleared
  * arena reuses, because the persisted image depends on those zeroes. The arena copies a
@@ -51,21 +53,25 @@ import java.lang.reflect.Method;
  * not again while that capacity lasts. A failed allocation leaves every payload it already
  * holds. And every byte comes back on release and on close.
  */
-public class LiveViewCheckpointPayloadArenaTest {
+public class LiveViewCheckpointRecordArenaTest {
+    private static final Method ABORT_RECORD;
     private static final Method ADDRESS;
     private static final Method APPEND;
+    private static final Method BEGIN_RECORD;
     private static final Method BYTES_OFFSET;
     private static final Method CAPACITY;
     private static final Method CLEAR;
     private static final Method CLOSE;
-    private static final Constructor<?> CONSTRUCTOR;
+    private static final Method COMMIT_RECORD;
     private static final Method ENSURE_CAPACITY;
+    private static final Method FOR_KEYS;
+    private static final Method FOR_PAYLOADS;
     private static final Method LENGTH;
     private static final Method MEMORY;
-    private static final long NO_PAYLOAD;
+    private static final long NO_RECORD;
     private static final long PAGE_SIZE = 4096;
-    private static final Method PAYLOAD_COUNT;
     private static final Method RECORD_BYTES;
+    private static final Method RECORD_COUNT;
     private static final Method RELEASE;
     private static final Method RESERVE;
     private static final Method SIZE;
@@ -73,23 +79,27 @@ public class LiveViewCheckpointPayloadArenaTest {
     static {
         // The arena is package-private to io.questdb.cairo.lv.
         try {
-            final Class<?> arena = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointPayloadArena");
-            CONSTRUCTOR = accessible(arena.getDeclaredConstructor());
+            final Class<?> arena = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointRecordArena");
+            FOR_KEYS = accessible(arena.getDeclaredMethod("forKeys"));
+            FOR_PAYLOADS = accessible(arena.getDeclaredMethod("forPayloads"));
+            ABORT_RECORD = accessible(arena.getDeclaredMethod("abortRecord"));
             ADDRESS = accessible(arena.getDeclaredMethod("address", long.class));
             APPEND = accessible(arena.getDeclaredMethod("append", long.class, int.class));
+            BEGIN_RECORD = accessible(arena.getDeclaredMethod("beginRecord"));
             BYTES_OFFSET = accessible(arena.getDeclaredMethod("bytesOffset", long.class));
             CAPACITY = accessible(arena.getDeclaredMethod("capacity"));
             CLEAR = accessible(arena.getDeclaredMethod("clear"));
             CLOSE = accessible(arena.getDeclaredMethod("close"));
+            COMMIT_RECORD = accessible(arena.getDeclaredMethod("commitRecord"));
             ENSURE_CAPACITY = accessible(arena.getDeclaredMethod("ensureCapacity", long.class));
             LENGTH = accessible(arena.getDeclaredMethod("length", long.class));
             MEMORY = accessible(arena.getDeclaredMethod("memory"));
-            PAYLOAD_COUNT = accessible(arena.getDeclaredMethod("payloadCount"));
             RECORD_BYTES = accessible(arena.getDeclaredMethod("recordBytes", int.class));
+            RECORD_COUNT = accessible(arena.getDeclaredMethod("recordCount"));
             RELEASE = accessible(arena.getDeclaredMethod("release"));
             RESERVE = accessible(arena.getDeclaredMethod("reserve", int.class));
             SIZE = accessible(arena.getDeclaredMethod("size"));
-            NO_PAYLOAD = accessible(arena.getDeclaredField("NO_PAYLOAD")).getLong(null);
+            NO_RECORD = accessible(arena.getDeclaredField("NO_RECORD")).getLong(null);
         } catch (ReflectiveOperationException e) {
             throw new ExceptionInInitializerError(e);
         }
@@ -106,7 +116,7 @@ public class LiveViewCheckpointPayloadArenaTest {
             final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
             final int sourceLength = 3 * (int) PAGE_SIZE;
             final long source = Unsafe.malloc(sourceLength, MemoryTag.NATIVE_DEFAULT);
-            try (Arena arena = new Arena()) {
+            try (Arena arena = Arena.payloads()) {
                 final Rnd rnd = new Rnd(11, 17);
                 fillRandom(rnd, source, sourceLength);
                 final LongList handles = new LongList();
@@ -136,7 +146,7 @@ public class LiveViewCheckpointPayloadArenaTest {
                 }
 
                 Assert.assertEquals("a refused growth must not move the append offset", size, arena.size());
-                Assert.assertEquals(handles.size(), arena.payloadCount());
+                Assert.assertEquals(handles.size(), arena.recordCount());
                 Assert.assertEquals(capacity, arena.capacity());
                 for (int i = 0, n = handles.size(); i < n; i++) {
                     assertPayload(arena, handles.getQuick(i), source + i, 16 + i);
@@ -159,7 +169,7 @@ public class LiveViewCheckpointPayloadArenaTest {
         // forges that header at one of the seven misalignments, confirms it satisfies every
         // other clause, and requires each handle reader to reject it.
         TestUtils.assertMemoryLeak(() -> {
-            try (Arena arena = new Arena()) {
+            try (Arena arena = Arena.payloads()) {
                 final int payloadLength = 32;
                 final int forgedLength = 1;
                 for (int misalignment = 1; misalignment < Long.BYTES; misalignment++) {
@@ -177,13 +187,13 @@ public class LiveViewCheckpointPayloadArenaTest {
                     );
                     Assert.assertTrue(
                             "the forged record must end before the append offset",
-                            handle + Arena.recordBytes(forgedLength) <= arena.size()
+                            handle + arena.recordBytes(forgedLength) <= arena.size()
                     );
                     assertHandleRejected(arena, handle);
 
                     // The record the forged header sits in still reads as itself.
                     Assert.assertEquals(payloadLength, arena.length(record));
-                    Assert.assertEquals(1, arena.payloadCount());
+                    Assert.assertEquals(1, arena.recordCount());
                 }
             }
         });
@@ -197,14 +207,14 @@ public class LiveViewCheckpointPayloadArenaTest {
         // offset. Every real record's handle, including the last one whose record ends
         // exactly at the append offset, stays valid next to the forged headers.
         TestUtils.assertMemoryLeak(() -> {
-            try (Arena arena = new Arena()) {
+            try (Arena arena = Arena.payloads()) {
                 final int payloadLength = 32;
                 final long first = arena.reserve(payloadLength);
                 final long last = arena.reserve(payloadLength);
                 final long firstBytes = arena.bytesOffset(first);
                 final long lastBytes = arena.bytesOffset(last);
                 final long headerBytes = firstBytes - first;
-                Assert.assertEquals(arena.size(), last + Arena.recordBytes(payloadLength));
+                Assert.assertEquals(arena.size(), last + arena.recordBytes(payloadLength));
 
                 assertHandleRejected(arena, -Long.BYTES);
 
@@ -224,13 +234,13 @@ public class LiveViewCheckpointPayloadArenaTest {
                 final int overrunLength = (int) (arena.size() - overrunHandle - headerBytes) + 1;
                 Unsafe.putInt(arena.address(last) + (overrunHandle - lastBytes), overrunLength);
                 Assert.assertTrue(overrunHandle + headerBytes <= arena.size());
-                Assert.assertTrue(overrunHandle + Arena.recordBytes(overrunLength) > arena.size());
+                Assert.assertTrue(overrunHandle + arena.recordBytes(overrunLength) > arena.size());
                 assertHandleRejected(arena, overrunHandle);
 
                 Assert.assertEquals(payloadLength, arena.length(first));
                 Assert.assertEquals(payloadLength, arena.length(last));
                 Assert.assertEquals(arena.memory().addressOf(lastBytes), arena.address(last));
-                Assert.assertEquals(2, arena.payloadCount());
+                Assert.assertEquals(2, arena.recordCount());
             }
         });
     }
@@ -240,7 +250,7 @@ public class LiveViewCheckpointPayloadArenaTest {
         TestUtils.assertMemoryLeak(() -> {
             final int maxLength = 300;
             final long source = Unsafe.malloc(maxLength, MemoryTag.NATIVE_DEFAULT);
-            try (Arena arena = new Arena()) {
+            try (Arena arena = Arena.payloads()) {
                 final Rnd rnd = new Rnd(3, 5);
                 long expectedHandle = 0;
                 for (int length = 1; length <= maxLength; length++) {
@@ -249,10 +259,10 @@ public class LiveViewCheckpointPayloadArenaTest {
                     Assert.assertEquals("a handle is its record's offset", expectedHandle, handle);
                     assertPayload(arena, handle, source, length);
                     assertRecordTail(arena, handle, length);
-                    expectedHandle += Arena.recordBytes(length);
+                    expectedHandle += arena.recordBytes(length);
                 }
                 Assert.assertEquals(expectedHandle, arena.size());
-                Assert.assertEquals(maxLength, arena.payloadCount());
+                Assert.assertEquals(maxLength, arena.recordCount());
 
                 // A payload the arena already holds cannot be the source of another: the copy
                 // may grow, and so move, the very memory it reads.
@@ -260,7 +270,7 @@ public class LiveViewCheckpointPayloadArenaTest {
                 final AssertionError e = Assert.assertThrows(AssertionError.class, () -> arena.append(held, 1));
                 TestUtils.assertContains(e.getMessage(), "aliases its own arena");
                 Assert.assertEquals("the rejected payload must not be staged", expectedHandle, arena.size());
-                Assert.assertEquals(maxLength, arena.payloadCount());
+                Assert.assertEquals(maxLength, arena.recordCount());
             } finally {
                 Unsafe.free(source, maxLength, MemoryTag.NATIVE_DEFAULT);
             }
@@ -272,7 +282,7 @@ public class LiveViewCheckpointPayloadArenaTest {
         TestUtils.assertMemoryLeak(() -> {
             final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
             final long source = Unsafe.malloc(64, MemoryTag.NATIVE_DEFAULT);
-            final Arena arena = new Arena();
+            final Arena arena = Arena.payloads();
             try {
                 Assert.assertEquals("a new arena allocates nothing", 0, arena.capacity());
                 Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
@@ -281,12 +291,12 @@ public class LiveViewCheckpointPayloadArenaTest {
                     arena.append(source, 64);
                 }
                 final long capacity = arena.capacity();
-                Assert.assertTrue(capacity >= 1_000 * Arena.recordBytes(64));
+                Assert.assertTrue(capacity >= 1_000 * arena.recordBytes(64));
                 Assert.assertEquals(capacity, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline);
 
                 arena.clear();
                 Assert.assertEquals(0, arena.size());
-                Assert.assertEquals(0, arena.payloadCount());
+                Assert.assertEquals(0, arena.recordCount());
                 Assert.assertEquals("a clear keeps the capacity", capacity, arena.capacity());
                 Assert.assertEquals(capacity, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM) - baseline);
                 Assert.assertEquals("a cleared arena starts over at offset zero", 0, arena.append(source, 64));
@@ -295,7 +305,7 @@ public class LiveViewCheckpointPayloadArenaTest {
                 arena.release();
                 Assert.assertEquals(0, arena.capacity());
                 Assert.assertEquals(0, arena.size());
-                Assert.assertEquals(0, arena.payloadCount());
+                Assert.assertEquals(0, arena.recordCount());
                 Assert.assertEquals("a release must hand every byte back", baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
 
                 // A released arena stays usable: the next record allocates afresh.
@@ -327,12 +337,12 @@ public class LiveViewCheckpointPayloadArenaTest {
         // already fits is a no-op.
         TestUtils.assertMemoryLeak(() -> {
             final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
-            try (Arena arena = new Arena()) {
+            try (Arena arena = Arena.payloads()) {
                 arena.ensureCapacity(0);
                 Assert.assertEquals("a presize of nothing allocates nothing", 0, arena.capacity());
 
                 final int payloadLength = 56;
-                final long recordBytes = Arena.recordBytes(payloadLength);
+                final long recordBytes = arena.recordBytes(payloadLength);
                 final int recordCount = (int) (5 * PAGE_SIZE / recordBytes);
                 arena.ensureCapacity(recordCount * recordBytes);
                 final long capacity = arena.capacity();
@@ -352,7 +362,7 @@ public class LiveViewCheckpointPayloadArenaTest {
                 arena.ensureCapacity(capacity - arena.size() + 1);
                 Assert.assertTrue(arena.capacity() > capacity);
                 Assert.assertEquals(recordCount * recordBytes, arena.size());
-                Assert.assertEquals(recordCount, arena.payloadCount());
+                Assert.assertEquals(recordCount, arena.recordCount());
             }
             Assert.assertEquals(baseline, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
         });
@@ -367,7 +377,7 @@ public class LiveViewCheckpointPayloadArenaTest {
             final int maxLength = 257;
             final int payloadCount = 4_000;
             final long source = Unsafe.malloc((long) payloadCount + maxLength, MemoryTag.NATIVE_DEFAULT);
-            try (Arena arena = new Arena()) {
+            try (Arena arena = Arena.payloads()) {
                 fillRandom(new Rnd(7, 13), source, payloadCount + maxLength);
                 final LongList handles = new LongList();
                 long growthCount = 0;
@@ -383,7 +393,7 @@ public class LiveViewCheckpointPayloadArenaTest {
                 final MemoryR memory = arena.memory();
                 for (int i = 0; i < payloadCount; i++) {
                     final long handle = handles.getQuick(i);
-                    Assert.assertTrue("a handle must never be NO_PAYLOAD", handle >= 0 && handle != NO_PAYLOAD);
+                    Assert.assertTrue("a handle must never be NO_RECORD", handle >= 0 && handle != NO_RECORD);
                     Assert.assertEquals("a record starts on an eight-byte boundary", 0, handle & 7);
                     Assert.assertEquals(memory.addressOf(arena.bytesOffset(handle)), arena.address(handle));
                     assertPayload(arena, handle, source + i, lengthOf(i, maxLength));
@@ -396,14 +406,58 @@ public class LiveViewCheckpointPayloadArenaTest {
     }
 
     @Test
+    public void testKeyArenaPacksFourByteRecordsAndEncodesInPlace() throws Exception {
+        // A key record is [int length][key bytes], zero-padded to four bytes with no pad word,
+        // and a key may be empty. A key encoded in place frames exactly as an appended one,
+        // and an aborted one leaves the arena as it was.
+        TestUtils.assertMemoryLeak(() -> {
+            final int maxLength = 9;
+            final long source = Unsafe.malloc(maxLength, MemoryTag.NATIVE_DEFAULT);
+            try (Arena arena = Arena.keys()) {
+                Vect.memset(source, maxLength, 0x5a);
+                long expectedHandle = 0;
+                for (int length = 0; length <= maxLength; length++) {
+                    final long handle = arena.append(source, length);
+                    Assert.assertEquals(expectedHandle, handle);
+                    Assert.assertEquals(Integer.BYTES + ((length + 3) & ~3), arena.recordBytes(length));
+                    Assert.assertEquals(handle + Integer.BYTES, arena.bytesOffset(handle));
+                    assertPayload(arena, handle, source, length);
+                    assertKeyPadding(arena, handle, length);
+                    expectedHandle += arena.recordBytes(length);
+                }
+                Assert.assertEquals(expectedHandle, arena.size());
+                Assert.assertEquals(maxLength + 1, arena.recordCount());
+
+                final MemoryA sink = arena.beginRecord();
+                for (int i = 0; i < 3; i++) {
+                    sink.putByte((byte) 0x5a);
+                }
+                final long encoded = arena.commitRecord();
+                Assert.assertEquals(expectedHandle, encoded);
+                assertPayload(arena, encoded, source, 3);
+                assertKeyPadding(arena, encoded, 3);
+                expectedHandle += arena.recordBytes(3);
+                Assert.assertEquals(expectedHandle, arena.size());
+
+                arena.beginRecord().putLong(42);
+                arena.abortRecord();
+                Assert.assertEquals(expectedHandle, arena.size());
+                Assert.assertEquals(maxLength + 2, arena.recordCount());
+            } finally {
+                Unsafe.free(source, maxLength, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
     public void testNoPayloadNeverNamesARecord() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            Assert.assertEquals(-1, NO_PAYLOAD);
-            try (Arena arena = new Arena()) {
+            Assert.assertEquals(-1, NO_RECORD);
+            try (Arena arena = Arena.payloads()) {
                 Assert.assertEquals("the first record starts at offset zero, not at the sentinel", 0, arena.reserve(1));
-                AssertionError e = Assert.assertThrows(AssertionError.class, () -> arena.address(NO_PAYLOAD));
+                AssertionError e = Assert.assertThrows(AssertionError.class, () -> arena.address(NO_RECORD));
                 TestUtils.assertContains(e.getMessage(), "payload handle outside its arena");
-                e = Assert.assertThrows(AssertionError.class, () -> arena.length(NO_PAYLOAD));
+                e = Assert.assertThrows(AssertionError.class, () -> arena.length(NO_RECORD));
                 TestUtils.assertContains(e.getMessage(), "payload handle outside its arena");
                 // A handle past the last record, and one inside a record rather than at its
                 // start, are rejected the same way.
@@ -413,7 +467,7 @@ public class LiveViewCheckpointPayloadArenaTest {
                 TestUtils.assertContains(e.getMessage(), "payload handle outside its arena");
                 e = Assert.assertThrows(AssertionError.class, () -> arena.reserve(0));
                 TestUtils.assertContains(e.getMessage(), "must not be empty");
-                Assert.assertEquals(1, arena.payloadCount());
+                Assert.assertEquals(1, arena.recordCount());
             }
         });
     }
@@ -425,7 +479,7 @@ public class LiveViewCheckpointPayloadArenaTest {
         // wrote, so a reserve must zero its whole record - the header's pad word, the
         // payload and the tail padding - rather than trust what is there.
         TestUtils.assertMemoryLeak(() -> {
-            try (Arena arena = new Arena()) {
+            try (Arena arena = Arena.payloads()) {
                 for (int i = 0; i < 200; i++) {
                     arena.reserve(1 + i % 61);
                 }
@@ -446,7 +500,7 @@ public class LiveViewCheckpointPayloadArenaTest {
                         Assert.assertEquals("payload byte " + b + " of record " + i, 0, Unsafe.getByte(address + b));
                     }
                     assertRecordTail(arena, handle, length);
-                    expectedHandle += Arena.recordBytes(length);
+                    expectedHandle += arena.recordBytes(length);
                 }
                 // An appended payload after a clear pads with zeroes too.
                 arena.clear();
@@ -481,6 +535,19 @@ public class LiveViewCheckpointPayloadArenaTest {
         TestUtils.assertContains(e.getMessage(), "payload handle outside its arena");
     }
 
+    /**
+     * Requires a key record's length prefix to sit right before its bytes, and every
+     * padding byte past them to be zero.
+     */
+    private static void assertKeyPadding(Arena arena, long handle, int length) {
+        final long record = arena.memory().addressOf(handle);
+        Assert.assertEquals(length, Unsafe.getInt(record));
+        Assert.assertEquals(record + Integer.BYTES, arena.address(handle));
+        for (long b = Integer.BYTES + length; b < arena.recordBytes(length); b++) {
+            Assert.assertEquals("padding byte " + b, 0, Unsafe.getByte(record + b));
+        }
+    }
+
     private static void assertPayload(Arena arena, long handle, long expected, int length) {
         Assert.assertEquals(length, arena.length(handle));
         Assert.assertTrue("payload bytes must be copied exactly", Vect.memeq(arena.address(handle), expected, length));
@@ -494,7 +561,7 @@ public class LiveViewCheckpointPayloadArenaTest {
         final long record = arena.memory().addressOf(handle);
         Assert.assertEquals(length, Unsafe.getInt(record));
         Assert.assertEquals("header pad word", 0, Unsafe.getInt(record + Integer.BYTES));
-        final long recordBytes = Arena.recordBytes(length);
+        final long recordBytes = arena.recordBytes(length);
         Assert.assertEquals(0, recordBytes & 7);
         for (long b = 2L * Integer.BYTES + length; b < recordBytes; b++) {
             Assert.assertEquals("padding byte " + b, 0, Unsafe.getByte(record + b));
@@ -518,21 +585,25 @@ public class LiveViewCheckpointPayloadArenaTest {
     private static final class Arena implements QuietCloseable {
         private final Object arena;
 
-        private Arena() {
-            try {
-                arena = CONSTRUCTOR.newInstance();
-            } catch (ReflectiveOperationException e) {
-                throw new AssertionError(e);
-            }
+        private Arena(Method factory) {
+            arena = invoke(factory, null);
         }
 
-        static long recordBytes(int payloadLength) {
-            return (long) invoke(RECORD_BYTES, null, payloadLength);
+        static Arena keys() {
+            return new Arena(FOR_KEYS);
+        }
+
+        static Arena payloads() {
+            return new Arena(FOR_PAYLOADS);
         }
 
         @Override
         public void close() {
             invoke(CLOSE, arena);
+        }
+
+        void abortRecord() {
+            invoke(ABORT_RECORD, arena);
         }
 
         long address(long handle) {
@@ -541,6 +612,10 @@ public class LiveViewCheckpointPayloadArenaTest {
 
         long append(long address, int length) {
             return (long) invoke(APPEND, arena, address, length);
+        }
+
+        MemoryA beginRecord() {
+            return (MemoryA) invoke(BEGIN_RECORD, arena);
         }
 
         long bytesOffset(long handle) {
@@ -555,6 +630,10 @@ public class LiveViewCheckpointPayloadArenaTest {
             invoke(CLEAR, arena);
         }
 
+        long commitRecord() {
+            return (long) invoke(COMMIT_RECORD, arena);
+        }
+
         void ensureCapacity(long additionalBytes) {
             invoke(ENSURE_CAPACITY, arena, additionalBytes);
         }
@@ -567,8 +646,12 @@ public class LiveViewCheckpointPayloadArenaTest {
             return (MemoryR) invoke(MEMORY, arena);
         }
 
-        int payloadCount() {
-            return (int) invoke(PAYLOAD_COUNT, arena);
+        long recordBytes(int length) {
+            return (long) invoke(RECORD_BYTES, arena, length);
+        }
+
+        int recordCount() {
+            return (int) invoke(RECORD_COUNT, arena);
         }
 
         void release() {

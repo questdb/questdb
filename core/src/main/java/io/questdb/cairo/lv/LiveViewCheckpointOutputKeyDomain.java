@@ -54,7 +54,7 @@ import org.jetbrains.annotations.NotNull;
  * from a base row: a SYMBOL partition column is a resolved STRING on both sides, never
  * a reader-local integer.
  * <p>
- * Every domain owns its keys: they live in a native {@link LiveViewCheckpointKeyArena}
+ * Every domain owns its keys: they live in a native {@link LiveViewCheckpointRecordArena}
  * of its own, and {@link #copyFrom} copies the bytes rather than sharing them. The
  * repair plan derives one of these per repair and the capture takes its own copy,
  * because the plan and the keyed replay are refilled by the next repair this worker runs
@@ -102,7 +102,7 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
     private static final int MIN_INITIAL_CAPACITY = 16;
     private static final int SLOT_BYTES = 16;
     private static final int SLOT_HASH_OFFSET = Long.BYTES;
-    private final LiveViewCheckpointKeyArena keys = new LiveViewCheckpointKeyArena();
+    private final LiveViewCheckpointRecordArena keys = LiveViewCheckpointRecordArena.forKeys();
     private int capacity;
     private int free;
     private int mask;
@@ -118,7 +118,7 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
      * Drops the key {@link #beginKey()} started without joining it to the domain.
      */
     public void abortKey() {
-        keys.abortKey();
+        keys.abortRecord();
     }
 
     /**
@@ -143,7 +143,7 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
      */
     public MemoryA beginKey() {
         ensureSlots();
-        return keys.beginKey();
+        return keys.beginRecord();
     }
 
     /**
@@ -176,13 +176,13 @@ public final class LiveViewCheckpointOutputKeyDomain implements Mutable, QuietCl
     public void commitKey() {
         // beginKey() allocated the table, and nothing in between may clear the domain.
         assert slotsAddress != 0 : "live view checkpoint output key committed without its table";
-        final long handle = keys.commitKey();
+        final long handle = keys.commitRecord();
         final long keyAddress = keys.address(handle);
         final int keyLength = keys.length(handle);
         final int hash = LiveViewCheckpointKeys.hash(keyAddress, keyLength);
         final int index = findSlot(hash, keyAddress, keyLength);
         if (index < 0) {
-            keys.discardLastKey(handle);
+            keys.discardLastRecord(handle);
             return;
         }
         occupy(index, handle, hash);

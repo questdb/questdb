@@ -707,7 +707,7 @@ public class LiveViewCheckpointPayloadGoldenTest extends AbstractLiveViewTest {
         // localized rebuild, which is not chained, and a ROWS replay does not reconstruct
         // every key, so the capture freezes the window state limited to Q, the keys with a
         // row in the re-emitted interval. The cold keys the primary runtime still walks sit
-        // outside Q: their payload is NO_PAYLOAD and the old root's entry stands.
+        // outside Q: their payload is NO_RECORD and the old root's entry stands.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
                     + "TIMESTAMP(created_at) PARTITION BY DAY WAL");

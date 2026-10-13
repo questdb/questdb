@@ -53,7 +53,7 @@ import java.util.HashMap;
 public class LiveViewCheckpointKeyIndexTest {
     private static final Method ARENA_APPEND;
     private static final Method ARENA_CLOSE;
-    private static final Constructor<?> ARENA_CONSTRUCTOR;
+    private static final Method ARENA_FOR_KEYS;
     private static final Method INDEX_CLEAR;
     private static final Method INDEX_CLOSE;
     private static final Constructor<?> INDEX_CONSTRUCTOR;
@@ -88,9 +88,9 @@ public class LiveViewCheckpointKeyIndexTest {
     static {
         // The arena and the index are package-private to io.questdb.cairo.lv.
         try {
-            final Class<?> arena = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointKeyArena");
+            final Class<?> arena = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointRecordArena");
             final Class<?> index = Class.forName("io.questdb.cairo.lv.LiveViewCheckpointKeyIndex");
-            ARENA_CONSTRUCTOR = accessible(arena.getDeclaredConstructor());
+            ARENA_FOR_KEYS = accessible(arena.getDeclaredMethod("forKeys"));
             ARENA_APPEND = accessible(arena.getDeclaredMethod("append", long.class, int.class));
             ARENA_CLOSE = accessible(arena.getDeclaredMethod("close"));
             INDEX_CONSTRUCTOR = accessible(index.getDeclaredConstructor(arena));
@@ -126,7 +126,7 @@ public class LiveViewCheckpointKeyIndexTest {
             for (int shape = 0; shape < KEY_SHAPE_COUNT; shape++) {
                 for (int namespaceCount : new int[]{1, 3}) {
                     final int keyCount = maxEntries / namespaceCount;
-                    final Object arena = ARENA_CONSTRUCTOR.newInstance();
+                    final Object arena = ARENA_FOR_KEYS.invoke(null);
                     try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                         final long[] handles = new long[keyCount];
                         for (int i = 0; i < keyCount; i++) {
@@ -201,7 +201,7 @@ public class LiveViewCheckpointKeyIndexTest {
         // third full or more at every size past the smallest.
         TestUtils.assertMemoryLeak(() -> {
             final int keyCount = 100_000;
-            final Object arena = ARENA_CONSTRUCTOR.newInstance();
+            final Object arena = ARENA_FOR_KEYS.invoke(null);
             final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
             try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                 final long[] handles = appendKeys(arena, probe, keyCount);
@@ -228,7 +228,7 @@ public class LiveViewCheckpointKeyIndexTest {
         // growth fails the put that triggered it at the allocation, before the old table
         // goes, so every entry already indexed still answers and the table keeps its bytes.
         TestUtils.assertMemoryLeak(() -> {
-            final Object arena = ARENA_CONSTRUCTOR.newInstance();
+            final Object arena = ARENA_FOR_KEYS.invoke(null);
             final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
             try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                 final long[] handles = appendKeys(arena, probe, 1_000);
@@ -271,7 +271,7 @@ public class LiveViewCheckpointKeyIndexTest {
     @Test
     public void testAReservedTableDoesNotRegrowAndARehashKeepsEveryEntry() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final Object arena = ARENA_CONSTRUCTOR.newInstance();
+            final Object arena = ARENA_FOR_KEYS.invoke(null);
             final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
             try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                 final long[] handles = appendKeys(arena, probe, 1_000);
@@ -320,7 +320,7 @@ public class LiveViewCheckpointKeyIndexTest {
             // holds one entry fewer than that without growing.
             final long halfCapDoublingEntryCount = 11_744_051;
             final long capDoublingEntryCount = 23_488_102;
-            final Object arena = ARENA_CONSTRUCTOR.newInstance();
+            final Object arena = ARENA_FOR_KEYS.invoke(null);
             final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
             try {
                 final long baseline = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
@@ -372,7 +372,7 @@ public class LiveViewCheckpointKeyIndexTest {
                     1_000, 1_023, 1_024, 1_025, 1_432, 1_433, 2_047, 2_048, 2_866, 2_867,
                     45_874, 45_875, 65_535, 65_536, 91_749, 91_750
             };
-            final Object arena = ARENA_CONSTRUCTOR.newInstance();
+            final Object arena = ARENA_FOR_KEYS.invoke(null);
             try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                 final long[] handles = appendKeys(arena, probe, keyCounts[keyCounts.length - 1]);
                 for (int keyCount : keyCounts) {
@@ -406,7 +406,7 @@ public class LiveViewCheckpointKeyIndexTest {
     @Test
     public void testIndexAnswersAsTheHeapIndexThroughEveryRehash() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final Object arena = ARENA_CONSTRUCTOR.newInstance();
+            final Object arena = ARENA_FOR_KEYS.invoke(null);
             final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
             final HashMap<String, Integer> oracle = new HashMap<>();
             try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
@@ -457,7 +457,7 @@ public class LiveViewCheckpointKeyIndexTest {
         TestUtils.assertMemoryLeak(() -> {
             final int keyCount = 1_000;
             for (boolean hasLongTail : new boolean[]{false, true}) {
-                final Object arena = ARENA_CONSTRUCTOR.newInstance();
+                final Object arena = ARENA_FOR_KEYS.invoke(null);
                 final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
                 try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                     for (int i = 0; i < keyCount; i++) {
@@ -485,7 +485,7 @@ public class LiveViewCheckpointKeyIndexTest {
     @Test
     public void testReleaseAndCloseFreeEveryNativeByte() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
-            final Object arena = ARENA_CONSTRUCTOR.newInstance();
+            final Object arena = ARENA_FOR_KEYS.invoke(null);
             final Object index = INDEX_CONSTRUCTOR.newInstance(arena);
             try (LiveViewCheckpointTestKeys probe = new LiveViewCheckpointTestKeys()) {
                 final long[] handles = appendKeys(arena, probe, 2_000);

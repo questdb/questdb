@@ -884,13 +884,13 @@ public class LiveViewWindow implements QuietCloseable {
      */
     long freezeCheckpointEntries(
             @NotNull MemoryCARW keyBuffer,
-            @NotNull LiveViewCheckpointKeyArena keyArena,
+            @NotNull LiveViewCheckpointRecordArena keyArena,
             @NotNull LongList keysOut,
             @NotNull LongList valuesOut,
             @NotNull LongList removedKeysOut,
             boolean isIncremental,
             int entryStateBytes,
-            @NotNull LiveViewCheckpointPayloadArena payloadArena,
+            @NotNull LiveViewCheckpointRecordArena payloadArena,
             @NotNull LongList payloadsOut,
             @Nullable BoolList isElisionRuledOutOut
     ) {
@@ -961,14 +961,14 @@ public class LiveViewWindow implements QuietCloseable {
      */
     void freezeCheckpointMemberEntries(
             @NotNull MemoryCARW keyBuffer,
-            @NotNull LiveViewCheckpointKeyArena keyArena,
+            @NotNull LiveViewCheckpointRecordArena keyArena,
             @NotNull IntList projectionIndexes,
             @NotNull LongList keysOut,
             @NotNull ObjList<LongList> imagesOut,
             @NotNull LongList removedKeysOut,
             boolean isIncremental,
             @NotNull LongList logicalBytesInOut,
-            @NotNull LiveViewCheckpointPayloadArena payloadArena
+            @NotNull LiveViewCheckpointRecordArena payloadArena
     ) {
         final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
         if (plan == null) {
@@ -1054,7 +1054,7 @@ public class LiveViewWindow implements QuietCloseable {
      */
     private void freezeCheckpointEntries(
             @NotNull MemoryCARW keyBuffer,
-            @NotNull LiveViewCheckpointKeyArena keyArena,
+            @NotNull LiveViewCheckpointRecordArena keyArena,
             @NotNull LongList keysOut,
             @Nullable LongList valuesOut,
             @NotNull LongList removedKeysOut,
@@ -1064,7 +1064,7 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull IntList memberProjectionIndexes,
             @NotNull LongList logicalBytesInOut,
             @Nullable BoolList isElisionRuledOutOut,
-            @Nullable LiveViewCheckpointPayloadArena payloadArena
+            @Nullable LiveViewCheckpointRecordArena payloadArena
     ) {
         checkpointFreezeScanCount++;
         final int memberCount = entryStateBytes.size();
@@ -1122,7 +1122,7 @@ public class LiveViewWindow implements QuietCloseable {
             // grow. Evicted and tombstoned keys make it an upper bound.
             long recordBytes = 0;
             for (int m = 0; m < memberCount; m++) {
-                recordBytes += LiveViewCheckpointPayloadArena.recordBytes(entryStateBytes.getQuick(m));
+                recordBytes += payloadArena.recordBytes(entryStateBytes.getQuick(m));
             }
             payloadArena.ensureCapacity(scanMap.size() * recordBytes);
         }
@@ -2964,7 +2964,7 @@ public class LiveViewWindow implements QuietCloseable {
     private long encodeWindowStatePayload(
             MapValue value,
             int entryStateBytes,
-            @NotNull LiveViewCheckpointPayloadArena arena
+            @NotNull LiveViewCheckpointRecordArena arena
     ) {
         final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
         assert plan != null;
@@ -3021,7 +3021,7 @@ public class LiveViewWindow implements QuietCloseable {
             @NotNull MemoryCARW keyBuffer,
             MapValue anchorValue,
             int entryStateBytes,
-            @NotNull LiveViewCheckpointPayloadArena arena
+            @NotNull LiveViewCheckpointRecordArena arena
     ) {
         if (entryStateBytes != plan.getTotalInlineStateBytes()) {
             throw CairoException.critical(0)
@@ -3125,7 +3125,7 @@ public class LiveViewWindow implements QuietCloseable {
             MapRecord keyRecord,
             int keyStartIndex,
             int stateBytes,
-            @NotNull LiveViewCheckpointPayloadArena arena
+            @NotNull LiveViewCheckpointRecordArena arena
     ) {
         final LiveViewWindowStatePlan plan = checkpointWindowStatePlan;
         assert plan != null;

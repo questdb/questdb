@@ -33,9 +33,8 @@ import java.util.Arrays;
 /**
  * Operation-scoped high-water pool for exact-width decoded metadata images - the
  * identities, key schemas and manifests a root or directory reads once per root. Per-key
- * data never comes from it: partition keys are native, in a
- * {@link LiveViewCheckpointKeyArena}, and state payloads are native too, in a
- * {@link LiveViewCheckpointPayloadArena}. Each width retains its simultaneous-use
+ * data never comes from it: partition keys and state payloads are native, each in a
+ * {@link LiveViewCheckpointRecordArena} of its own. Each width retains its simultaneous-use
  * high-water count, independent of the order in which later reads encounter widths.
  * <p>
  * The pool never shrinks by itself. An owner that outlives the operations it

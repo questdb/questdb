@@ -36,7 +36,7 @@ import org.jetbrains.annotations.TestOnly;
 
 /**
  * Native open-addressed index from {@code (namespace, version, partition key)} to a
- * non-negative int, over the keys of one {@link LiveViewCheckpointKeyArena}. The two
+ * non-negative int, over the keys of one {@link LiveViewCheckpointRecordArena}. The two
  * primitive qualifiers let one flat table serve several function ordinals and state
  * versions without joining them to the key.
  * <p>
@@ -74,7 +74,7 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
     private static final int SLOT_NAMESPACE_OFFSET = SLOT_HASH_OFFSET + Integer.BYTES;
     private static final int SLOT_VERSION_OFFSET = SLOT_NAMESPACE_OFFSET + Integer.BYTES;
     private static final int SLOT_VALUE_OFFSET = SLOT_VERSION_OFFSET + Integer.BYTES;
-    private final LiveViewCheckpointKeyArena keys;
+    private final LiveViewCheckpointRecordArena keys;
     // The entry count that doubles the table: LOAD_FACTOR of its slots, rounded down.
     private int capacity;
     private int free;
@@ -83,7 +83,7 @@ final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
     private long slotsAddress;
     private long slotsBytes;
 
-    LiveViewCheckpointKeyIndex(@NotNull LiveViewCheckpointKeyArena keys) {
+    LiveViewCheckpointKeyIndex(@NotNull LiveViewCheckpointRecordArena keys) {
         this.keys = keys;
         resetGeometry();
     }

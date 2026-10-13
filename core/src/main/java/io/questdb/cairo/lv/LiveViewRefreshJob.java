@@ -461,11 +461,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // their handle lists are trimmed to their retention limits once the transplant ends.
     // transplantKeyMemory is only the buffer the freeze encodes each key through, and the
     // two pages frame one key and its payload in place for the restore.
-    private final LiveViewCheckpointKeyArena transplantKeyArena = new LiveViewCheckpointKeyArena();
+    private final LiveViewCheckpointRecordArena transplantKeyArena = LiveViewCheckpointRecordArena.forKeys();
     private final MemoryCARW transplantKeyMemory = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT);
     private final LiveViewStatePageReader transplantKeyPage = new LiveViewStatePageReader();
     private final LongList transplantKeys = new LongList();
-    private final LiveViewCheckpointPayloadArena transplantPayloadArena = new LiveViewCheckpointPayloadArena();
+    private final LiveViewCheckpointRecordArena transplantPayloadArena = LiveViewCheckpointRecordArena.forPayloads();
     private final LiveViewStatePageReader transplantPayloadPage = new LiveViewStatePageReader();
     private final LongList transplantPayloads = new LongList();
     private final LongList transplantRemovedKeys = new LongList();
@@ -1124,7 +1124,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     @TestOnly
     public int getTransplantKeyArenaKeyCountForTest() {
-        return transplantKeyArena.keyCount();
+        return transplantKeyArena.recordCount();
     }
 
     /**
@@ -1151,7 +1151,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      */
     @TestOnly
     public int getTransplantPayloadCountForTest() {
-        return transplantPayloadArena.payloadCount();
+        return transplantPayloadArena.recordCount();
     }
 
     /**
@@ -7320,7 +7320,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // limit frees both arenas and the lists that grew one handle per key; a few wide
             // keys or payloads past a byte limit free their arena alone, whose handles go
             // with it, while the lists keep a capacity the count limit already bounds.
-            if (transplantKeyArena.keyCount() > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEYS
+            if (transplantKeyArena.recordCount() > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEYS
                     || transplantKeyArena.capacity() > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEY_BYTES) {
                 // The handles name keys the release frees, so they go with it.
                 transplantKeyArena.release();
@@ -7329,7 +7329,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 transplantValues.restoreInitialCapacity();
             }
             final boolean isPayloadCountPastLimit =
-                    transplantPayloadArena.payloadCount() > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEYS;
+                    transplantPayloadArena.recordCount() > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_KEYS;
             if (isPayloadCountPastLimit
                     || transplantPayloadArena.capacity() > LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_PAYLOAD_BYTES) {
                 transplantPayloadArena.release();
