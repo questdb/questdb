@@ -33,7 +33,8 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 /**
- * Engine-shared, allocation-free-after-warmup lifecycle state for checkpoint timelines.
+ * Engine-shared, allocation-free-after-warmup purge state for checkpoint timelines: the
+ * reconciliation and orphan-scan flags and the pending retirements of each timeline.
  *
  * <p>The refresh notification queue may route consecutive turns of one live view to different
  * workers. Consequently this state cannot live on a worker's timeline writer: doing so gives one
@@ -46,7 +47,7 @@ import org.jetbrains.annotations.TestOnly;
  * process-local long, so rename preserves state through the shared instance while drop/recreate and
  * explicit table-id reuse receive a different identity.</p>
  */
-public final class LiveViewCheckpointLifecycleState implements Mutable {
+public final class LiveViewCheckpointPurgeState implements Mutable {
     private static final int FLAG_ORPHAN_SCAN_COMPLETED = 2;
     private static final int FLAG_ORPHAN_SCAN_NEEDED = 4;
     private static final int FLAG_RECONCILED = 1;

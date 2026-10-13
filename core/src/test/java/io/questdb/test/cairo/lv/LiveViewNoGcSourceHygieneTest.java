@@ -363,7 +363,7 @@ public class LiveViewNoGcSourceHygieneTest {
         final String[] files = {
                 "io/questdb/cairo/CairoEngine.java",
                 "io/questdb/cairo/lv/LiveViewInstance.java",
-                "io/questdb/cairo/lv/LiveViewCheckpointLifecycleState.java",
+                "io/questdb/cairo/lv/LiveViewCheckpointPurgeState.java",
                 "io/questdb/cairo/lv/LiveViewCheckpointTimelineStoreWriter.java",
                 "io/questdb/cairo/lv/LiveViewCheckpointCompaction.java",
                 "io/questdb/cairo/lv/LiveViewRefreshJob.java"

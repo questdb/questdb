@@ -715,7 +715,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     workerLatched.countDown();
                     // The rollback hook releases us immediately before the fence. The CREATE
                     // catch must mark the instance dropped and fence this latch before it resets
-                    // publication lifecycle state; otherwise this late mutation can repopulate it.
+                    // publication purge state; otherwise this late mutation can repopulate it.
                     if (!workerMayWrite.await(30, TimeUnit.SECONDS)) {
                         throw new AssertionError("timed out waiting for CREATE rollback coordination");
                     }
@@ -723,8 +723,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     pendingRetirements.add(17);
                     final long lifecycleIdentity = instance.getLifecycleIdentity();
                     workerLifecycleIdentity.set(lifecycleIdentity);
-                    engine.getLiveViewCheckpointLifecycleState().markReconciled(lifecycleIdentity);
-                    engine.getLiveViewCheckpointLifecycleState().replacePendingRetirements(
+                    engine.getLiveViewCheckpointPurgeState().markReconciled(lifecycleIdentity);
+                    engine.getLiveViewCheckpointPurgeState().replacePendingRetirements(
                             lifecycleIdentity,
                             pendingRetirements
                     );
@@ -755,7 +755,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                         workerMayWrite.countDown();
                         try {
                             if (!workerWroteLifecycleState.await(30, TimeUnit.SECONDS)) {
-                                throw new AssertionError("late refresh did not write lifecycle state after reset");
+                                throw new AssertionError("late refresh did not write purge state after reset");
                             }
                         } catch (InterruptedException e) {
                             Thread.currentThread().interrupt();
@@ -797,16 +797,16 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             // The rollback removed the half-built view; the name is free to reuse.
             Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
             final int activeGenerationCount =
-                    engine.getLiveViewCheckpointLifecycleState().getActiveGenerationCountForTest();
+                    engine.getLiveViewCheckpointPurgeState().getActiveGenerationCountForTest();
             final int pendingRetirementIdentity = activeGenerationCount == 0
                     ? 0
-                    : engine.getLiveViewCheckpointLifecycleState().getPendingRetirementIdentityForTest(
+                    : engine.getLiveViewCheckpointPurgeState().getPendingRetirementIdentityForTest(
                     workerLifecycleIdentity.get()
             );
             final int retirementPoolSize =
-                    engine.getLiveViewCheckpointLifecycleState().getRetirementPoolSizeForTest();
+                    engine.getLiveViewCheckpointPurgeState().getRetirementPoolSizeForTest();
             Assert.assertEquals(
-                    "CREATE rollback must prune lifecycle state seeded by a late refresh"
+                    "CREATE rollback must prune purge state seeded by a late refresh"
                             + " [activeGenerationCount=" + activeGenerationCount
                             + ", pendingRetirementIdentity=" + pendingRetirementIdentity
                             + ", retirementPoolSize=" + retirementPoolSize + ']',
@@ -830,8 +830,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                         TestUtils.assertContains(expected.getFlyweightMessage(), "injected repeated registerBaseTable failure");
                     }
                     Assert.assertFalse(engine.getLiveViewRegistry().hasView("lv"));
-                    Assert.assertEquals(0, engine.getLiveViewCheckpointLifecycleState().getActiveGenerationCountForTest());
-                    Assert.assertEquals(1, engine.getLiveViewCheckpointLifecycleState().getRetirementPoolSizeForTest());
+                    Assert.assertEquals(0, engine.getLiveViewCheckpointPurgeState().getActiveGenerationCountForTest());
+                    Assert.assertEquals(1, engine.getLiveViewCheckpointPurgeState().getRetirementPoolSizeForTest());
                 }
             } finally {
                 registerBaseTableFault = null;

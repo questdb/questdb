@@ -24,16 +24,16 @@
 
 package io.questdb.test.cairo.lv;
 
-import io.questdb.cairo.lv.LiveViewCheckpointLifecycleState;
+import io.questdb.cairo.lv.LiveViewCheckpointPurgeState;
 import io.questdb.std.LongList;
 import org.junit.Assert;
 import org.junit.Test;
 
-public class LiveViewCheckpointLifecycleStateTest {
+public class LiveViewCheckpointPurgeStateTest {
 
     @Test
     public void testDistinctLifecycleIdentityDoesNotAliasAndResetReusesRetirementShell() {
-        final LiveViewCheckpointLifecycleState state = new LiveViewCheckpointLifecycleState();
+        final LiveViewCheckpointPurgeState state = new LiveViewCheckpointPurgeState();
         final LongList retired = new LongList();
         retired.add(11);
         retired.add(12);
@@ -62,7 +62,7 @@ public class LiveViewCheckpointLifecycleStateTest {
 
     @Test
     public void testDropResetPrunesGenerationAndPoolsRetirementShell() {
-        final LiveViewCheckpointLifecycleState state = new LiveViewCheckpointLifecycleState();
+        final LiveViewCheckpointPurgeState state = new LiveViewCheckpointPurgeState();
         final LongList retired = new LongList();
         retired.add(31);
         state.markReconciled(9);
@@ -83,7 +83,7 @@ public class LiveViewCheckpointLifecycleStateTest {
 
     @Test
     public void testSuccessfulPublicationReturnsPendingShellAndCloseClearsEverything() {
-        final LiveViewCheckpointLifecycleState state = new LiveViewCheckpointLifecycleState();
+        final LiveViewCheckpointPurgeState state = new LiveViewCheckpointPurgeState();
         final LongList retired = new LongList();
         retired.add(51);
         state.replacePendingRetirements(23, retired);

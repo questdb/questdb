@@ -30,7 +30,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
-import io.questdb.cairo.lv.LiveViewCheckpointLifecycleState;
+import io.questdb.cairo.lv.LiveViewCheckpointPurgeState;
 import io.questdb.cairo.lv.LiveViewCheckpointMetaStore;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputKeyDomain;
 import io.questdb.cairo.lv.LiveViewCheckpointRepairMarker;
@@ -2553,7 +2553,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                 final LiveViewInstance instance = buildHistory(job);
                 final long definitionTxn = instance.getLiveViewToken().getTableId();
                 final long lifecycleIdentity = instance.getLifecycleIdentity();
-                final LiveViewCheckpointLifecycleState state = engine.getLiveViewCheckpointLifecycleState();
+                final LiveViewCheckpointPurgeState state = engine.getLiveViewCheckpointPurgeState();
                 final LongList pending = new LongList();
                 pending.add(41);
                 pending.add(42);
@@ -2655,7 +2655,7 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
 
     private static void assertLifecycleStateUnchanged(
             String operation,
-            LiveViewCheckpointLifecycleState state,
+            LiveViewCheckpointPurgeState state,
             long lifecycleIdentity,
             int pendingIdentity
     ) {

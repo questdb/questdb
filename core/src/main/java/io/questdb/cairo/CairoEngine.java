@@ -34,7 +34,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.frm.file.FrameFactory;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointLifecycle;
-import io.questdb.cairo.lv.LiveViewCheckpointLifecycleState;
+import io.questdb.cairo.lv.LiveViewCheckpointPurgeState;
 import io.questdb.cairo.lv.LiveViewCheckpointOutputUniqueness;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
@@ -247,7 +247,7 @@ public class CairoEngine implements Closeable, WriterSource {
     private final DataID dataID;
     private final DependentViewGraph dependentViewGraph;
     private final FunctionFactoryCache ffCache;
-    private final LiveViewCheckpointLifecycleState liveViewCheckpointLifecycleState = new LiveViewCheckpointLifecycleState();
+    private final LiveViewCheckpointPurgeState liveViewCheckpointPurgeState = new LiveViewCheckpointPurgeState();
     private final LiveViewRegistry liveViewRegistry = new LiveViewRegistry();
     private final Queue<MatViewTimerTask> matViewTimerQueue;
     private final MessageBusImpl messageBus;
@@ -1287,7 +1287,7 @@ public class CairoEngine implements Closeable, WriterSource {
         matViewStateStore.clear();
         matViewTimerQueue.clear();
         liveViewRegistry.clear();
-        liveViewCheckpointLifecycleState.clear();
+        liveViewCheckpointPurgeState.clear();
         liveViewStateStore.clear();
         boolean b1 = readerPool.releaseAll();
         boolean b2 = writerPool.releaseAll();
@@ -1338,7 +1338,7 @@ public class CairoEngine implements Closeable, WriterSource {
         // one pooled handle to LiveViewInstance would otherwise turn the old order into a
         // use-after-free that no test catches.
         Misc.free(liveViewRegistry);
-        liveViewCheckpointLifecycleState.clear();
+        liveViewCheckpointPurgeState.clear();
         Misc.free(liveViewStateStore);
         Misc.free(sqlCompilerPool);
         Misc.free(writerPool);
@@ -1857,7 +1857,7 @@ public class CairoEngine implements Closeable, WriterSource {
                             beforeFenceHook.run();
                         }
                         partial.fenceRefresh();
-                        liveViewCheckpointLifecycleState.reset(partial.getLifecycleIdentity());
+                        liveViewCheckpointPurgeState.reset(partial.getLifecycleIdentity());
                         final Runnable afterResetHook = liveViewCreateRollbackAfterResetHook;
                         if (afterResetHook != null) {
                             afterResetHook.run();
@@ -2050,7 +2050,7 @@ public class CairoEngine implements Closeable, WriterSource {
             instance.fenceRefresh();
         }
         if (instance != null) {
-            liveViewCheckpointLifecycleState.reset(instance.getLifecycleIdentity());
+            liveViewCheckpointPurgeState.reset(instance.getLifecycleIdentity());
         }
         if (instance != null) {
             instance.clearCheckpointTimelineOwnership();
@@ -2300,8 +2300,8 @@ public class CairoEngine implements Closeable, WriterSource {
         return getSequencerMetadata(tableToken, desiredVersion);
     }
 
-    public LiveViewCheckpointLifecycleState getLiveViewCheckpointLifecycleState() {
-        return liveViewCheckpointLifecycleState;
+    public LiveViewCheckpointPurgeState getLiveViewCheckpointPurgeState() {
+        return liveViewCheckpointPurgeState;
     }
 
     public LiveViewRegistry getLiveViewRegistry() {
@@ -3273,7 +3273,7 @@ public class CairoEngine implements Closeable, WriterSource {
     /**
      * Issues the next process-local live view lifecycle identity. Every registration of a
      * {@link LiveViewInstance}, a replica's included, must draw its identity from here, so that
-     * {@link LiveViewCheckpointLifecycleState} never binds two views to one slot.
+     * {@link LiveViewCheckpointPurgeState} never binds two views to one slot.
      */
     public long nextLiveViewLifecycleIdentity() {
         final long identity = nextLiveViewLifecycleIdentity.getAndIncrement();

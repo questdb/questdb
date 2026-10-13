@@ -264,8 +264,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     // Catalogue entries a reconciliation's sweep left naming an unlinked file,
     // per checkpoint directory, waiting for the next seal of that view to carry
     // them out of the tree. A view whose seal is skipped keeps its proposal.
-    private final LiveViewCheckpointLifecycleState lifecycleState;
-    private final boolean isLifecycleStateOwner;
+    private final LiveViewCheckpointPurgeState purgeState;
+    private final boolean isPurgeStateOwner;
     private final LiveViewCheckpointRingSeal ringSeal;
     private final RetirementQueueSeedVisitor retirementQueueSeedVisitor = new RetirementQueueSeedVisitor();
     private final RedirectPartitionVisitor redirectPartitionVisitor = new RedirectPartitionVisitor();
@@ -280,24 +280,24 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     private int testFailureStage;
 
     public LiveViewCheckpointTimelineStoreWriter(@NotNull CairoConfiguration configuration) {
-        this(configuration, new LiveViewCheckpointLifecycleState(), true);
+        this(configuration, new LiveViewCheckpointPurgeState(), true);
     }
 
     public LiveViewCheckpointTimelineStoreWriter(
             @NotNull CairoConfiguration configuration,
-            @NotNull LiveViewCheckpointLifecycleState lifecycleState
+            @NotNull LiveViewCheckpointPurgeState purgeState
     ) {
-        this(configuration, lifecycleState, false);
+        this(configuration, purgeState, false);
     }
 
     private LiveViewCheckpointTimelineStoreWriter(
             @NotNull CairoConfiguration configuration,
-            @NotNull LiveViewCheckpointLifecycleState lifecycleState,
-            boolean isLifecycleStateOwner
+            @NotNull LiveViewCheckpointPurgeState purgeState,
+            boolean isPurgeStateOwner
     ) {
         this.configuration = configuration;
-        this.lifecycleState = lifecycleState;
-        this.isLifecycleStateOwner = isLifecycleStateOwner;
+        this.purgeState = purgeState;
+        this.isPurgeStateOwner = isPurgeStateOwner;
         this.compactionScratch = new LiveViewCheckpointCompactionScratch(configuration);
         this.identityCheckMetaStore = new LiveViewCheckpointMetaStore(configuration);
         this.ringSeal = new LiveViewCheckpointRingSeal(configuration, null);
@@ -390,7 +390,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 // generation, which leaves whatever an earlier sweep reported.
                 long liveSegmentCount = Numbers.LONG_NULL;
                 long obsoleteSegmentBytes = Numbers.LONG_NULL;
-                if (!lifecycleState.isReconciled(lifecycleIdentity)) {
+                if (!purgeState.isReconciled(lifecycleIdentity)) {
                     final LiveViewCheckpointLifecycle.ReconcileResult reconciliation =
                             LiveViewCheckpointLifecycle.reconcile(
                                     configuration,
@@ -438,12 +438,12 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     // publication.
                     final LongList retirable = reconciliation.getRetirableSegmentIds();
                     if (retirable.size() > 0) {
-                        lifecycleState.replacePendingRetirements(lifecycleIdentity, retirable);
+                        purgeState.replacePendingRetirements(lifecycleIdentity, retirable);
                     }
                     if (reconciliation.getFailedOrphanCount() == 0
                             && reconciliation.getFailedPurgeCount() == 0
                             && reconciliation.getFailedRepairCount() == 0) {
-                        lifecycleState.markReconciled(lifecycleIdentity);
+                        purgeState.markReconciled(lifecycleIdentity);
                     }
                 }
                 try {
@@ -464,9 +464,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                             orphanUpperBound,
                             liveSegmentCount,
                             obsoleteSegmentBytes,
-                            lifecycleState.getPendingRetirements(lifecycleIdentity)
+                            purgeState.getPendingRetirements(lifecycleIdentity)
                     );
-                    lifecycleState.clearPendingRetirements(lifecycleIdentity);
+                    purgeState.clearPendingRetirements(lifecycleIdentity);
                     return result;
                 } catch (HistoryEpochChangedException e) {
                     if (epochRetry) {
@@ -479,8 +479,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     // failed, and the entries it would have retired wait for the next one.
                     throw e;
                 } catch (RuntimeException | Error e) {
-                    lifecycleState.clearReconciled(lifecycleIdentity);
-                    lifecycleState.clearPendingRetirements(lifecycleIdentity);
+                    purgeState.clearReconciled(lifecycleIdentity);
+                    purgeState.clearPendingRetirements(lifecycleIdentity);
                     throw e;
                 }
             }
@@ -610,8 +610,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         Misc.freeObjList(repairScratchPool);
         Misc.free(ringSeal);
         partitionMapObjectPool.clear();
-        if (isLifecycleStateOwner) {
-            lifecycleState.clear();
+        if (isPurgeStateOwner) {
+            purgeState.clear();
         }
     }
 
@@ -652,8 +652,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     @TestOnly
-    public LiveViewCheckpointLifecycleState getLifecycleStateForTest() {
-        return lifecycleState;
+    public LiveViewCheckpointPurgeState getPurgeStateForTest() {
+        return purgeState;
     }
 
     @TestOnly
@@ -940,7 +940,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
                         .put("live view checkpoint compaction definition identity mismatch");
             }
-            hasPriorOrphanRisk = lifecycleState.beginPublication(lifecycleIdentity);
+            hasPriorOrphanRisk = purgeState.beginPublication(lifecycleIdentity);
             if (superblock.generation != plan.getGeneration()) {
                 throw CairoException.critical(0)
                         .put("live view checkpoint timeline moved under the compaction plan")
@@ -1041,7 +1041,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             copy(newTimelineRoot, superblock.timelineRootRef);
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
             metaStore.publish();
-            lifecycleState.finishPublication(lifecycleIdentity, hasPriorOrphanRisk);
+            purgeState.finishPublication(lifecycleIdentity, hasPriorOrphanRisk);
             if (testFailureStage == TEST_FAIL_AFTER_SUPERBLOCK_PUBLISH) {
                 throw CairoException.critical(0).put("test failure after live view checkpoint superblock publication");
             }
@@ -1146,7 +1146,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
                         .put("live view checkpoint repair definition identity mismatch");
             }
-            hasPriorOrphanRisk = lifecycleState.beginPublication(lifecycleIdentity);
+            hasPriorOrphanRisk = purgeState.beginPublication(lifecycleIdentity);
             if (superblock.generation != capture.generation) {
                 throw CairoException.critical(0)
                         .put("live view checkpoint timeline moved under the repair capture")
@@ -1452,7 +1452,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             copy(newDeltaRoot, superblock.rowPositionDeltaRootRef);
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
             metaStore.publish();
-            lifecycleState.finishPublication(lifecycleIdentity, hasPriorOrphanRisk);
+            purgeState.finishPublication(lifecycleIdentity, hasPriorOrphanRisk);
 
             return shells.repairResult.of(
                     generation,
@@ -1527,7 +1527,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 throw CairoException.critical(CairoException.LV_CHECKPOINT_TIMELINE_INVALID)
                         .put("live view checkpoint truncate definition identity mismatch");
             }
-            hasPriorOrphanRisk = lifecycleState.beginPublication(lifecycleIdentity);
+            hasPriorOrphanRisk = purgeState.beginPublication(lifecycleIdentity);
 
             final LiveViewCheckpointPageRef oldTimelineRoot = copyInto(superblock.timelineRootRef, shells.oldTimelineRoot);
             final LiveViewCheckpointPageRef oldDirectoryRoot =
@@ -1614,7 +1614,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // suffix moves no surviving prefix key's cumulative recovery position.
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
             metaStore.publish();
-            lifecycleState.finishPublication(lifecycleIdentity, hasPriorOrphanRisk);
+            purgeState.finishPublication(lifecycleIdentity, hasPriorOrphanRisk);
 
             return shells.truncateResult.of(
                     generation,
@@ -1721,11 +1721,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             int removedOrphans = 0;
             int failedOrphans = 0;
             int physicalEntriesVisited = 0;
-            final int sweepsSinceScan = lifecycleState.incrementSweepsSinceOrphanScan(
+            final int sweepsSinceScan = purgeState.incrementSweepsSinceOrphanScan(
                     lifecycleIdentity
             );
-            if (!lifecycleState.isOrphanScanCompleted(lifecycleIdentity)
-                    || lifecycleState.isOrphanScanNeeded(lifecycleIdentity)
+            if (!purgeState.isOrphanScanCompleted(lifecycleIdentity)
+                    || purgeState.isOrphanScanNeeded(lifecycleIdentity)
                     || purge.isPhysicalOrphanScanRequired()
                     || sweepsSinceScan >= ORPHAN_SAFETY_SCAN_INTERVAL) {
                 final LiveViewCheckpointLifecycle.CleanupStats orphans =
@@ -1738,7 +1738,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 removedOrphans = orphans.getRemovedCount();
                 failedOrphans = orphans.getFailedCount();
                 physicalEntriesVisited = orphans.getVisitedCount();
-                lifecycleState.markOrphanScanCompleted(
+                purgeState.markOrphanScanCompleted(
                         lifecycleIdentity,
                         failedOrphans != 0
                 );
@@ -1749,9 +1749,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // already carried out of the tree.
             final LongList retirable = purge.getRetirableSegmentIds();
             if (retirable.size() > 0) {
-                lifecycleState.replacePendingRetirements(lifecycleIdentity, retirable);
+                purgeState.replacePendingRetirements(lifecycleIdentity, retirable);
             } else {
-                lifecycleState.clearPendingRetirements(lifecycleIdentity);
+                purgeState.clearPendingRetirements(lifecycleIdentity);
             }
             return shells.sweepResult.of(
                     purge.getPurgedSegmentCount(),
@@ -1829,7 +1829,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             if (metaStore.isValid() && (superblock.definitionTxn != definitionTxn || superblock.historyEpoch != historyEpoch)) {
                 throw HistoryEpochChangedException.INSTANCE;
             }
-            hasPriorOrphanRisk = lifecycleState.beginPublication(lifecycleIdentity);
+            hasPriorOrphanRisk = purgeState.beginPublication(lifecycleIdentity);
             if (metaStore.isValid()
                     && (normalizedBaseSeqTxn < superblock.normalizedBaseSeqTxn
                     || coveredLvSeqTxn < superblock.coveredLvSeqTxn)) {
@@ -2064,7 +2064,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             copy(oldDeltaRoot, superblock.rowPositionDeltaRootRef);
             copy(newDirectoryRoot, superblock.segmentDirectoryRootRef);
             metaStore.publish();
-            lifecycleState.finishPublication(lifecycleIdentity, hasPriorOrphanRisk);
+            purgeState.finishPublication(lifecycleIdentity, hasPriorOrphanRisk);
             adoptBoundaryBaseline(boundary, generation);
 
             LiveViewCheckpointLifecycle.purgeFinalOrphans(
@@ -2431,7 +2431,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             // have been staged by an earlier publication which failed before its
             // superblock commit. Preserve that durable orphan-recovery signal
             // even though this publication replaces the queue image.
-            lifecycleState.markOrphanRisk(lifecycleIdentity);
+            purgeState.markOrphanRisk(lifecycleIdentity);
         }
         final long liveDataSegmentCount;
         if (isAdvancingExisting) {

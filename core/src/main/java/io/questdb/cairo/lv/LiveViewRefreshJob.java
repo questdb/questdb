@@ -93,6 +93,7 @@ import io.questdb.log.LogRecord;
 import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
+import io.questdb.std.FiberLocal;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -639,10 +640,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * checkpoint timeline writer, or null before a timeline write path first uses it.
      */
     @TestOnly
-    public @Nullable LiveViewCheckpointLifecycleState getCheckpointTimelineLifecycleStateForTest() {
+    public @Nullable LiveViewCheckpointPurgeState getCheckpointTimelinePurgeStateForTest() {
         return checkpointTimelineStoreWriter == null
                 ? null
-                : checkpointTimelineStoreWriter.getLifecycleStateForTest();
+                : checkpointTimelineStoreWriter.getPurgeStateForTest();
     }
 
     /**
@@ -912,7 +913,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (checkpointTimelineStoreWriter == null) {
             checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
                     engine.getConfiguration(),
-                    engine.getLiveViewCheckpointLifecycleState()
+                    engine.getLiveViewCheckpointPurgeState()
             );
             checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
         }
@@ -1225,7 +1226,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (checkpointTimelineStoreWriter == null) {
             checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
                     engine.getConfiguration(),
-                    engine.getLiveViewCheckpointLifecycleState()
+                    engine.getLiveViewCheckpointPurgeState()
             );
             checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
         }
@@ -4431,7 +4432,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (checkpointTimelineStoreWriter == null) {
                 checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
                         engine.getConfiguration(),
-                        engine.getLiveViewCheckpointLifecycleState()
+                        engine.getLiveViewCheckpointPurgeState()
                 );
                 checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
             }
@@ -9337,7 +9338,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * That whole-range replacement is also what makes a full rebuild dangerous: the prefix
      * the incremental path froze is exactly what it deletes, and what the recompute cannot
      * put back. So a full rebuild runs behind {@link LiveViewRebuildRestatementGuard}, which
-     * refuses it - by throwing {@link LiveViewRebuildRefusedException} before anything durable
+     * refuses it - by throwing {@link RebuildRefusedException} before anything durable
      * moves - when the view retains rows the snapshot has no history for, or when the
      * recompute reproduces fewer rows below the durable frontier than the view holds. A full
      * rebuild also retires its timeline only after that second check, just before it commits,
@@ -9667,11 +9668,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 armRebuildRestatementGuard(instance, reader, effectiveSeqTxn);
                 if (restatementGuard.isHistoryFloorBreached()) {
                     restatementGuard.refuse(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR);
-                    throw LiveViewRebuildRefusedException.instance();
+                    throw RebuildRefusedException.instance();
                 }
                 if (restatementGuard.isBasePartitionLost()) {
                     restatementGuard.refuse(LiveViewRebuildRestatementGuard.VERDICT_LOST_PARTITION);
-                    throw LiveViewRebuildRefusedException.instance();
+                    throw RebuildRefusedException.instance();
                 }
             }
             try {
@@ -12120,7 +12121,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         if (checkpointTimelineStoreWriter == null) {
             checkpointTimelineStoreWriter = new LiveViewCheckpointTimelineStoreWriter(
                     engine.getConfiguration(),
-                    engine.getLiveViewCheckpointLifecycleState()
+                    engine.getLiveViewCheckpointPurgeState()
             );
             checkpointTimelineStoreWriter.setTestFailureStage(checkpointTimelineTestFailureStage);
         }
@@ -13667,7 +13668,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             } else {
                 instance.recordCheckpointRestoreRebuilt();
             }
-        } catch (LiveViewRebuildRefusedException refused) {
+        } catch (RebuildRefusedException refused) {
             // Not a failure: the rebuild would have dropped rows the view retains, and it
             // stopped before anything moved. The view keeps its rows and stays valid, and
             // the next restart asks the same question again.
@@ -14171,7 +14172,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void prepareWholeViewReplacement(LiveViewInstance instance) {
         if (restatementGuard.isRowShortfall()) {
             restatementGuard.refuse(LiveViewRebuildRestatementGuard.VERDICT_ROW_SHORTFALL);
-            throw LiveViewRebuildRefusedException.instance();
+            throw RebuildRefusedException.instance();
         }
         retireCheckpointStateOnO3(instance, !instance.isCheckpointUpgradeRebuildPending());
     }
@@ -14988,7 +14989,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // Not a failure, and nothing moved: the base has not applied every commit the view
             // consumed. The caller defers the recovery until it has.
             throw lag;
-        } catch (LiveViewRebuildRefusedException refused) {
+        } catch (RebuildRefusedException refused) {
             // The in-memory tier is left as it was: the refusal committed nothing, so the
             // published slot still mirrors the view's table plus whatever lead it carried,
             // and readers - which take the lead from the slot, never from the count zeroed
@@ -16604,7 +16605,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     .$(", head=").$(baseAppliedSeqTxn)
                     .$(", reason=").$safe(cause.getFlyweightMessage()).I$();
             return true;
-        } catch (LiveViewRebuildRefusedException refused) {
+        } catch (RebuildRefusedException refused) {
             // The base no longer holds rows the view retains, so the re-derive would have
             // replaced them with nothing. The view stops instead of recovering, and it must
             // not be invalidated either: the block is not durable, and a restart that finds
@@ -18075,6 +18076,34 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             this.selectedRootId = selectedRootId;
             this.headRootId = headRootId;
             this.isRuntimeAnchorReusable = isRuntimeAnchorReusable;
+        }
+    }
+
+    /**
+     * Thrown out of a whole-view rebuild that {@link LiveViewRebuildRestatementGuard} refuses
+     * because it would drop rows the view retains. Nothing durable has moved when it is thrown,
+     * so the rebuild's caller stops the view instead of counting a failure. Not a
+     * {@link CairoException}: the rebuild's callers count, retry or invalidate on those, and a
+     * refusal must reach the one catch arm per caller that recognizes it. A fiber-local
+     * flyweight with no stack trace outside {@code -ea}.
+     */
+    private static final class RebuildRefusedException extends RuntimeException {
+        private static final StackTraceElement[] EMPTY_STACK_TRACE = {};
+        private static final FiberLocal<RebuildRefusedException> tlException = new FiberLocal<>(RebuildRefusedException::new);
+
+        static RebuildRefusedException instance() {
+            RebuildRefusedException ex = tlException.get();
+            // This is to have a correct stack trace in local debugging with -ea option.
+            assert (ex = new RebuildRefusedException()) != null;
+            return ex;
+        }
+
+        @Override
+        public StackTraceElement[] getStackTrace() {
+            StackTraceElement[] result = EMPTY_STACK_TRACE;
+            // This is to have a correct stack trace reported in CI.
+            assert (result = super.getStackTrace()) != null;
+            return result;
         }
     }
 

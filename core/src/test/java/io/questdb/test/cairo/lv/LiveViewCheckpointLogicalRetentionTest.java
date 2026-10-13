@@ -138,14 +138,14 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         assertMemoryLeak(() -> {
             createView();
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                Assert.assertNull(job.getCheckpointTimelineLifecycleStateForTest());
+                Assert.assertNull(job.getCheckpointTimelinePurgeStateForTest());
                 long entries = 0;
                 for (int commit = 1; commit <= SEALS; commit++) {
                     appendAndRefresh(job, commit * 10, commit);
                     if (commit == 1) {
                         Assert.assertSame(
-                                engine.getLiveViewCheckpointLifecycleState(),
-                                job.getCheckpointTimelineLifecycleStateForTest()
+                                engine.getLiveViewCheckpointPurgeState(),
+                                job.getCheckpointTimelinePurgeStateForTest()
                         );
                     }
                     final LiveViewInstance instance = viewInstance();
@@ -282,15 +282,15 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                 instance = buildHistory(job);
             }
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                Assert.assertNull(job.getCheckpointTimelineLifecycleStateForTest());
+                Assert.assertNull(job.getCheckpointTimelinePurgeStateForTest());
                 long entries = SEALS;
                 for (int correction = 1; correction <= CORRECTIONS; correction++) {
                     final long generationBefore = generation(instance);
                     correct(job, instance, historicalSecond(correction), 900 + correction);
                     if (correction == 1) {
                         Assert.assertSame(
-                                engine.getLiveViewCheckpointLifecycleState(),
-                                job.getCheckpointTimelineLifecycleStateForTest()
+                                engine.getLiveViewCheckpointPurgeState(),
+                                job.getCheckpointTimelinePurgeStateForTest()
                         );
                     }
 
@@ -373,11 +373,11 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             // to its predecessor, and the restart reconstructs the corrupt id in place
             // before restoring cleanly from the healed generation.
             try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
-                Assert.assertNull(resumed.getCheckpointTimelineLifecycleStateForTest());
+                Assert.assertNull(resumed.getCheckpointTimelinePurgeStateForTest());
                 driveRefreshToQuiescence(resumed);
                 Assert.assertSame(
-                        engine.getLiveViewCheckpointLifecycleState(),
-                        resumed.getCheckpointTimelineLifecycleStateForTest()
+                        engine.getLiveViewCheckpointPurgeState(),
+                        resumed.getCheckpointTimelinePurgeStateForTest()
                 );
             }
 
@@ -1039,14 +1039,14 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                 instance = buildHistory(job);
             }
             try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                Assert.assertNull(job.getCheckpointTimelineLifecycleStateForTest());
+                Assert.assertNull(job.getCheckpointTimelinePurgeStateForTest());
                 Assert.assertTrue(job.truncateOrRetireTimelineOnO3ForTest(
                         instance,
                         ts(timestamp(SEALS * 10 - 5))
                 ));
                 Assert.assertSame(
-                        engine.getLiveViewCheckpointLifecycleState(),
-                        job.getCheckpointTimelineLifecycleStateForTest()
+                        engine.getLiveViewCheckpointPurgeState(),
+                        job.getCheckpointTimelinePurgeStateForTest()
                 );
             }
         });

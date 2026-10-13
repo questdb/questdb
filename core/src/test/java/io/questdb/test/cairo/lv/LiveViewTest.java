@@ -33,7 +33,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.file.BlockFileReader;
-import io.questdb.cairo.lv.LiveViewCheckpointLifecycleState;
+import io.questdb.cairo.lv.LiveViewCheckpointPurgeState;
 import io.questdb.cairo.lv.LiveViewDefinition;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
@@ -363,7 +363,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
     }
 
     @Test
-    public void testDropPrunesCheckpointLifecycleState() throws Exception {
+    public void testDropPrunesCheckpointPurgeState() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE base (ts TIMESTAMP, x LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             execute("CREATE LIVE VIEW lv FLUSH EVERY 1s START FROM NOW AS " +
@@ -371,7 +371,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
             final TableToken token = engine.verifyTableName("lv");
             final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
             final long lifecycleIdentity = instance.getLifecycleIdentity();
-            final LiveViewCheckpointLifecycleState state = engine.getLiveViewCheckpointLifecycleState();
+            final LiveViewCheckpointPurgeState state = engine.getLiveViewCheckpointPurgeState();
             final LongList retired = new LongList();
             retired.add(11);
             state.markReconciled(lifecycleIdentity);
@@ -380,7 +380,7 @@ public class LiveViewTest extends AbstractLiveViewTest {
 
             execute("DROP LIVE VIEW lv");
 
-            Assert.assertEquals("real DROP must prune lifecycle state", 0, state.getActiveGenerationCountForTest());
+            Assert.assertEquals("real DROP must prune purge state", 0, state.getActiveGenerationCountForTest());
             Assert.assertEquals("real DROP must pool pending retirement shells", 1,
                     state.getRetirementPoolSizeForTest());
 
