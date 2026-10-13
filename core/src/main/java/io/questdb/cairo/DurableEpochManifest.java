@@ -248,6 +248,17 @@ public final class DurableEpochManifest {
                 if (!cvReader.readSafe() || cvReader.hasTornLiveArea() || txReader.getColumnVersion() != cvReader.getVersion()) {
                     throw CairoException.critical(0).put("could not validate initial adaptive _cv baseline [table=").put(tableToken.getTableName()).put(']');
                 }
+                // A populated baseline (a conversion to WAL, a REBASE clone) names partitions written lazily, maybe
+                // under NOSYNC: generation zero certifies them only after they are durable.
+                if (txReader.getPartitionCount() > 0) {
+                    final boolean isFileByFile = !ff.isSyncfsFileSystemWide();
+                    fsyncPartitions(configuration, tablePath, rootLen, txReader, timestampType, partitionBy, null, null, isFileByFile);
+                    if (isFileByFile) {
+                        fsyncTableRoot(configuration, tablePath, rootLen);
+                    } else {
+                        syncfsTable(configuration, tablePath, rootLen);
+                    }
+                }
                 seqTxn = txReader.getSeqTxn();
                 txn = txReader.getTxn();
                 columnVersion = txReader.getColumnVersion();

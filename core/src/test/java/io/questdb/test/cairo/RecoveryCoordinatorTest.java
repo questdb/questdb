@@ -60,6 +60,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8String;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.crash.CrashFaultFilesFacade;
@@ -1741,50 +1742,14 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
     }
 
-    /**
-     * The creation baselines other than CREATE: an {@code ALTER TABLE ... REBASE WAL} clone and a conversion to WAL
-     * each leave the new table with a valid save point at its live cut, and a restart accepts it and keeps every row.
-     */
     @Test
     public void testRebaseCloneAndConversionToWalLeaveValidCreationBaseline() throws Exception {
-        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
-        try {
-            assertMemoryLeak(() -> {
-                setCommitMode("adaptive");
-                execute("CREATE TABLE rebased (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                execute("INSERT INTO rebased VALUES ('2024-09-01T00:00:00.000000Z', 1)");
-                drainWalQueue();
-                execute("ALTER TABLE rebased SUSPEND WAL");
-                execute("ALTER TABLE rebased REBASE WAL");
-                drainWalQueue();
-                execute("CREATE TABLE converted (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-                execute("INSERT INTO converted VALUES ('2024-09-01T00:00:00.000000Z', 1)");
-                execute("ALTER TABLE converted SET TYPE WAL");
-                engine.releaseInactive();
-                engine.load();
-                for (String name : new String[]{"rebased", "converted"}) {
-                    final TableToken tt = engine.verifyTableName(name);
-                    Assert.assertTrue(name + ": a WAL table", tt.isWal());
-                    Assert.assertEquals(name + ": a valid save point at the live cut", readTxnSeqTxn(tt), newestSavePointSeqTxn(tt));
-                    engine.releaseAllWriters();
-                    engine.releaseAllReaders();
-                    engine.getTxnScoreboardPool().remove(tt);
-                    engine.getTableSequencerAPI().resetForReboot(tt);
-                    new RecoveryCoordinator(engine).recover();
-                    engine.notifyWalTxnRepublisher(tt);
-                    drainWalQueue();
-                    assertQuery("SELECT * FROM " + name)
-                            .expectSize()
-                            .timestamp("ts")
-                            .returns("""
-                                    ts\tv
-                                    2024-09-01T00:00:00.000000Z\t1
-                                    """);
-                }
-            });
-        } finally {
-            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
-        }
+        assertCreationBaselinesValid(Os.isLinux());
+    }
+
+    @Test
+    public void testRebaseCloneAndConversionToWalLeaveValidCreationBaselineOnNonWideSyncfsPlatform() throws Exception {
+        assertCreationBaselinesValid(false);
     }
 
     /**
@@ -3096,6 +3061,58 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         assertDetachFinalizationFailureRetries(true);
     }
 
+    /**
+     * The creation baselines other than CREATE: an {@code ALTER TABLE ... REBASE WAL} clone and a conversion to WAL
+     * each leave the new table with a valid save point at its live cut, and a restart accepts it and keeps every row.
+     * Both baselines name a populated partition, whose files the conversion's source wrote without a flush, so
+     * generation zero is published only after a barrier covers them.
+     */
+    private void assertCreationBaselinesValid(boolean isWide) throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        final BaselineBarrierFacade ff = new BaselineBarrierFacade(isWide);
+        try {
+            assertMemoryLeak(ff, () -> {
+                setCommitMode("adaptive");
+                execute("CREATE TABLE rebased (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO rebased VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                execute("ALTER TABLE rebased SUSPEND WAL");
+                ff.reset();
+                execute("ALTER TABLE rebased REBASE WAL");
+                drainWalQueue();
+                ff.assertBaselineFlushedFirst("2024-09-01");
+                execute("CREATE TABLE converted (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO converted VALUES ('2024-09-01T00:00:00.000000Z', 1)");
+                execute("ALTER TABLE converted SET TYPE WAL");
+                engine.releaseInactive();
+                ff.reset();
+                engine.load();
+                ff.assertBaselineFlushedFirst("2024-09-01");
+                for (String name : new String[]{"rebased", "converted"}) {
+                    final TableToken tt = engine.verifyTableName(name);
+                    Assert.assertTrue(name + ": a WAL table", tt.isWal());
+                    Assert.assertEquals(name + ": a valid save point at the live cut", readTxnSeqTxn(tt), newestSavePointSeqTxn(tt));
+                    engine.releaseAllWriters();
+                    engine.releaseAllReaders();
+                    engine.getTxnScoreboardPool().remove(tt);
+                    engine.getTableSequencerAPI().resetForReboot(tt);
+                    new RecoveryCoordinator(engine).recover();
+                    engine.notifyWalTxnRepublisher(tt);
+                    drainWalQueue();
+                    assertQuery("SELECT * FROM " + name)
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("""
+                                    ts\tv
+                                    2024-09-01T00:00:00.000000Z\t1
+                                    """);
+                }
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
     private void assertDetachFinalizationFailureRetries(boolean restart) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
@@ -3911,6 +3928,86 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      * it is opened read-only anyway.
      */
     private static final class SimulatedCrash extends RuntimeException {
+    }
+
+    /**
+     * Records, in order, every {@code fsync} and {@code syncfs} with the path its fd was opened by, and every write
+     * open of a save point manifest.
+     */
+    private static final class BaselineBarrierFacade extends TestFilesFacadeImpl {
+        private final Map<Long, String> fdPaths = new java.util.concurrent.ConcurrentHashMap<>();
+        private final boolean isWide;
+        private final List<String> ops = java.util.Collections.synchronizedList(new ArrayList<>());
+
+        private BaselineBarrierFacade(boolean isWide) {
+            this.isWide = isWide;
+        }
+
+        @Override
+        public void fsync(long fd) {
+            ops.add("fsync " + fdPaths.get(fd));
+            super.fsync(fd);
+        }
+
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            return isWide;
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            return track(name, super.openRO(name));
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME)) {
+                ops.add("manifest " + Utf8String.newInstance(name));
+            }
+            return track(name, super.openRW(name, opts));
+        }
+
+        @Override
+        public void syncfs(long fd) {
+            ops.add("syncfs " + fdPaths.get(fd));
+            super.syncfs(fd);
+        }
+
+        // The first generation-zero manifest written since the reset must follow a barrier through its own table
+        // directory and, file by file, a flush of the partition's files.
+        void assertBaselineFlushedFirst(String partitionName) {
+            synchronized (ops) {
+                final String generationZero = "/" + DurableEpochManifest.FILE_NAME + ".0";
+                int manifest = -1;
+                for (int i = 0, n = ops.size(); i < n && manifest < 0; i++) {
+                    if (ops.get(i).startsWith("manifest ") && ops.get(i).endsWith(generationZero)) {
+                        manifest = i;
+                    }
+                }
+                Assert.assertTrue("no generation-zero baseline: " + ops, manifest > -1);
+                final String tableDir = ops.get(manifest).substring("manifest ".length(), ops.get(manifest).length() - generationZero.length());
+                boolean hasBarrier = false;
+                boolean hasPartitionFlush = false;
+                for (int i = 0; i < manifest; i++) {
+                    final String op = ops.get(i);
+                    hasBarrier |= op.startsWith("syncfs " + tableDir + "/");
+                    hasPartitionFlush |= op.startsWith("fsync " + tableDir + "/" + partitionName);
+                }
+                Assert.assertTrue("no barrier through " + tableDir + " before its baseline: " + ops, hasBarrier);
+                Assert.assertTrue("no flush of the partition before its baseline: " + ops, isWide || hasPartitionFlush);
+            }
+        }
+
+        void reset() {
+            ops.clear();
+        }
+
+        private long track(LPSZ name, long fd) {
+            if (fd != -1) {
+                fdPaths.put(fd, Utf8String.newInstance(name).toString());
+            }
+            return fd;
+        }
     }
 
     private static final class RestoreTransferFaultFacade extends TestFilesFacadeImpl {
