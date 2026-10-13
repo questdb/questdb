@@ -144,6 +144,9 @@ public class IndexKeyScanParallelTest extends AbstractCairoTest {
                                             engine.execute("insert into t select case when x % 2 = 0 then 'A' else 'B' end, 2_000_000 + x, 0.25, (400_000_000_000L + "
                                                     + round + " * 10_000_000_000L + x * 1_000_000L)::timestamp, 'q' from long_sequence(500)", ctx);
                                             engine.execute("update t set y = 7.0 where x % 1000 = 3", ctx);
+                                            // appends in place to the last partition, which keeps its name txn
+                                            engine.execute("insert into t select 'A', 3_000_000 + x, 0.125, (max_ts + x)::timestamp, 'q'"
+                                                    + " from long_sequence(300) cross join (select max(ts) max_ts from t)", ctx);
                                         }
                                     }
                                     Assert.assertTrue(query, n > 50);

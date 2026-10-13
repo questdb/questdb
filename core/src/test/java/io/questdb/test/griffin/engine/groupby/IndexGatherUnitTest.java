@@ -81,6 +81,37 @@ public class IndexGatherUnitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReopenAfterAppendsInPlace() throws Exception {
+        // A cached factory reopened after rows were appended in place to the last partitions, whose
+        // readers it takes without a reload (their names do not change): counted tasks and units both
+        // read the new rows, as the serial GROUP BY does.
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, ctx) -> {
+                createTable(engine, ctx, 60_000);
+                final String sql = "select sym, count() n, sum(z) s, max(z) m from t where sym in ('S0', 'S2', 'R3', 'R7') order by sym";
+                for (long minProbes : new long[]{Long.MAX_VALUE, 1}) {
+                    IndexGatherPageFrameCursor.setUnitModeMinProbes(minProbes);
+                    setFeatures(true, false);
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_FRAME_DISPATCH_ENABLED, "true");
+                    try (RecordCursorFactory factory = engine.select(sql, ctx)) {
+                        for (int round = 0; round < 3; round++) {
+                            final String actual = print(factory, ctx);
+                            Assert.assertEquals(minProbes == 1, findGather(factory).getPageFrameCursorForTesting().isUnitMode());
+                            setFeatures(false, false);
+                            TestUtils.assertEquals(sql + " [round " + round + ", minProbes " + minProbes + ']', runToString(engine, ctx, sql), actual);
+                            setFeatures(true, false);
+                            // in order, after the last row: into the last partition, in place
+                            engine.execute("insert into t select case when x % 2 = 0 then 'S0' else 'R7' end, x, 7, 1_000_000 * (" + round + " + 1) + x, 's', "
+                                    + "(max_ts + x)::timestamp from long_sequence(500) cross join (select max(ts) max_ts from t)", ctx);
+                        }
+                    }
+                }
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testUnitsMatchSerialOnTestContext() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext, 60_000);
