@@ -807,8 +807,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     return false;
                 }
                 if (configuration.getHttpContextConfiguration().areCookiesEnabled()) {
-                    // The session is opened, closed or extended only after the request has been authorized,
-                    // see updateSession(). A refused request must not keep the session alive.
+                    // The session is opened, extended or rotated only after the request has been authorized,
+                    // see updateSession(). A refused request must not keep the session alive, but it still
+                    // closes the session if it asks for that, see handleClientRecv().
                     requestSessionPending = true;
                     requestSessionId = sessionId;
                     requestSession = sessionInfo;
@@ -1282,6 +1283,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                         } catch (CairoException e) {
                             processor = rejectProcessor.reject(HTTP_INTERNAL_ERROR, e.getFlyweightMessage());
                         }
+                    } else if (requestSession != null && isSessionCloseRequested()) {
+                        // Closing a session is always safe, so a logout the server refuses still ends the
+                        // session, such as the one the web console sends after its user lost HTTP access.
+                        sessionStore.destroySession(requestSession.getSessionId(), this);
                     }
                 }
 
@@ -1412,6 +1417,11 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         }
     }
 
+    // true when the client asks to close its session by sending 'session=false'
+    private boolean isSessionCloseRequested() {
+        return Utf8s.equalsNcAscii(FALSE, getRequestHeader().getUrlParam(URL_PARAM_SESSION));
+    }
+
     private boolean keepConnectionAlive() {
         return !forceDisconnectOnComplete && configuration.getHttpContextConfiguration().getServerKeepAlive();
     }
@@ -1484,7 +1494,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     getCredentialFingerprint(headerParser.getHeader(HEADER_AUTHORIZATION)),
                     this
             );
-        } else if (Utf8s.equalsNcAscii(FALSE, sessionParam) && sessionInfo != null) {
+        } else if (sessionInfo != null && isSessionCloseRequested()) {
             // close session if client requested it
             // note that this request is still going to be processed
             sessionStore.destroySession(sessionInfo.getSessionId(), this);

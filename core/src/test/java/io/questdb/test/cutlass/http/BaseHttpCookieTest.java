@@ -186,6 +186,50 @@ public abstract class BaseHttpCookieTest extends AbstractBootstrapTest {
         });
     }
 
+    protected void testRefusedLogoutEndsSession(Supplier<ServerMain> serverMainSupplier, Supplier<HttpClient> httpClientSupplier) throws Exception {
+        assertMemoryLeak(() -> {
+            try (final ServerMain questdb = serverMainSupplier.get()) {
+                questdb.start();
+
+                final HttpSessionStore sessionStore = questdb.getConfiguration().getFactoryProvider().getHttpSessionStore();
+
+                final String sessionId;
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    HttpClient.ResponseHeaders responseHeaders = newHttpRequest(httpClient, HTTP_PORT, "SELECT 1", USER, PASSWORD, "true");
+                    awaitStatusCode(responseHeaders, "200");
+                    sessionId = assertSessionCookie(responseHeaders, isSecure());
+                    assertChunkedBody(responseHeaders, "{\"query\":\"SELECT 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}");
+                }
+                final HttpSessionStore.SessionInfo session = sessionStore.getSession(sessionId);
+                assertNotNull(session);
+
+                // the session authenticates the request, which asks to close the session,
+                // but the server refuses it: /exec does not take PUT
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    final HttpClient.Request request = httpClient.newRequest("127.0.0.1", HTTP_PORT)
+                            .PUT()
+                            .url("/exec")
+                            .query("query", "SELECT 1")
+                            .query("session", "false")
+                            .setCookie(SESSION_COOKIE_NAME, sessionId);
+                    request.withContent().putAscii("x");
+                    HttpClient.ResponseHeaders responseHeaders = request.send();
+                    awaitStatusCode(responseHeaders, "405");
+                    assertChunkedBody(responseHeaders, "Method PUT not supported\r\n");
+                }
+
+                // refused or not, the request has closed the session
+                assertTrue(session.isInvalid());
+                assertNull(sessionStore.getSession(sessionId));
+                try (HttpClient httpClient = httpClientSupplier.get()) {
+                    HttpClient.ResponseHeaders responseHeaders = newHttpRequest(httpClient, HTTP_PORT, "SELECT 1", null, null, null, SESSION_COOKIE_NAME, sessionId);
+                    awaitStatusCode(responseHeaders, "401");
+                    assertChunkedBody(responseHeaders, "Unauthorized\r\n");
+                }
+            }
+        });
+    }
+
     protected void testRefusedRequestDoesNotExtendSession(Supplier<ServerMain> serverMainSupplier, Supplier<HttpClient> httpClientSupplier, AtomicLong currentMicros) throws Exception {
         assertMemoryLeak(() -> {
             try (final ServerMain questdb = serverMainSupplier.get()) {
