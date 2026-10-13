@@ -176,20 +176,14 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
 
     @Test
     public void testSyncfsPersistsNamespaceChanges() throws Exception {
-        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
-        final String dir = temp.newFolder("namespace-syncfs").getAbsolutePath();
-        ff.markDurableBaseline(dir);
-        try (Path file = new Path().of(dir).concat("new.d")) {
-            final long fd = openAndWrite(ff, file, (byte) 7);
-            try {
-                ff.syncfs(fd);
-            } finally {
-                ff.close(fd);
-            }
-            ff.powerLoss();
-            ff.crash(dir);
-            assertFileBytes(file, (byte) 7);
-        }
+        // The filesystem-wide syncfs of Linux also commits the new file's name.
+        assertSyncfsNamespaceScope(true);
+    }
+
+    @Test
+    public void testSyncfsPerFileKeepsNoNamespaceChanges() throws Exception {
+        // Where syncfs flushes one file (macOS, Windows) it is an fsync: the bytes, not the new directory entry.
+        assertSyncfsNamespaceScope(false);
     }
 
     @Test
@@ -392,6 +386,28 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
         final byte[] expected = new byte[8];
         java.util.Arrays.fill(expected, value);
         Assert.assertArrayEquals(expected, java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(file.toString())));
+    }
+
+    private void assertSyncfsNamespaceScope(boolean isWide) throws Exception {
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        ff.setSyncfsFileSystemWide(isWide);
+        final String dir = temp.newFolder(isWide ? "namespace-syncfs-wide" : "namespace-syncfs-per-file").getAbsolutePath();
+        ff.markDurableBaseline(dir);
+        try (Path file = new Path().of(dir).concat("new.d")) {
+            final long fd = openAndWrite(ff, file, (byte) 7);
+            try {
+                ff.syncfs(fd);
+            } finally {
+                ff.close(fd);
+            }
+            ff.powerLoss();
+            ff.crash(dir);
+            if (isWide) {
+                assertFileBytes(file, (byte) 7);
+            } else {
+                Assert.assertFalse("a per-file syncfs does not make the new name durable", ff.exists(file.$()));
+            }
+        }
     }
 
     private void assertSyncfsScope(boolean isWide) throws Exception {

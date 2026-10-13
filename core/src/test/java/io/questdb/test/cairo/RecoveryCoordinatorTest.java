@@ -4192,7 +4192,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     ) {
         final Map<String, byte[]> durable = new TreeMap<>();
         for (String name : files.keySet()) {
-            final byte[] content = crashFf.durableContentOf(Paths.get(engine.getConfiguration().getDbRoot().toString(), tt.getDirName(), name).toString());
+            // What crash() restores, not the durable prefix: a per-file fsync (macOS, Windows) makes a column durable
+            // up to its last written byte and its size as a whole, so the restored file has a zero tail.
+            final byte[] content = crashFf.powerLossImageOf(Paths.get(engine.getConfiguration().getDbRoot().toString(), tt.getDirName(), name).toString());
             if (content != null) {
                 durable.put(name, content);
             }

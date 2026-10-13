@@ -87,6 +87,9 @@ public abstract class AbstractCrashConsistencyTest extends AbstractCairoTest {
         // truncate its segment files against the rolled-back state.
         engine.releaseCrashOrphanedWalWriters();
         engine.releaseAllWalWriters();
+        // A freshly booted engine has no table sequencer open either: one kept open across the rollback would
+        // flush or append to its txn log through a handle from before the power loss.
+        engine.releaseInactiveTableSequencers();
         crashFf.crash(engine.getConfiguration().getDbRoot());
     }
 
