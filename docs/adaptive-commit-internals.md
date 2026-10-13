@@ -765,18 +765,17 @@ change reads as unverified, never as torn, and a released binary ignores the new
   `metadata-hydration` thread opens every WAL table's log right after the start
   (`CairoEngine.hydrateRecentWriteTracker`), unless a write gets there first. Damage to a V1 record already written
   (bit rot, a foreign write) is not detected.
-- **WAL segment length guard.** Before applying, the writer checks that each WAL column file is long enough for
-  the committed rows, using a cached length and another `fstat` when the committed range passes that length. It
-  also checks that the last aux entry of a var-size column is whole (`WAL segment column too short for committed
-  row range [...]`, `WAL segment column has a torn aux entry [...]`).
+- **WAL segment files.** Apply relies on WAL files becoming durable before sequencing under `sync` and
+  `adaptive`; it performs no extra per-apply file-length or last-aux-entry validation. `nosync` and `async` make
+  no power-loss durability promise, so their lost or torn WAL bytes need not be replayable after a crash.
 
 A torn `_txn` or `_cv` live area makes a reader stay on the previous transaction (`_txn live area is torn, reader
 cannot advance past the previous transaction [...]`) and a writer refuse to build on it, rather than read wrong data.
 Under `adaptive`, recovery restores these files from the save point before anything reads them.
 
-The `_txn` and `_cv` checks ask the file's length when a reader maps an area or a mapping grows
-(`TxReader.unsafeMapArea`, `ColumnVersionReader`): three more `fstat` of `_txn` and one of `_cv` on a table's first
-reader open, about 9 µs in every mode, and none per query or per commit.
+The `_txn` and `_cv` checks ask the file's length during initial-open verification, retaining verification after
+failure or fallback. Ordinary live refreshes, including mapping growth, do not repeat the checks. The first-open
+cost is three more `fstat` of `_txn` and one of `_cv`, previously measured at about 9 µs in every mode.
 
 ## 14. Files and formats
 
