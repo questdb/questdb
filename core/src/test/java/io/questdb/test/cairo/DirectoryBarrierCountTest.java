@@ -24,23 +24,38 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.BuildInformationHolder;
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
+import io.questdb.ServerConfigurationException;
 import io.questdb.cairo.AttachDetachStatus;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
+import org.junit.AfterClass;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
@@ -54,6 +69,7 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.Properties;
 import java.util.stream.Stream;
 
 /**
@@ -64,8 +80,8 @@ import java.util.stream.Stream;
  * A directory fsync makes names durable, and a mode takes one only where it promises that what the name
  * points at survives a power loss:
  * <ul>
- *   <li>{@code TableWriter.openPartition} fsyncs the partition directory and the table directory under SYNC
- *   only. ADAPTIVE relies on its durable epoch and WAL replay, ASYNC and NOSYNC promise nothing.</li>
+ *   <li>Ordinary partition opens take no directory barriers. ADAPTIVE covers directory entries through its
+ *   durable epoch and WAL replay; legacy ingest keeps its existing durability contract.</li>
  *   <li>The WAL writer fsyncs a new segment's entry in {@code wal<N>} under SYNC and ADAPTIVE, and the table
  *   directory once per writer, when it has created {@code wal<N>}. ASYNC takes only the segment directory
  *   fsync of a newly opened segment.</li>
@@ -83,6 +99,8 @@ import java.util.stream.Stream;
  */
 @RunWith(Parameterized.class)
 public class DirectoryBarrierCountTest extends AbstractCairoTest {
+    private static final Properties COUNT_PROPERTIES = new Properties();
+    private static CairoConfigurationWrapper countConfiguration;
     private final String commitMode;
     private DirFsyncCountingFacade ff;
 
@@ -95,15 +113,66 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
         return Arrays.asList(new Object[][]{{"nosync"}, {"async"}, {"sync"}, {"adaptive"}});
     }
 
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        COUNT_PROPERTIES.clear();
+        configurationFactory = (dbRoot, telemetry, overrides) -> {
+            // Only disposable paths, the harness clock and the counting facade differ from production. Queries
+            // skip their own leak check: at the production reader TTL their pooled reader outlives the query;
+            // each test's assertMemoryLeak still checks.
+            countConfiguration = new CairoConfigurationWrapper(createProductionConfiguration(dbRoot)) {
+                @Override
+                public CharSequence getCheckpointRoot() {
+                    return dbRoot + String.valueOf(io.questdb.std.Files.SEPARATOR) + TableUtils.CHECKPOINT_DIRECTORY;
+                }
+
+                @Override
+                public FilesFacade getFilesFacade() {
+                    final FilesFacade facade = overrides.getFilesFacade();
+                    return facade != null ? facade : super.getFilesFacade();
+                }
+
+                @Override
+                public MicrosecondClock getMicrosecondClock() {
+                    return overrides.getTestMicrosClock();
+                }
+
+                @Override
+                public MillisecondClock getMillisecondClock() {
+                    return () -> overrides.getTestMicrosClock().getTicks() / 1000L;
+                }
+
+                @Override
+                public NanosecondClock getNanosecondClock() {
+                    return () -> overrides.getTestMicrosClock().getTicks() * 1000L;
+                }
+            };
+            return countConfiguration;
+        };
+        AbstractCairoTest.setUpStatic();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        try {
+            AbstractCairoTest.tearDownStatic();
+        } finally {
+            countConfiguration = null;
+            COUNT_PROPERTIES.clear();
+        }
+    }
+
     @Override
     @Before
     public void setUp() {
+        COUNT_PROPERTIES.clear();
+        countConfiguration.setDelegate(createProductionConfiguration(root));
         super.setUp();
         // Windows cannot open a directory for fsync, so it takes none of these barriers in any mode.
         Assume.assumeFalse(Os.isWindows());
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setCountProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         // No durable epoch inside a measured window: an epoch fsyncs the table directory itself.
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
+        setCountProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 3_600_000);
         ff = new DirFsyncCountingFacade();
     }
 
@@ -130,7 +199,7 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
                 // Each commit writes a new version of the last partition, which the writer then reopens.
                 execute("INSERT INTO x VALUES ('2024-01-02T0" + i + ":00:00.000000Z', " + i + ")");
             }
-            assertTableSide(5, tableDir);
+            assertNoTableSideFsyncs(tableDir);
         });
     }
 
@@ -145,7 +214,7 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
                     SELECT timestamp_sequence('2024-01-01T00:00:00.000000Z', 3_600_000_000L), x
                     FROM long_sequence(48)
                     """);
-            assertTableSide(48, tableDir);
+            assertNoTableSideFsyncs(tableDir);
         });
     }
 
@@ -159,14 +228,29 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
             for (int i = 1; i <= 5; i++) {
                 execute("INSERT INTO x VALUES ('2024-01-0" + (i + 1) + "T00:00:00.000000Z', " + i + ")");
             }
-            assertTableSide(5, tableDir);
+            assertNoTableSideFsyncs(tableDir);
 
             // Appending to the open partition creates nothing, so no mode fsyncs a directory for it.
             ff.clear();
             for (int i = 1; i <= 5; i++) {
                 execute("INSERT INTO x VALUES ('2024-01-06T0" + i + ":00:00.000000Z', " + i + ")");
             }
-            assertTableSide(0, tableDir);
+            assertNoTableSideFsyncs(tableDir);
+        });
+    }
+
+    @Test
+    public void testNonWalWriterReopen() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('2024-01-01', 1)");
+            final String tableDir = tableDir("x");
+            engine.releaseAllWriters();
+            ff.clear();
+            try (TableWriter writer = getWriter("x")) {
+                Assert.assertEquals(1, writer.size());
+                assertNoTableSideFsyncs(tableDir);
+            }
         });
     }
 
@@ -184,6 +268,28 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
                 engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
                 Assert.assertEquals(configured, writer.getFlushCommitMode());
             }
+        });
+    }
+
+    @Test
+    public void testProductionDefaults() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            final var cfg = engine.getConfiguration();
+            Assert.assertSame(ff, cfg.getFilesFacade());
+            Assert.assertEquals(30, cfg.getWalMaxSegmentFileDescriptorsCache());
+            Assert.assertEquals(1000, cfg.getWalApplyTableTimeQuota());
+            Assert.assertEquals(200, cfg.getWalApplyLookAheadTransactionCount());
+            Assert.assertEquals(-1, cfg.getWalMaxLagTxnCount());
+            Assert.assertEquals(300000, cfg.getIdleCheckInterval());
+            Assert.assertEquals(120000, cfg.getInactiveReaderTTL());
+            Assert.assertEquals(600000, cfg.getInactiveWriterTTL());
+            Assert.assertEquals(120000, cfg.getInactiveWalWriterTTL());
+            Assert.assertEquals(1024, cfg.getMetadataPoolCapacity());
+            Assert.assertEquals(1, cfg.getPartitionPurgeListCapacity());
+            Assert.assertEquals(50000, cfg.getAdaptiveCommitGroupWindowUs());
+            Assert.assertEquals(5000000, cfg.getAdaptiveEpochMaxRows());
+            Assert.assertEquals(commitMode, CommitMode.toString(cfg.getCommitMode()));
+            Assert.assertEquals(3600000, cfg.getAdaptiveEpochIntervalMs());
         });
     }
 
@@ -215,7 +321,7 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
                 Assert.assertEquals(ff.dump(), metadataSync ? 1 : 0, ff.countOther());
                 Assert.assertEquals(ff.dump(), metadataSync ? 1 : 0, ff.countChildren(tableDir));
             }
-            assertQuery("SELECT sum(v) FROM w").noRandomAccess().expectSize().returns("sum\n3\n");
+            assertQuery("SELECT sum(v) FROM w").noLeakCheck().noRandomAccess().expectSize().returns("sum(v)\n3\n");
         });
     }
 
@@ -249,7 +355,7 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
             drainWalQueue();
             Assert.assertEquals(ff.dump(), sync ? 3 : 0, ff.countOther());
             Assert.assertEquals(ff.dump(), sync ? 2 : 0, ff.countChildren(tableDir));
-            assertQuery("SELECT sum(v) FROM w").noRandomAccess().expectSize().returns("sum\n3.0\n");
+            assertQuery("SELECT sum(v) FROM w").noLeakCheck().noRandomAccess().expectSize().returns("sum(v)\n3.0\n");
         });
     }
 
@@ -314,7 +420,7 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
             Assert.assertEquals(message, expected, ff.count(tableDir + "/_todo_"));
             Assert.assertEquals(message, 2 * expected, ff.count(tableDir));
             execute("ALTER TABLE x ADD COLUMN e INT");
-            assertQuery("SELECT e FROM x").expectSize().returns("e\nnull\n");
+            assertQuery("SELECT e FROM x").noLeakCheck().expectSize().returns("e\nnull\n");
         });
     }
 
@@ -371,7 +477,7 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
                     Assert.assertEquals("convert to native" + ff.dump(), (durable ? 1 : 0) + (isSync ? 2 : 0), ff.total());
                 }
             }
-            assertQuery("SELECT sum(v) FROM w").noRandomAccess().expectSize().returns("sum\n6.0\n");
+            assertQuery("SELECT sum(v) FROM w").noLeakCheck().noRandomAccess().expectSize().returns("sum(v)\n6.0\n");
         });
     }
 
@@ -393,8 +499,25 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
                 drainWalQueue();
             }
             // Apply creates each new partition through O3 and then reopens it as the last partition.
-            assertTableSide(5, tableDir);
-            assertQuery("SELECT count() FROM x").noRandomAccess().expectSize().returns("count\n6\n");
+            assertNoTableSideFsyncs(tableDir);
+            assertQuery("SELECT count() FROM x").noLeakCheck().noRandomAccess().expectSize().returns("count()\n6\n");
+        });
+    }
+
+    @Test
+    public void testWalApplyO3IntoLastPartition() throws Exception {
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES ('2024-01-01', 0), ('2024-01-02', 0), ('2024-01-02T12:00:00', 0)");
+            drainWalQueue();
+            final String tableDir = tableDir("x");
+            ff.clear();
+            for (int i = 1; i <= 5; i++) {
+                execute("INSERT INTO x VALUES ('2024-01-02T0" + i + ":00:00.000000Z', " + i + ")");
+                drainWalQueue();
+            }
+            assertNoTableSideFsyncs(tableDir);
+            assertQuery("SELECT count() FROM x").noLeakCheck().noRandomAccess().expectSize().returns("count()\n8\n");
         });
     }
 
@@ -423,7 +546,7 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
 
     @Test
     public void testWalWriterOpenAndSegmentRoll() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 3);
+        setCountProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 3);
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final String tableDir = tableDir("x");
@@ -505,17 +628,33 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
         });
     }
 
-    /**
-     * Asserts the partition-directory and table-directory fsyncs of the measured window: one of each per
-     * partition that {@code openPartition} opened under SYNC, none in any other mode.
-     */
-    private void assertTableSide(int syncCount, String tableDir) {
-        final int expected = "sync".equals(commitMode) ? syncCount : 0;
-        Assert.assertEquals("partition directory fsyncs" + ff.dump(), expected, ff.countChildren(tableDir));
-        Assert.assertEquals("table directory fsyncs" + ff.dump(), expected, ff.count(tableDir));
-        Assert.assertEquals("all directory fsyncs" + ff.dump(), 2 * expected, ff.total());
-        // A partition directory fsynced before its column files exist persists an empty directory.
-        Assert.assertEquals("fsyncs of an empty directory", 0, ff.countEmpty());
+    private void assertNoTableSideFsyncs(String tableDir) {
+        Assert.assertEquals("partition directory fsyncs" + ff.dump(), 0, ff.countChildren(tableDir));
+        Assert.assertEquals("table directory fsyncs" + ff.dump(), 0, ff.count(tableDir));
+        Assert.assertEquals("all directory fsyncs" + ff.dump(), 0, ff.total());
+    }
+
+    private static CairoConfiguration createProductionConfiguration(CharSequence dbRoot) {
+        final Properties properties = new Properties();
+        properties.putAll(COUNT_PROPERTIES);
+        properties.setProperty(PropertyKey.CAIRO_ROOT.getPropertyPath(), dbRoot.toString());
+        try {
+            // Empty environment pins production defaults, not the developer machine's QDB_* settings.
+            // Disabling unrelated HTTP MIME loading does not change the Cairo defaults.
+            final PropServerConfiguration server = new PropServerConfiguration(
+                    Paths.get(dbRoot.toString()).getParent().toString(), properties, null, Map.of(), LOG,
+                    new BuildInformationHolder(), FilesFacadeImpl.INSTANCE, MicrosecondClockImpl.INSTANCE,
+                    (_, _, _) -> DefaultFactoryProvider.INSTANCE, false);
+            server.reinit(DefaultFactoryProvider.INSTANCE);
+            return server.getCairoConfiguration();
+        } catch (ServerConfigurationException | JsonException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static void setCountProperty(PropertyKey key, Object value) {
+        COUNT_PROPERTIES.setProperty(key.getPropertyPath(), String.valueOf(value));
+        countConfiguration.setDelegate(createProductionConfiguration(root));
     }
 
     private boolean isSyncOrAdaptive() {
@@ -614,6 +753,11 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
         }
 
         synchronized void clear() {
+            final var cfg = engine.getConfiguration();
+            Assert.assertSame(this, cfg.getFilesFacade());
+            Assert.assertEquals(30, cfg.getWalMaxSegmentFileDescriptorsCache());
+            Assert.assertEquals(COUNT_PROPERTIES.getProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath()), CommitMode.toString(cfg.getCommitMode()));
+            Assert.assertEquals(3600000, cfg.getAdaptiveEpochIntervalMs());
             counts.clear();
             renameCounts.clear();
             emptyCount = 0;

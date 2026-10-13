@@ -53,15 +53,14 @@ import java.util.Arrays;
 import java.util.function.BooleanSupplier;
 
 /**
- * Every commit mode that promises durability keeps its promise with only the directory barriers it takes.
+ * Explicit durability operations keep their promises with only the directory barriers they take.
  * <p>
  * The crash model is strict POSIX ({@link CrashFaultFilesFacade}): a directory entry survives a power loss
  * only if its parent directory was fsynced after the entry appeared, or a {@code syncfs} ran. Nothing is
  * written back by the kernel unless a test says so.
  * <ul>
- *   <li>SYNC fsyncs a partition directory after its column files exist, and the table directory after it,
- *   before the commit that publishes the partition. A barrier issued before the files exist persists an
- *   empty directory.</li>
+ *   <li>Ordinary SYNC partition opens retain the existing durability contract: they do not flush new
+ *   directory entries, which this strict model may lose.</li>
  *   <li>SYNC fsyncs each partition directory in which ALTER COLUMN TYPE creates converted column files, and the
  *   partition directory a parquet conversion or the switch of a native partition to its parquet file creates and
  *   then the table directory, before the commit that publishes them. A failed one poisons the engine, as every
@@ -452,75 +451,6 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
-    public void testSyncMultiPartitionCommitSurvivesCrash() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-        runWithCrashFacade(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1)");
-            markDurableBaseline();
-            execute("""
-                    INSERT INTO x VALUES
-                        ('2024-01-02T00:00:00.000000Z', 2),
-                        ('2024-01-03T00:00:00.000000Z', 3),
-                        ('2024-01-04T00:00:00.000000Z', 4)
-                    """);
-            crashAndReopen();
-            assertRows("""
-                    ts\tv
-                    2024-01-01T00:00:00.000000Z\t1
-                    2024-01-02T00:00:00.000000Z\t2
-                    2024-01-03T00:00:00.000000Z\t3
-                    2024-01-04T00:00:00.000000Z\t4
-                    """);
-            releaseEngineHandles();
-        });
-    }
-
-    @Test
-    public void testSyncO3IntoLastPartitionSurvivesCrash() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-        runWithCrashFacade(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("""
-                    INSERT INTO x VALUES
-                        ('2024-01-01T00:00:00.000000Z', 1),
-                        ('2024-01-02T00:00:00.000000Z', 2),
-                        ('2024-01-02T02:00:00.000000Z', 3)
-                    """);
-            markDurableBaseline();
-            // O3 into the last partition writes a new version of it, which the writer then reopens.
-            execute("INSERT INTO x VALUES ('2024-01-02T01:00:00.000000Z', 4)");
-            crashAndReopen();
-            assertRows("""
-                    ts\tv
-                    2024-01-01T00:00:00.000000Z\t1
-                    2024-01-02T00:00:00.000000Z\t2
-                    2024-01-02T01:00:00.000000Z\t4
-                    2024-01-02T02:00:00.000000Z\t3
-                    """);
-            releaseEngineHandles();
-        });
-    }
-
-    @Test
-    public void testSyncPartitionSwitchSurvivesCrash() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-        runWithCrashFacade(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1)");
-            markDurableBaseline();
-            execute("INSERT INTO x VALUES ('2024-01-02T00:00:00.000000Z', 2)");
-            crashAndReopen();
-            assertRows("""
-                    ts\tv
-                    2024-01-01T00:00:00.000000Z\t1
-                    2024-01-02T00:00:00.000000Z\t2
-                    """);
-            releaseEngineHandles();
-        });
-    }
-
-    @Test
     public void testSyncSwitchToParquetNonWalFailedBarrierIsFailStop() throws Exception {
         assertSyncSchemaChangeBarrierFailureIsFailStop(false, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, "fsyncConvertedPartitionDir");
     }
@@ -558,28 +488,6 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncSwitchToParquetWalSurvivesCrash() throws Exception {
         assertSyncSchemaChangeSurvivesCrash(true, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, this::assertParquetPartitionNames);
-    }
-
-    @Test
-    public void testSyncWalApplyNewPartitionSurvivesCrash() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
-        runWithCrashFacade(() -> {
-            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1)");
-            drainWalQueue();
-            final TableToken token = engine.verifyTableName("x");
-            markDurableBaseline();
-            execute("INSERT INTO x VALUES ('2024-01-02T00:00:00.000000Z', 2)");
-            drainWalQueue();
-            recoverAfterCrash(new TableToken[]{token});
-            assertNotSuspended(token);
-            assertRows("""
-                    ts\tv
-                    2024-01-01T00:00:00.000000Z\t1
-                    2024-01-02T00:00:00.000000Z\t2
-                    """);
-            releaseEngineHandles();
-        });
     }
 
     @Test

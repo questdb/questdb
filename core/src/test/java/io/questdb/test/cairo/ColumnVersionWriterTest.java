@@ -70,6 +70,105 @@ public class ColumnVersionWriterTest extends AbstractCairoTest {
     private static final long CV_AREA_SIZE = 3L * BLOCK_SIZE_BYTES;
 
     @Test
+    public void testCvReaderCopiedSnapshotStillVerifies() throws Exception {
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = TestFilesFacadeImpl.INSTANCE;
+            try (Path path = new Path()) {
+                final LPSZ cvPath = path.of(root).concat("_cv").$();
+                for (boolean copyArea : new boolean[]{false, true}) {
+                    try (ColumnVersionWriter writer = new ColumnVersionWriter(configuration, cvPath, true)) {
+                        writer.upsert(0, 0, 1, 10);
+                        writer.commit();
+                        writer.upsert(0, 0, 2, 20);
+                        writer.commit();
+                    }
+                    try (ColumnVersionReader source = new ColumnVersionReader().ofRO(ff, cvPath);
+                         ColumnVersionReader target = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                        Assert.assertTrue(source.readSafe());
+                        final long version = source.getVersion();
+                        if (copyArea) {
+                            source.readAreaTo(version, target);
+                        } else {
+                            target.readFrom(source);
+                        }
+                        final boolean areaA = (version & 1) == 0;
+                        final long offset = peekLong(ff, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                        final long size = peekLong(ff, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+                        final long checksumOffset = offset + size + Long.BYTES;
+                        final long checksum = peekLong(ff, cvPath, checksumOffset);
+                        pokeLong(ff, cvPath, checksumOffset, checksum ^ 1);
+                        Assert.assertTrue(target.readSafe());
+                        Assert.assertEquals(version - 1, target.getVersion());
+                        Assert.assertEquals(10, target.getColumnTopQuick(0, 0));
+                        pokeLong(ff, cvPath, checksumOffset, checksum);
+                        Assert.assertTrue(target.readSafe());
+                        Assert.assertEquals(version, target.getVersion());
+                        Assert.assertEquals(20, target.getColumnTopQuick(0, 0));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testCvReaderRefreshChecksOnlyInitialMapping() throws Exception {
+        assertMemoryLeak(() -> {
+            final AtomicInteger lengths = new AtomicInteger();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long length(long fd) {
+                    lengths.incrementAndGet();
+                    return super.length(fd);
+                }
+            };
+            try (Path path = new Path()) {
+                final LPSZ cvPath = path.of(root).concat("_cv").$();
+                try (ColumnVersionWriter writer = new ColumnVersionWriter(configuration, cvPath, true);
+                     ColumnVersionReader reader = new ColumnVersionReader().ofRO(ff, cvPath)) {
+                    writer.upsert(0, 0, 1, 10);
+                    writer.commit();
+                    lengths.set(0);
+                    Assert.assertTrue(reader.readSafe());
+                    Assert.assertEquals(1, lengths.get());
+                    for (int i = 1; i <= 128; i++) {
+                        writer.upsert(i, 0, i, i * 10L);
+                        writer.commit();
+                        lengths.set(0);
+                        Assert.assertTrue(reader.readSafe());
+                        Assert.assertEquals("live refresh must not stat _cv, including mapping growth", 0, lengths.get());
+                        Assert.assertEquals(i * 10L, reader.getColumnTopQuick(i, 0));
+                    }
+                    writer.upsert(129, 0, 129, 1290);
+                    writer.commit();
+                    final long version = peekLong(TestFilesFacadeImpl.INSTANCE, cvPath, OFFSET_VERSION_64);
+                    final boolean areaA = (version & 1) == 0;
+                    final long offset = peekLong(TestFilesFacadeImpl.INSTANCE, cvPath, areaA ? OFFSET_OFFSET_A_64 : OFFSET_OFFSET_B_64);
+                    final long size = peekLong(TestFilesFacadeImpl.INSTANCE, cvPath, areaA ? OFFSET_SIZE_A_64 : OFFSET_SIZE_B_64);
+                    final long checksumOffset = offset + size + Long.BYTES;
+                    final long checksum = peekLong(TestFilesFacadeImpl.INSTANCE, cvPath, checksumOffset);
+                    // Alter only the trailer to distinguish live publication from first-open verification.
+                    pokeLong(TestFilesFacadeImpl.INSTANCE, cvPath, checksumOffset, checksum ^ 1);
+                    lengths.set(0);
+                    Assert.assertTrue(reader.readSafe());
+                    Assert.assertEquals(0, lengths.get());
+                    Assert.assertEquals(version, reader.getVersion());
+                    Assert.assertEquals(1290, reader.getColumnTopQuick(129, 0));
+                    reader.ofRO(ff, cvPath);
+                    lengths.set(0);
+                    Assert.assertTrue(reader.readSafe());
+                    Assert.assertTrue("reopen must verify again", lengths.get() > 0);
+                    Assert.assertEquals(version - 1, reader.getVersion());
+                    pokeLong(TestFilesFacadeImpl.INSTANCE, cvPath, checksumOffset, checksum);
+                    lengths.set(0);
+                    Assert.assertTrue(reader.readSafe());
+                    Assert.assertEquals("fallback must not consume verification", 1, lengths.get());
+                    Assert.assertEquals(version, reader.getVersion());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testCvAreaChecksumChangesWhenAnyByteChanges() {
         long addr = Unsafe.malloc(CV_AREA_SIZE, MemoryTag.NATIVE_DEFAULT);
         try {

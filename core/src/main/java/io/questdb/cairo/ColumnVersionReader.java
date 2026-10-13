@@ -68,6 +68,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     static final int TIMESTAMP_ADDED_PARTITION_OFFSET = COLUMN_TOP_OFFSET;
     private final static Log LOG = LogFactory.getLog(ColumnVersionReader.class);
     protected final LongList cachedColumnVersionList = new LongList();
+    private boolean isInitialChecksumVerificationRequired = true;
     private MemoryCMR mem;
     private boolean ownMem;
     // The file version whose live area was torn on the last consistent read, the version this reader fell
@@ -82,6 +83,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
             mem.close();
         }
         cachedColumnVersionList.clear();
+        isInitialChecksumVerificationRequired = true;
         tornLiveVersion = -1;
         version = -1;
     }
@@ -296,6 +298,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
     }
 
     public ColumnVersionReader ofRO(FilesFacade ff, LPSZ fileName) {
+        isInitialChecksumVerificationRequired = true;
         version = -1;
         tornLiveVersion = -1;
         if (this.mem == null || !ownMem) {
@@ -312,6 +315,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
         }
         this.mem = mem;
         ownMem = false;
+        isInitialChecksumVerificationRequired = true;
         version = -1;
         tornLiveVersion = -1;
     }
@@ -385,7 +389,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
     public boolean readSafe() {
         long version = unsafeGetVersion();
-        if (version == this.version) {
+        if (version == this.version && !isInitialChecksumVerificationRequired) {
             return true;
         }
         Unsafe.loadFence();
@@ -404,16 +408,14 @@ public class ColumnVersionReader implements Closeable, Mutable {
 
         Unsafe.loadFence();
         if (version == unsafeGetVersion()) {
-            // The header page can reach the disk before the file grows to hold the area it names, and a read-only
-            // mapping faults on the first touch of a page that lies wholly past the end of the file. Check the
-            // geometry before mapping it. The file only grows, so under a version that holds still an area past
-            // the end is torn, never a commit in flight. The checksum needs the length anyway: no extra call.
-            final long fileLength = mem.getFilesFacade().length(mem.getFd());
+            // Verify persisted bytes once per mapping. Live refreshes rely on the publication protocol;
+            // copied state, failed reads and fallback must not consume the initial verification.
+            final long fileLength = isInitialChecksumVerificationRequired ? mem.getFilesFacade().length(mem.getFd()) : Long.MAX_VALUE;
             final boolean isIntact;
             if (isAreaWithinFile(offset, size, fileLength)) {
                 mem.resize(offset + size);
                 readUnsafe(offset, size, cachedColumnVersionList, mem);
-                isIntact = unsafeVerifyAreaChecksum(offset, size, fileLength);
+                isIntact = !isInitialChecksumVerificationRequired || unsafeVerifyAreaChecksum(offset, size, fileLength);
             } else {
                 isIntact = false;
             }
@@ -422,6 +424,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 Unsafe.loadFence();
                 if (version == unsafeGetVersion()) {
                     this.version = version;
+                    isInitialChecksumVerificationRequired = false;
                     tornLiveVersion = -1;
                     LOG.debug().$("read clean version ").$(version).$(", offset ").$(offset).$(", size ").$(size).$();
                     return true;
@@ -433,6 +436,7 @@ public class ColumnVersionReader implements Closeable, Mutable {
                 // falls back to the other A/B area; otherwise a concurrent write raced the read, and it retries.
                 Unsafe.loadFence();
                 if (version == unsafeGetVersion()) {
+                    isInitialChecksumVerificationRequired = true;
                     //noinspection NonAtomicOperationOnVolatileField
                     bodyChecksumFallbackCount++;
                     boolean otherOk = unsafeLoadAndVerifyOtherArea(version);

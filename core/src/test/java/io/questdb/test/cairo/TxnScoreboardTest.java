@@ -101,6 +101,46 @@ public class TxnScoreboardTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBooleanRangeDoesNotClassifyHolders() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(320) {
+                @Override
+                public int scanRangeHolders(long fromTxn, long toTxn) {
+                    throw new AssertionError("boolean availability must not request a full holder classification");
+                }
+            }) {
+                for (int i = 0; i < 320; i++) {
+                    Assert.assertTrue(scoreboard.acquireTxn(i, 1));
+                }
+                Assert.assertFalse(scoreboard.isRangeAvailable(1, 2));
+                Assert.assertTrue(scoreboard.isRangeAvailable(2, 3));
+                for (int i = 0; i < 320; i++) {
+                    scoreboard.releaseTxn(i, 1);
+                }
+                Assert.assertTrue(scoreboard.isRangeAvailable(1, 2));
+                Assert.assertTrue(scoreboard.acquireTxn(TxnScoreboard.EPOCH_ID_A, 3));
+                Assert.assertFalse(scoreboard.isRangeAvailable(3, 4));
+                scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_A, 3);
+            }
+        });
+    }
+
+    @Test
+    public void testRangeHolderClassification() throws Exception {
+        assertMemoryLeak(() -> {
+            try (TxnScoreboardV2 scoreboard = new TxnScoreboardV2(2)) {
+                Assert.assertTrue(scoreboard.acquireTxn(TxnScoreboard.EPOCH_ID_A, 1));
+                Assert.assertTrue(scoreboard.acquireTxn(0, 1));
+                Assert.assertEquals(TxnScoreboard.RANGE_HELD_BY_EPOCH | TxnScoreboard.RANGE_HELD_BY_OTHER, scoreboard.scanRangeHolders(1, 2));
+                scoreboard.releaseTxn(0, 1);
+                Assert.assertEquals(TxnScoreboard.RANGE_HELD_BY_EPOCH, scoreboard.scanRangeHolders(1, 2));
+                scoreboard.releaseTxn(TxnScoreboard.EPOCH_ID_A, 1);
+                Assert.assertEquals(TxnScoreboard.RANGE_FREE, scoreboard.scanRangeHolders(1, 2));
+            }
+        });
+    }
+
+    @Test
     public void testCannotLockTwice() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TxnScoreboard txnScoreboard = newTxnScoreboard()) {

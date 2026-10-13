@@ -1499,13 +1499,10 @@ public class TableReader implements Closeable, SymbolTableSource {
                         final long parquetFileSize = openParquetMetadata(partitionIndex);
                         path.trimTo(rootLen);
                         pathGenParquetPartition(partitionIndex, partitionNameTxn);
-                        if (ff.exists(path.$())) {
-                            // Truncated-file guard: the _pm just read says the data file is
-                            // parquetFileSize bytes, so a shorter file on disk is a torn write. Fail
-                            // rather than mmap past its end. The check sits inside the exists() branch
-                            // because a remote partition may have no local data file (length -1), and
-                            // that case must reach the stubbing paths below.
-                            final long parquetActualLength = ff.length(path.$());
+                        final long parquetActualLength = ff.length(path.$());
+                        if (parquetActualLength >= 0) {
+                            // A remote partition may legitimately have no local data file. For a
+                            // present file, reject a torn extent before mapping the size from _pm.
                             if (parquetFileSize > parquetActualLength) {
                                 throw CairoException.critical(0)
                                         .put("parquet partition file too short [expected=").put(parquetFileSize)

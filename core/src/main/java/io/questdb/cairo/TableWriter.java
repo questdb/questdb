@@ -369,7 +369,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private byte dedupMode = WalUtils.WAL_DEDUP_MODE_DEFAULT;
     private ObjectStackPool<PostingSealPurgeTask> deferredPostingSealPurgeTaskPool;
     private String designatedTimestampColumnName;
-    // Scratch path for the partition directory fsyncs in openPartition(), created on the first SYNC one.
+    // Scratch path for the SYNC partition-conversion directory barriers.
     private Path dirFsyncPath;
     private boolean distressed = false;
     private DropIndexOperator dropIndexOperator;
@@ -8393,7 +8393,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Under SYNC, makes the partition directory that a parquet conversion has just created and filled survive
      * a power loss before the commit that publishes it: the column, parquet and index files in it, then its
      * own entry in the table directory. Runs after the index files are copied or restored, which is the last
-     * write into the directory. A failed barrier is a data-sync failure, as in {@link #openPartition}.
+     * write into the directory. A failed barrier is a data-sync failure.
      */
     private void fsyncConvertedPartitionDir(long partitionTimestamp) {
         if (effectiveCommitMode == CommitMode.SYNC) {
@@ -8411,16 +8411,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     /**
-     * Makes the partition that {@link #openPartition} has just opened survive a power loss under SYNC, before a
-     * commit publishes it: the column and index files in the partition directory, then the partition directory
-     * in the table directory. The column data itself becomes durable at the commit.
-     * <p>
-     * On the O3 reopen of the last partition ({@code finishO3Commit}) the directory is a new partition version
-     * that the O3 jobs have just filled, and these two barriers are the only ones it gets.
-     * <p>
-     * No other mode needs them. ADAPTIVE makes directory entries durable at its durable epoch and re-creates
-     * the later ones when recovery replays the WAL; on a non-WAL table it is NOSYNC-grade. ASYNC and NOSYNC make
-     * no power-loss promise. An ADAPTIVE table that is not enrolled yet applies at SYNC grade, and so takes them.
+     * Flushes a converted partition's file names, then its entry in the table directory.
      */
     private void fsyncPartitionDirEntries(Path partitionPath, int partitionDirLen) {
         if (dirFsyncPath == null) {
@@ -10744,11 +10735,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
             }
             populateDenseIndexerList();
-            if (effectiveCommitMode == CommitMode.SYNC) {
-                // After the loop, not after mkdirs: a directory fsync persists only the entries that
-                // exist when it runs, and the loop is what creates the column and index files.
-                fsyncPartitionDirEntries(path, plen);
-            }
 
             LOG.info().$("switched partition [path=").$substr(pathRootSize, path)
                     .$(", rowCount=").$(rowCount)

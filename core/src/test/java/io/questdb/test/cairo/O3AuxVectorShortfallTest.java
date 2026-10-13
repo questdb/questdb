@@ -88,7 +88,7 @@ public class O3AuxVectorShortfallTest extends AbstractCairoTest {
 
             // Drop the last row's aux entry, leaving the file one entry short of what _txn says.
             final long keptEntries = 1;
-            truncateAuxVector("t", 0, ColumnType.getDriver(ColumnType.VARCHAR).getAuxVectorOffset(keptEntries));
+            final String auxPath = truncateAuxVector("t", 0, ColumnType.getDriver(ColumnType.VARCHAR).getAuxVectorOffset(keptEntries));
 
             try {
                 // O3: before the table's max timestamp, after 2024-06-10's own max, so it appends to
@@ -99,6 +99,10 @@ public class O3AuxVectorShortfallTest extends AbstractCairoTest {
                 // The caller sees only the O3 wrapper: processO3Block rethrows a generic message once a
                 // worker has set o3ErrorCount, so the detail has to reach the log at the origin.
                 TestUtils.assertContains(e.getFlyweightMessage(), "bulk update failed and will be rolled back");
+            }
+
+            try (Path path = new Path().of(auxPath)) {
+                Assert.assertEquals("reject before extending the damaged aux file", 16, configuration.getFilesFacade().length(path.$()));
             }
 
             // The diagnostic itself: what was short, by how much, and for which column and partition.
@@ -113,7 +117,7 @@ public class O3AuxVectorShortfallTest extends AbstractCairoTest {
         });
     }
 
-    private static void truncateAuxVector(String tableName, int partitionIndex, long newLen) {
+    private static String truncateAuxVector(String tableName, int partitionIndex, long newLen) {
         final FilesFacade ff = configuration.getFilesFacade();
         final TableToken token = engine.verifyTableName(tableName);
         final long partitionTs;
@@ -136,6 +140,7 @@ public class O3AuxVectorShortfallTest extends AbstractCairoTest {
             } finally {
                 ff.close(fd);
             }
+            return path.toString();
         }
     }
 }

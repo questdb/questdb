@@ -317,7 +317,11 @@ public final class TableUtils {
     }
 
     public static void allocateDiskSpace(FilesFacade ff, long fd, long size) {
-        if (ff.length(fd) < size && !ff.allocate(fd, size)) {
+        allocateDiskSpace(ff, fd, size, ff.length(fd));
+    }
+
+    public static void allocateDiskSpace(FilesFacade ff, long fd, long size, long existingSize) {
+        if (existingSize < size && !ff.allocate(fd, size)) {
             throw CairoException.critical(ff.errno()).put("No space left [size=").put(size).put(", fd=").put(fd).put(']');
         }
     }
@@ -1815,9 +1819,13 @@ public final class TableUtils {
      * @return read-write memory address
      */
     public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag) {
+        return mapRW(ff, fd, size, offset, memoryTag, ff.length(fd));
+    }
+
+    public static long mapRW(FilesFacade ff, long fd, long size, long offset, int memoryTag, long existingSize) {
         assert fd != -1;
         assert offset % Files.PAGE_SIZE == 0;
-        allocateDiskSpace(ff, fd, size + offset);
+        allocateDiskSpace(ff, fd, size + offset, existingSize);
         return mapRWNoAlloc(ff, fd, size, offset, memoryTag);
     }
 

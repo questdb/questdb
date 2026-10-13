@@ -1340,31 +1340,25 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
 
                 dstAuxOffset = columnTypeDriver.getAuxVectorOffset(srcDataMax - srcDataTop);
                 dstAuxFileOffset = dstAuxOffset;
-                // Sample the aux file's real length before mapRW extends it to dstAuxSize. Once mapped,
-                // the evidence is gone: the region past the old EOF reads back as zeros, which is
-                // indistinguishable from an entry written as zeros.
-                final long dstAuxFileLen = dstAuxOffset > 0 ? ff.length(Math.abs(activeFixFd)) : 0;
-                dstAuxAddr = mapRW(ff, Math.abs(activeFixFd), dstAuxSize, MemoryTag.MMAP_O3);
+                // Reject missing committed aux entries before allocation can hide the shortfall.
+                // Reuse the same descriptor extent for the mapping's allocation decision.
+                final long dstAuxFileLen = ff.length(Math.abs(activeFixFd));
+                if (dstAuxFileLen < dstAuxOffset) {
+                    throw CairoException.critical(0)
+                            .put("aux vector is shorter than the partition row count [table=")
+                            .put(tableWriter.getTableToken().getTableName())
+                            .put(", partitionTimestamp=").put(partitionTimestamp)
+                            .put(", columnType=").put(ColumnType.nameOf(columnType))
+                            .put(", auxFd=").put(activeFixFd)
+                            .put(", auxFileLen=").put(dstAuxFileLen)
+                            .put(", requiredLen=").put(dstAuxOffset)
+                            .put(", srcDataMax=").put(srcDataMax)
+                            .put(", srcDataTop=").put(srcDataTop)
+                            .put(']');
+                }
+                dstAuxAddr = mapRW(ff, Math.abs(activeFixFd), dstAuxSize, 0, MemoryTag.MMAP_O3, dstAuxFileLen);
 
                 if (dstAuxOffset > 0) {
-                    // The last existing row's aux entry ends at dstAuxOffset, so a shorter file holds fewer
-                    // rows than _txn and _cv claim for this partition and column. The read below would take
-                    // its entry from past the old EOF, all zeros: an assertion in the type driver under -ea,
-                    // otherwise a data size of 0 that surfaces later as "Invalid column size" in another
-                    // reader, naming neither the column nor the partition. Fail here, where both are known.
-                    if (dstAuxFileLen < dstAuxOffset) {
-                        throw CairoException.critical(0)
-                                .put("aux vector is shorter than the partition row count [table=")
-                                .put(tableWriter.getTableToken().getTableName())
-                                .put(", partitionTimestamp=").put(partitionTimestamp)
-                                .put(", columnType=").put(ColumnType.nameOf(columnType))
-                                .put(", auxFd=").put(activeFixFd)
-                                .put(", auxFileLen=").put(dstAuxFileLen)
-                                .put(", requiredLen=").put(dstAuxOffset)
-                                .put(", srcDataMax=").put(srcDataMax)
-                                .put(", srcDataTop=").put(srcDataTop)
-                                .put(']');
-                    }
                     dstDataOffset = columnTypeDriver.getDataVectorSizeAt(dstAuxAddr, srcDataMax - 1 - srcDataTop);
                 } else {
                     dstDataOffset = 0;

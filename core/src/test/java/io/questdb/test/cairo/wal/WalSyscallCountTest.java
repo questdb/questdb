@@ -24,7 +24,13 @@
 
 package io.questdb.test.cairo.wal;
 
+import io.questdb.BuildInformationHolder;
+import io.questdb.DefaultFactoryProvider;
+import io.questdb.PropServerConfiguration;
 import io.questdb.PropertyKey;
+import io.questdb.ServerConfigurationException;
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.TableToken;
@@ -34,13 +40,23 @@ import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.wal.ApplyWal2TableJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cutlass.json.JsonException;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
+import io.questdb.std.datetime.MicrosecondClock;
+import io.questdb.std.datetime.NanosecondClock;
+import io.questdb.std.datetime.microtime.MicrosecondClockImpl;
+import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
 import org.jetbrains.annotations.Nullable;
+import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Before;
+import org.junit.BeforeClass;
 import org.junit.Assume;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -55,6 +71,7 @@ import java.util.Collection;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Properties;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -65,7 +82,7 @@ import java.util.stream.Stream;
  * The file system calls of a 1-row WAL commit and of the apply pass that applies it. NOSYNC, ASYNC and SYNC
  * make the calls of the base version (the WAL without ADAPTIVE): the same kinds and counts on the same files,
  * except the one extra SYNC msync noted in {@code expected}. The apply pass also runs with STRING, VARCHAR and
- * ARRAY columns, so a read of the last aux entry by the segment-length guard shows up here. In every mode,
+ * ARRAY columns to cover variable-width mapping work. In every mode,
  * ADAPTIVE included, a WAL table keeps only the files the base version writes in its WAL segments and in
  * {@code txn_seq}: a mapped write makes no system call on a NOSYNC commit, so only the file set sees it.
  */
@@ -73,6 +90,7 @@ import java.util.stream.Stream;
 public class WalSyscallCountTest extends AbstractCairoTest {
     // A WAL column file: .d, plus .i for var-size columns.
     private static final Pattern COLUMN_FILE = Pattern.compile("[a-z]+\\.[di]");
+    private static final Properties COUNT_PROPERTIES = new Properties();
     private static final int MEASURED = 20;
     // The files base writes in a WAL segment: the event file and its index, the segment _meta and the column
     // files (.d, plus .i for var-size columns).
@@ -81,6 +99,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     // versions, the WAL index, and the numbered V2 part files.
     private static final Pattern SEQ_FILE = Pattern.compile("_txnlog|_txnlog\\.meta\\.[di]|_meta(\\.[0-9]+)?|_wal_index\\.d|[0-9]+");
     private static final int WARMUP = 5;
+    private static CairoConfigurationWrapper countConfiguration;
     private final String commitMode;
     private final boolean isV2;
 
@@ -99,6 +118,61 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         return params;
     }
 
+    @BeforeClass
+    public static void setUpStatic() throws Exception {
+        COUNT_PROPERTIES.clear();
+        configurationFactory = (dbRoot, telemetry, overrides) -> {
+            // Only disposable paths, the harness clock and the counting facade differ from production.
+            countConfiguration = new CairoConfigurationWrapper(createProductionConfiguration(dbRoot)) {
+                @Override
+                public CharSequence getCheckpointRoot() {
+                    return dbRoot + String.valueOf(io.questdb.std.Files.SEPARATOR) + TableUtils.CHECKPOINT_DIRECTORY;
+                }
+
+                @Override
+                public FilesFacade getFilesFacade() {
+                    final FilesFacade facade = overrides.getFilesFacade();
+                    return facade != null ? facade : super.getFilesFacade();
+                }
+
+                @Override
+                public MicrosecondClock getMicrosecondClock() {
+                    return overrides.getTestMicrosClock();
+                }
+
+                @Override
+                public MillisecondClock getMillisecondClock() {
+                    return () -> overrides.getTestMicrosClock().getTicks() / 1000L;
+                }
+
+                @Override
+                public NanosecondClock getNanosecondClock() {
+                    return () -> overrides.getTestMicrosClock().getTicks() * 1000L;
+                }
+            };
+            return countConfiguration;
+        };
+        AbstractCairoTest.setUpStatic();
+    }
+
+    @AfterClass
+    public static void tearDownStatic() {
+        try {
+            AbstractCairoTest.tearDownStatic();
+        } finally {
+            countConfiguration = null;
+            COUNT_PROPERTIES.clear();
+        }
+    }
+
+    @Before
+    @Override
+    public void setUp() {
+        COUNT_PROPERTIES.clear();
+        countConfiguration.setDelegate(createProductionConfiguration(root));
+        super.setUp();
+    }
+
     @Test
     public void testApplyPass() throws Exception {
         assertCalls(false, false);
@@ -106,7 +180,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
 
     @Test
     public void testApplyPassMappedIO() throws Exception {
-        node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, false);
+        setCountProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, false);
         assertCalls(false, false);
     }
 
@@ -117,7 +191,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
 
     @Test
     public void testApplyPassVarSizeMappedIO() throws Exception {
-        node1.setProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, false);
+        setCountProperty(PropertyKey.DEBUG_CAIRO_ALLOW_MIXED_IO, false);
         assertCalls(false, true);
     }
 
@@ -130,9 +204,9 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     @Test
     public void testColumnPageRelease() throws Exception {
         Assume.assumeFalse("the sequencer log format does not touch column pages", isV2);
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-        node1.setProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, io.questdb.std.Files.PAGE_SIZE);
-        node1.setProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1_000);
+        setCountProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setCountProperty(PropertyKey.CAIRO_WAL_WRITER_DATA_APPEND_PAGE_SIZE, io.questdb.std.Files.PAGE_SIZE);
+        setCountProperty(PropertyKey.CAIRO_WAL_SEGMENT_ROLLOVER_ROW_COUNT, 1_000);
         final CountingFacade ff = new CountingFacade();
         ff.isCountingPageReleases = true;
         assertMemoryLeak(ff, () -> {
@@ -173,8 +247,8 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     @Test
     public void testDdl() throws Exception {
         Assume.assumeFalse("ADAPTIVE makes its own calls; only its file set must match base", "adaptive".equals(commitMode));
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
+        setCountProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setCountProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
         final CountingFacade ff = new CountingFacade();
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -207,8 +281,8 @@ public class WalSyscallCountTest extends AbstractCairoTest {
 
     @Test
     public void testOnlyBaseFiles() throws Exception {
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
+        setCountProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setCountProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
             for (int i = 0; i < 3; i++) {
@@ -251,7 +325,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     @Test
     public void testParquetPartitionFlushes() throws Exception {
         Assume.assumeFalse("the sequencer log format does not change the partition writes", isV2);
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setCountProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
         final CountingFacade ff = new CountingFacade();
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL");
@@ -265,7 +339,8 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             drainWalQueue();
             ff.stopSyncLog();
             final List<String> merge = new ArrayList<>(ff.syncLog);
-            assertQuery("SELECT count() FROM x").noRandomAccess().expectSize().returns("count\n11\n");
+            // The enclosing leak check covers this query; at the production reader TTL its pooled reader outlives it.
+            assertQuery("SELECT count() FROM x").noLeakCheck().noRandomAccess().expectSize().returns("count()\n11\n");
             final boolean flushesData = CommitMode.isPowerLossDurable(CommitMode.fromString(commitMode));
             Assert.assertEquals("a fresh Parquet partition's data file flush " + fresh,
                     flushesData, flushesOf(fresh, TableUtils.PARQUET_PARTITION_NAME) > 0);
@@ -285,9 +360,9 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     public void testPeriodicSavePointSyncs() throws Exception {
         Assume.assumeTrue("only ADAPTIVE takes save points", "adaptive".equals(commitMode));
         Assume.assumeFalse("Windows syncs no directory", Os.isWindows());
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
-        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        setCountProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setCountProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
+        setCountProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         final CountingFacade ff = new CountingFacade();
         assertMemoryLeak(ff, () -> {
             Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
@@ -323,6 +398,28 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testProductionDefaults() throws Exception {
+        assertMemoryLeak(() -> {
+            final var cfg = engine.getConfiguration();
+            Assert.assertEquals(30, cfg.getWalMaxSegmentFileDescriptorsCache());
+            Assert.assertEquals(1000, cfg.getWalApplyTableTimeQuota());
+            Assert.assertEquals(200, cfg.getWalApplyLookAheadTransactionCount());
+            Assert.assertEquals(-1, cfg.getWalMaxLagTxnCount());
+            Assert.assertEquals(300000, cfg.getIdleCheckInterval());
+            Assert.assertEquals(120000, cfg.getInactiveReaderTTL());
+            Assert.assertEquals(600000, cfg.getInactiveWriterTTL());
+            Assert.assertEquals(120000, cfg.getInactiveWalWriterTTL());
+            Assert.assertEquals(1024, cfg.getMetadataPoolCapacity());
+            Assert.assertEquals(1, cfg.getPartitionPurgeListCapacity());
+            Assert.assertEquals(50000, cfg.getAdaptiveCommitGroupWindowUs());
+            Assert.assertEquals(5000000, cfg.getAdaptiveEpochMaxRows());
+            Assert.assertEquals(0, cfg.getDefaultSeqPartTxnCount());
+            Assert.assertEquals(60000, cfg.getAdaptiveEpochIntervalMs());
+            Assert.assertEquals(200000, cfg.getWalSegmentRolloverRowCount());
+        });
+    }
+
     private static void addForeignFiles(Path tableDir, Path dir, Pattern baseFile, Set<String> foreign) throws IOException {
         try (Stream<Path> files = Files.walk(dir)) {
             for (Path file : files.filter(Files::isRegularFile).toList()) {
@@ -342,6 +439,28 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             row.putArray(4, array);
         }
         row.append();
+    }
+
+    private static CairoConfiguration createProductionConfiguration(CharSequence dbRoot) {
+        final Properties properties = new Properties();
+        properties.putAll(COUNT_PROPERTIES);
+        properties.setProperty(PropertyKey.CAIRO_ROOT.getPropertyPath(), dbRoot.toString());
+        try {
+            // Exclude host QDB_* overrides and unrelated HTTP MIME loading, not Cairo defaults.
+            final PropServerConfiguration server = new PropServerConfiguration(
+                    Paths.get(dbRoot.toString()).getParent().toString(), properties, null, Map.of(), LOG,
+                    new BuildInformationHolder(), FilesFacadeImpl.INSTANCE, MicrosecondClockImpl.INSTANCE,
+                    (_, _, _) -> DefaultFactoryProvider.INSTANCE, false);
+            server.reinit(DefaultFactoryProvider.INSTANCE);
+            return server.getCairoConfiguration();
+        } catch (ServerConfigurationException | JsonException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static void setCountProperty(PropertyKey key, Object value) {
+        COUNT_PROPERTIES.setProperty(key.getPropertyPath(), String.valueOf(value));
+        countConfiguration.setDelegate(createProductionConfiguration(root));
     }
 
     private static int flushesOf(List<String> syncLog, String file) {
@@ -383,8 +502,8 @@ public class WalSyscallCountTest extends AbstractCairoTest {
 
     private void assertCalls(boolean isCommit, boolean isVarSize) throws Exception {
         Assume.assumeFalse("ADAPTIVE makes its own calls; only its file set must match base", "adaptive".equals(commitMode));
-        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
-        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
+        setCountProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setCountProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, isV2 ? 1000 : 0);
         final CountingFacade ff = new CountingFacade();
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG" + (isVarSize ? ", s STRING, vc VARCHAR, a DOUBLE[]" : "")
@@ -706,6 +825,14 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             return sb.toString();
         }
 
+        private void assertConfiguration() {
+            final var cfg = engine.getConfiguration();
+            Assert.assertSame(this, cfg.getFilesFacade());
+            Assert.assertEquals(30, cfg.getWalMaxSegmentFileDescriptorsCache());
+            Assert.assertEquals(COUNT_PROPERTIES.getProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath()), CommitMode.toString(cfg.getCommitMode()));
+            Assert.assertEquals(Integer.parseInt(COUNT_PROPERTIES.getProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT.getPropertyPath(), "0")), cfg.getDefaultSeqPartTxnCount());
+        }
+
         private void count(String call) {
             if (Thread.currentThread() == measured) {
                 increment(calls, call);
@@ -733,11 +860,13 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         }
 
         private void start(boolean isArmed) {
+            assertConfiguration();
             stop();
             measured = isArmed ? Thread.currentThread() : null;
         }
 
         private void startSyncLog() {
+            assertConfiguration();
             syncLog.clear();
             syncLogged = Thread.currentThread();
         }

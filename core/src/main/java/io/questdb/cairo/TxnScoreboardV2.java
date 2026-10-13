@@ -239,47 +239,7 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     @Override
     public boolean isRangeAvailable(long fromTxn, long toTxn) {
-        return scanRangeHolders(fromTxn, toTxn) == RANGE_FREE;
-    }
-
-    @Override
-    public int scanRangeHolders(long fromTxn, long toTxn) {
-        // Push max txn to the latest, to avoid races with acquireTxn()
-        // but don't stop checking if it's not the max.
-        updateMax(toTxn);
-
-        if (getActiveReaderCount() == 0) {
-            return RANGE_FREE;
-        }
-
-        int holders = RANGE_FREE;
-
-        for (int i = 0; i < bitmapCount; i++) {
-            long bitmap = Unsafe.getLongVolatile(bitmapMem + (long) i * Long.BYTES);
-            if (bitmap == 0) {
-                continue;
-            }
-
-            int base = i * Long.SIZE;
-            while (bitmap != 0) {
-                final long lowestBit = Long.lowestOneBit(bitmap);
-                final int bit = Long.numberOfTrailingZeros(lowestBit);
-                int internalId = base + bit;
-                long lockedTxn = Unsafe.getLongVolatile(entriesMem + (long) internalId * Long.BYTES);
-                if (lockedTxn > UNLOCKED && lockedTxn >= fromTxn && lockedTxn < toTxn) {
-                    holders |= (internalId == EPOCH_A_INTERNAL_ID || internalId == EPOCH_B_INTERNAL_ID)
-                            ? RANGE_HELD_BY_EPOCH
-                            : RANGE_HELD_BY_OTHER;
-                    if (holders == (RANGE_HELD_BY_EPOCH | RANGE_HELD_BY_OTHER)) {
-                        // Nothing a further slot could add.
-                        return holders;
-                    }
-                }
-
-                bitmap ^= lowestBit;
-            }
-        }
-        return holders;
+        return scanRangeHolders(fromTxn, toTxn, true) == RANGE_FREE;
     }
 
     @Override
@@ -335,6 +295,11 @@ public class TxnScoreboardV2 implements TxnScoreboard {
         return 0;
     }
 
+    @Override
+    public int scanRangeHolders(long fromTxn, long toTxn) {
+        return scanRangeHolders(fromTxn, toTxn, false);
+    }
+
     public void setTableToken(TableToken tableToken) {
         this.tableToken = tableToken;
     }
@@ -365,6 +330,45 @@ public class TxnScoreboardV2 implements TxnScoreboard {
 
     private void incrementActiveReaderCount() {
         Unsafe.getAndAddLong(null, activeReaderCountMem, 1);
+    }
+
+    private int scanRangeHolders(long fromTxn, long toTxn, boolean stopAfterFirstHolder) {
+        // Push max txn to the latest, to avoid races with acquireTxn()
+        // but don't stop checking if it's not the max.
+        updateMax(toTxn);
+
+        if (getActiveReaderCount() == 0) {
+            return RANGE_FREE;
+        }
+
+        int holders = RANGE_FREE;
+
+        for (int i = 0; i < bitmapCount; i++) {
+            long bitmap = Unsafe.getLongVolatile(bitmapMem + (long) i * Long.BYTES);
+            if (bitmap == 0) {
+                continue;
+            }
+
+            int base = i * Long.SIZE;
+            while (bitmap != 0) {
+                final long lowestBit = Long.lowestOneBit(bitmap);
+                final int bit = Long.numberOfTrailingZeros(lowestBit);
+                int internalId = base + bit;
+                long lockedTxn = Unsafe.getLongVolatile(entriesMem + (long) internalId * Long.BYTES);
+                if (lockedTxn > UNLOCKED && lockedTxn >= fromTxn && lockedTxn < toTxn) {
+                    holders |= (internalId == EPOCH_A_INTERNAL_ID || internalId == EPOCH_B_INTERNAL_ID)
+                            ? RANGE_HELD_BY_EPOCH
+                            : RANGE_HELD_BY_OTHER;
+                    if (stopAfterFirstHolder || holders == (RANGE_HELD_BY_EPOCH | RANGE_HELD_BY_OTHER)) {
+                        // Nothing a further slot could add.
+                        return holders;
+                    }
+                }
+
+                bitmap ^= lowestBit;
+            }
+        }
+        return holders;
     }
 
     private void setBitmapBit(long internalId) {
