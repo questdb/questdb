@@ -278,6 +278,36 @@ reads "no policy" and stops hiding expired rows, with no error or log line.
   trailing section. It matters more here because the lost field is a retention
   control, so it needs an operator note wherever downgrades are documented.
 
+### `REBASE WAL` drops a policy set by `ALTER`
+
+`ALTER MATERIALIZED VIEW ... REBASE WAL` drops a policy that `SET EXPIRE` added,
+with no error or log line. This holds for both forms, including the replica's
+`REBASE WAL INTO`. After the rebase, reads show the rows the policy hid, cleanup
+stops, and `SHOW CREATE MATERIALIZED VIEW` prints no policy. Refresh,
+`REFRESH FULL` and a restart do not bring it back, and the next DDL on the view
+rewrites `_meta` without it.
+
+`WalUtils.cloneTableDirForRebase()` resets the metadata version in `_meta` to 0
+and leaves the minor-version field as it was. That field carries a checksum of
+the metadata version and the column count, so after the reset
+`TableUtils.isMetaFormatAtLeast()` fails for every minor version. The reader, the
+writer and `MetadataCache` then all read the policy section as absent. A policy
+given at `CREATE` survives as long as no DDL has run on the view since, because
+the view's metadata version is still 0.
+
+- **Why accepted:** the defect predates `EXPIRE ROWS`, and it lives in rebase
+  code that this feature does not change. The same sequence drops a TTL set by
+  `ALTER`, along with every other setting gated on the minor version. A rebase is
+  a recovery step that an admin runs on a suspended view, and only with
+  `cairo.wal.apply.suspended.write.denied=true`. Running `SET EXPIRE` again after
+  the rebase restores the policy: `TableWriter` writes a fresh minor-version
+  field with every DDL. Wherever `REBASE WAL` is documented, it needs an operator
+  note saying so.
+- **Follow-up:** when `cloneTableDirForRebase()` resets the metadata version, it
+  should rewrite the minor-version field with
+  `TableUtils.calculateMetaFormatMinorVersionField(0, columnCount)`. That fixes
+  TTL as well.
+
 ### WAL apply does not re-check a structural policy
 
 When a user runs `SET EXPIRE` with KEEP LATEST, KEEP HIGHEST/LOWEST or a window
