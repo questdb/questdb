@@ -562,6 +562,16 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     }
 
     /**
+     * Rows under which a parallel consumer of this factory's page frames reduces them all on the
+     * query's thread instead of dispatching them to the workers. The consumer decides it each time
+     * it opens, from the rows of the frames it has just built, so a cached plan follows the data.
+     * 0, the default, always dispatches.
+     */
+    default long getLocalReduceMaxRows(SqlExecutionContext executionContext) {
+        return 0;
+    }
+
+    /**
      * Returns true if the factory supports page frame cursor.
      *
      * @return true if page frame cursor is supported

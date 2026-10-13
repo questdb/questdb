@@ -31,12 +31,12 @@ import io.questdb.std.Unsafe;
  * Selectivity statistics for late materialization heuristics.
  * <p>
  * This class tracks the historical selectivity (ratio of filtered rows to total rows)
- * using exponential moving average (EMA). Late materialization is enabled only when
- * the selectivity is below a threshold (20%), meaning most rows are filtered out.
+ * using exponential moving average (EMA). Callers enable late materialization only
+ * when selectivity falls below their threshold; the default threshold is 20%.
  * <p>
  * Late materialization benefits:
  * - Low selectivity -> most rows filtered -> avoid decoding unused column data
- * - Only applicable to Parquet format (columnar storage requiring decoding)
+ * - Only applicable to decode-backed frames such as Parquet and single-key covering frames
  * <p>
  * A thread-safe filter hands out no per-worker slots, so every reducing worker, the query owner
  * and any work-stealing thread share one instance. {@link #update(long, long)} therefore has to
@@ -53,7 +53,7 @@ public class SelectivityStats implements Mutable {
     // EMA smoothing factor (0.3 favors recent results)
     private static final double ALPHA = 0.3;
     private static final int MIN_SAMPLES = 2;
-    // Selectivity threshold (20%) - enable late materialization when selectivity is below this
+    // Default selectivity threshold (20%) for Parquet late materialization.
     private static final double SELECTIVITY_THRESHOLD = 0.2;
     private static final long STATE_OFFSET = Unsafe.getFieldOffset(SelectivityStats.class, "state");
     // Packed [sampleCount:32][avgSelectivity float bits:32].
@@ -65,11 +65,18 @@ public class SelectivityStats implements Mutable {
     }
 
     public boolean shouldUseLateMaterialization() {
+        return shouldUseLateMaterialization(SELECTIVITY_THRESHOLD, true);
+    }
+
+    public boolean shouldUseLateMaterialization(
+            double threshold,
+            boolean isLateMaterializationEnabledDuringWarmup
+    ) {
         final long state = this.state;
         if (sampleCountOf(state) < MIN_SAMPLES) {
-            return true;
+            return isLateMaterializationEnabledDuringWarmup;
         }
-        return avgSelectivityOf(state) < SELECTIVITY_THRESHOLD;
+        return avgSelectivityOf(state) < threshold;
     }
 
     public void update(long filteredRowCount, long totalRowCount) {

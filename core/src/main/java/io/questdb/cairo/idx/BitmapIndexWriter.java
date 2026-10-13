@@ -166,7 +166,8 @@ public class BitmapIndexWriter implements IndexWriter {
 
     public void commit() {
         int commitMode = configuration.getCommitMode();
-        if (commitMode != CommitMode.NOSYNC) {
+        // TableWriter retains closed indexers after its last partition becomes parquet.
+        if (isOpen() && commitMode != CommitMode.NOSYNC) {
             sync(commitMode == CommitMode.ASYNC);
         }
     }

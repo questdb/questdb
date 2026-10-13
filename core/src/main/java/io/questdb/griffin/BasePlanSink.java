@@ -198,6 +198,24 @@ public abstract class BasePlanSink implements PlanSink {
         this.useBaseMetadata = useBaseMetadata;
     }
 
+    /**
+     * Prints a child factory's plan. Its column names resolve against the child itself: a parent
+     * that prints an attribute against its base metadata ({@link #optAttr(CharSequence, Plannable, boolean)})
+     * can reach a factory of its own, such as a scalar sub-query's in a filter, which must not
+     * inherit that mode.
+     */
+    protected void pushChildFactory(RecordCursorFactory factory) {
+        final boolean wasUsingBaseMetadata = useBaseMetadata;
+        useBaseMetadata = false;
+        factoryStack.push(factory);
+        try {
+            factory.toPlan(this);
+        } finally {
+            factoryStack.pop();
+            useBaseMetadata = wasUsingBaseMetadata;
+        }
+    }
+
     @Override
     public PlanSink val(Plannable s, RecordCursorFactory factory) {
         factoryStack.push(factory);

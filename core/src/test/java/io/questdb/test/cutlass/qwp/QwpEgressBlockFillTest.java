@@ -152,6 +152,70 @@ public class QwpEgressBlockFillTest extends AbstractBootstrapTest {
     }
 
     @Test
+    public void testCoveringIndexScan() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start()) {
+                // a covering scan of one key offers its runs: of the dense generation the index was
+                // built with, decoded, and of the sparse generations of the rows written after it, raw
+                serverMain.execute("create table cv (ts timestamp, sym symbol, s2 symbol, b boolean, sh short, i int, l long, " +
+                        "f float, d double, g6 geohash(6c), u uuid, l256 long256, dc128 decimal(30,4), v varchar) timestamp(ts) partition by DAY BYPASS WAL");
+                final String select = "select (x * 3000000)::timestamp, case when x % 9 = 0 then 'R' else 'k' || (x % 13) end, " +
+                        "case when x % 5 = 0 then null else 'z' || (x % 7) end, x % 3 = 0, (x % 999)::short, " +
+                        "case when x % 11 = 0 then null else x::int end, case when x % 7 = 0 then null else x * 1000003 end, " +
+                        "(x / 3.0)::float, case when x % 4 = 0 then null else x * 1.5 end, rnd_geohash(30), rnd_uuid4(), rnd_long256(), " +
+                        "(x * 1.25)::decimal(30,4), 'v' || x";
+                serverMain.execute("insert into cv " + select + " from long_sequence(60000)");
+                serverMain.execute("alter table cv alter column sym add index type posting include (s2, b, sh, i, l, f, d, g6, u, l256, dc128, v)");
+                serverMain.execute("insert into cv " + select.replace("(x * 3000000)::timestamp", "((x + 60000) * 3000000)::timestamp") + " from long_sequence(3000)");
+                final String[] sqls = {
+                        "select ts, (d + l) / 2 m, i * 2 i2 from cv where sym = 'R'",
+                        "select ts, sym, s2, b, sh, i, l, f, d, g6, u, l256, dc128 from cv where sym = 'R' limit 3, 18000",
+                        "select ts, s2, d from cv where sym = 'R' limit -500",
+                        "select ts, (d + l) / 2 m from cv where sym = 'absent'",
+                        // interval bounds inside the posting blocks: a run ends at the bound
+                        "select ts, (d + l) / 2 m from cv where sym = 'R' and ts >= '1970-01-01T10:00:00.5' and ts < '1970-01-02T07:00:00.5'",
+                };
+                for (int i = 0; i < 3; i++) {
+                    assertPlanContains(serverMain, sqls[i], "CoveringIndex");
+                }
+                assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=1000", 0, -1);
+                assertBlockFillMatchesRowFill(sqls, "", 0, -1);
+                // a var-size column: no blocks, row by row
+                assertBlockFillMatchesRowFill(new String[]{"select ts, v, d * 2 dd from cv where sym = 'R'"}, "", 0, -1, false);
+            }
+        });
+    }
+
+    @Test
+    public void testCoveringIndexScanIrregularKeyIntervalBounds() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (TestServerMain serverMain = start()) {
+                // the key at irregular spacing, so its posting blocks hold variable deltas, whose
+                // runs the block fill must end at an interval bound inside a block (a key at a fixed
+                // stride makes constant-delta blocks, which check the bound on their own path)
+                serverMain.execute("create table cv (ts timestamp, sym symbol, i int, l long, d double) timestamp(ts) partition by DAY BYPASS WAL");
+                final String select = "select (x * 3000000)::timestamp, case when x % 9 = 0 or x % 13 = 0 or x % 31 = 0 then 'R' else 'k' || (x % 13) end, " +
+                        "x::int, x * 1000003, x * 1.5";
+                serverMain.execute("insert into cv " + select + " from long_sequence(60000)");
+                serverMain.execute("alter table cv alter column sym add index type posting include (i, l, d)");
+                for (int c = 0; c < 4; c++) {
+                    serverMain.execute("insert into cv " + select.replace("(x * 3000000)::timestamp", "((x + " + (60000 + c * 3000) + ") * 3000000)::timestamp") + " from long_sequence(3000)");
+                }
+                final String[] sqls = {
+                        "select ts, (d + l) / 2 m, i * 2 i2 from cv where sym = 'R' and ts >= '1970-01-01T10:00:00.5' and ts < '1970-01-02T07:00:00.5'",
+                        "select ts, (d + l) / 2 m from cv where sym = 'R' and ts < '1970-01-03T02:30:01'",
+                        "select ts, (d + l) / 2 m from cv where sym = 'R' and ts >= '1970-01-02T02:00:01' and ts < '1970-01-03T03:30:01'",
+                };
+                for (String q : sqls) {
+                    assertPlanContains(serverMain, q, "CoveringIndex");
+                }
+                assertBlockFillMatchesRowFill(sqls, "", 0, -1);
+                assertBlockFillMatchesRowFill(sqls, "?qwp_max_batch_rows=1000", 0, -1);
+            }
+        });
+    }
+
+    @Test
     public void testAsyncFilter() throws Exception {
         TestUtils.assertMemoryLeak(() -> {
             try (TestServerMain serverMain = start(filterEnv())) {

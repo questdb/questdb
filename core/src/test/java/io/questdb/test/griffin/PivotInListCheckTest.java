@@ -302,6 +302,35 @@ public class PivotInListCheckTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testReusedPlanAcceptsUnorderedValuesInAnotherOrder() throws Exception {
+        // without ORDER BY the subquery's row order is unspecified: a parallel GROUP BY returns
+        // its groups in whatever order its workers' maps merge. Only the set of values names the
+        // plan's columns, so the cached plan stays usable.
+        assertMemoryLeak(() -> {
+            createTables();
+            final String pivot = "SELECT * FROM data PIVOT (sum(val) FOR cat IN (SELECT c FROM cats WHERE active) GROUP BY grp) ORDER BY grp";
+            try (RecordCursorFactory factory = select(pivot)) {
+                assertCursor(factory, """
+                        grp\tA\tB
+                        g1\t10\t20
+                        g2\t30\tnull
+                        """);
+                // the same values, the subquery's rows in another order: B, then A
+                execute("UPDATE cats SET active = false WHERE c = 'A'");
+                execute("INSERT INTO cats VALUES ('A', true, 3)");
+                assertCursor(factory, """
+                        grp\tA\tB
+                        g1\t10\t20
+                        g2\t30\tnull
+                        """);
+                // a value missing is still refused
+                execute("UPDATE cats SET active = false WHERE c = 'B'");
+                assertStale(factory, "[value=B]");
+            }
+        });
+    }
+
     private static void assertCursor(RecordCursorFactory factory, String expected) throws SqlException {
         final StringSink sink = new StringSink();
         try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {

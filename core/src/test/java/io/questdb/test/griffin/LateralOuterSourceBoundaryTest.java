@@ -445,6 +445,7 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
         }
         int sources = 0;
         int distinctSources = 0;
+        int scanArms = 0;
         for (int i = 1; i <= plan.getLineCount(); i++) {
             String line = plan.getLine(i).toString();
             if (line.contains("PostingIndex op: distinct")) {
@@ -455,6 +456,9 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
             }
             sources++;
             boolean hasSelection = isFastPath && line.contains("Interval forward scan");
+            // the rejected fast path is a GROUP BY over a posting-indexed IN list, which plans as
+            // a choice between the index gather and a scan: both arms must select the rows
+            boolean isScanArm = false;
             int ancestorIndent = line.length() - line.stripLeading().length();
             for (int j = i - 1; j > 0 && !hasSelection; j--) {
                 String ancestor = plan.getLine(j).toString();
@@ -470,13 +474,28 @@ public class LateralOuterSourceBoundaryTest extends AbstractCairoTest {
                             }
                         }
                         hasSelection = filteredKeys == 2;
+                    } else if (!isFastPath && ancestor.contains("Async JIT Group By")
+                            && plan.getLine(j + 2).toString().contains("filter: (sym in [A,BB] and 5<extra)")) {
+                        // the scan arm, under an Index Or Scan (its parent node, past its attributes)
+                        for (int k = j - 1; k > 0; k--) {
+                            String parent = plan.getLine(k).toString();
+                            if (parent.length() - parent.stripLeading().length() < indent && !parent.contains(": ")) {
+                                isScanArm = parent.contains("Index Or Scan");
+                                break;
+                            }
+                        }
+                        hasSelection = isScanArm;
                     }
                     ancestorIndent = indent;
                 }
             }
             Assert.assertTrue(text.toString(), hasSelection);
+            if (isScanArm) {
+                scanArms++;
+            }
         }
-        Assert.assertEquals(text.toString(), 2, sources);
+        Assert.assertEquals(text.toString(), isFastPath ? 2 : 4, sources);
+        Assert.assertEquals(text.toString(), isFastPath ? 0 : 2, scanArms);
         Assert.assertEquals(text.toString(), isFastPath ? 2 : 0, distinctSources);
     }
 

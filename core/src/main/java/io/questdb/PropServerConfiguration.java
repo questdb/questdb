@@ -191,6 +191,8 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final CairoConfiguration cairoConfiguration = new PropCairoConfiguration();
     private final boolean cairoGroupByBatchKernelsEnabled;
     private final double cairoIndexScanChoiceMaxSelectivity;
+    private final long cairoParallelCoveringFrameRows;
+    private final long cairoParallelCoveringLocalMaxRows;
     private final boolean cairoIndexScanChoiceEnabled;
     private final boolean cairoParallelIndexGroupByEnabled;
     private final int cairoParallelIndexGroupByFrameRows;
@@ -2474,6 +2476,14 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.cairoIndexScanChoiceMaxSelectivity = getDouble(properties, env, PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY, "0.05");
             if (!(cairoIndexScanChoiceMaxSelectivity >= 0 && cairoIndexScanChoiceMaxSelectivity <= 1)) {
                 throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_MAX_SELECTIVITY.getPropertyPath() + " must be between 0 and 1");
+            }
+            this.cairoParallelCoveringFrameRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_COVERING_FRAME_ROWS, 65_536);
+            if (cairoParallelCoveringFrameRows < 1) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_PARALLEL_COVERING_FRAME_ROWS.getPropertyPath() + " must be at least 1");
+            }
+            this.cairoParallelCoveringLocalMaxRows = getLong(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_COVERING_LOCAL_MAX_ROWS, 8_192);
+            if (cairoParallelCoveringLocalMaxRows < 0) {
+                throw new ServerConfigurationException(PropertyKey.CAIRO_SQL_PARALLEL_COVERING_LOCAL_MAX_ROWS.getPropertyPath() + " must not be negative");
             }
             this.cairoGroupByMergeShardQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_MERGE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
             this.vectorAggregateQueueCapacity = Numbers.ceilPow2(getInt(properties, env, PropertyKey.CAIRO_VECTOR_AGGREGATE_QUEUE_CAPACITY, defaultReduceQueueCapacity));
@@ -6100,6 +6110,16 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public int getSqlParallelIndexGroupByFrameRows() {
             return cairoParallelIndexGroupByFrameRows;
+        }
+
+        @Override
+        public long getSqlParallelCoveringFrameRows() {
+            return cairoParallelCoveringFrameRows;
+        }
+
+        @Override
+        public long getSqlParallelCoveringLocalMaxRows() {
+            return cairoParallelCoveringLocalMaxRows;
         }
 
         @Override

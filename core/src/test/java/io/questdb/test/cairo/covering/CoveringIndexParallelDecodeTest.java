@@ -1440,6 +1440,59 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoveredRunsDoNotContinueAcrossGenerations() throws Exception {
+        // The worker decode copies a key's covered values in runs, a run being postings whose
+        // sidecar ordinals follow each other in one block. In a sparse generation a key's ordinal
+        // base is the prefix sum of the lower keys' counts, so a key's last ordinal in generation k
+        // can equal, plus one, its first in generation k + 1: only the block id tells the two
+        // generations apart. Here 'a' is key 0 and generation k holds A_k rows of 'a' then B_k of
+        // 'b', with A_{k+1} = A_k + B_k, so 'b''s ordinals continue each other at every boundary.
+        assertMemoryLeak(() -> {
+            execute("create table g (ts timestamp, sym symbol, v long, d double, i int) timestamp(ts) partition by day bypass wal");
+            execute("insert into g values (0, 'a', 1, 1.0, 1)");
+            execute("alter table g alter column sym add index type posting include (v, d, i)");
+            long ts = 1_000_000;
+            int a = 0;
+            long val = 100;
+            final int[] bs = {3, 3, 2, 5, 1, 4, 7, 2, 3, 6};
+            for (int b : bs) {
+                final StringBuilder sql = new StringBuilder("insert into g values ");
+                for (int r = 0; r < a; r++) {
+                    sql.append('(').append(ts).append(",'a',").append(-val).append(',').append(-val).append(".25,").append(-val).append("),");
+                    ts += 1_000_000;
+                    val++;
+                }
+                for (int r = 0; r < b; r++) {
+                    sql.append('(').append(ts).append(",'b',").append(val).append(',').append(val).append(".5,").append(val).append("),");
+                    ts += 1_000_000;
+                    val++;
+                }
+                sql.setLength(sql.length() - 1);
+                execute(sql);
+                a += b;
+            }
+            final String[] queries = {
+                    "select count(), sum(v), sum(d), sum(i), min(v), max(v) from g where sym = 'b'",
+                    "select ts, v, d, i from g where sym = 'b'",
+                    "select ts, v, d, i from g where sym = 'b' order by ts desc",
+                    "select ts, v, d from g where sym = 'b' limit -7",
+                    "select ts, v * 2, d from g where sym = 'b'",
+                    "select ts, v, d, i from g where sym = 'b' and i > 0",
+            };
+            final StringSink plan = new StringSink();
+            printSql("explain " + queries[0], plan);
+            assertTrue(plan.toString(), plan.toString().contains("Async") && plan.toString().contains("CoveringIndex"));
+            for (String q : queries) {
+                final StringSink actual = new StringSink();
+                final StringSink expected = new StringSink();
+                printSql(q, actual);
+                printSql(q.replaceFirst("select ", "select /*+ no_index */ "), expected);
+                TestUtils.assertEquals(q, expected, actual);
+            }
+        });
+    }
+
+    @Test
     public void testParallelCoveredFirstLastArrayAcrossManyFrames() throws Exception {
         // Review finding #3: first()/last() over a covered ARRAY is the riskiest lifetime case --
         // the aggregate retains a RAW pointer into a covered decode buffer for the merge phase, so
@@ -1702,7 +1755,7 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                         engine.execute("INSERT INTO ref " + gen, sqlExecutionContext);
                         engine.releaseAllWriters();
 
-                        // Confirm the projection-with-residual runs Async Filter over
+                        // Confirm the projection-with-residual runs Async JIT Filter over
                         // the covering scan (the record fast-path), then equal the
                         // non-indexed twin -- both the projection (record path) and
                         // the aggregate (sum over the same residual).
@@ -1713,8 +1766,8 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
                                 sink
                         );
                         final String plan = sink.toString();
-                        assertTrue("residual projection must run Async Filter over CoveringIndex; plan=\n" + plan,
-                                plan.contains("Async Filter") && plan.contains("CoveringIndex on: sym"));
+                        assertTrue("residual projection must run Async JIT Filter over CoveringIndex; plan=\n" + plan,
+                                plan.contains("Async JIT Filter") && plan.contains("CoveringIndex on: sym"));
 
                         for (String sym : new String[]{"S0", "S3", "S7"}) {
                             final String proj = "SELECT price FROM %s WHERE sym = '" + sym + "' AND price > 500 ORDER BY price";
