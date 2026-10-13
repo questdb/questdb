@@ -48,6 +48,12 @@ import io.questdb.std.str.StringSink;
  * rows, the order is part of the plan (it orders the columns) and must match too. Otherwise the
  * subquery's order is unspecified, and can change from one run to the next (a parallel GROUP BY
  * merges its workers' maps in whatever order they finish), so only the set of values must match.
+ * <p>
+ * So for an IN subquery without ORDER BY, the order of the PIVOT's columns is fixed by the compile
+ * that built the plan: a cached plan keeps it while the subquery returns the same values in
+ * another order, and a fresh compile of the same SQL (another compiler, an evicted cache) may
+ * order the columns differently. The column names and values do not change, only their order; a
+ * query that needs a stable column order puts ORDER BY in the IN subquery.
  */
 public final class PivotInListCheck implements QuietCloseable {
     private final ObjList<String> expected = new ObjList<>();
