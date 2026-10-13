@@ -16396,6 +16396,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return;
         }
         final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tableToken);
+        tracker.setDurableEpochCompletionRequired(true);
         final long txn = getTxn();
         try {
             // There are two generation slots. No new write is needed when all actual candidates already cover
@@ -16411,6 +16412,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             finishPendingDetaches();
             tracker.setDurableEpochOwed(false);
+            tracker.setDurableEpochCompletionRequired(false);
         } catch (Throwable e) {
             tracker.setDurableEpochOwed(true);
             if (engine.isDataSyncFailureFatal(e)) {

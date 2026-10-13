@@ -59,9 +59,12 @@ public class SeqTxnTracker {
     // Counts the times RecoveryCoordinator restored this table from its save point since the process started.
     // wal_tables() exposes it, so an operator can see that this table needed recovery.
     private volatile long recoveryIncarnation = 0;
+    // Required logical completion survives ordinary publication and writer eviction. Only coverage plus
+    // finalization clears it; recovery reconstructs it before the first writer opens.
+    private volatile boolean durableEpochCompletionRequired;
     // Set when the inline save point after a change that no WAL replay can redo fails or is skipped: the next
     // apply batch or clean close takes one regardless of the cadence. Cleared when a save point publishes.
-    // Written only by the thread that holds the table writer; RESUME WAL reads it before it takes the writer.
+    // Written only by the thread that holds the table writer.
     private volatile boolean durableEpochOwed;
     // Set by WalPurgeJob when the table's older save point is behind its current state and no save point has
     // been taken for one interval; the next apply run that applies nothing takes one more save point.
@@ -225,6 +228,13 @@ public class SeqTxnTracker {
 
     public long getDurableEpochSeqTxn() {
         return durableEpochSeqTxn;
+    }
+
+    /**
+     * True until every candidate covers the required logical change and pending finalization succeeds.
+     */
+    public boolean isDurableEpochCompletionRequired() {
+        return durableEpochCompletionRequired;
     }
 
     /**
@@ -763,7 +773,14 @@ public class SeqTxnTracker {
     }
 
     /**
-     * Marks or clears a save point owed after a change no WAL replay can redo. Writer holder only.
+     * Arms at required-operation boundaries or recovery; only the writer's successful completion clears it.
+     */
+    public void setDurableEpochCompletionRequired(boolean required) {
+        durableEpochCompletionRequired = required;
+    }
+
+    /**
+     * Marks cadence-independent publication debt. A single successful save point clears it.
      */
     public void setDurableEpochOwed(boolean durableEpochOwed) {
         this.durableEpochOwed = durableEpochOwed;
