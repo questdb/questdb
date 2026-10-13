@@ -31,6 +31,7 @@ import io.questdb.griffin.engine.window.WindowAccumulatorDescriptor;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -128,21 +129,6 @@ public final class LiveViewAccumulatorDescriptor {
     }
 
     /**
-     * Returns the whole-state width of {@code family}, which must equal the width the
-     * contributing implementation declares through
-     * {@code WindowFunction.checkpointStateFixedLength()}. The plan checks the two
-     * against each other rather than trusting either alone.
-     * <p>
-     * Derived from the family's slot count rather than tabulated, because the codec
-     * writes one 64-bit field per slot and a second table could only ever disagree with
-     * it.
-     */
-    public static int familyStateLength(int family) {
-        final int slots = WindowAccumulatorDescriptor.familySlotCount(family);
-        return slots <= 0 ? -1 : slots * Long.BYTES;
-    }
-
-    /**
      * Whether {@code family}'s component codec is at the version every containment relation
      * in {@link WindowAccumulatorDescriptor#derivedSlotOffset}'s table was proved byte for
      * byte at.
@@ -189,24 +175,6 @@ public final class LiveViewAccumulatorDescriptor {
             return null;
         }
         return new LiveViewAccumulatorDescriptor(runtime, codecVersion);
-    }
-
-    /**
-     * Orders two identities by their encoded bytes, unsigned. The fused layout is
-     * assigned in this order and never in SELECT-list order, so reordering the
-     * projections of one view cannot move a component's offset.
-     */
-    public int compareIdentity(@NotNull LiveViewAccumulatorDescriptor other) {
-        final byte[] a = encoded;
-        final byte[] b = other.encoded;
-        final int n = Math.min(a.length, b.length);
-        for (int i = 0; i < n; i++) {
-            final int diff = (a[i] & 0xff) - (b[i] & 0xff);
-            if (diff != 0) {
-                return diff;
-            }
-        }
-        return a.length - b.length;
     }
 
     /**
@@ -297,26 +265,15 @@ public final class LiveViewAccumulatorDescriptor {
         }
     }
 
-    public int getArgumentColumnIndex() {
-        return runtime.getArgumentColumnIndex();
-    }
-
-    public int getArgumentColumnType() {
-        return runtime.getArgumentColumnType();
-    }
-
     public int getCodecVersion() {
         return codecVersion;
-    }
-
-    public int getContributionKind() {
-        return runtime.getContributionKind();
     }
 
     /**
      * Returns an owned copy of the encoded identity, which is what the persisted
      * manifest carries.
      */
+    @TestOnly
     public byte[] getEncoded() {
         return Arrays.copyOf(encoded, encoded.length);
     }

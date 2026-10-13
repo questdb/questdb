@@ -27,6 +27,7 @@ package io.questdb.cairo.lv;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.TestOnly;
 
 import java.util.Arrays;
 
@@ -82,12 +83,8 @@ import java.util.Arrays;
 public final class LiveViewWindowStateManifest {
     public static final int FORMAT_VERSION = 1;
     private static final int MAGIC = 0x4c56574d; // LVWM
-    private final int anchorStateLength;
-    private final int anchorStateOffset;
-    private final int componentCount;
     private final int[] componentStateOffsets;
     private final byte[] encoded;
-    private final int totalInlineStateBytes;
 
     /**
      * @param components            the plan's components, already in canonical
@@ -108,20 +105,13 @@ public final class LiveViewWindowStateManifest {
         if (components.size() != componentOffsets.size()) {
             throw new IllegalArgumentException("live view window state manifest component/offset count mismatch");
         }
-        this.componentCount = components.size();
-        this.anchorStateOffset = anchorStateOffset;
-        this.anchorStateLength = anchorStateLength;
-        this.totalInlineStateBytes = totalInlineStateBytes;
+        final int componentCount = components.size();
         this.componentStateOffsets = new int[componentCount];
         for (int i = 0; i < componentCount; i++) {
             componentStateOffsets[i] = componentOffsets.getQuick(i);
         }
-        this.encoded = encode(components, componentOffsets);
+        this.encoded = encode(components, componentOffsets, anchorStateOffset, anchorStateLength, totalInlineStateBytes);
         LiveViewCheckpointMetadata.validateByteArrayLength(encoded.length, "window state manifest");
-    }
-
-    public int getComponentCount() {
-        return componentCount;
     }
 
     /**
@@ -137,6 +127,7 @@ public final class LiveViewWindowStateManifest {
      * Returns an owned copy of the encoded manifest, which is what a window root
      * carries and what the predecessor comparison reads.
      */
+    @TestOnly
     public byte[] getEncoded() {
         return Arrays.copyOf(encoded, encoded.length);
     }
@@ -149,16 +140,14 @@ public final class LiveViewWindowStateManifest {
         return encoded;
     }
 
-    /**
-     * The width of a complete fused leaf scalar payload, anchor value included. A
-     * restore requires the entry's scalar to be exactly this long and to name no state
-     * page.
-     */
-    public int getTotalInlineStateBytes() {
-        return totalInlineStateBytes;
-    }
-
-    private byte[] encode(ObjList<LiveViewAccumulatorDescriptor> components, IntList componentOffsets) {
+    private static byte[] encode(
+            ObjList<LiveViewAccumulatorDescriptor> components,
+            IntList componentOffsets,
+            int anchorStateOffset,
+            int anchorStateLength,
+            int totalInlineStateBytes
+    ) {
+        final int componentCount = components.size();
         int size = 6 * Integer.BYTES;
         for (int i = 0; i < componentCount; i++) {
             size += 4 * Integer.BYTES + components.getQuick(i).borrowEncoded().length;

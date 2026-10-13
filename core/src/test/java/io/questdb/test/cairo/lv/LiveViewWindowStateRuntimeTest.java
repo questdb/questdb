@@ -643,7 +643,7 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 Assert.assertEquals("sum and avg stay residual", 2, plan.getResidualFunctions().size());
                 Assert.assertEquals(
                         WindowAccumulatorDescriptor.CONTRIBUTION_TYPED_NOT_NULL,
-                        plan.getComponent(0).getContributionKind()
+                        plan.getComponent(0).getRuntime().getContributionKind()
                 );
                 Assert.assertTrue(plan.getProjectionFunction(0).isWindowStateOwned());
                 for (int i = 0; i < 2; i++) {
@@ -699,7 +699,7 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 Assert.assertEquals("the count folds onto the total's counter", 1, plan.getComponentCount());
                 Assert.assertEquals(2, plan.getProjectionCount());
                 Assert.assertEquals(0, plan.getResidualFunctions().size());
-                Assert.assertTrue(plan.getProjection(1).isDerived());
+                Assert.assertTrue(plan.getProjection(1).getRuntime().isDerived());
                 for (int i = 0; i < 2; i++) {
                     final WindowFunction function = plan.getProjectionFunction(i);
                     Assert.assertTrue("projection " + i + " must be fused", function.isWindowStateOwned());
@@ -822,7 +822,7 @@ public class LiveViewWindowStateRuntimeTest extends AbstractLiveViewTest {
                 Assert.assertEquals(3, plan.getProjectionCount());
                 // Keyed by the column's own type: the widening is what the shared
                 // predicate was proved through, so it is part of the identity.
-                Assert.assertEquals(ColumnType.LONG, plan.getComponent(0).getArgumentColumnType());
+                Assert.assertEquals(ColumnType.LONG, plan.getComponent(0).getRuntime().getArgumentColumnType());
                 for (int i = 0; i < 3; i++) {
                     final WindowFunction function = plan.getProjectionFunction(i);
                     Assert.assertTrue("projection " + i + " must be fused", function.isWindowStateOwned());

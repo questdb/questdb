@@ -35,9 +35,9 @@ import org.jetbrains.annotations.NotNull;
  * <p>
  * Everything about the binding itself - which component this output reads, which slots its
  * fields occupy, whether it is derived or guarded - is the runtime projection's and is read
- * off it rather than restated here. The four fields this class adds are the ones an
- * ordinary query has no use for: the component's offset and length in the payload, and the
- * narrower slice the projecting function's own decoder consumes out of it.
+ * off it rather than restated here. The fields this class adds are the ones an ordinary
+ * query has no use for: the component's offset in the payload, and the narrower slice the
+ * projecting function's own decoder consumes out of it.
  *
  * <h2>Derived projections</h2>
  * A projection's component need not be the one its own function would have persisted
@@ -72,14 +72,12 @@ public final class LiveViewAccumulatorProjection {
      */
     public static final int NOT_PERSISTED = -1;
     private final LiveViewAccumulatorDescriptor component;
-    private final int componentStateLength;
     private final int componentStateOffset;
     private final LiveViewAccumulatorDescriptor functionComponent;
     private final int functionStateLength;
     private final int functionStateOffset;
     private final int nonNullCountFieldOffset;
     private final WindowAccumulatorProjection runtime;
-    private final int sumFieldOffset;
 
     /**
      * Wraps the runtime binding a compiled plan already made in the byte facts a live view
@@ -122,16 +120,10 @@ public final class LiveViewAccumulatorProjection {
         this.component = component;
         this.functionComponent = functionComponent;
         this.componentStateOffset = componentStateOffset;
-        this.componentStateLength = component.getStateLength();
         this.functionStateOffset = componentStateOffset == NOT_PERSISTED
                 ? NOT_PERSISTED
                 : componentStateOffset + derivedOffset;
         this.functionStateLength = functionComponent.getStateLength();
-        this.sumFieldOffset = absoluteFieldOffset(
-                component,
-                componentStateOffset,
-                WindowAccumulatorDescriptor.FIELD_SUM
-        );
         this.nonNullCountFieldOffset = absoluteFieldOffset(
                 component,
                 componentStateOffset,
@@ -157,30 +149,8 @@ public final class LiveViewAccumulatorProjection {
         return runtime.getComponentSlotBase();
     }
 
-    public int getComponentStateLength() {
-        return componentStateLength;
-    }
-
     public int getComponentStateOffset() {
         return componentStateOffset;
-    }
-
-    /**
-     * Returns {@code field}'s offset in the fused scalar payload, or {@code -1} when the
-     * component this projection reads carries no such field. The absolute counterpart of
-     * {@link LiveViewAccumulatorDescriptor#getFieldOffset(int)}.
-     */
-    public int getFieldOffset(int field) {
-        return absoluteFieldOffset(component, componentStateOffset, field);
-    }
-
-    /**
-     * Returns {@code field}'s slot in the window's fused runtime map value, or {@code -1}
-     * when the component this projection reads carries no such field. This is what a
-     * bound function reads its state through.
-     */
-    public int getFieldSlot(int field) {
-        return runtime.getFieldSlot(field);
     }
 
     /**
@@ -202,8 +172,8 @@ public final class LiveViewAccumulatorProjection {
     }
 
     /**
-     * The width of the projecting function's own whole-state image, which equals
-     * {@link #getComponentStateLength()} unless this projection is derived.
+     * The width of the projecting function's own whole-state image, which equals the
+     * component's state length unless this projection is derived.
      */
     public int getFunctionStateLength() {
         return functionStateLength;
@@ -241,42 +211,12 @@ public final class LiveViewAccumulatorProjection {
         return runtime.getNonNullCountSlot();
     }
 
-    public int getOutputPosition() {
-        return runtime.getOutputPosition();
-    }
-
     /**
      * The runtime binding this one persists. Which component the output reads and which
      * slots it reads it through are that projection's answers, not this one's.
      */
     public @NotNull WindowAccumulatorProjection getRuntime() {
         return runtime;
-    }
-
-    /**
-     * Returns the running sum's offset in the fused scalar payload, or {@code -1} when
-     * the component carries none.
-     */
-    public int getSumFieldOffset() {
-        return sumFieldOffset;
-    }
-
-    /**
-     * Returns the running sum's slot in the window's fused runtime map value, or
-     * {@code -1} when the component carries none.
-     */
-    public int getSumSlot() {
-        return runtime.getSumSlot();
-    }
-
-    /**
-     * Whether this projection reads a component wider than the one its own function
-     * persists alone - a {@code count(x)} bound onto the counter inside a
-     * {@code sum(x)}. A derived projection is never a component's contributor: its
-     * function freezes an image narrower than the component, so it cannot write one.
-     */
-    public boolean isDerived() {
-        return runtime.isDerived();
     }
 
     /**

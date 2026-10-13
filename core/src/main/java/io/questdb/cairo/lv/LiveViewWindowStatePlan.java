@@ -137,22 +137,18 @@ public final class LiveViewWindowStatePlan {
     public static final int WINDOW_VALUE_SLOT_COUNT = 4;
     private static final int WINDOW_IDENTITY_FORMAT_VERSION = 1;
     private static final int WINDOW_IDENTITY_MAGIC = 0x4c565749; // LVWI
-    private final IntList componentSlotBases;
     private final ObjList<LiveViewAccumulatorDescriptor> components;
-    /**
-     * Per component, the index into {@link #projectionFunctions} of the function that
-     * updates it. The plan chooses it deterministically - the lowest output position
-     * among the compatible contributors - so a view recompiled without the projection
-     * that happened to own the accumulator last time still updates it, and no "owner
-     * output position" ever reaches disk.
-     */
-    private final IntList contributorIndexes;
     private final int durableComponentCount;
     private final ColumnTypes keyColumnTypes;
     private final LiveViewWindowStateManifest manifest;
-    private final ObjList<WindowFunction> projectionFunctions;
     private final ObjList<LiveViewAccumulatorProjection> projections;
     private final ObjList<WindowFunction> residualFunctions;
+    /**
+     * The runtime plan this one renders, index-aligned with it in components and
+     * projections; its slot bases, contributors and projection functions are this plan's.
+     * Null for an anchor-only plan, which has no component or projection to index it by.
+     */
+    private final WindowAccumulatorPlan runtimePlan;
     private final int totalInlineStateBytes;
     private final int totalRuntimeStateBytes;
     private final byte[] windowIdentity;
@@ -162,10 +158,8 @@ public final class LiveViewWindowStatePlan {
             ColumnTypes keyColumnTypes,
             ObjList<LiveViewAccumulatorDescriptor> components,
             int durableComponentCount,
-            IntList componentSlotBases,
-            IntList contributorIndexes,
+            WindowAccumulatorPlan runtimePlan,
             ObjList<LiveViewAccumulatorProjection> projections,
-            ObjList<WindowFunction> projectionFunctions,
             ObjList<WindowFunction> residualFunctions,
             LiveViewWindowStateManifest manifest,
             int totalInlineStateBytes,
@@ -175,10 +169,8 @@ public final class LiveViewWindowStatePlan {
         this.keyColumnTypes = keyColumnTypes;
         this.components = components;
         this.durableComponentCount = durableComponentCount;
-        this.componentSlotBases = componentSlotBases;
-        this.contributorIndexes = contributorIndexes;
+        this.runtimePlan = runtimePlan;
         this.projections = projections;
-        this.projectionFunctions = projectionFunctions;
         this.residualFunctions = residualFunctions;
         this.manifest = manifest;
         this.totalInlineStateBytes = totalInlineStateBytes;
@@ -227,7 +219,7 @@ public final class LiveViewWindowStatePlan {
      */
     public void bindProjectionFunctions() {
         for (int i = 0, n = projections.size(); i < n; i++) {
-            projectionFunctions.getQuick(i).bindWindowStateSlots(projections.getQuick(i).getRuntime());
+            getProjectionFunction(i).bindWindowStateSlots(projections.getQuick(i).getRuntime());
         }
     }
 
@@ -249,22 +241,24 @@ public final class LiveViewWindowStatePlan {
      * value. The slot counterpart of the manifest's state offset.
      */
     public int getComponentSlotBase(int index) {
-        return componentSlotBases.getQuick(index);
+        return runtimePlan.getComponentSlotBase(index);
     }
 
     /**
      * Returns the function that updates component {@code index}. Every other
-     * projection on that component is a read-only reader of the same state.
+     * projection on that component is a read-only reader of the same state. The runtime
+     * plan picks it deterministically - the lowest output position among the compatible
+     * contributors - so no owner output position ever reaches disk.
      * <p>
      * A contributor is always a projection whose own function persists that exact
-     * component, never a {@link LiveViewAccumulatorProjection#isDerived() derived} one:
+     * component, never a {@link WindowAccumulatorProjection#isDerived() derived} one:
      * a {@code count} folded onto a sum's counter freezes eight bytes and the component
      * is sixteen, so it could not write the image even though it can read it. Nor a
      * {@link LiveViewAccumulatorProjection#isPartitionKeyGuarded() guarded} one, whose
      * image is the same eight bytes as its component's and still a different number.
      */
     public WindowFunction getContributor(int index) {
-        return projectionFunctions.getQuick(contributorIndexes.getQuick(index));
+        return runtimePlan.getContributor(index);
     }
 
     /**
@@ -275,15 +269,6 @@ public final class LiveViewWindowStatePlan {
      */
     public int getDurableComponentCount() {
         return durableComponentCount;
-    }
-
-    /**
-     * Returns the partition-key layout the grouped functions share. A window-state
-     * root is compatible with a predecessor only when this matches too, so it is
-     * carried on the plan rather than re-derived per seal.
-     */
-    public ColumnTypes getKeyColumnTypes() {
-        return keyColumnTypes;
     }
 
     public LiveViewWindowStateManifest getManifest() {
@@ -304,7 +289,7 @@ public final class LiveViewWindowStatePlan {
      * plan lives and dies with it.
      */
     public WindowFunction getProjectionFunction(int index) {
-        return projectionFunctions.getQuick(index);
+        return runtimePlan.getProjectionFunction(index);
     }
 
     /**
@@ -363,8 +348,8 @@ public final class LiveViewWindowStatePlan {
      * however alike their identities read.
      */
     public int indexOfProjectionFunction(WindowFunction function) {
-        for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
-            if (projectionFunctions.getQuick(i) == function) {
+        for (int i = 0, n = projections.size(); i < n; i++) {
+            if (getProjectionFunction(i) == function) {
                 return i;
             }
         }
@@ -380,7 +365,7 @@ public final class LiveViewWindowStatePlan {
      */
     public boolean isContributor(int index) {
         final int componentIndex = projections.getQuick(index).getComponentIndex();
-        return contributorIndexes.getQuick(componentIndex) == index;
+        return runtimePlan.getContributorIndex(componentIndex) == index;
     }
 
     /**
@@ -419,8 +404,8 @@ public final class LiveViewWindowStatePlan {
      * symmetric.
      */
     public void releaseProjectionMaps() {
-        for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
-            final Map map = projectionFunctions.getQuick(i).getPartitionMap();
+        for (int i = 0, n = projections.size(); i < n; i++) {
+            final Map map = getProjectionFunction(i).getPartitionMap();
             if (map != null && map.isOpen()) {
                 map.close();
             }
@@ -434,8 +419,8 @@ public final class LiveViewWindowStatePlan {
      * group's state back the same way.
      */
     public void reopenProjectionMaps() {
-        for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
-            final Map map = projectionFunctions.getQuick(i).getPartitionMap();
+        for (int i = 0, n = projections.size(); i < n; i++) {
+            final Map map = getProjectionFunction(i).getPartitionMap();
             if (map != null) {
                 map.reopen();
                 map.clear();
@@ -457,8 +442,8 @@ public final class LiveViewWindowStatePlan {
      * change is rare and one complete freeze per function is what it costs.
      */
     public void requireProjectionCheckpointFullScan() {
-        for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
-            projectionFunctions.getQuick(i).requireCheckpointFullScan();
+        for (int i = 0, n = projections.size(); i < n; i++) {
+            getProjectionFunction(i).requireCheckpointFullScan();
         }
     }
 
@@ -468,8 +453,8 @@ public final class LiveViewWindowStatePlan {
      * The state itself is the caller's to move; this only changes who is asked for it.
      */
     public void unbindProjectionFunctions() {
-        for (int i = 0, n = projectionFunctions.size(); i < n; i++) {
-            projectionFunctions.getQuick(i).bindWindowStateSlots(null);
+        for (int i = 0, n = projections.size(); i < n; i++) {
+            getProjectionFunction(i).bindWindowStateSlots(null);
         }
     }
 
@@ -632,7 +617,6 @@ public final class LiveViewWindowStatePlan {
             // the same order, so a component's slot base is read straight off the plan that
             // assigned it and only the byte offsets are added here.
             final IntList componentOffsets = new IntList(componentCount);
-            final IntList componentSlotBases = new IntList(componentCount);
             final ObjList<LiveViewAccumulatorDescriptor> durableComponents = new ObjList<>(durableComponentCount);
             final IntList durableComponentOffsets = new IntList(durableComponentCount);
             int offset = ANCHOR_STATE_OFFSET + ANCHOR_STATE_BYTES;
@@ -640,7 +624,6 @@ public final class LiveViewWindowStatePlan {
             for (int i = 0; i < componentCount; i++) {
                 final LiveViewAccumulatorDescriptor component = durableComponent(runtimePlan.getComponent(i));
                 components.add(component);
-                componentSlotBases.add(runtimePlan.getComponentSlotBase(i));
                 runtimeStateBytes += component.getStateLength();
                 if (i < durableComponentCount) {
                     componentOffsets.add(offset);
@@ -657,7 +640,6 @@ public final class LiveViewWindowStatePlan {
             assert offset <= LiveViewCheckpointContracts.MAX_INLINE_LEAF_STATE_BYTES;
             final int projectionCount = runtimePlan.getProjectionCount();
             final ObjList<LiveViewAccumulatorProjection> projections = new ObjList<>(projectionCount);
-            final ObjList<WindowFunction> projectionFunctions = new ObjList<>(projectionCount);
             for (int i = 0; i < projectionCount; i++) {
                 final WindowAccumulatorProjection projection = runtimePlan.getProjection(i);
                 projections.add(new LiveViewAccumulatorProjection(
@@ -666,24 +648,14 @@ public final class LiveViewWindowStatePlan {
                         components.getQuick(projection.getComponentIndex()),
                         durableComponent(projection.getFunctionComponent())
                 ));
-                projectionFunctions.add(runtimePlan.getProjectionFunction(i));
-            }
-            // Every projection the runtime plan made is a member, so the contributor indexes
-            // are the runtime plan's own. The budget renumbered them while it handed the tail
-            // back as residuals; it no longer drops anything, so there is nothing to remap.
-            final IntList contributorIndexes = new IntList(componentCount);
-            for (int i = 0; i < componentCount; i++) {
-                contributorIndexes.add(runtimePlan.getContributorIndex(i));
             }
             return new LiveViewWindowStatePlan(
                     windowIdentity,
                     keyColumnTypes,
                     components,
                     durableComponentCount,
-                    componentSlotBases,
-                    contributorIndexes,
+                    runtimePlan,
                     projections,
-                    projectionFunctions,
                     residualFunctions,
                     new LiveViewWindowStateManifest(
                             durableComponents,
@@ -728,9 +700,7 @@ public final class LiveViewWindowStatePlan {
                     keyColumnTypes,
                     new ObjList<>(0),
                     0,
-                    new IntList(0),
-                    new IntList(0),
-                    new ObjList<>(0),
+                    null,
                     new ObjList<>(0),
                     residuals,
                     new LiveViewWindowStateManifest(

@@ -116,8 +116,6 @@ public class LiveViewNoGcSourceHygieneTest {
             LiveViewAccumulatorDescriptor.java
                 # The component identity, encoded once per compiled descriptor and compared
                 # whole; the component's state image is native.
-                1 byte[] a
-                1 byte[] b
                 1 byte[] borrowEncoded()
                 1 byte[] encode()
                 2 byte[] encoded

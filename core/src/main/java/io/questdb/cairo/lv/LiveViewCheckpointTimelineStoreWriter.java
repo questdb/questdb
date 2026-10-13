@@ -849,19 +849,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
-     * @return bytes of every key and scalar buffer the two previous-boundary shells keep for
-     * reuse: the native key and scalar buffers of their entries and the node arenas
-     * and scratch entries of their partition-map readers. The shells live as long as the
-     * writer, so this is what they retain from views the worker served before; the writer's
-     * other readers and caches are not part of it.
-     */
-    @TestOnly
-    public long getRetainedPreviousBoundaryBufferBytesForTest() {
-        return sealPreviousBoundary.getRetainedBufferBytesForTest()
-                + keyDomainPreviousBoundary.getRetainedBufferBytesForTest();
-    }
-
-    /**
      * @return true when no pooled frozen holder of an idle freeze scratch still names a
      * window, a window state plan or a window function - the runtime of the view that
      * scratch last froze
@@ -5926,13 +5913,6 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                     Math.max(entry.getLargestRetainedBufferBytesForTest(), windowEntry.getLargestRetainedBufferBytesForTest()),
                     partitionReader.getLargestRetainedBufferBytesForTest()
             );
-        }
-
-        @TestOnly
-        private long getRetainedBufferBytesForTest() {
-            return entry.getRetainedBufferBytesForTest()
-                    + windowEntry.getRetainedBufferBytesForTest()
-                    + partitionReader.getRetainedBufferBytesForTest();
         }
 
         @Override

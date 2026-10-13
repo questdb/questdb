@@ -705,7 +705,6 @@ public class LiveViewStateTransferFamilyMatrixTest extends AbstractLiveViewTest 
             void assertPlanShape(LiveViewWindowStatePlan plan) {
                 Assert.assertEquals("every pair must be in the group", WIDE_COLUMNS, plan.getComponentCount());
                 Assert.assertEquals(inlineComponents, plan.getDurableComponentCount());
-                Assert.assertEquals(inlineComponents, plan.getManifest().getComponentCount());
                 Assert.assertEquals(
                         "a component past the budget is a runtime-only member, not a residual",
                         0,
@@ -992,7 +991,7 @@ public class LiveViewStateTransferFamilyMatrixTest extends AbstractLiveViewTest 
         final LiveViewWindowStatePlan plan = storagePlan();
         int componentIndex = -1;
         for (int i = 0, n = plan.getDurableComponentCount(); i < n; i++) {
-            if (plan.getComponent(i).getArgumentColumnIndex() == argumentColumnIndex) {
+            if (plan.getComponent(i).getRuntime().getArgumentColumnIndex() == argumentColumnIndex) {
                 componentIndex = i;
                 break;
             }
@@ -1274,14 +1273,14 @@ public class LiveViewStateTransferFamilyMatrixTest extends AbstractLiveViewTest 
             final byte[] payload = new byte[plan.getTotalInlineStateBytes()];
             putLongLE(payload, LiveViewWindowStatePlan.ANCHOR_STATE_OFFSET, anchorValue);
             final List<Integer> seen = new ArrayList<>();
-            for (int i = 0, n = manifest.getComponentCount(); i < n; i++) {
+            for (int i = 0, n = plan.getDurableComponentCount(); i < n; i++) {
                 final LiveViewAccumulatorDescriptor component = plan.getComponent(i);
-                final FieldValue[] fields = fieldsByArgument.get(component.getArgumentColumnIndex());
+                final FieldValue[] fields = fieldsByArgument.get(component.getRuntime().getArgumentColumnIndex());
                 Assert.assertNotNull(
-                        "no expectation for the component over column " + component.getArgumentColumnIndex(),
+                        "no expectation for the component over column " + component.getRuntime().getArgumentColumnIndex(),
                         fields
                 );
-                seen.add(component.getArgumentColumnIndex());
+                seen.add(component.getRuntime().getArgumentColumnIndex());
                 writeFields(component, fields, payload, manifest.getComponentStateOffset(i));
             }
             Assert.assertEquals("every expected component must be in the manifest", fieldsByArgument.size(), seen.size());
@@ -1314,7 +1313,6 @@ public class LiveViewStateTransferFamilyMatrixTest extends AbstractLiveViewTest 
             Arrays.sort(expected);
             Arrays.sort(actual);
             Assert.assertArrayEquals("the plan must compile to exactly the expected families", expected, actual);
-            Assert.assertEquals(plan.getDurableComponentCount(), plan.getManifest().getComponentCount());
             Assert.assertEquals("every call must be in the group", 0, plan.getResidualFunctions().size());
             for (int i = 0, n = plan.getProjectionCount(); i < n; i++) {
                 Assert.assertTrue("projection " + i + " must be durable", plan.isDurableProjection(i));

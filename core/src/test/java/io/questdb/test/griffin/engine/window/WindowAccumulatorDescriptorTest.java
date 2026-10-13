@@ -40,6 +40,8 @@ import io.questdb.std.ObjList;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.Arrays;
+
 /**
  * The seams between a runtime accumulator component and the live-view wrapper that
  * persists it.
@@ -989,13 +991,6 @@ public class WindowAccumulatorDescriptorTest {
                     expectedStateLength(component.getFamily()),
                     component.getStateLength()
             );
-            // The same width by the other route the plan checks: off the family table rather
-            // than off a built descriptor.
-            Assert.assertEquals(
-                    what + ": family width",
-                    component.getStateLength(),
-                    LiveViewAccumulatorDescriptor.familyStateLength(component.getFamily())
-            );
             for (int s = 0; s < slots; s++) {
                 // The codec writes each slot through one putLong, so a narrower slot type
                 // would leave the image describing fields the layout does not have.
@@ -1038,7 +1033,7 @@ public class WindowAccumulatorDescriptorTest {
                 // so a disagreement would be a persisted offset nobody chose.
                 Assert.assertEquals(
                         what + ": order",
-                        Integer.signum(left.compareIdentity(right)),
+                        Integer.signum(Arrays.compareUnsigned(left.getEncoded(), right.getEncoded())),
                         Integer.signum(left.getRuntime().compareIdentity(right.getRuntime()))
                 );
             }
@@ -1098,8 +1093,8 @@ public class WindowAccumulatorDescriptorTest {
             LiveViewAccumulatorDescriptor host,
             LiveViewAccumulatorDescriptor guest
     ) {
-        if (host.getArgumentColumnIndex() != guest.getArgumentColumnIndex()
-                || host.getArgumentColumnType() != guest.getArgumentColumnType()) {
+        if (host.getRuntime().getArgumentColumnIndex() != guest.getRuntime().getArgumentColumnIndex()
+                || host.getRuntime().getArgumentColumnType() != guest.getRuntime().getArgumentColumnType()) {
             return -1;
         }
         if (host.getFamily() == guest.getFamily()) {
@@ -1161,6 +1156,6 @@ public class WindowAccumulatorDescriptorTest {
     }
 
     private static String label(LiveViewAccumulatorDescriptor component) {
-        return "family " + component.getFamily() + " over column " + component.getArgumentColumnIndex();
+        return "family " + component.getFamily() + " over column " + component.getRuntime().getArgumentColumnIndex();
     }
 }

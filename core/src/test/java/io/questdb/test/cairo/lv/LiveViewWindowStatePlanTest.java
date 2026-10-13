@@ -108,7 +108,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertEquals(ANCHOR_BYTES + COUNT_STATE_BYTES, plan.getTotalInlineStateBytes());
                         Assert.assertEquals(
                                 WindowAccumulatorDescriptor.CONTRIBUTION_TYPED_NOT_NULL,
-                                plan.getComponent(0).getContributionKind()
+                                plan.getComponent(0).getRuntime().getContributionKind()
                         );
                     }
             );
@@ -263,12 +263,12 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         // factory's, because the widening is what the predicate was
                         // proved through: a component over a LONG column and one over a
                         // DOUBLE column are two different proofs.
-                        Assert.assertEquals(ColumnType.LONG, plan.getComponent(0).getArgumentColumnType());
+                        Assert.assertEquals(ColumnType.LONG, plan.getComponent(0).getRuntime().getArgumentColumnType());
                         Assert.assertEquals(
                                 WindowAccumulatorDescriptor.CONTRIBUTION_FINITE_DOUBLE,
-                                plan.getComponent(0).getContributionKind()
+                                plan.getComponent(0).getRuntime().getContributionKind()
                         );
-                        Assert.assertTrue(plan.getProjection(2).isDerived());
+                        Assert.assertTrue(plan.getProjection(2).getRuntime().isDerived());
                     }
             );
             // The dispersion family widens the same way, and the count folds onto
@@ -283,7 +283,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                                 WindowAccumulatorDescriptor.FAMILY_DOUBLE_WELFORD,
                                 plan.getComponent(0).getFamily()
                         );
-                        Assert.assertEquals(ColumnType.INT, plan.getComponent(0).getArgumentColumnType());
+                        Assert.assertEquals(ColumnType.INT, plan.getComponent(0).getRuntime().getArgumentColumnType());
                         Assert.assertEquals(ANCHOR_BYTES + WELFORD_STATE_BYTES, plan.getTotalInlineStateBytes());
                     }
             );
@@ -352,10 +352,10 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         );
                         // The count is the only one of the four that reads a slice its own
                         // function would not have persisted alone.
-                        Assert.assertFalse(plan.getProjection(0).isDerived());
-                        Assert.assertFalse(plan.getProjection(1).isDerived());
-                        Assert.assertFalse(plan.getProjection(2).isDerived());
-                        Assert.assertTrue(plan.getProjection(3).isDerived());
+                        Assert.assertFalse(plan.getProjection(0).getRuntime().isDerived());
+                        Assert.assertFalse(plan.getProjection(1).getRuntime().isDerived());
+                        Assert.assertFalse(plan.getProjection(2).getRuntime().isDerived());
+                        Assert.assertTrue(plan.getProjection(3).getRuntime().isDerived());
                     }
             );
             // The 64-bit extremum is one family serving three argument types, and the
@@ -397,7 +397,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                                 plan.getComponent(0).getFamily()
                         );
                         Assert.assertEquals(ANCHOR_BYTES + KAHAN_STATE_BYTES, plan.getTotalInlineStateBytes());
-                        Assert.assertTrue(plan.getProjection(1).isDerived());
+                        Assert.assertTrue(plan.getProjection(1).getRuntime().isDerived());
                     }
             );
             // A compensated total and a plain one are different numbers over the same rows,
@@ -568,9 +568,9 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         // derived one reads the counter inside it and stops there.
                         final LiveViewAccumulatorProjection sum = plan.getProjection(0);
                         final LiveViewAccumulatorProjection count = plan.getProjection(2);
-                        Assert.assertFalse(sum.isDerived());
-                        Assert.assertFalse(plan.getProjection(1).isDerived());
-                        Assert.assertTrue(count.isDerived());
+                        Assert.assertFalse(sum.getRuntime().isDerived());
+                        Assert.assertFalse(plan.getProjection(1).getRuntime().isDerived());
+                        Assert.assertTrue(count.getRuntime().isDerived());
                         Assert.assertEquals(sum.getComponentStateOffset(), sum.getFunctionStateOffset());
                         Assert.assertEquals(SUM_STATE_BYTES, sum.getFunctionStateLength());
                         Assert.assertEquals(count.getNonNullCountFieldOffset(), count.getFunctionStateOffset());
@@ -618,7 +618,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                                 plan.getComponent(0).getFamily()
                         );
                         Assert.assertEquals(ANCHOR_BYTES + COUNT_STATE_BYTES, plan.getTotalInlineStateBytes());
-                        Assert.assertFalse(plan.getProjection(0).isDerived());
+                        Assert.assertFalse(plan.getProjection(0).getRuntime().isDerived());
                         Assert.assertSame(plan.getProjectionFunction(0), plan.getContributor(0));
                     }
             );
@@ -696,8 +696,8 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                                 ANCHOR_BYTES + 2 * COUNT_STATE_BYTES,
                                 plan.getTotalInlineStateBytes()
                         );
-                        Assert.assertFalse(plan.getProjection(0).isDerived());
-                        Assert.assertFalse(plan.getProjection(1).isDerived());
+                        Assert.assertFalse(plan.getProjection(0).getRuntime().isDerived());
+                        Assert.assertFalse(plan.getProjection(1).getRuntime().isDerived());
                         Assert.assertNotEquals(
                                 "a row count must not read a non-null count's counter",
                                 plan.getProjection(0).getComponentIndex(),
@@ -861,8 +861,8 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         Assert.assertEquals(ANCHOR_BYTES + COUNT_STATE_BYTES, plan.getTotalInlineStateBytes());
                         // Neither is derived - each persists the whole component - so the
                         // contributor is decided by output position, and only it updates.
-                        Assert.assertFalse(plan.getProjection(0).isDerived());
-                        Assert.assertFalse(plan.getProjection(1).isDerived());
+                        Assert.assertFalse(plan.getProjection(0).getRuntime().isDerived());
+                        Assert.assertFalse(plan.getProjection(1).getRuntime().isDerived());
                         Assert.assertSame(plan.getProjectionFunction(0), plan.getContributor(0));
                     }
             );
@@ -927,8 +927,8 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         // Only the count is derived, and its slice is the counter at the
                         // end of Welford's image rather than the whole of it.
                         final LiveViewAccumulatorProjection count = plan.getProjection(4);
-                        Assert.assertFalse(plan.getProjection(0).isDerived());
-                        Assert.assertTrue(count.isDerived());
+                        Assert.assertFalse(plan.getProjection(0).getRuntime().isDerived());
+                        Assert.assertTrue(count.getRuntime().isDerived());
                         Assert.assertEquals(COUNT_STATE_BYTES, count.getFunctionStateLength());
                         Assert.assertEquals(count.getNonNullCountFieldOffset(), count.getFunctionStateOffset());
                         Assert.assertEquals(
@@ -981,7 +981,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         final LiveViewAccumulatorDescriptor rowCount = rowCountComponent();
         Assert.assertEquals(
                 WindowAccumulatorDescriptor.CONTRIBUTION_EVERY_ROW,
-                rowCount.getContributionKind()
+                rowCount.getRuntime().getContributionKind()
         );
         Assert.assertEquals(COUNT_STATE_BYTES, rowCount.getStateLength());
         // Two row counts under one window are the same component whatever named them.
@@ -1105,8 +1105,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                     expectedOffset += plan.getComponent(componentIndex).getStateLength();
                 }
                 Assert.assertEquals(plan.getTotalInlineStateBytes(), expectedOffset);
-                Assert.assertEquals(plan.getTotalInlineStateBytes(), plan.getManifest().getTotalInlineStateBytes());
-                Assert.assertEquals(2, plan.getManifest().getComponentCount());
+                Assert.assertEquals(2, plan.getDurableComponentCount());
             });
         });
     }
@@ -1272,7 +1271,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         final LiveViewWindowStatePlan declinedPlan = builder.build();
         Assert.assertNotNull(declinedPlan);
         Assert.assertEquals(0, declinedPlan.getComponentCount());
-        Assert.assertEquals(0, declinedPlan.getManifest().getComponentCount());
+        Assert.assertEquals(0, declinedPlan.getDurableComponentCount());
         Assert.assertEquals(
                 LiveViewWindowStatePlan.ANCHOR_STATE_BYTES,
                 declinedPlan.getTotalInlineStateBytes()
@@ -1309,8 +1308,8 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
                         );
                         // Both read the same slice; only the arithmetic on top differs.
                         Assert.assertEquals(
-                                plan.getProjection(0).getSumFieldOffset(),
-                                plan.getProjection(1).getSumFieldOffset()
+                                plan.getProjection(0).getComponentStateOffset(),
+                                plan.getProjection(1).getComponentStateOffset()
                         );
                         Assert.assertEquals(
                                 plan.getProjection(0).getNonNullCountFieldOffset(),
@@ -1458,13 +1457,8 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
         Assert.assertEquals(0, plan.getComponentCount());
         Assert.assertEquals(0, plan.getDurableComponentCount());
         Assert.assertEquals(0, plan.getProjectionCount());
-        Assert.assertEquals(0, plan.getManifest().getComponentCount());
         Assert.assertTrue(plan.getManifest().getEncoded().length > 0);
         Assert.assertEquals(LiveViewWindowStatePlan.ANCHOR_STATE_BYTES, plan.getTotalInlineStateBytes());
-        Assert.assertEquals(
-                LiveViewWindowStatePlan.ANCHOR_STATE_BYTES,
-                plan.getManifest().getTotalInlineStateBytes()
-        );
     }
 
     /**
@@ -1548,7 +1542,7 @@ public class LiveViewWindowStatePlanTest extends AbstractLiveViewTest {
             // A contributor writes the whole component, so it is neither a derived reader of
             // a wider host nor the guarded one whose counter differs from its component's.
             final LiveViewAccumulatorProjection contributor = contributorProjection(plan, i);
-            Assert.assertFalse("component " + i + " has a derived contributor", contributor.isDerived());
+            Assert.assertFalse("component " + i + " has a derived contributor", contributor.getRuntime().isDerived());
             Assert.assertFalse("component " + i + " has a guarded contributor", contributor.isPartitionKeyGuarded());
             slot += component.getSlotCount();
             runtimeBytes += component.getStateLength();

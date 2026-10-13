@@ -1057,9 +1057,9 @@ public class WindowAccumulatorPlanTest extends AbstractCairoTest {
         for (int i = 0, n = plan.getComponentCount(); i < n; i++) {
             sink.append("component ").append(i)
                     .append(" family=").append(plan.getComponent(i).getFamily())
-                    .append(" contribution=").append(plan.getComponent(i).getContributionKind())
-                    .append(" arg=").append(plan.getComponent(i).getArgumentColumnIndex())
-                    .append(':').append(plan.getComponent(i).getArgumentColumnType())
+                    .append(" contribution=").append(plan.getComponent(i).getRuntime().getContributionKind())
+                    .append(" arg=").append(plan.getComponent(i).getRuntime().getArgumentColumnIndex())
+                    .append(':').append(plan.getComponent(i).getRuntime().getArgumentColumnType())
                     .append(" slotBase=").append(plan.getComponentSlotBase(i) - prefix)
                     .append(" slots=").append(plan.getComponent(i).getSlotCount())
                     .append('\n');

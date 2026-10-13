@@ -212,7 +212,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                         ANCHOR_VALUE_TYPE,
                         DIRECT_KEY_SCHEMA,
                         manifest.getEncoded(),
-                        manifest.getTotalInlineStateBytes(),
+                        totalInlineStateBytes(manifest),
                         true,
                         null
                 );
@@ -1078,9 +1078,9 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                         for (int p = 0, n = plan.getProjectionCount(); p < n; p++) {
                             final LiveViewAccumulatorProjection projection = plan.getProjection(p);
                             if (projection.getKind() == WindowAccumulatorProjection.PROJECTION_SUM) {
-                                sums[0] += Double.longBitsToDouble(
-                                        readLongLe(payload, projection.getSumFieldOffset())
-                                );
+                                final int sumFieldOffset = projection.getComponentStateOffset()
+                                        + projection.getComponent().getFieldOffset(WindowAccumulatorDescriptor.FIELD_SUM);
+                                sums[0] += Double.longBitsToDouble(readLongLe(payload, sumFieldOffset));
                             } else {
                                 counts[0] += readLongLe(payload, projection.getNonNullCountFieldOffset());
                             }
@@ -1222,7 +1222,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                     ANCHOR_VALUE_TYPE,
                     DIRECT_KEY_SCHEMA,
                     manifest.getEncoded(),
-                    manifest.getTotalInlineStateBytes(),
+                    totalInlineStateBytes(manifest),
                     isCompleteSnapshot,
                     null
             );
@@ -1469,6 +1469,19 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
 
     private static LiveViewWindowStateManifest sumCountManifest() {
         return manifestOf(component(WindowAccumulatorDescriptor.FAMILY_DOUBLE_SUM_COUNT, 2, ColumnType.DOUBLE));
+    }
+
+    /**
+     * The payload width a hand-built manifest encodes, big-endian, after its magic and
+     * format version.
+     */
+    private static int totalInlineStateBytes(LiveViewWindowStateManifest manifest) {
+        final byte[] encoded = manifest.getEncoded();
+        final int offset = 2 * Integer.BYTES;
+        return (encoded[offset] & 0xFF) << 24
+                | (encoded[offset + 1] & 0xFF) << 16
+                | (encoded[offset + 2] & 0xFF) << 8
+                | (encoded[offset + 3] & 0xFF);
     }
 
     private static void writeIntLe(byte[] target, int offset, int value) {
