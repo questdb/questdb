@@ -245,8 +245,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // under this many scanned rows per (key, partition) seek, a small scan is read instead of the covering
     // plan, see estimateSelection()
     static final long COVERING_MIN_ROWS_PER_KEY_SEEK = 16_384;
-    // under this many scanned rows either plan is quick, and the covering plan stays
+    // under this many scanned rows and COVERING_SEEK_RULE_MIN_SEEKS seeks either plan is quick, and the
+    // covering plan stays
     static final long COVERING_SEEK_RULE_MIN_SCANNED_ROWS = 100_000;
+    static final long COVERING_SEEK_RULE_MIN_SEEKS = 64;
     // budget of (partition, key) count probes of one selection estimate, see estimateSelection():
     // the estimate runs on the compiling thread, and each probed partition opens its index
     private static final int SELECTION_ESTIMATE_MAX_PROBES = 256;
@@ -750,7 +752,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // (a narrow time interval over an IN list of several keys), where reading the interval is cheaper. Report the
                 // whole scan as selected, which picks the scan.
                 if (keyCount > 1 && dfcFactory instanceof IntervalPartitionFrameCursorFactory
-                        && scanned >= COVERING_SEEK_RULE_MIN_SCANNED_ROWS
+                        && (scanned >= COVERING_SEEK_RULE_MIN_SCANNED_ROWS || (long) keyCount * frameCount >= COVERING_SEEK_RULE_MIN_SEEKS)
                         && scanned < (long) keyCount * frameCount * COVERING_MIN_ROWS_PER_KEY_SEEK) {
                     sink[0] = scanned;
                     sink[1] = scanned;
