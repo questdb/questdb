@@ -2363,7 +2363,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // The copies, a partition copied across devices and the temporary name are durable before
                             // _txn names them.
                             try {
-                                DurableEpochManifest.fsyncDirectoryFiles(configuration, detachedPath.trimTo(detachedPathLen), detachedPathLen);
+                                DurableEpochManifest.fsyncDirectoryFiles(configuration, detachedPath.trimTo(detachedPathLen), detachedPathLen, false);
                                 TableUtils.fsyncDirDurable(ff, other.trimTo(pathSize).$());
                             } catch (CairoException e) {
                                 attachDetachStatus = AttachDetachStatus.DETACH_ERR_COPY;
@@ -8196,7 +8196,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 return false;
             }
             if (CommitMode.isPowerLossDurable(getFlushCommitMode())) {
-                DurableEpochManifest.fsyncDirectoryFiles(configuration, path, path.size());
+                DurableEpochManifest.fsyncDirectoryFiles(configuration, path, path.size(), false);
                 TableUtils.fsyncDirDurable(ff, path.trimTo(pathSize).$());
             }
             if (!ff.rmdir(other)) {
@@ -16770,6 +16770,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
             final long partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
             final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
+            final boolean readOnly = txWriter.isPartitionReadOnly(partitionIndex);
             setPathForNativePartition(
                     path.trimTo(pathSize),
                     timestampType,
@@ -16799,9 +16800,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     final int type = ff.findType(findPtr);
                     if (Files.notDots(namePtr) && (type == Files.DT_FILE || type == Files.DT_UNKNOWN)) {
                         path.trimTo(partitionDirLen).concat(namePtr);
-                        final long fd = Os.isWindows()
-                                ? TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts())
-                                : TableUtils.openRO(ff, path.$(), LOG);
+                        final long fd = DurableEpochManifest.openForFsync(configuration, path, readOnly);
                         try {
                             // Plain fsync: it moves this file's bytes to the drive, and the one F_FULLFSYNC
                             // the caller issues after the sweep flushes the drive cache for all of them (see

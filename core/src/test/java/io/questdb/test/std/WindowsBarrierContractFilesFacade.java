@@ -140,6 +140,14 @@ public class WindowsBarrierContractFilesFacade extends TestFilesFacadeImpl {
         super.fsyncDurable(fd);
     }
 
+    /**
+     * Windows flushes one file per {@code syncfs}, so the engine takes the per-file flush paths it takes there.
+     */
+    @Override
+    public boolean isSyncfsFileSystemWide() {
+        return false;
+    }
+
     @Override
     public long openCleanRW(LPSZ name, long size) {
         final long fd = super.openCleanRW(name, size);

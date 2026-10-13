@@ -910,7 +910,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                     final PartitionInfo partition = partitions.getQuick(i);
                     if (partition.importedRows > 0) {
                         path.trimTo(rootLen).concat(partition.name).put(configuration.getAttachPartitionSuffix());
-                        DurableEpochManifest.fsyncDirectoryFiles(configuration, path, path.size());
+                        DurableEpochManifest.fsyncDirectoryFiles(configuration, path, path.size(), false);
                     }
                 }
                 DurableEpochManifest.fsyncTableRoot(configuration, path, rootLen);

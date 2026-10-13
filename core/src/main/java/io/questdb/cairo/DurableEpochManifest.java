@@ -510,7 +510,7 @@ public final class DurableEpochManifest {
         }
     }
 
-    public static void fsyncDirectoryFiles(CairoConfiguration configuration, Path dirPath, int dirLen) {
+    public static void fsyncDirectoryFiles(CairoConfiguration configuration, Path dirPath, int dirLen, boolean readOnly) {
         final FilesFacade ff = configuration.getFilesFacade();
         final long findPtr = ff.findFirst(dirPath.trimTo(dirLen).$());
         if (findPtr <= 0) {
@@ -523,9 +523,7 @@ public final class DurableEpochManifest {
                 final int type = ff.findType(findPtr);
                 if (Files.notDots(namePtr) && (type == Files.DT_FILE || type == Files.DT_UNKNOWN)) {
                     dirPath.trimTo(dirLen).concat(namePtr);
-                    final long fd = Os.isWindows()
-                            ? TableUtils.openRW(ff, dirPath.$(), LOG, configuration.getWriterFileOpenOpts())
-                            : TableUtils.openRO(ff, dirPath.$(), LOG);
+                    final long fd = openForFsync(configuration, dirPath, readOnly);
                     if (fd == -1) {
                         throw CairoException.critical(ff.errno()).put("could not open adaptive file for fsync [path=").put(dirPath).put(']');
                     }
@@ -554,7 +552,8 @@ public final class DurableEpochManifest {
      * directory, then every file in the table root and the root itself, then one device barrier. This is the
      * fallback for platforms where {@link FilesFacade#syncfs(long)} flushes a single file, and it covers the same
      * write set as the writer's first epoch there ({@code TableWriter.fsyncAttachedPartitionFiles}). Sealing
-     * a partition does not make its last writes durable.
+     * a partition does not make its last writes durable. The table's entry in the database root closes the flush:
+     * nothing else makes a table created since the last filesystem-wide sync durable.
      *
      * <p>The per-file fsync moves each file's bytes to the drive, and the closing {@code syncfs} flushes the drive
      * cache once for all of them: F_FULLFSYNC on macOS acts as a barrier for data fsync'd on the same device before
@@ -563,7 +562,8 @@ public final class DurableEpochManifest {
     public static void fsyncTableFiles(CairoConfiguration configuration, TableToken tableToken, int timestampType, int partitionBy) {
         final FilesFacade ff = configuration.getFilesFacade();
         try (Path path = new Path(); TxReader txReader = new TxReader(ff)) {
-            final int rootLen = path.of(configuration.getDbRoot()).concat(tableToken).size();
+            final int dbRootLen = path.of(configuration.getDbRoot()).size();
+            final int rootLen = path.concat(tableToken).size();
             txReader.ofRO(path.concat(TableUtils.TXN_FILE_NAME).$(), timestampType, partitionBy);
             if (!txReader.unsafeLoadAll()) {
                 throw CairoException.critical(0).put("could not read adaptive _txn to flush the table [table=")
@@ -577,9 +577,10 @@ public final class DurableEpochManifest {
                         txReader.getPartitionTimestampByIndex(i),
                         txReader.getPartitionNameTxn(i)
                 );
-                fsyncDirectoryFiles(configuration, path, path.size());
+                fsyncDirectoryFiles(configuration, path, path.size(), txReader.isPartitionReadOnly(i));
             }
             fsyncTableRoot(configuration, path, rootLen);
+            fsyncDirectory(configuration, path, dbRootLen);
         }
     }
 
@@ -589,7 +590,7 @@ public final class DurableEpochManifest {
      */
     public static void fsyncTableRoot(CairoConfiguration configuration, Path tablePath, int rootLen) {
         final FilesFacade ff = configuration.getFilesFacade();
-        fsyncDirectoryFiles(configuration, tablePath, rootLen);
+        fsyncDirectoryFiles(configuration, tablePath, rootLen, false);
         tablePath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME);
         final long fd = TableUtils.openRW(ff, tablePath.$(), LOG, configuration.getWriterFileOpenOpts());
         if (fd == -1) {
@@ -627,6 +628,18 @@ public final class DurableEpochManifest {
                 fsyncTableFiles(configuration, tableToken, metadata.getTimestampType(), metadata.getPartitionBy());
             }
         }
+    }
+
+    /**
+     * Opens a file for a per-file flush. FlushFileBuffers needs a writable handle, so this is a write open, except
+     * for a read-only partition on POSIX: it may be a link to storage that refuses write opens, and POSIX fsyncs a
+     * readable handle.
+     */
+    public static long openForFsync(CairoConfiguration configuration, Path path, boolean readOnly) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        return readOnly && !Os.isWindows()
+                ? TableUtils.openRO(ff, path.$(), LOG)
+                : TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
     }
 
     private static void fsyncFile(CairoConfiguration configuration, Path tablePath, int rootLen, String name) {
