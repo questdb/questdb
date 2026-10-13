@@ -34,6 +34,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.arr.DirectArray;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
@@ -67,6 +68,8 @@ import org.junit.Test;
 
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
@@ -1327,6 +1330,81 @@ public class UpdateTest extends AbstractCairoTest {
                         .returns(expected);
             }
         });
+    }
+
+    @Test
+    public void testUpdateFromFailedOnBusyWriterClosesPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            createUpdateFromTables();
+
+            // The join plan holds native memory from the moment the compiler builds it. Without a
+            // sequence to wait on, the statement fails when it cannot take the writer, and that
+            // failure has to close the plan.
+            try (TableWriter ignore = getWriter("upd")) {
+                try {
+                    execute("UPDATE upd SET w = src.v FROM src WHERE upd.k = src.k");
+                    Assert.fail("UPDATE of a table with a busy writer should have failed");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
+                }
+            }
+
+            assertQuery("upd")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tw
+                            2024-01-01T00:00:00.000000Z\t1\t0
+                            2024-01-02T00:00:00.000000Z\t2\t0
+                            2024-01-03T00:00:00.000000Z\t3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateFromFailedOnParquetPartitionClosesPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            createUpdateFromTables();
+            execute("ALTER TABLE upd CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            // The join plan holds native memory from the moment the compiler builds it. The
+            // statement fails once its cursor reaches the parquet partition, and that failure has
+            // to close the plan.
+            try {
+                execute("UPDATE upd SET w = src.v FROM src WHERE upd.k = src.k");
+                Assert.fail("UPDATE of a parquet partition should have failed");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "cannot update parquet-format partition [table=upd");
+            }
+
+            assertQuery("upd")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tw
+                            2024-01-01T00:00:00.000000Z\t1\t0
+                            2024-01-02T00:00:00.000000Z\t2\t0
+                            2024-01-03T00:00:00.000000Z\t3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testUpdateFromViewRedefinedDuringStatementClosesStalePlan() throws Exception {
+        // The first plan joins the target to the old view body. The view changes after the
+        // statement compiled, so that plan refuses to open its cursor and the statement compiles
+        // again. The retry has to close the first plan, and the rows have to come from the new body.
+        assertUpdateClosesStalePlanAfterViewRedefined(
+                "UPDATE upd SET w = vw.v FROM vw WHERE upd.k = vw.k",
+                """
+                        ts\tk\tw
+                        2024-01-01T00:00:00.000000Z\t1\t110
+                        2024-01-02T00:00:00.000000Z\t2\t120
+                        2024-01-03T00:00:00.000000Z\t3\t130
+                        """
+        );
     }
 
     @Test
@@ -3111,6 +3189,23 @@ public class UpdateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testUpdateWhereSubQueryOnViewRedefinedDuringStatementClosesStalePlan() throws Exception {
+        // As testUpdateFromViewRedefinedDuringStatementClosesStalePlan, with the view read by a
+        // sub-query of the WHERE clause. The sub-query joins, so its plan holds native memory from
+        // the moment the compiler builds it, with or without JIT. The old view body yields no
+        // value above 100, which updates no row, and the new body updates all three.
+        assertUpdateClosesStalePlanAfterViewRedefined(
+                "UPDATE upd SET w = 1 WHERE w < (SELECT count() FROM vw JOIN src ON vw.k = src.k WHERE vw.v > 100)",
+                """
+                        ts\tk\tw
+                        2024-01-01T00:00:00.000000Z\t1\t1
+                        2024-01-02T00:00:00.000000Z\t2\t1
+                        2024-01-03T00:00:00.000000Z\t3\t1
+                        """
+        );
+    }
+
+    @Test
     public void testUpdateWith2TableJoinInWithClause() throws Exception {
         // this test makes sense for non-WAL tables only, no joins in UPDATE for WAL table yet
         Assume.assumeFalse(walEnabled);
@@ -3871,6 +3966,71 @@ public class UpdateTest extends AbstractCairoTest {
         }
     }
 
+    /**
+     * Runs {@code updateSql} through {@code CairoEngine.execute()} while another session redefines
+     * the view it reads, between the statement's compile and its execution. The statement takes
+     * the writer of its target only to execute a compiled plan, so the hook redefines the view the
+     * first time the statement takes that writer. Nothing here waits on time: the hook returns
+     * once the concurrent {@code ALTER VIEW} has committed.
+     */
+    private void assertUpdateClosesStalePlanAfterViewRedefined(String updateSql, String expected) throws Exception {
+        assertMemoryLeak(() -> {
+            createUpdateFromTables();
+            execute("CREATE VIEW vw AS (SELECT k, v FROM src)");
+            drainWalAndViewQueues();
+
+            final long updateThreadId = Thread.currentThread().threadId();
+            final AtomicInteger writerGetCount = new AtomicInteger();
+            final AtomicReference<Throwable> alterViewFailure = new AtomicReference<>();
+            final PoolListener previousListener = engine.getPoolListener();
+            engine.setPoolListener((factoryType, thread, tableToken, event, segment, position) -> {
+                if (previousListener != null) {
+                    previousListener.onEvent(factoryType, thread, tableToken, event, segment, position);
+                }
+                if (factoryType == PoolListener.SRC_WRITER
+                        && (event == PoolListener.EV_GET || event == PoolListener.EV_CREATE)
+                        && thread == updateThreadId
+                        && tableToken != null
+                        && "upd".equals(tableToken.getTableName())
+                        && writerGetCount.incrementAndGet() == 1) {
+                    final Thread alterViewThread = new Thread(() -> {
+                        try (SqlExecutionContext alterViewContext = TestUtils.createSqlExecutionCtx(engine)) {
+                            engine.execute("ALTER VIEW vw AS (SELECT k, v + 100 AS v FROM src)", alterViewContext);
+                        } catch (Throwable th) {
+                            alterViewFailure.set(th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    });
+                    alterViewThread.start();
+                    try {
+                        alterViewThread.join();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        alterViewFailure.compareAndSet(null, e);
+                    }
+                }
+            });
+            try {
+                execute(updateSql);
+            } finally {
+                engine.setPoolListener(previousListener);
+            }
+            if (alterViewFailure.get() != null) {
+                throw new AssertionError("concurrent ALTER VIEW failed", alterViewFailure.get());
+            }
+            // The stale plan took the writer once and the recompiled plan took it once more.
+            Assert.assertEquals(2, writerGetCount.get());
+            drainWalAndViewQueues();
+
+            assertQuery("upd")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
     private SqlExecutionContext createAllowAllExecutionContext() {
         return new SqlExecutionContextImpl(engine, 1).with(
                 AllowAllSecurityContext.INSTANCE,
@@ -3921,6 +4081,27 @@ public class UpdateTest extends AbstractCairoTest {
                         505\t
                         506\t
                         """);
+    }
+
+    /**
+     * Creates the non-WAL tables of an {@code UPDATE upd ... FROM src}: a WAL table refuses to
+     * read another table in an UPDATE when the statement compiles.
+     */
+    private void createUpdateFromTables() throws Exception {
+        execute("CREATE TABLE src (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("CREATE TABLE upd (ts TIMESTAMP, k INT, w INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("""
+                INSERT INTO src VALUES
+                ('2024-01-01T00:00:00', 1, 10),
+                ('2024-01-02T00:00:00', 2, 20),
+                ('2024-01-03T00:00:00', 3, 30)
+                """);
+        execute("""
+                INSERT INTO upd VALUES
+                ('2024-01-01T00:00:00', 1, 0),
+                ('2024-01-02T00:00:00', 2, 0),
+                ('2024-01-03T00:00:00', 3, 0)
+                """);
     }
 
     private void testInsertAfterFailed(boolean closeWriter) throws Exception {

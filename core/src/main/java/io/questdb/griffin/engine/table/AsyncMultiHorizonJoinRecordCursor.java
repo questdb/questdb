@@ -257,6 +257,7 @@ class AsyncMultiHorizonJoinRecordCursor implements RecordCursor {
                 );
                 try {
                     atom.initSlaveTimeFrameCursors(
+                            executionContext,
                             s,
                             masterSource,
                             cursor,

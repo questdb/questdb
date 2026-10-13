@@ -187,6 +187,7 @@ class AsyncMultiHorizonJoinNotKeyedRecordCursor implements NoRandomAccessRecordC
                 );
                 try {
                     atom.initSlaveTimeFrameCursors(
+                            executionContext,
                             s,
                             masterSource,
                             cursor,
