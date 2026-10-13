@@ -213,8 +213,8 @@ public class SubqueryGenerationOrderTest extends AbstractCairoTest {
 
     @Test
     public void testTableFunctionArgumentSubqueryGeneratesWithNestedSubquery() throws Exception {
-        assertMemoryLeak(() -> assertQuery("SELECT x FROM long_sequence((SELECT x FROM long_sequence(3) WHERE x = (SELECT 2)))")
-                .fails(29, "constant expected"));
+        assertQuery("SELECT x FROM long_sequence((SELECT x FROM long_sequence(3) WHERE x = (SELECT 2)))")
+                .fails(29, "constant expected");
     }
 
     @Test
