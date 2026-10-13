@@ -814,7 +814,7 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
     public void testProjectionFilterSubQueryKeepsContextFrameSizes() throws Exception {
         // The parallel factory opens the sub-query of the stolen filter while it prepares the
         // master frames. The frame sizes it picks for the master must not reach that sub-query,
-        // or 100 offsets would cut the scan of big into 200 frames of 1,000 rows. Past 100 slots
+        // or 100 offsets would cut the scan of big into 20 frames of 10,000 rows. Past 100 slots
         // the serial factory leaves the filter, and its sub-query, on the master.
         setProductionPageFrameSizes();
         assertMemoryLeak(() -> {
@@ -1370,7 +1370,8 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
         // the projection and the master's async filter scans frames of its usual size: a selective
         // filter at 7,201 offsets dispatches the reduce tasks of the filter on its own. Up to 100
         // slots the parallel factory cuts the master into frames of the small frame budget divided
-        // by the slots, so a scan makes at most 100 times the frames of a small-frame scan.
+        // by the slots, but no smaller than a tenth of the budget, so a scan makes at most 10
+        // times the frames of a small-frame scan.
         setProductionPageFrameSizes();
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
@@ -1404,9 +1405,9 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                     final long taskCount = drainAndCountReduceTasks(engine, factory, context);
                     Assert.assertTrue("filter tasks: " + filterTaskCount + ", tasks: " + taskCount, taskCount <= filterTaskCount);
                 }
-                // 100 offsets cut the trades into frames of 1,000 rows, 100 times the two frames of
-                // the small frame budget.
-                Assert.assertEquals(200, assertMatchesSerialAndCountReduceTasks(context, select + "99s STEP 1s AS h WHERE t.price = 5"));
+                // 100 offsets cut the trades into frames of 10,000 rows, the floor of a tenth of the
+                // small frame budget: 10 times the two frames of the budget.
+                Assert.assertEquals(20, assertMatchesSerialAndCountReduceTasks(context, select + "99s STEP 1s AS h WHERE t.price = 5"));
             }
         });
     }

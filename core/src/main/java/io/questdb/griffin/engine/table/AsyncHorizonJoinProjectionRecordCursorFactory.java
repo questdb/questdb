@@ -74,25 +74,36 @@ import static io.questdb.griffin.engine.table.AsyncFilterUtils.applyFilter;
  * most {@link AsyncHorizonJoinProjectionAtom#getMaxTaskRows()} rows. The factory sizes native
  * page frames to fit; the owner thread matches the rest of a larger (Parquet) frame itself.
  * <p>
- * The native frames shrink as the slots per master row, offsets times slaves, grow. The code
- * generator therefore picks this factory for at most {@link #MAX_SLOTS_PER_MASTER_ROW} slots and
- * the serial {@link HorizonJoinProjectionRecordCursorFactory} past that, unless the master lacks
- * the random access the serial factory needs, as a covering index scan does.
+ * The native frames shrink as the slots per master row, offsets times slaves, grow, down to the
+ * floor of {@link #MIN_FRAME_BUDGET_DIVISOR}. The code generator picks this factory for at most
+ * {@link #MAX_SLOTS_PER_MASTER_ROW} slots and the serial {@link HorizonJoinProjectionRecordCursorFactory}
+ * past that, unless the master lacks the random access the serial factory needs, as a covering
+ * index scan does.
  */
 public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecordCursorFactory {
     /**
      * The most slots per master row, offsets times slaves, for which the code generator picks this
-     * factory over a master with random access. A frame costs a reduce task and a page address
-     * cache entry whether or not any of its rows pass the filter, and the factory cuts the master
-     * into frames of the small frame budget divided by the slots. Within the cap, the frames stay
-     * at 1/100 of that budget or larger, 1,000 rows at the default budget of 100,000, so such a
-     * scan makes at most 100 times the frames of a small-frame scan over the same rows. A master
-     * without random access, such as a covering index scan, keeps this factory above the cap, as
-     * the class javadoc says, and its frames shrink further with the slots.
+     * factory over a master with random access. Within the cap, the task budget of
+     * {@code cairo.sql.page.frame.max.rows} divided by the slots, 10,000 rows or more at the
+     * default of 1,000,000, covers a frame of the floor that {@link #MIN_FRAME_BUDGET_DIVISOR}
+     * sets. A master without random access, such as a covering index scan, keeps this factory
+     * above the cap, as the class javadoc says, and its frames shrink with the task budget there.
      */
     public static final int MAX_SLOTS_PER_MASTER_ROW = 100;
     private static final PageFrameReducer FILTER_AND_MATCH = AsyncHorizonJoinProjectionRecordCursorFactory::filterAndMatch;
     private static final PageFrameReducer MATCH = AsyncHorizonJoinProjectionRecordCursorFactory::match;
+    /**
+     * Native page frames hold at least the small frame budget divided by this, 10,000 rows at the
+     * default budget of 100,000, as long as a task matches such a frame whole. The factory cuts
+     * the master into frames of the small budget divided by the slots per master row, and each
+     * frame costs a reduce task and a page address cache entry whether or not any of its rows pass
+     * the filter. A frame is also an epoch of the keyed ASOF lookup: every task starts with an
+     * empty key cache in backward-only mode, so a key whose last slave row lies far back costs a
+     * deep backward scan in every task that looks it up. With the floor, a scan makes at most 10
+     * times the frames of a small-frame scan over the same rows, and a selective filter leaves
+     * each task 10 times the rows to share one epoch between.
+     */
+    private static final int MIN_FRAME_BUDGET_DIVISOR = 10;
     private final SCSequence collectSubSeq = new SCSequence();
     private final MasterFrameSource masterFrameSource = new MasterFrameSource();
     private final int offsetCount;
@@ -137,14 +148,21 @@ public class AsyncHorizonJoinProjectionRecordCursorFactory extends AbstractRecor
             final int slaveCount = slaveStates.size();
             final long slotsPerRow = (long) offsetCount * slaveCount;
             // A task stores one long per matched (row, offset, slave), and the owner thread keeps
-            // up to a queue's worth of finished tasks. Native page frames stay within the small
-            // frame budget, the same one parallel window joins use. A task matches at most as many
-            // longs as the row id list of a full-size filter frame holds, so a Parquet row group
-            // larger than the small budget still reduces on a worker when its offsets are few.
-            final long frameRows = Math.max(1, configuration.getSqlSmallPageFrameMaxRows() / slotsPerRow);
+            // up to a queue's worth of finished tasks. A task matches at most as many longs as the
+            // row id list of a full-size filter frame holds, so a Parquet row group larger than the
+            // small budget still reduces on a worker when its offsets are few. Native page frames
+            // hold the small frame budget's worth of longs, the budget parallel window joins use,
+            // but no fewer rows than MIN_FRAME_BUDGET_DIVISOR allows while a task matches them
+            // whole: past 10 slots at the default budgets, a task holds more longs than the small
+            // budget, up to the full task budget.
+            final long maxTaskRows = Math.max(1, configuration.getSqlPageFrameMaxRows() / slotsPerRow);
+            final long smallBudgetRows = configuration.getSqlSmallPageFrameMaxRows();
+            final long frameRows = Math.max(
+                    1,
+                    Math.max(smallBudgetRows / slotsPerRow, Math.min(smallBudgetRows / MIN_FRAME_BUDGET_DIVISOR, maxTaskRows))
+            );
             this.pageFrameMaxRows = (int) frameRows;
             this.pageFrameMinRows = (int) Math.max(1, Math.min(configuration.getSqlSmallPageFrameMinRows(), frameRows));
-            final long maxTaskRows = Math.max(1, configuration.getSqlPageFrameMaxRows() / slotsPerRow);
             this.slaveFactories = new ObjList<>(slaveCount);
             final AsyncHorizonJoinProjectionAtom atom = new AsyncHorizonJoinProjectionAtom(
                     configuration,
