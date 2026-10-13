@@ -341,6 +341,7 @@ grep -F "duplicates=['org/questdb/questdb/9.9.9/questdb-9.9.9.pom']" "${temp_dir
 # mode: valid | snapshot-pom (a SNAPSHOT dependency in the bundled POM)
 #     | inactive-profile-snapshot-pom (a SNAPSHOT only inside a profile without <activation>: allowed)
 #     | activated-profile-snapshot-pom (a SNAPSHOT inside an OS-activated profile: rejected)
+#     | local-repository-files (Maven 3.10 staging bookkeeping: _remote.repositories and maven-metadata-local.xml)
 #     | other-jar (bundled jar differs from the verified jar)
 create_complete_central_bundle() {
     local bundle_path="$1"
@@ -376,6 +377,12 @@ with zipfile.ZipFile(bundle_path, "w") as bundle:
         bundle.writestr(base + artifact, payload)
         for suffix in (".asc", ".md5", ".sha1", ".sha256", ".sha512"):
             bundle.writestr(base + artifact + suffix, suffix.encode())
+    if mode == "local-repository-files":
+        # The exact set Maven 3.10 added to a real staged bundle.
+        bundle.writestr(base + "_remote.repositories", b"questdb-9.9.9.jar>central-staging=\n")
+        for suffix in (".md5", ".sha1", ".sha256", ".sha512"):
+            bundle.writestr(base + "_remote.repositories" + suffix, suffix.encode())
+        bundle.writestr("org/questdb/questdb/maven-metadata-local.xml", b"<metadata/>")
 PY
 }
 
@@ -401,6 +408,24 @@ assert_failure central-activated-profile-snapshot-pom \
     "${central_bundle_verifier}" "${activated_profile_central_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9
 grep -F 'Central bundled POM contains a SNAPSHOT dependency' "${temp_dir}/central-activated-profile-snapshot-pom.out" > /dev/null \
     || fail "Central verifier did not reject a SNAPSHOT inside an OS-activated profile"
+
+local_files_bundle="${temp_dir}/central-local-repository-files.zip"
+create_complete_central_bundle "${local_files_bundle}" "${temp_dir}/valid.jar" local-repository-files
+assert_failure central-local-repository-files-kept \
+    "${central_bundle_verifier}" "${local_files_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9
+grep -F '_remote.repositories' "${temp_dir}/central-local-repository-files-kept.out" | grep -F 'maven-metadata-local.xml' > /dev/null \
+    || fail "Central verifier did not name the local-repository files it rejected"
+"${central_bundle_verifier}" "${local_files_bundle}" "${temp_dir}/valid.jar" "${valid_stage}" --version 9.9.9 --drop-local-repository-files > "${temp_dir}/central-local-repository-files-dropped.out" \
+    || fail "Central verifier did not accept the bundle once the local-repository files were dropped"
+grep -c 'dropped local-repository file from the bundle: ' "${temp_dir}/central-local-repository-files-dropped.out" | grep -qx 6 \
+    || fail "Central verifier did not report all six dropped local-repository files"
+python3 - "${local_files_bundle}" <<'PY'
+import sys, zipfile
+names = zipfile.ZipFile(sys.argv[1]).namelist()
+assert not any("_remote.repositories" in name or "maven-metadata-local" in name for name in names), names
+assert "org/questdb/questdb/9.9.9/questdb-9.9.9.jar" in names
+assert len(names) == len(set(names))
+PY
 
 other_jar_central_bundle="${temp_dir}/central-other-jar.zip"
 create_complete_central_bundle "${other_jar_central_bundle}" "${temp_dir}/valid.jar" other-jar
@@ -978,6 +1003,7 @@ central_identity_ok = (
             "-DskipPublishing=true",
             "${GITHUB_WORKSPACE}/core/target/central-dry-run",
             "verify-central-bundle.py",
+            "--drop-local-repository-files",
             "build-web-console,include-rust-native-artifacts,maven-central-release",
             "sha256sum",
             "bundle_path=",
@@ -1942,7 +1968,7 @@ PY
     [[ -n "${release_core_jar}" ]] || fail "Central fixture did not produce a core jar"
     "${release_root}/.github/scripts/verify-central-bundle.py" \
         "${bundle}" "${release_core_jar}" "${release_root}/core/target/native-libs" \
-        --version "${fixture_release_version}"
+        --version "${fixture_release_version}" --drop-local-repository-files
     local verifier_line central_line
     verifier_line="$(grep -n 'io/questdb/bin/windows-x86-64/questdbr.dll' "${central_log}" | head -1 | cut -d: -f1 || true)"
     central_line="$(grep -Ein 'skip.*publish|publish.*skip' "${central_log}" | tail -1 | cut -d: -f1 || true)"

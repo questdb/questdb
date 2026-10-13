@@ -822,9 +822,12 @@ jobs:
             echo "::error::The Central dry run did not produce questdb-${GITHUB_REF_NAME}.jar."
             exit 1
           fi
+          # Maven 3.10's Resolver adds local-repository bookkeeping to the staged
+          # layout (_remote.repositories, maven-metadata-local.xml); it is
+          # unsigned and must not reach Central.
           .github/scripts/verify-central-bundle.py \
             "${bundles[0]}" "${core_jar}" core/target/native-libs \
-            --version "${GITHUB_REF_NAME}"
+            --version "${GITHUB_REF_NAME}" --drop-local-repository-files
           # The upload step sends these exact bytes. Nothing after this point
           # rebuilds or re-signs the bundle.
           bundle_sha256="$(sha256sum "${bundles[0]}" | awk '{print $1}')"

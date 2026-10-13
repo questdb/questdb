@@ -38,6 +38,12 @@ RUST_NATIVE_PATHS = {
     "io/questdb/bin/windows-x86-64/questdbr.dll",
 }
 SIDECARS = (".asc", ".md5", ".sha1", ".sha256", ".sha512")
+# Maven 3.10's Resolver treats the Central plugin's staging directory as a
+# local repository and adds its bookkeeping: `_remote.repositories` markers
+# (with checksums) next to the artifacts and `maven-metadata-local.xml` above
+# them. None of it is an artifact, none of it is signed, and none of it may be
+# uploaded; --drop-local-repository-files removes it before the allowlist check.
+LOCAL_REPOSITORY_FILE_PREFIXES = ("_remote.repositories", "maven-metadata-local.xml")
 
 
 def consumer_visible_nodes(pom):
@@ -57,6 +63,23 @@ def consumer_visible_nodes(pom):
         for node in profile.iter()
     }
     return (node for node in pom.iter() if id(node) not in skipped)
+
+
+def drop_local_repository_files(bundle_path: pathlib.Path) -> list[str]:
+    """Rewrite the bundle without local-repository bookkeeping; return what was dropped."""
+    with zipfile.ZipFile(bundle_path) as bundle:
+        entries = [(info, bundle.read(info.filename)) for info in bundle.infolist()]
+    dropped = [
+        info.filename
+        for info, _ in entries
+        if pathlib.PurePosixPath(info.filename).name.startswith(LOCAL_REPOSITORY_FILE_PREFIXES)
+    ]
+    if dropped:
+        with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as rewritten:
+            for info, payload in entries:
+                if info.filename not in dropped:
+                    rewritten.writestr(info, payload)
+    return dropped
 
 
 def fail(message: str) -> None:
@@ -88,6 +111,11 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--group-id", default="org.questdb")
     parser.add_argument("--artifact-id", default="questdb")
     parser.add_argument("--version", required=True)
+    parser.add_argument(
+        "--drop-local-repository-files",
+        action="store_true",
+        help="remove Maven local-repository bookkeeping (_remote.repositories, maven-metadata-local.xml) before verifying",
+    )
     return parser.parse_args()
 
 
@@ -103,6 +131,9 @@ def main() -> None:
     main_jar_entry = directory + f"{arguments.artifact_id}-{arguments.version}.jar"
     pom_entry = directory + f"{arguments.artifact_id}-{arguments.version}.pom"
 
+    if arguments.drop_local_repository_files:
+        for entry in drop_local_repository_files(arguments.bundle):
+            print(f"dropped local-repository file from the bundle: {entry}")
     try:
         with zipfile.ZipFile(arguments.bundle) as bundle:
             entries = [entry.filename for entry in bundle.infolist() if not entry.is_dir()]
