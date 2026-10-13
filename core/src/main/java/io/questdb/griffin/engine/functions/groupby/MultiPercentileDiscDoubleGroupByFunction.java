@@ -147,13 +147,8 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
             indices = new int[viewLength];
         }
         for (int i = 0, len = view.length(); i < len; i++) {
-            double percentile = view.getDoubleAtAbsIndex(i);
-            double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
-            int N = (int) Math.ceil(size * multiplier) - 1;
-            if (N < 0) {
-                N = 0;
-            }
-            indices[i] = N;
+            double percentile = SqlUtil.validatePercentile(view.getDoubleAtAbsIndex(i), percentilePos);
+            indices[i] = (int) SqlUtil.getPercentileDiscIndex(percentile, size);
         }
 
         // Insertion sort - the array is typically very small (2-10 elements)
@@ -173,12 +168,7 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
         // Now retrieve the values (they're already in the correct positions)
         for (int i = 0, len = view.length(); i < len; i++) {
             double percentile = view.getDoubleAtAbsIndex(i);
-            double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
-            int N = (int) Math.ceil(size * multiplier) - 1;
-            if (N < 0) {
-                N = 0;
-            }
-            out.putDouble(i, listA.getQuick(N));
+            out.putDouble(i, listA.getQuick((int) SqlUtil.getPercentileDiscIndex(percentile, size)));
         }
         return out;
     }

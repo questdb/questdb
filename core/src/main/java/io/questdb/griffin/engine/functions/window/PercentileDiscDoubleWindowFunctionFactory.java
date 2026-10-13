@@ -272,14 +272,13 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
 
                 if (size > 0) {
                     // Get percentile value
-                    double percentile = percentileFunc.getDouble(record);
-                    double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
+                    double percentile = SqlUtil.validatePercentile(percentileFunc.getDouble(record), percentilePos);
 
                     // Sort the list (values start at listPtr + DATA_OFFSET)
                     DoubleSort.sort(listMemory.getPageAddress(0) + listPtr + DATA_OFFSET, 0, size - 1);
 
                     // Calculate index
-                    int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
+                    long N = SqlUtil.getPercentileDiscIndex(percentile, size);
                     double result = listMemory.getDouble(listPtr + DATA_OFFSET + N * 8L);
 
                     // Store result back at first value position
@@ -388,14 +387,13 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
                 return;
             }
 
-            double percentile = percentileFunc.getDouble(null);
-            double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
+            double percentile = SqlUtil.validatePercentile(percentileFunc.getDouble(null), percentilePos);
 
             // Sort the list
             DoubleSort.sort(listMemory.getPageAddress(0), 0, size - 1);
 
             // Calculate index
-            int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
+            long N = SqlUtil.getPercentileDiscIndex(percentile, size);
             result = listMemory.getDouble(N * 8L);
         }
 

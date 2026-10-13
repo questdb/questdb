@@ -291,7 +291,7 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
     @Test
     public void testNegativePercentileInArray() throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT x::double AS val FROM long_sequence(10))");
+            execute("CREATE TABLE test AS (SELECT x::double AS val, x AS lval FROM long_sequence(10))");
             try {
                 assertQuery("SELECT approx_percentile(val, ARRAY[0.5, -1.5]::DOUBLE[]) FROM test")
                         .noLeakCheck()
@@ -300,6 +300,11 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactoryTest extends Abstr
             } catch (CairoException e) {
                 TestUtils.assertContains(e.getFlyweightMessage(), "invalid percentile");
             }
+            // a negative percentile within [-1, 0) is rejected too, as the scalar approx_percentile does
+            final String sql = "SELECT approx_percentile(val, ARRAY[0.5, -0.25]) FROM test";
+            assertExceptionNoLeakCheck(sql, sql.indexOf('['), "invalid percentile [expected=range(0.0, 1.0), actual=-0.25]");
+            final String sqlLong = "SELECT approx_percentile(lval, ARRAY[0.5, -0.25], 3) FROM test";
+            assertExceptionNoLeakCheck(sqlLong, sqlLong.indexOf('['), "invalid percentile [expected=range(0.0, 1.0), actual=-0.25]");
         });
     }
 

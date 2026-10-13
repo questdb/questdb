@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
@@ -164,13 +165,26 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
     }
 
     @Test
-    public void testNegativeOnePercentile() throws Exception {
+    public void testMatchesCumeDist() throws Exception {
+        // percentile_disc(p) is the first value whose cume_dist() reaches p. Each group holds
+        // 100 values with duplicates, so p * 100 lands on a whole number for p = 0.07, 0.14,
+        // 0.28, 0.55 and 0.56, where the double product rounds up past it.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
-            // -1.0 should be equivalent to 1 - 1.0 = 0.0 (0th percentile)
-            assertQuery("SELECT percentile_disc(x, -1.0) FROM test")
-                    .noLeakCheck()
-                    .returnsOnce("percentile_disc\n1.0\n");
+            execute("CREATE TABLE test AS (SELECT (x * 7_919 % 101)::DOUBLE x, x % 7 k FROM long_sequence(700))");
+            final StringSink expected = new StringSink();
+            for (String p : new String[]{"0.0", "0.001", "0.01", "0.07", "0.1", "0.14", "0.28", "0.333", "0.5", "0.55", "0.56", "0.667", "0.9", "0.99", "1.0"}) {
+                expected.clear();
+                printSql(
+                        "SELECT k, min(x) percentile_disc " +
+                                "FROM (SELECT k, x, cume_dist() OVER (PARTITION BY k ORDER BY x) cd FROM test) " +
+                                "WHERE cd >= " + p + " ORDER BY k",
+                        expected
+                );
+                assertQuery("SELECT k, percentile_disc(x, " + p + ") FROM test ORDER BY k")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns(expected);
+            }
         });
     }
 
@@ -178,25 +192,48 @@ public class PercentileDiscDoubleGroupByFunctionFactoryTest extends AbstractCair
     public void testNegativePercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
-            // -0.95 should be equivalent to 1 - 0.95 = 0.05
-            // ceil(100 * 0.05) - 1 = 5 - 1 = 4, so we get the 5th element = 5.0...
-            // but wait, let's check: ceil(100 * 0.05) - 1 = ceil(5) - 1 = 4
-            // Actually it should be: max(0, ceil(100 * 0.05) - 1) = max(0, 4) = 4 -> 5th value
-            // But we're getting 6.0, so the actual result is: ceil(100 * 0.05) = 5 -> 6th value
-            assertQuery("SELECT percentile_disc(x, -0.95) FROM test")
-                    .noLeakCheck()
-                    .returnsOnce("percentile_disc\n6.0\n");
+            assertExceptionNoLeakCheck(
+                    "SELECT percentile_disc(x, -0.5) FROM test",
+                    26,
+                    "invalid percentile [expected=range(0.0, 1.0), actual=-0.5]"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT percentile_disc(x, -1.0) FROM test",
+                    26,
+                    "invalid percentile [expected=range(0.0, 1.0), actual=-1.0]"
+            );
         });
     }
 
     @Test
-    public void testNegativePercentileEqualsPositive() throws Exception {
+    public void testNegativeZeroPercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
-            // -0.5 should be equivalent to 1 - 0.5 = 0.5
-            assertQuery("SELECT percentile_disc(x, -0.5) FROM test")
+            assertQuery("SELECT percentile_disc(x, -0.0) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n50.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n1.0\n");
+        });
+    }
+
+    @Test
+    public void testPercentileAtWholeNumberProduct() throws Exception {
+        // 0.07 * 100 evaluates to 7.000000000000001; the 7th value's cumulative distribution,
+        // 7 / 100, already reaches 0.07, so the result is 7, not 8
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
+            assertQuery(
+                    "SELECT percentile_disc(x, 0.07) p07, percentile_disc(x, 0.14) p14, percentile_disc(x, 0.28) p28, " +
+                            "percentile_disc(x, 0.55) p55, percentile_disc(x, 0.56) p56 FROM test"
+            )
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            p07\tp14\tp28\tp55\tp56
+                            7.0\t14.0\t28.0\t55.0\t56.0
+                            """);
         });
     }
 

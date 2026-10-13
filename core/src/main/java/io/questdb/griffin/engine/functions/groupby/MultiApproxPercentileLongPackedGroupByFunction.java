@@ -144,8 +144,8 @@ public class MultiApproxPercentileLongPackedGroupByFunction extends ArrayFunctio
 
         for (int i = 0; i < viewLength; i++) {
             double p = view.getDoubleAtAbsIndex(i);
-            double multiplier = SqlUtil.getPercentileMultiplier(p, percentilesPos);
-            out.putDouble(i, histogram.getValueAtPercentile(multiplier * 100));
+            double percentile = SqlUtil.validatePercentile(p, percentilesPos);
+            out.putDouble(i, histogram.getValueAtPercentile(percentile * 100));
         }
         return out;
     }

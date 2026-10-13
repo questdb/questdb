@@ -1,0 +1,147 @@
+# name: test/sql/test_quantile_descending.test
+# description: Descending ordered-set percentiles, and the rejection of negative fractions
+# group: [aggregates]
+#
+# Ported from the ORDER BY ... DESC and error cases of DuckDB
+# test/sql/aggregate/aggregates/test_ordered_aggregates.test. QuestDB has no
+# WITHIN GROUP syntax. The percentile of a descending order is the negated
+# percentile of the negated values, so -percentile_disc(-x, p) stands for
+# percentile_disc(p) WITHIN GROUP (ORDER BY x DESC); the expected values are
+# DuckDB's. QuestDB rejects negative fractions, as the SQL standard, DuckDB's
+# WITHIN GROUP and PostgreSQL do.
+
+# percentile_disc(0.25) WITHIN GROUP (ORDER BY i DESC)
+query I
+SELECT -percentile_disc(-i, 0.25) FROM (SELECT x - 1 i FROM long_sequence(101))
+----
+75
+
+# percentile_disc([0.25, 0.5, 0.75]) WITHIN GROUP (ORDER BY i DESC)
+query I
+SELECT percentile_disc(-i, ARRAY[0.25, 0.5, 0.75]) * -1 FROM (SELECT x - 1 i FROM long_sequence(101))
+----
+{75.000000,50.000000,25.000000}
+
+# percentile_cont(0.25) WITHIN GROUP (ORDER BY i DESC)
+query R
+SELECT -percentile_cont(-i, 0.25) FROM (SELECT x - 1 i FROM long_sequence(101))
+----
+75.000000
+
+# percentile_cont([0.25, 0.5, 0.75]) WITHIN GROUP (ORDER BY i DESC)
+query R
+SELECT percentile_cont(-i, ARRAY[0.25, 0.5, 0.75]) * -1 FROM (SELECT x - 1 i FROM long_sequence(101))
+----
+{75.000000,50.000000,25.000000}
+
+# the same as window functions
+query RRR
+SELECT -percentile_disc(-i, 0.25) OVER (), -percentile_cont(-i, 0.25) OVER (), percentile_cont(-i, ARRAY[0.25, 0.5, 0.75]) OVER () * -1
+FROM (SELECT x - 1 i FROM long_sequence(101))
+LIMIT 1
+----
+75.000000 75.000000 {75.000000,50.000000,25.000000}
+
+# DESC boundary condition: 0.5 * 6 is a whole number, so the descending median
+# differs from the ascending one, 2800
+query I
+SELECT -percentile_disc(-col, 0.5)
+FROM (
+    SELECT 11000 col UNION ALL
+    SELECT 3100 UNION ALL
+    SELECT 2900 UNION ALL
+    SELECT 2800 UNION ALL
+    SELECT 2600 UNION ALL
+    SELECT 2500
+)
+----
+2900
+
+query I
+SELECT percentile_disc(-col, ARRAY[0.25, 0.5, 0.75]) * -1
+FROM (
+    SELECT 11000 col UNION ALL
+    SELECT 3100 UNION ALL
+    SELECT 2900 UNION ALL
+    SELECT 2800 UNION ALL
+    SELECT 2600 UNION ALL
+    SELECT 2500
+)
+----
+{3100.000000,2900.000000,2600.000000}
+
+# 0.07 * 100 evaluates to 7.000000000000001: the 7th value from the top, 94,
+# is the first whose cumulative distribution reaches 0.07 (DuckDB returns 94)
+query I
+SELECT -percentile_disc(-x, 0.07) FROM long_sequence(100)
+----
+94
+
+#
+# Error checking
+#
+
+# wrong number of arguments
+statement error
+SELECT percentile_disc() FROM long_sequence(101)
+
+statement error
+SELECT percentile_disc(x, 0.25, 0.5) FROM long_sequence(101)
+
+statement error
+SELECT percentile_cont() FROM long_sequence(101)
+
+statement error
+SELECT percentile_cont(x, 0.25, 0.5) FROM long_sequence(101)
+
+# NaN is not allowed
+statement error
+SELECT percentile_disc(x, 'NaN'::double) FROM long_sequence(101)
+
+statement error
+SELECT percentile_cont(x, 'NaN'::double) FROM long_sequence(101)
+
+# a fraction that is not a number
+statement error
+SELECT percentile_disc(x, 'duck') FROM long_sequence(101)
+
+statement error
+SELECT percentile_cont(x, 'duck') FROM long_sequence(101)
+
+# aggregate function calls cannot be nested
+statement error
+SELECT percentile_disc(x, sum(1)) FROM long_sequence(101)
+
+# NULL fractions are not allowed
+statement error
+SELECT percentile_cont(x, NULL::double) FROM long_sequence(101)
+
+# Negative fractions are not allowed
+statement error
+SELECT percentile_disc(col, -0.5)
+FROM (SELECT 11000 col UNION ALL SELECT 3100 UNION ALL SELECT 2900 UNION ALL SELECT 2800 UNION ALL SELECT 2600 UNION ALL SELECT 2500)
+
+statement error
+SELECT percentile_disc(col, ARRAY[-0.25, 0.5, 0.75])
+FROM (SELECT 11000 col UNION ALL SELECT 3100 UNION ALL SELECT 2900 UNION ALL SELECT 2800 UNION ALL SELECT 2600 UNION ALL SELECT 2500)
+
+statement error
+SELECT percentile_cont(col, -0.5)
+FROM (SELECT 11000 col UNION ALL SELECT 3100 UNION ALL SELECT 2900 UNION ALL SELECT 2800 UNION ALL SELECT 2600 UNION ALL SELECT 2500)
+
+statement error
+SELECT percentile_cont(col, ARRAY[-0.25, 0.5, 0.75])
+FROM (SELECT 11000 col UNION ALL SELECT 3100 UNION ALL SELECT 2900 UNION ALL SELECT 2800 UNION ALL SELECT 2600 UNION ALL SELECT 2500)
+
+statement error
+SELECT percentile_disc(x, -0.5) OVER () FROM long_sequence(10)
+
+statement error
+SELECT percentile_cont(x, ARRAY[-0.5]) OVER () FROM long_sequence(10)
+
+# fractions above 1
+statement error
+SELECT percentile_disc(x, -1.5) FROM long_sequence(101)
+
+statement error
+SELECT percentile_disc(x, ARRAY[0.25, 1.5]) FROM long_sequence(101)

@@ -230,13 +230,21 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     }
 
     @Test
-    public void testNegativeOnePercentile() throws Exception {
+    public void testInterpolationBetweenExtremes() throws Exception {
+        // hi - lo overflows for these two values, but every interpolated value lies between them.
+        // DuckDB returns the same three values; p75 is one ulp below max / 2 because
+        // 0.75 * (hi - lo) rounds.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
-            // -1.0 should be equivalent to 1 - 1.0 = 0.0 (0th percentile = minimum)
-            assertQuery("SELECT percentile_cont(x, -1.0) FROM test")
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (1.7976931348623157E308), (-1.7976931348623157E308)");
+            assertQuery("SELECT percentile_cont(x, 0.5) p50, percentile_cont(x, 0.25) p25, percentile_cont(x, 0.75) p75 FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_cont\n1.0\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            p50\tp25\tp75
+                            0.0\t-8.988465674311579E307\t8.988465674311578E307
+                            """);
         });
     }
 
@@ -244,22 +252,28 @@ public class PercentileContDoubleGroupByFunctionFactoryTest extends AbstractCair
     public void testNegativePercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
-            // -0.95 should be equivalent to 1 - 0.95 = 0.05 (5th percentile)
-            // position = 0.05 * (100 - 1) = 4.95, interpolating between indices 4 and 5 (values 5 and 6)
-            assertQuery("SELECT percentile_cont(x, -0.95) FROM test")
-                    .noLeakCheck()
-                    .returnsOnce("percentile_cont\n5.950000000000005\n");
+            assertExceptionNoLeakCheck(
+                    "SELECT percentile_cont(x, -0.5) FROM test",
+                    26,
+                    "invalid percentile [expected=range(0.0, 1.0), actual=-0.5]"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT percentile_cont(x, -1.0) FROM test",
+                    26,
+                    "invalid percentile [expected=range(0.0, 1.0), actual=-1.0]"
+            );
         });
     }
 
     @Test
-    public void testNegativePercentileEqualsPositive() throws Exception {
+    public void testNegativeZeroPercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT cast(x AS DOUBLE) x FROM long_sequence(100))");
-            // -0.5 should be equivalent to 1 - 0.5 = 0.5
-            assertQuery("SELECT percentile_cont(x, -0.5) FROM test")
+            assertQuery("SELECT percentile_cont(x, -0.0) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_cont\n50.5\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_cont\n1.0\n");
         });
     }
 

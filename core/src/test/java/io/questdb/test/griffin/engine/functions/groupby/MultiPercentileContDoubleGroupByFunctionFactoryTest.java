@@ -180,6 +180,34 @@ public class MultiPercentileContDoubleGroupByFunctionFactoryTest extends Abstrac
     }
 
     @Test
+    public void testInterpolationBetweenExtremes() throws Exception {
+        // hi - lo overflows for these two values, but every interpolated value lies between them.
+        // DuckDB returns the same three values; the last is one ulp below max / 2 because
+        // 0.75 * (hi - lo) rounds.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (x DOUBLE)");
+            execute("INSERT INTO test VALUES (1.7976931348623157E308), (-1.7976931348623157E308)");
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.5, 0.25, 0.75]) FROM test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            percentile_cont
+                            [0.0,-8.988465674311579E307,8.988465674311578E307]
+                            """);
+        });
+    }
+
+    @Test
+    public void testNegativePercentileInArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");
+            final String sql = "SELECT percentile_cont(x, ARRAY[0.5, -0.25]) FROM test";
+            assertExceptionNoLeakCheck(sql, sql.indexOf('['), "invalid percentile [expected=range(0.0, 1.0), actual=-0.25]");
+        });
+    }
+
+    @Test
     public void testMultiPercentileContGroupBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (" +

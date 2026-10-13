@@ -308,11 +308,10 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
 
                     // Calculate each percentile with interpolation
                     for (int i = 0; i < percentileCount; i++) {
-                        double percentile = view.getDoubleAtAbsIndex(i);
-                        double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
+                        double percentile = SqlUtil.validatePercentile(view.getDoubleAtAbsIndex(i), percentilesPos);
 
                         // Calculate continuous percentile with interpolation
-                        double position = multiplier * (size - 1);
+                        double position = percentile * (size - 1);
                         int lowerIndex = (int) Math.floor(position);
                         int upperIndex = (int) Math.ceil(position);
 
@@ -322,8 +321,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                         } else {
                             double lowerValue = listMemory.getDouble(listPtr + DATA_OFFSET + lowerIndex * 8L);
                             double upperValue = listMemory.getDouble(listPtr + DATA_OFFSET + upperIndex * 8L);
-                            double fraction = position - lowerIndex;
-                            resultValue = lowerValue + (upperValue - lowerValue) * fraction;
+                            resultValue = SqlUtil.interpolatePercentile(lowerValue, upperValue, position - lowerIndex);
                         }
                         resultMemory.putDouble(resultPtr + 8 + i * 8L, resultValue);
                     }
@@ -480,11 +478,10 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
             }
 
             for (int i = 0; i < percentileCount; i++) {
-                double percentile = view.getDoubleAtAbsIndex(i);
-                double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
+                double percentile = SqlUtil.validatePercentile(view.getDoubleAtAbsIndex(i), percentilesPos);
 
                 // Calculate continuous percentile with interpolation
-                double position = multiplier * (size - 1);
+                double position = percentile * (size - 1);
                 int lowerIndex = (int) Math.floor(position);
                 int upperIndex = (int) Math.ceil(position);
 
@@ -493,8 +490,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                 } else {
                     double lowerValue = listMemory.getDouble(lowerIndex * 8L);
                     double upperValue = listMemory.getDouble(upperIndex * 8L);
-                    double fraction = position - lowerIndex;
-                    results[i] = lowerValue + (upperValue - lowerValue) * fraction;
+                    results[i] = SqlUtil.interpolatePercentile(lowerValue, upperValue, position - lowerIndex);
                 }
             }
 

@@ -307,10 +307,8 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
 
                     // Calculate each percentile
                     for (int i = 0; i < percentileCount; i++) {
-                        double percentile = view.getDoubleAtAbsIndex(i);
-                        double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
-
-                        int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
+                        double percentile = SqlUtil.validatePercentile(view.getDoubleAtAbsIndex(i), percentilesPos);
+                        long N = SqlUtil.getPercentileDiscIndex(percentile, size);
                         double resultValue = listMemory.getDouble(listPtr + DATA_OFFSET + N * 8L);
                         resultMemory.putDouble(resultPtr + 8 + i * 8L, resultValue);
                     }
@@ -467,10 +465,8 @@ public class MultiPercentileDiscDoubleWindowFunctionFactory extends AbstractWind
             }
 
             for (int i = 0; i < percentileCount; i++) {
-                double percentile = view.getDoubleAtAbsIndex(i);
-                double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
-
-                int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
+                double percentile = SqlUtil.validatePercentile(view.getDoubleAtAbsIndex(i), percentilesPos);
+                long N = SqlUtil.getPercentileDiscIndex(percentile, size);
                 results[i] = listMemory.getDouble(N * 8L);
             }
 

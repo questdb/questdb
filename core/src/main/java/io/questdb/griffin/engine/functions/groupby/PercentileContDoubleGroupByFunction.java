@@ -52,11 +52,10 @@ public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGro
         if (size == 0) {
             return Double.NaN;
         }
-        double percentile = percentileFunc.getDouble(record);
-        double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
+        double percentile = SqlUtil.validatePercentile(percentileFunc.getDouble(record), percentilePos);
 
         // Calculate the continuous percentile position
-        double position = multiplier * (size - 1);
+        double position = percentile * (size - 1);
         int lowerIndex = (int) Math.floor(position);
         int upperIndex = (int) Math.ceil(position);
 
@@ -74,10 +73,7 @@ public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGro
         listA.quickSelectMultiple(0, size - 1, indices, 0, 2);
 
         // Perform linear interpolation between the two adjacent values
-        double lowerValue = listA.getQuick(lowerIndex);
-        double upperValue = listA.getQuick(upperIndex);
-        double fraction = position - lowerIndex;
-        return lowerValue + (upperValue - lowerValue) * fraction;
+        return SqlUtil.interpolatePercentile(listA.getQuick(lowerIndex), listA.getQuick(upperIndex), position - lowerIndex);
     }
 
     @Override

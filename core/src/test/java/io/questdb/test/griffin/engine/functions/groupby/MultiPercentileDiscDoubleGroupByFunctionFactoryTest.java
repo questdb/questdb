@@ -164,6 +164,32 @@ public class MultiPercentileDiscDoubleGroupByFunctionFactoryTest extends Abstrac
     }
 
     @Test
+    public void testNegativePercentileInArray() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");
+            final String sql = "SELECT percentile_disc(x, ARRAY[0.5, -0.25]) FROM test";
+            assertExceptionNoLeakCheck(sql, sql.indexOf('['), "invalid percentile [expected=range(0.0, 1.0), actual=-0.25]");
+        });
+    }
+
+    @Test
+    public void testPercentilesAtWholeNumberProduct() throws Exception {
+        // 0.07 * 100 evaluates to 7.000000000000001; the 7th value's cumulative distribution,
+        // 7 / 100, already reaches 0.07, so the result is 7, not 8
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x FROM long_sequence(100))");
+            assertQuery("SELECT percentile_disc(x, ARRAY[0.07, 0.14, 0.28, 0.55, 0.56]) FROM test")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            percentile_disc
+                            [7.0,14.0,28.0,55.0,56.0]
+                            """);
+        });
+    }
+
+    @Test
     public void testEmptyGroupSampleBy() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x::double AS val, timestamp_sequence('2024-01-01T00:00:00', 3600000000L) ts FROM long_sequence(3)) TIMESTAMP(ts)");

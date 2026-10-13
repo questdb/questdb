@@ -81,11 +81,10 @@ public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDis
         // Collect all unique indices needed for interpolation
         indexSet.clear();
         for (int i = 0, len = view.length(); i < len; i++) {
-            double percentile = view.getDoubleAtAbsIndex(i);
-            double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
+            double percentile = SqlUtil.validatePercentile(view.getDoubleAtAbsIndex(i), percentilePos);
 
             // Calculate the continuous percentile position
-            double position = multiplier * (size - 1);
+            double position = percentile * (size - 1);
             int lowerIndex = (int) Math.floor(position);
             int upperIndex = (int) Math.ceil(position);
 
@@ -120,8 +119,7 @@ public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDis
         // Now compute interpolated values
         for (int i = 0, len = view.length(); i < len; i++) {
             double percentile = view.getDoubleAtAbsIndex(i);
-            double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
-            double position = multiplier * (size - 1);
+            double position = percentile * (size - 1);
             int lowerIndex = (int) Math.floor(position);
             int upperIndex = (int) Math.ceil(position);
 
@@ -130,10 +128,7 @@ public class MultiPercentileContDoubleGroupByFunction extends MultiPercentileDis
                 out.putDouble(i, listA.getQuick(lowerIndex));
             } else {
                 // Otherwise, perform linear interpolation between the two adjacent values
-                double lowerValue = listA.getQuick(lowerIndex);
-                double upperValue = listA.getQuick(upperIndex);
-                double fraction = position - lowerIndex;
-                out.putDouble(i, lowerValue + (upperValue - lowerValue) * fraction);
+                out.putDouble(i, SqlUtil.interpolatePercentile(listA.getQuick(lowerIndex), listA.getQuick(upperIndex), position - lowerIndex));
             }
         }
         return out;

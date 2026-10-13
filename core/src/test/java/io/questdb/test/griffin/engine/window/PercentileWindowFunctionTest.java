@@ -30,6 +30,23 @@ import org.junit.Test;
 public class PercentileWindowFunctionTest extends AbstractCairoTest {
 
     @Test
+    public void testMultiPercentileContInterpolationBetweenExtremes() throws Exception {
+        // hi - lo overflows for these two values, but every interpolated value lies between them
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (x DOUBLE, k INT)");
+            execute("INSERT INTO test VALUES (1.7976931348623157E308, 0), (-1.7976931348623157E308, 0)");
+            assertQuery("SELECT percentile_cont(x, ARRAY[0.5, 0.25]) OVER () w, percentile_cont(x, ARRAY[0.5, 0.25]) OVER (PARTITION BY k) p FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            w\tp
+                            [0.0,-8.988465674311579E307]\t[0.0,-8.988465674311579E307]
+                            [0.0,-8.988465674311579E307]\t[0.0,-8.988465674311579E307]
+                            """);
+        });
+    }
+
+    @Test
     public void testMultiPercentileContOverPartition() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table test as (" +
@@ -810,6 +827,38 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPercentileContInterpolationBetweenExtremes() throws Exception {
+        // hi - lo overflows for these two values, but every interpolated value lies between them
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (x DOUBLE, k INT)");
+            execute("INSERT INTO test VALUES (1.7976931348623157E308, 0), (-1.7976931348623157E308, 0)");
+            assertQuery("SELECT percentile_cont(x, 0.5) OVER () w50, percentile_cont(x, 0.25) OVER (PARTITION BY k) p25 FROM test")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            w50\tp25
+                            0.0\t-8.988465674311579E307
+                            0.0\t-8.988465674311579E307
+                            """);
+        });
+    }
+
+    @Test
+    public void testPercentileContRejectsNegativePercentile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x, x % 2 k FROM long_sequence(10))");
+            String sql = "SELECT percentile_cont(x, -0.5) OVER () FROM test";
+            assertExceptionNoLeakCheck(sql, sql.indexOf('-'), "invalid percentile [expected=range(0.0, 1.0), actual=-0.5]");
+            sql = "SELECT percentile_cont(x, -0.5) OVER (PARTITION BY k) FROM test";
+            assertExceptionNoLeakCheck(sql, sql.indexOf('-'), "invalid percentile [expected=range(0.0, 1.0), actual=-0.5]");
+            sql = "SELECT percentile_cont(x, ARRAY[0.5, -0.25]) OVER () FROM test";
+            assertExceptionNoLeakCheck(sql, sql.indexOf('['), "invalid percentile [expected=range(0.0, 1.0), actual=-0.25]");
+            sql = "SELECT percentile_cont(x, ARRAY[0.5, -0.25]) OVER (PARTITION BY k) FROM test";
+            assertExceptionNoLeakCheck(sql, sql.indexOf('['), "invalid percentile [expected=range(0.0, 1.0), actual=-0.25]");
+        });
+    }
+
+    @Test
     public void testPercentileContRejectsNonConstantPercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v DOUBLE, p DOUBLE)");
@@ -1059,6 +1108,50 @@ public class PercentileWindowFunctionTest extends AbstractCairoTest {
                             9.0\t5.0
                             10.0\t5.0
                             """);
+        });
+    }
+
+    @Test
+    public void testPercentileDiscAtWholeNumberProduct() throws Exception {
+        // Each partition holds 100 values. 0.07 * 100 evaluates to 7.000000000000001; the 7th
+        // value's cumulative distribution, 7 / 100, already reaches 0.07, so the result is the
+        // 7th value, not the 8th. The same holds for 0.14, 0.28, 0.55 and 0.56.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x, x % 2 k FROM long_sequence(200))");
+            assertQuery(
+                    "SELECT x, d, a, w FROM (" +
+                            "SELECT x, percentile_disc(x, 0.07) OVER (PARTITION BY k) d, " +
+                            "percentile_disc(x, ARRAY[0.07, 0.14, 0.28, 0.55, 0.56]) OVER (PARTITION BY k) a, " +
+                            "percentile_disc(x, ARRAY[0.07, 0.14, 0.28, 0.55, 0.56]) OVER () w " +
+                            "FROM test) WHERE x <= 2 ORDER BY x"
+            )
+                    .noLeakCheck()
+                    .returns("""
+                            x\td\ta\tw
+                            1.0\t13.0\t[13.0,27.0,55.0,109.0,111.0]\t[14.0,28.0,56.0,110.0,112.0]
+                            2.0\t14.0\t[14.0,28.0,56.0,110.0,112.0]\t[14.0,28.0,56.0,110.0,112.0]
+                            """);
+            assertQuery("SELECT percentile_disc(x, 0.07) OVER () FROM test LIMIT 1")
+                    .noLeakCheck()
+                    .returns("""
+                            percentile_disc
+                            14.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testPercentileDiscRejectsNegativePercentile() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x::DOUBLE x, x % 2 k FROM long_sequence(10))");
+            String sql = "SELECT percentile_disc(x, -0.5) OVER () FROM test";
+            assertExceptionNoLeakCheck(sql, sql.indexOf('-'), "invalid percentile [expected=range(0.0, 1.0), actual=-0.5]");
+            sql = "SELECT percentile_disc(x, -0.5) OVER (PARTITION BY k) FROM test";
+            assertExceptionNoLeakCheck(sql, sql.indexOf('-'), "invalid percentile [expected=range(0.0, 1.0), actual=-0.5]");
+            sql = "SELECT percentile_disc(x, ARRAY[0.5, -0.25]) OVER () FROM test";
+            assertExceptionNoLeakCheck(sql, sql.indexOf('['), "invalid percentile [expected=range(0.0, 1.0), actual=-0.25]");
+            sql = "SELECT percentile_disc(x, ARRAY[0.5, -0.25]) OVER (PARTITION BY k) FROM test";
+            assertExceptionNoLeakCheck(sql, sql.indexOf('['), "invalid percentile [expected=range(0.0, 1.0), actual=-0.25]");
         });
     }
 

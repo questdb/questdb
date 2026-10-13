@@ -70,12 +70,28 @@ SELECT quantile_disc(r, 0.1), quantile_disc(r, 0.5), quantile_disc(r, 0.9) from 
 #endloop
 
 # Negative quantiles (use descending intervals)
-query I
+# DuckDB reads a negative quantile as the quantile in descending order.
+# QuestDB rejects it, as the SQL standard does; negating the values gives the
+# descending order and DuckDB's result.
+statement error
 SELECT quantile_disc(col, -0.5)
 FROM
-( SELECT 11000 col UNION SELECT 3100 col UNION SELECT 2900 col UNION SELECT 2600 col UNION SELECT 2500 col );
+( SELECT 11000 col UNION SELECT 3100 col UNION SELECT 2900 col UNION SELECT 2800 col UNION SELECT 2600 col UNION SELECT 2500 col );
+
+query I
+SELECT -quantile_disc(-col, 0.5)
+FROM
+( SELECT 11000 col UNION SELECT 3100 col UNION SELECT 2900 col UNION SELECT 2800 col UNION SELECT 2600 col UNION SELECT 2500 col );
 ----
 2900
+
+# the ascending median of the same values
+query I
+SELECT quantile_disc(col, 0.5)
+FROM
+( SELECT 11000 col UNION SELECT 3100 col UNION SELECT 2900 col UNION SELECT 2800 col UNION SELECT 2600 col UNION SELECT 2500 col );
+----
+2800
 
 # ORDER BY ... DESC
 #query II
@@ -136,8 +152,8 @@ statement error
 SELECT quantile_disc(r, "string") FROM quantile
 
 
-#statement error
-#SELECT quantile_disc(r, NULL) FROM quantile
+statement error
+SELECT quantile_disc(r, NULL) FROM quantile
 
 
 statement error
@@ -192,6 +208,108 @@ query I
 SELECT quantile_disc(r, 0.1) FROM quantile WHERE 1=0
 ----
 NULL
+
+# The first value whose cumulative distribution reaches the fraction. 0.07 * 100
+# evaluates to 7.000000000000001, yet the 7th of 100 values has the cumulative
+# distribution 7 / 100 = 0.07. DuckDB returns 7, 14, 28, 55 and 56; PostgreSQL
+# returns the next values up.
+query IIIII
+SELECT quantile_disc(x, 0.07), quantile_disc(x, 0.14), quantile_disc(x, 0.28), quantile_disc(x, 0.55), quantile_disc(x, 0.56) FROM long_sequence(100)
+----
+7 14 28 55 56
+
+query RRRRR
+SELECT quantile_disc(x::double, 0.07), quantile_disc(x::double, 0.14), quantile_disc(x::double, 0.28), quantile_disc(x::double, 0.55), quantile_disc(x::double, 0.56) FROM long_sequence(100)
+----
+7.000000 14.000000 28.000000 55.000000 56.000000
+
+query I
+SELECT min(x) FROM (SELECT x, cume_dist() OVER (ORDER BY x) cd FROM long_sequence(100)) WHERE cd >= 0.07
+----
+7
+
+query R
+SELECT quantile_disc(x::double, 0.07) OVER () FROM long_sequence(100) LIMIT 1
+----
+7.000000
+
+# Integral extremes, after DuckDB's test_quantile_cont.test. The LONG
+# variant returns the exact value.
+statement ok
+CREATE TABLE tinyints (t BYTE);
+
+statement ok
+INSERT INTO tinyints VALUES (-127), (-127);
+
+query I
+SELECT quantile_disc(t, 0.5) FROM tinyints;
+----
+-127
+
+statement ok
+UPDATE tinyints SET t = -t;
+
+query I
+SELECT quantile_disc(t, 0.5) FROM tinyints;
+----
+127
+
+statement ok
+CREATE TABLE smallints (t SHORT);
+
+statement ok
+INSERT INTO smallints VALUES (-32767), (-32767);
+
+query I
+SELECT quantile_disc(t, 0.5) FROM smallints;
+----
+-32767
+
+statement ok
+UPDATE smallints SET t = -t;
+
+query I
+SELECT quantile_disc(t, 0.5) FROM smallints;
+----
+32767
+
+statement ok
+CREATE TABLE integers (t INT);
+
+statement ok
+INSERT INTO integers VALUES (-2147483647), (-2147483647);
+
+query I
+SELECT quantile_disc(t, 0.5) FROM integers;
+----
+-2147483647
+
+statement ok
+UPDATE integers SET t = -t;
+
+query I
+SELECT quantile_disc(t, 0.5) FROM integers;
+----
+2147483647
+
+statement ok
+CREATE TABLE bigints (t LONG);
+
+statement ok
+INSERT INTO bigints VALUES (-9223372036854775800), (-9223372036854775800);
+
+query I
+SELECT quantile_disc(t, 0.5) FROM bigints;
+----
+-9223372036854775800
+
+statement ok
+UPDATE bigints SET t = -t;
+
+query I
+SELECT quantile_disc(t, 0.5) FROM bigints;
+----
+9223372036854775800
 
 # NaNs
 query I
