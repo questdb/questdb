@@ -6442,16 +6442,8 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         private long nextSegmentId;
 
         private RootBuilders() {
-            functionRootBuilder = new LiveViewCheckpointFunctionRootBuilder(
-                    configuration,
-                    null,
-                    partitionMapObjectPool
-            );
-            windowRootBuilder = new LiveViewCheckpointWindowRootBuilder(
-                    configuration,
-                    null,
-                    partitionMapObjectPool
-            );
+            functionRootBuilder = new LiveViewCheckpointFunctionRootBuilder(configuration, partitionMapObjectPool);
+            windowRootBuilder = new LiveViewCheckpointWindowRootBuilder(configuration, partitionMapObjectPool);
         }
 
         /**

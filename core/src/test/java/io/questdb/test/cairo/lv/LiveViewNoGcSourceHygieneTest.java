@@ -646,6 +646,7 @@ public class LiveViewNoGcSourceHygieneTest {
         final Path sourceRoot = findSourceRoot();
         final List<String> violations = new ArrayList<>();
         final String[] files = {
+                "io/questdb/cairo/lv/AbstractLiveViewCheckpointStateRootBuilder.java",
                 "io/questdb/cairo/lv/LiveViewCheckpointCompaction.java",
                 "io/questdb/cairo/lv/LiveViewCheckpointDataStore.java",
                 "io/questdb/cairo/lv/LiveViewCheckpointTimelineStoreReader.java",

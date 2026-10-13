@@ -1502,7 +1502,7 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
      * @return the arena {@code builder} stages its mutations in, which it keeps to itself
      */
     private static LiveViewCheckpointMutationArena stagingArena(LiveViewCheckpointWindowRootBuilder builder) throws Exception {
-        final Field mutations = LiveViewCheckpointWindowRootBuilder.class.getDeclaredField("mutations");
+        final Field mutations = LiveViewCheckpointWindowRootBuilder.class.getSuperclass().getDeclaredField("mutations");
         mutations.setAccessible(true);
         return (LiveViewCheckpointMutationArena) mutations.get(builder);
     }
