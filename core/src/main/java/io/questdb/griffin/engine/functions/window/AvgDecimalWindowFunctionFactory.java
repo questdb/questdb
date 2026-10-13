@@ -2657,14 +2657,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
-        /**
-         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
-         * there are no live rows behind the accumulator to carry, and the accumulator's own
-         * width is the one this DECIMAL width sums into rather than the argument's.
-         */
         @Override
         public int checkpointStateFixedLength() {
-            return Decimal256.BYTES + Long.BYTES;
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL256, Long.BYTES);
         }
 
         @Override
@@ -4383,14 +4378,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
-        /**
-         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
-         * there are no live rows behind the accumulator to carry, and the accumulator's own
-         * width is the one this DECIMAL width sums into rather than the argument's.
-         */
         @Override
         public int checkpointStateFixedLength() {
-            return 2 * Long.BYTES;
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL64, Long.BYTES);
         }
 
         @Override
@@ -6353,14 +6343,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
-        /**
-         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
-         * there are no live rows behind the accumulator to carry, and the accumulator's own
-         * width is the one this DECIMAL width sums into rather than the argument's.
-         */
         @Override
         public int checkpointStateFixedLength() {
-            return Decimal256.BYTES + Long.BYTES;
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL256, Long.BYTES);
         }
 
         @Override
@@ -8086,14 +8071,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
-        /**
-         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
-         * there are no live rows behind the accumulator to carry, and the accumulator's own
-         * width is the one this DECIMAL width sums into rather than the argument's.
-         */
         @Override
         public int checkpointStateFixedLength() {
-            return 2 * Long.BYTES;
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL64, Long.BYTES);
         }
 
         @Override
@@ -9857,14 +9837,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
-        /**
-         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
-         * there are no live rows behind the accumulator to carry, and the accumulator's own
-         * width is the one this DECIMAL width sums into rather than the argument's.
-         */
         @Override
         public int checkpointStateFixedLength() {
-            return Decimal128.BYTES + Long.BYTES;
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL128, Long.BYTES);
         }
 
         @Override
@@ -11572,14 +11547,9 @@ public class AvgDecimalWindowFunctionFactory extends AbstractWindowFunctionFacto
             return offset;
         }
 
-        /**
-         * The whole image is {@code (acc, nonNullCount)} - the frame start is unbounded, so
-         * there are no live rows behind the accumulator to carry, and the accumulator's own
-         * width is the one this DECIMAL width sums into rather than the argument's.
-         */
         @Override
         public int checkpointStateFixedLength() {
-            return 2 * Long.BYTES;
+            return decimalAccumulatorStateLength(ColumnType.DECIMAL64, Long.BYTES);
         }
 
         @Override
