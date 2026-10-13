@@ -212,10 +212,8 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
             // This is unlucky, sequences have changed while we were reading transaction data
             // We must discard and try again
             count++;
-            // Same terminal case and discriminator as TableReader.readTxnSlow: the load lands on the A/B
-            // fallback whose version trails the file's, which acquireTxn never accepts, and a frozen clock
-            // never reaches the deadline. A live writer always publishes by bumping the version, so call the
-            // area torn only once a whole window of retries passes with the version unchanged.
+            // Same terminal case and discriminator as TableReader.readTxnSlow: call the area torn only once
+            // a whole window of retries passes with the version unchanged.
             if ((count & (TORN_DIAGNOSIS_WINDOW - 1)) == 0) {
                 final long versionNow = txFile.unsafeReadVersion();
                 if (versionNow == tornWindowVersion && txFile.unsafeIsLiveAreaTorn()) {
@@ -224,9 +222,7 @@ class TableReaderMetadataTenantImpl extends TableReaderMetadata implements PoolT
                 tornWindowVersion = versionNow;
             }
             if (clock.getTicks() > deadline) {
-                // Same diagnosis as TableReader.readTxnSlow, for a load that keeps failing: a torn live _txn
-                // area leaves this loop spinning on the older fallback record. Name the corruption rather than
-                // report contention.
+                // Same diagnosis as TableReader.readTxnSlow: name the corruption rather than report contention.
                 if (txFile.unsafeIsLiveAreaTorn()) {
                     throw tornLiveAreaException();
                 }

@@ -136,12 +136,10 @@ public class WriterPool extends AbstractPool {
 
     /**
      * Force-reclaims every entry the calling thread still has checked out or locked: closes its writer,
-     * releases any held {@code .lock} fd, resets ownership and evicts the entry. Returns the count reclaimed.
-     * <p>
-     * A test that simulates power loss by throwing inside {@link TableWriter#close()} or a commit unwinds with
-     * the entry still owned, and {@link #releaseAll} frees only {@code UNALLOCATED} entries. A real power loss
-     * reclaims such an entry by ending the process. Only the caller's own entries are reclaimed, so this is
-     * safe on a live engine; on a healthy engine it does nothing.
+     * releases any held {@code .lock} fd, resets ownership and evicts the entry. Only the caller's own
+     * entries are reclaimed; a healthy engine sees no effect.
+     *
+     * @return the number of entries reclaimed
      */
     @TestOnly
     public int releaseCrashOrphanedWriters() {

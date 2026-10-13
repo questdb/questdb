@@ -238,17 +238,11 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final double columnPurgeRetryDelayMultiplier;
     private final int columnPurgeTaskPoolCapacity;
     private final int commitMode;
-    // See CairoConfiguration.getAdaptiveEpochIntervalMs.
     private final long adaptiveEpochIntervalMs;
-    // See CairoConfiguration.getAdaptiveEpochMaxRows.
     private final long adaptiveEpochMaxRows;
-    // See CairoConfiguration.getAdaptiveCommitGroupWindowUs.
     private final long adaptiveCommitGroupWindowUs;
-    // See CairoConfiguration.isAdaptiveRecoveryRollForwardEnabled.
     private final boolean adaptiveRecoveryRollForwardEnabled;
-    // See CairoConfiguration.isAdaptiveEpochFlushOnClose.
     private final boolean adaptiveEpochFlushOnClose;
-    // See CairoConfiguration.isAdaptiveEpochColumnSyncBatched.
     private final boolean adaptiveEpochColumnSyncBatched;
     private final boolean walCommitWritebackDrain;
     private final String confRoot;
@@ -1727,11 +1721,7 @@ public class PropServerConfiguration implements ServerConfiguration {
             this.exportWorkerSleepTimeout = getMillis(properties, env, PropertyKey.EXPORT_WORKER_SLEEP_TIMEOUT, 10);
             this.exportWorkerYieldThreshold = getLong(properties, env, PropertyKey.EXPORT_WORKER_YIELD_THRESHOLD, 1000);
 
-            // The default is CommitMode.DEFAULT, shared with DefaultCairoConfiguration. site/conf/server.conf
-            // documents it in prose, so change the two together. Enterprise defaults to nosync when
-            // replication is configured (EntPropServerConfiguration): a replicated deployment survives the
-            // loss of a node, and store-and-forward clients replay what it lost. An Enterprise node without
-            // replication keeps this default. An explicit cairo.commit.mode wins over both.
+            // Enterprise overrides this default when replication is configured, but an explicit cairo.commit.mode wins over both.
             this.commitMode = getCommitMode(properties, env, PropertyKey.CAIRO_COMMIT_MODE, CommitMode.toString(CommitMode.DEFAULT));
             this.adaptiveEpochIntervalMs = getMillis(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 60000);
             this.adaptiveEpochMaxRows = getLong(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 5_000_000);

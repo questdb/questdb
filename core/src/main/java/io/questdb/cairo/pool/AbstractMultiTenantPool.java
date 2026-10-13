@@ -106,13 +106,8 @@ public abstract class AbstractMultiTenantPool<T extends PoolTenant<T>> extends A
 
     /**
      * Force-reclaims every slot the calling thread still has checked out, closing its tenant and resetting
-     * ownership: the WAL-writer counterpart of {@link WriterPool#releaseCrashOrphanedWriters()}.
-     * <p>
-     * With a group-commit window above 0, a simulated power loss can hit the close-time fdatasync
-     * ({@code WalWriter.cleanupBeforeClose}); the writer rethrows, so {@code WalWriterTenant.close()} unwinds
-     * before {@code returnToPool}/{@code expelFromPool} and the slot stays owned, which {@link #releaseAll}
-     * cannot reclaim. A real power loss reclaims it by ending the process. Only the caller's own slots are
-     * reclaimed, so this is safe on a live engine; on a healthy engine it does nothing.
+     * ownership: the WAL-writer counterpart of {@link WriterPool#releaseCrashOrphanedWriters()}. Only the
+     * caller's own slots are reclaimed; a healthy engine sees no effect.
      *
      * @return the number of orphaned tenants reclaimed
      */

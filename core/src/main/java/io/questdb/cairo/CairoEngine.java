@@ -2799,9 +2799,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Returns the WAL writers whose last commit awaits its device flush under a group-commit window
-     * ({@code cairo.adaptive.commit.group.window}) above 0. The {@code WalPurgeJob} flusher sweeps them, so an
-     * idle writer's last commit becomes durable within the window.
+     * Returns the WAL writers whose last commit awaits its device flush under a group-commit window above 0.
      */
     public @NotNull WalGroupCommitFlushQueue getWalGroupCommitFlushQueue() {
         return walGroupCommitFlushQueue;
@@ -3601,9 +3599,7 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Force-reclaims writers the calling thread left checked out or locked. A simulated power loss can unwind
-     * {@link TableWriter#close()} with the pool entry still owned, which {@link #releaseAllWriters()} cannot
-     * reclaim. See {@link WriterPool#releaseCrashOrphanedWriters()}. No-op on a healthy engine.
+     * Force-reclaims writers the calling thread left checked out or locked. No-op on a healthy engine.
      */
     @TestOnly
     public int releaseCrashOrphanedWriters() {
@@ -3611,11 +3607,8 @@ public class CairoEngine implements Closeable, WriterSource {
     }
 
     /**
-     * Force-reclaims WAL writers the calling thread left checked out, in the view WAL pool too. With a
-     * group-commit window above 0, a simulated power loss can hit the close-time fdatasync
-     * ({@code WalWriter.cleanupBeforeClose} -> {@code flushPendingDurable}); the writer rethrows, so
-     * {@code WalWriterTenant.close()} unwinds with the pool slot still owned, which
-     * {@link #releaseAllWalWriters()} cannot reclaim. No-op on a healthy engine.
+     * Force-reclaims WAL writers the calling thread left checked out, in the view WAL pool too. No-op on a
+     * healthy engine.
      */
     @TestOnly
     public int releaseCrashOrphanedWalWriters() {

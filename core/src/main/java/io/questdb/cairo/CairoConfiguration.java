@@ -207,17 +207,11 @@ public interface CairoConfiguration {
 
     /**
      * Minimum interval, in milliseconds, between durable epochs of one table under {@link CommitMode#ADAPTIVE}.
-     * The apply worker advances the epoch ({@link TableWriter#advanceDurableEpoch(long)}) at most once per
-     * interval per table, right after an apply batch commits while it still holds the writer. {@code 0} advances
-     * it on every apply batch.
-     *
-     * <p>A negative value disables adaptive epochs, including the {@link #getAdaptiveEpochMaxRows()} cap. With no
-     * epoch there is no {@code WalPurgeJob} retention floor: the WAL is never purged and grows with ingest, and
-     * recovery replays the whole WAL. It is a deliberate opt-out for operators and tests.
-     *
-     * <p>This default (1000 ms) serves embedded configurations and tests. The server default of
-     * {@code cairo.adaptive.epoch.interval} is 60000 ms: {@link #getAdaptiveEpochMaxRows()} bounds the backlog
-     * under load, so the interval only has to bound the idle case.
+     * {@code 0} advances the epoch on every apply batch; a negative value disables adaptive epochs, including
+     * the {@link #getAdaptiveEpochMaxRows()} cap, which is a deliberate opt-out: the WAL is then never purged
+     * and recovery replays all of it.
+     * <p>This default (1000 ms) serves embedded configurations and tests; the server default is 60000 ms since
+     * {@link #getAdaptiveEpochMaxRows()} already bounds the backlog under load.
      *
      * @return the minimum per-table durable-epoch interval in milliseconds; negative disables epochs
      */
@@ -227,9 +221,8 @@ public interface CairoConfiguration {
 
     /**
      * The maximum rows applied to a table since its last durable epoch before the apply worker advances the
-     * epoch, independent of {@link #getAdaptiveEpochIntervalMs()}. Bounds both post-epoch WAL retention (the
-     * {@code WalPurgeJob} floor is the epoch) and post-crash recovery-replay lag, so the interval can be
-     * long without either growing unbounded. {@code <= 0} disables the cap (interval-only cadence).
+     * epoch, independent of {@link #getAdaptiveEpochIntervalMs()}. Bounds post-epoch WAL retention and
+     * post-crash recovery-replay lag so the interval can stay long. {@code <= 0} disables the cap.
      *
      * @return the per-table un-epoched applied-row cap; {@code <= 0} disables it
      */
@@ -240,15 +233,11 @@ public interface CairoConfiguration {
     /**
      * The adaptive group-commit window in microseconds ({@code cairo.adaptive.commit.group.window}). Under
      * {@link CommitMode#ADAPTIVE}, {@code commit0} makes the writer's own segment files durable, then returns
-     * once the shared sequencer record is in the page cache. The sequencer fdatasync is batched across the
-     * commits within the window, and the {@code WalPurgeJob} flusher bounds it to the window when commits stop.
-     * A crash loses only commits whose batch fdatasync had not completed. {@code localDurableSeqTxn}, the
-     * durable-ack frontier, advances only when that fdatasync completes, so a durably acknowledged txn
-     * survives a crash.
-     *
-     * <p>{@code 0} fdatasyncs each commit before {@code commit0} returns: no loss, at {@code sync} latency. A
-     * negative value counts as {@code 0}. Other modes ignore the setting. The mat-view refresh WAL
-     * ({@link io.questdb.cairo.wal.ViewWalWriter}) fdatasyncs every commit regardless.
+     * once the shared sequencer record is in the page cache; the sequencer fdatasync is batched across the
+     * commits within the window. {@code localDurableSeqTxn}, the durable-ack frontier, advances only when
+     * that fdatasync completes, so a crash loses only commits whose batch fdatasync had not completed.
+     * <p>{@code 0} fdatasyncs each commit before {@code commit0} returns, at {@code sync} latency; a negative
+     * value counts as {@code 0}. Other modes ignore the setting; the mat-view refresh WAL always fdatasyncs.
      *
      * @return the group-commit window in microseconds; {@code 0} commits synchronously
      */
@@ -258,9 +247,8 @@ public interface CairoConfiguration {
 
     /**
      * Whether startup recovery ({@link RecoveryCoordinator}) restores each WAL table that has a save point
-     * from it, before WAL apply replays the transactions after it. When {@code false}, startup refuses a table
-     * that has a save point rather than expose applied state that may be torn. It exists for tests and has no
-     * effect on tables without a save point.
+     * from it, before WAL apply replays the transactions after it. When {@code false}, startup refuses a
+     * table that has a save point rather than expose applied state that may be torn; no effect otherwise.
      *
      * @return {@code true} to run the adaptive epoch roll-forward on startup
      */
@@ -271,10 +259,8 @@ public interface CairoConfiguration {
     /**
      * Whether a clean {@link io.questdb.cairo.TableWriter} close flushes a final durable epoch over any
      * committed tail the last epoch does not cover (ADAPTIVE only). When {@code true} (default), a graceful
-     * close, on idle eviction or shutdown, advances the durable epoch to the committed frontier, so a restart
-     * lands there with nothing to roll forward. When {@code false}, the tail is left for the next boot's
-     * idempotent WAL replay, bounded by the epoch cadence ({@link #getAdaptiveEpochIntervalMs()} /
-     * {@link #getAdaptiveEpochMaxRows()}). No effect under non-ADAPTIVE commit modes.
+     * close advances the durable epoch to the committed frontier, leaving nothing to roll forward; when
+     * {@code false}, the tail is left for the next boot's idempotent WAL replay. No effect otherwise.
      *
      * @return {@code true} to flush a durable epoch on a clean writer close
      */
@@ -1271,7 +1257,7 @@ public interface CairoConfiguration {
     /**
      * Whether the adaptive durable epoch batches its column flushes (start writeback of every column, wait for
      * it, then one {@code syncfs}) instead of flushing each file with {@code msync(MS_SYNC)}, which is slower
-     * but durable on every filesystem. Controlled by {@code cairo.adaptive.epoch.column.sync.batched}.
+     * but durable on every filesystem.
      *
      * @return {@code true} if the batched adaptive durable-epoch column flush should be used
      */
@@ -1287,18 +1273,13 @@ public interface CairoConfiguration {
     boolean isAllPartitionOperationsAllowed();
 
     /**
-     * Whether an ADAPTIVE WAL commit drains writeback across its whole segment before taking barriers.
-     * <p>
-     * The commit {@code fdatasync}s every column and {@code _event} file, and each fdatasync does writeback and
-     * a journal force serially. Starting every file's writeback first ({@code sync_file_range(WRITE)}) and then
-     * waiting on each ({@code WRITE|WAIT_AFTER}) lets the device write all files back concurrently, which leaves
-     * the fdatasyncs little more than the journal force.
-     * <p>
-     * The pass is advisory: {@code sync_file_range} journals no metadata, so it is never the barrier. Every
-     * file still gets its own {@code fdatasync}, which journals the extent conversions of an
-     * {@code ftruncate}-preallocated mmap append. Where the call does nothing (ZFS, see
-     * {@link io.questdb.std.FilesFacade#isSyncFileRangeEffective(io.questdb.std.str.Utf8Sequence)}) the commit
-     * only loses the speedup.
+     * Whether an ADAPTIVE WAL commit drains writeback across its whole segment before taking barriers: starts
+     * every column and {@code _event} file's writeback first ({@code sync_file_range(WRITE)}), then waits on
+     * each ({@code WRITE|WAIT_AFTER}), so the device writes files back concurrently instead of serially inside
+     * each file's own fdatasync.
+     * <p>The pass is advisory and never the barrier: every file still gets its own {@code fdatasync}. Where
+     * the call does nothing (ZFS, see {@link io.questdb.std.FilesFacade#isSyncFileRangeEffective(io.questdb.std.str.Utf8Sequence)})
+     * the commit only loses the speedup.
      *
      * @return {@code true} if the drain pass should run
      */
