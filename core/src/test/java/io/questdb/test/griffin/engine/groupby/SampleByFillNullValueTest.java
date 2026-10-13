@@ -138,13 +138,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // column surfaces as max1 because of the pre-existing alias de-duplication; the
         // test pins the gap row, not that name.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE m (v DOUBLE, max TIMESTAMP) TIMESTAMP(max) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO m VALUES
-                        (1.0, '2024-01-01T00:00:00.000000Z'),
-                        (2.0, '2024-01-01T01:15:00.000000Z'),
-                        (3.0, '2024-01-01T03:00:00.000000Z')
-                    """);
+            createTimestampNamedMaxTable();
             assertQuery("SELECT max, max(v) FROM m SAMPLE BY 1h FILL(NULL)")
                     .noLeakCheck()
                     .noRandomAccess()
@@ -338,8 +332,6 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         // (5-argument timestamp_floor_utc) and even reuses the alias ts. Only the
         // ownership signal that rewriteSelectClause0 maintains tells generateFill
         // that the inner fill is not this group-by's.
-        // Resolving the bucket by its recorded alias alone, without the ownership check,
-        // stacked a second 1h fill here and emitted a spurious 01:00 row.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("""
@@ -428,7 +420,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testFillNullOuterGroupByOverFromToDoesNotRefill() throws Exception {
+    public void testFillValueOuterGroupByOverFromToDoesNotRefill() throws Exception {
         // A leaked outer fill emitted every FROM-TO bucket with rows = 42, the inner
         // fill constant, instead of the single bucket the filter leaves.
         assertMemoryLeak(() -> {
@@ -505,8 +497,7 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     @Test
     public void testFillNullOuterGroupByOverWrappedFillDoesNotRefill() throws Exception {
         // A SELECT * wrapper with the filter sits between the outer GROUP BY and the
-        // filled sub-query. Boundary-based ownership signals used to fail across such
-        // intermediate models; the per-model fill list does not depend on the chain.
+        // filled sub-query. The per-model fill list does not depend on the chain.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("""
@@ -2723,7 +2714,10 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
         });
     }
 
-    private static void createBucketAliasTable() throws SqlException {
+    // Fixture for the #7838 bucket shapes: ets is a second TIMESTAMP column whose values
+    // differ from ts, and 02:00 is the only gap in the 1h grid. SampleByFillPrevTest
+    // shares it.
+    static void createBucketAliasTable() throws SqlException {
         execute("CREATE TABLE t (k SYMBOL, val DOUBLE, ets TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("""
                 INSERT INTO t VALUES
@@ -2731,5 +2725,16 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                     ('b', 2.0, '2024-01-01T04:00:00.000000Z', '2024-01-01T01:15:00.000000Z'),
                     ('a', 3.0, '2024-01-01T03:00:00.000000Z', '2024-01-01T03:00:00.000000Z'),
                     ('b', 4.0, '2024-01-01T02:00:00.000000Z', '2024-01-01T03:30:00.000000Z')""");
+    }
+
+    // Fixture whose designated timestamp is named max, so max(v) carries the same token
+    // and rewriteSampleBy puts its bucket on the explicit GROUP BY list.
+    static void createTimestampNamedMaxTable() throws SqlException {
+        execute("CREATE TABLE m (v DOUBLE, max TIMESTAMP) TIMESTAMP(max) PARTITION BY DAY");
+        execute("""
+                INSERT INTO m VALUES
+                    (1.0, '2024-01-01T00:00:00.000000Z'),
+                    (2.0, '2024-01-01T01:15:00.000000Z'),
+                    (3.0, '2024-01-01T03:00:00.000000Z')""");
     }
 }
