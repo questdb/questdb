@@ -142,6 +142,26 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
     }
 
     @Test
+    public void testManyKeysOverANarrowIntervalTakeTheScan() throws Exception {
+        // a 2-hour interval scans ~33K rows: 30 keys would cost a seek each for ~1K rows, so the interval is
+        // read instead (COVERING_MIN_ROWS_PER_KEY_SEEK); one key over the same interval keeps the covering plan
+        assertMemoryLeak(() -> {
+            createTable();
+            final StringBuilder keys = new StringBuilder();
+            for (int i = 0; i < 30; i++) {
+                keys.append(i == 0 ? "" : ",").append("'k").append(i).append('\'');
+            }
+            final String interval = " and ts in '1970-01-01T02;2h'";
+            final String many = "select ts, sym, v, w from t where sym in (" + keys + ")" + interval + " order by ts, sym";
+            assertPlanLacks(many, "CoveringIndex");
+            assertSameResult(many, many.replace("select ", "select /*+ no_index */ "));
+            final String one = "select ts, v, w from t where sym = 'R'" + interval;
+            assertPlanContains(one, "CoveringIndex");
+            assertSameResult(one, one.replace("select ", "select /*+ no_index */ "));
+        });
+    }
+
+    @Test
     public void testChoiceDisabledKeepsCovering() throws Exception {
         setProperty(PropertyKey.CAIRO_SQL_INDEX_SCAN_CHOICE_ENABLED, "false");
         assertMemoryLeak(() -> {

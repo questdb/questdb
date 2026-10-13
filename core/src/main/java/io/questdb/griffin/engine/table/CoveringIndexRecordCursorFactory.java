@@ -29,6 +29,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.EmptySymbolMapReader;
 import io.questdb.cairo.GeoHashes;
+import io.questdb.cairo.IntervalPartitionFrameCursorFactory;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.ScannedColumnTopProbe;
 import io.questdb.cairo.SymbolMapReader;
@@ -241,6 +242,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // its answer is exact rather than sampled. See estimateRowsPerPair().
     private static final int PER_KEY_ESTIMATE_MAX_KEYS = 64;
     private static final int PER_KEY_ESTIMATE_MAX_PROBES = 8192;
+    // under this many scanned rows per (key, partition) seek, a small scan is read instead of the covering
+    // plan, see estimateSelection()
+    static final long COVERING_MIN_ROWS_PER_KEY_SEEK = 16_384;
     // budget of (partition, key) count probes of one selection estimate, see estimateSelection():
     // the estimate runs on the compiling thread, and each probed partition opens its index
     private static final int SELECTION_ESTIMATE_MAX_PROBES = 256;
@@ -739,6 +743,16 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 frameCount++;
             }
             if (scanned < minScannedRows) {
+                // A small scan needs no estimate unless the covering plan's per-key cost dominates it: one
+                // seek per (key, partition) for fewer than COVERING_MIN_ROWS_PER_KEY_SEEK scanned rows each
+                // (a narrow time interval over an IN list of several keys), where reading the interval is cheaper. Report the
+                // whole scan as selected, which picks the scan.
+                if (keyCount > 1 && dfcFactory instanceof IntervalPartitionFrameCursorFactory
+                        && scanned < (long) keyCount * frameCount * COVERING_MIN_ROWS_PER_KEY_SEEK) {
+                    sink[0] = scanned;
+                    sink[1] = scanned;
+                    return true;
+                }
                 return false;
             }
             frameCursor.toTop();
