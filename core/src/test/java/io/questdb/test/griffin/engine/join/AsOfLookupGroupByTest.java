@@ -65,6 +65,7 @@ public class AsOfLookupGroupByTest extends AbstractCairoTest {
                 printSql("explain " + query, plan);
                 TestUtils.assertContains(query, plan, "asof(b.");
                 TestUtils.assertNotContains(plan, "AsOf Join");
+                TestUtils.assertContains(query, plan, "Group By workers");
                 final String reference = query.replace("asof join b", "asof join b tolerance 100000d");
                 final StringSink referencePlan = new StringSink();
                 printSql("explain " + reference, referencePlan);

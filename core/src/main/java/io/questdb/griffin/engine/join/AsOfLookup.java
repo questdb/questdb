@@ -507,7 +507,13 @@ public final class AsOfLookup implements QuietCloseable {
 
         @Override
         public @Nullable SymbolTable newSymbolTable() {
+            // read-only once loaded
             return this;
+        }
+
+        @Override
+        public boolean supportsParallelism() {
+            return true;
         }
 
         @Override
