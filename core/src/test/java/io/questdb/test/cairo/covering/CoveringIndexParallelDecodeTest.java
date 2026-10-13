@@ -503,6 +503,77 @@ public class CoveringIndexParallelDecodeTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testCoveredDecodeShellsAreReusedAcrossQueries() throws Exception {
+        // A released covered frame keeps its buffer's address lists and metadata arrays as a shell
+        // (its column buffers are freed), and the next decodes take the shells: of the same layout,
+        // of another layout with other columns, and back. Every value reads as decoded fresh, the
+        // covered byte accounting nets to zero at each release, and close() frees the shells.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_sh1 (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (payload), payload VARCHAR) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_sh1 SELECT '2024-01-01'::TIMESTAMP + x * 3_600_000_000L, 'A', 'payload-value-' || x FROM long_sequence(200)");
+            execute("CREATE TABLE t_sh2 (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (v, d), v LONG, d DOUBLE) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO t_sh2 SELECT '2024-01-01'::TIMESTAMP + x * 7_200_000_000L, 'A', x, x / 4.0 FROM long_sequence(300)");
+            engine.releaseAllWriters();
+            final String[] queries = {
+                    "SELECT sym, payload FROM t_sh1 WHERE sym = 'A'",
+                    "SELECT v, sym, d FROM t_sh2 WHERE sym = 'A'",
+                    "SELECT sym, payload FROM t_sh1 WHERE sym = 'A'",
+                    "SELECT v, sym, d FROM t_sh2 WHERE sym = 'A'",
+            };
+            try (PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, 0L)) {
+                pool.setRetainsCoveringShells(true);
+                for (int q = 0; q < queries.length; q++) {
+                    final int shellsBefore = pool.getCoveringShellCount();
+                    try (
+                            RecordCursorFactory factory = select(queries[q]);
+                            PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, PartitionFrameCursorFactory.ORDER_ASC);
+                            PageFrameAddressCache addressCache = new PageFrameAddressCache();
+                            PageFrameMemoryRecord record = new PageFrameMemoryRecord(PageFrameMemoryRecord.RECORD_A_LETTER)
+                    ) {
+                        addressCache.of(factory.getMetadata(), cursor.getColumnMapping(), cursor.isExternal());
+                        int frameCount = 0;
+                        PageFrame f;
+                        while ((f = cursor.next(0)) != null) {
+                            addressCache.add(frameCount++, f);
+                        }
+                        assertTrue(queries[q], frameCount > 4);
+                        pool.of(addressCache);
+                        record.of(cursor);
+                        final StringSink sink = new StringSink();
+                        long expectedRow = 0;
+                        for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+                            pool.navigateTo(frameIndex, record);
+                            for (long r = 0, n = addressCache.getFrameSize(frameIndex); r < n; r++) {
+                                record.setRowIndex(r);
+                                expectedRow++;
+                                if (q % 2 == 0) {
+                                    sink.clear();
+                                    sink.put(record.getVarcharA(1));
+                                    assertEquals(queries[q], "payload-value-" + expectedRow, sink.toString());
+                                } else {
+                                    assertEquals(queries[q], expectedRow, record.getLong(0));
+                                    assertEquals(queries[q], expectedRow / 4.0, record.getDouble(2), 0.0);
+                                }
+                            }
+                        }
+                        assertEquals(queries[q], frameCount, pool.getCoveredFrameCount());
+                        if (q > 0) {
+                            // the frames took the previous query's shells
+                            assertTrue(queries[q] + " shells " + shellsBefore, shellsBefore > 0);
+                            assertEquals(queries[q], Math.max(0, shellsBefore - frameCount), pool.getCoveringShellCount());
+                        }
+                        // released at the next of(), as at a query boundary
+                        pool.clear();
+                        assertEquals("covered byte accounting must net to zero after release", 0L, pool.getCoveredCachedBytes());
+                        assertEquals(queries[q], 0, pool.getCoveredFrameCount());
+                        assertTrue(queries[q], pool.getCoveringShellCount() >= Math.min(frameCount, 512));
+                    }
+                }
+            }
+        });
+    }
+
     /**
      * PURPOSE-BUILT PERFORMANCE MEASUREMENT (Task 14) — NOT an assertion test.
      * <p>

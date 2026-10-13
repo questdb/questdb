@@ -120,6 +120,8 @@ public class AsyncFilterContext implements Closeable {
 
         try {
             ownerMemoryPool = new PageFrameMemoryPool(configuration, ownerMemoryPoolMaxBytes);
+            // the atom keeps its pools across queries and closes them with itself
+            ownerMemoryPool.setRetainsCoveringShells(true);
             ownerFilteredRows = new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD);
             if (compiledFilter != null) {
                 ownerDataAddresses = new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD);
@@ -135,7 +137,9 @@ public class AsyncFilterContext implements Closeable {
             perWorkerAuxAddresses = new ObjList<>(slotCount);
             perWorkerSelectivityStats = new ObjList<>(slotCount);
             for (int i = 0; i < slotCount; i++) {
-                perWorkerMemoryPools.extendAndSet(i, new PageFrameMemoryPool(configuration, perWorkerMemoryPoolMaxBytes));
+                final PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, perWorkerMemoryPoolMaxBytes);
+                perWorkerMemoryPools.extendAndSet(i, pool);
+                pool.setRetainsCoveringShells(true);
                 perWorkerFilteredRows.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceRowIdListCapacity(), MemoryTag.NATIVE_OFFLOAD));
                 if (compiledFilter != null) {
                     perWorkerDataAddresses.extendAndSet(i, new DirectLongList(configuration.getPageFrameReduceColumnListCapacity(), MemoryTag.NATIVE_OFFLOAD));
@@ -162,8 +166,12 @@ public class AsyncFilterContext implements Closeable {
 
     public void clear() {
         ownerMemoryPoolOverride = null;
-        Misc.free(ownerMemoryPool);
-        Misc.freeObjListAndKeepObjects(perWorkerMemoryPools);
+        // cleared, not closed: a pool keeps its covered decode buffers' shells for the next query,
+        // see PageFrameMemoryPool.releaseCoveringBuffers(); close() frees them
+        ownerMemoryPool.clear();
+        for (int i = 0, n = perWorkerMemoryPools.size(); i < n; i++) {
+            perWorkerMemoryPools.getQuick(i).clear();
+        }
         ownerSelectivityStats.clear();
         Misc.clearObjList(perWorkerSelectivityStats);
         // Shrink the row-id and column-address lists back to initial capacity,
