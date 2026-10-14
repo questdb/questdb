@@ -33,6 +33,7 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.TxReader;
+import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
@@ -40,6 +41,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
@@ -335,6 +337,28 @@ public class TableUtilsTest extends AbstractTest {
             Unsafe.free(mem1, 32, MemoryTag.NATIVE_DEFAULT);
             Unsafe.free(mem2, 32, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testSymbolDataHasNullsAcrossScanChunks() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long rowCount = TableUtils.MAX_SYMBOL_NULL_SCAN_ROWS + 2L;
+            final long size = rowCount * Integer.BYTES;
+            final long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            try {
+                Vect.memset(address, size, 0);
+                Assert.assertFalse(TableUtils.symbolDataHasNulls(address, rowCount));
+                final long[] nullRows = {0, TableUtils.MAX_SYMBOL_NULL_SCAN_ROWS - 1, TableUtils.MAX_SYMBOL_NULL_SCAN_ROWS, rowCount - 1};
+                for (long row : nullRows) {
+                    Unsafe.putInt(address + row * Integer.BYTES, SymbolTable.VALUE_IS_NULL);
+                    Assert.assertTrue("null at row " + row, TableUtils.symbolDataHasNulls(address, rowCount));
+                    Unsafe.putInt(address + row * Integer.BYTES, 0);
+                }
+                Assert.assertFalse(TableUtils.symbolDataHasNulls(address, rowCount));
+            } finally {
+                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
     }
 
     @Test

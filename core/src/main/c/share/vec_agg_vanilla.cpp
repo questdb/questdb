@@ -106,6 +106,23 @@ int32_t maxInt_Vanilla(int32_t *pi, int64_t count) {
     return max;
 }
 
+int64_t minMaxCountInt_Vanilla(int32_t *pi, int64_t count, int32_t *minMax) {
+    const int32_t *lim = pi + count;
+    int32_t min = I_MAX;
+    int32_t max = I_MIN;
+    int64_t nonNulls = 0;
+    for (; pi < lim; pi++) {
+        const int32_t i = *pi;
+        const bool isValue = i != I_MIN;
+        min = isValue && i < min ? i : min;
+        max = i > max ? i : max;
+        nonNulls += isValue;
+    }
+    minMax[0] = nonNulls > 0 ? min : I_MIN;
+    minMax[1] = max;
+    return nonNulls;
+}
+
 int64_t countDouble_Vanilla(double *d, int64_t count) {
     if (count == 0) {
         return 0;
