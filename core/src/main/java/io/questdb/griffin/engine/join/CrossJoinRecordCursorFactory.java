@@ -36,6 +36,7 @@ import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
+import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.std.Misc;
 
 // This exec plan is filter-less Nested Loop
@@ -331,9 +332,10 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
             this.slaveCursor = slaveCursor;
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             isMasterHasNextPending = true;
-            // EmptyTableRecordCursorFactory returns this cursor, as does RuntimeConstGateRecordCursorFactory
-            // while its filter is false
-            isSlaveEmpty = slaveCursor == EmptyTableRandomRecordCursor.INSTANCE;
+            // EmptyTableRecordCursorFactory returns the first cursor, and RuntimeConstGateRecordCursorFactory
+            // returns one of the two while its filter is false
+            isSlaveEmpty = slaveCursor == EmptyTableRandomRecordCursor.INSTANCE
+                    || RuntimeConstGateRecordCursorFactory.isEmptyOpenBaseCursor(slaveCursor);
             // not the slave's size: a parent may still be opening its other cursors, see JoinKeyFilterGate
             keyFilterGate.of(slaveCursor);
             this.circuitBreaker = circuitBreaker;

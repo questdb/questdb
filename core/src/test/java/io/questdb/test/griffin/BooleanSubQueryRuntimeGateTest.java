@@ -298,6 +298,31 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFalsePredicateOpensBaseThatHoldsSharedPrimary() throws Exception {
+        // A base that holds a shared primary opens in every execution, also while the predicate is false, so that
+        // a shared cursor outside the base reads the state of the current execution. The gate reads no row of the
+        // base, and the empty cursor that it returns closes the base cursor.
+        assertMemoryLeak(() -> {
+            createTables();
+            OpenCountingRecordCursorFactory base = new OpenCountingRecordCursorFactory(select("select * from t"));
+            try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false), null, true)) {
+                for (int execution = 1; execution < 3; execution++) {
+                    try (RecordCursor cursor = gate.getCursor(sqlExecutionContext)) {
+                        Assert.assertTrue(RuntimeConstGateRecordCursorFactory.isEmptyOpenBaseCursor(cursor));
+                        Assert.assertEquals(0, cursor.size());
+                        Assert.assertFalse(cursor.hasNext());
+                        cursor.toTop();
+                        Assert.assertFalse(cursor.hasNext());
+                        Assert.assertEquals("the open base cursor holds the table reader", 1, engine.getBusyReaderCount());
+                    }
+                    Assert.assertEquals("the base must open once per execution", execution, base.openCount);
+                    Assert.assertEquals("the empty cursor must close the base cursor", 0, engine.getBusyReaderCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testGatePassthroughPreferredOverStealingByPageFrameConsumers() throws Exception {
         // The gate advertises filter stealing for the ASOF/LT slave paths, but a consumer that can
         // ride the gate's page frames directly must prefer them: the passthrough evaluates the
