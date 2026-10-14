@@ -512,8 +512,11 @@ public final class IntervalUtils {
             return false;
         }
         boolean hasFinerDigit = false;
+        boolean isYear = true;
+        int bracketDepth = 0;
         int fractionDigits = -1;
         int integerDigits = 0;
+        int yearListDepth = 0;
         for (int i = lo; i < lim; i++) {
             final char c = seq.charAt(i);
             if (c >= '0' && c <= '9') {
@@ -523,10 +526,27 @@ public final class IntervalUtils {
                     hasFinerDigit = true;
                 }
             } else {
-                if (c == '-' && integerDigits >= 4 && isBeyondNanoRange(seq, i - integerDigits, i)) {
+                if (isYear && integerDigits >= 3 && isBeyondNanoRange(seq, lo, i - integerDigits, i)) {
                     return false;
                 }
                 fractionDigits = c == '.' ? 0 : -1;
+                if (c == '[') {
+                    bracketDepth++;
+                    if (isYear) {
+                        yearListDepth = bracketDepth;
+                    }
+                } else if (c == ']') {
+                    yearListDepth = Math.min(yearListDepth, --bracketDepth);
+                    isYear = false;
+                } else if (c == ',') {
+                    isYear = bracketDepth <= yearListDepth;
+                } else if (c == '.' && i + 1 < lim && seq.charAt(i + 1) == '.' && bracketDepth <= yearListDepth) {
+                    isYear = true;
+                    fractionDigits = -1;
+                    i++;
+                } else if (!Chars.isAsciiWhitespace(c) && ((c != '-' && c != '+') || integerDigits > 0)) {
+                    isYear = false;
+                }
                 integerDigits = 0;
             }
         }
@@ -4169,7 +4189,13 @@ public final class IntervalUtils {
         return false;
     }
 
-    private static boolean isBeyondNanoRange(CharSequence seq, int yearLo, int yearHi) {
+    private static boolean isBeyondNanoRange(CharSequence seq, int lo, int yearLo, int yearHi) {
+        if (yearLo > lo && (seq.charAt(yearLo - 1) == '-' || seq.charAt(yearLo - 1) == '+')) {
+            yearLo--;
+        }
+        if (yearHi - yearLo < 4) {
+            return false;
+        }
         try {
             return FunctionResolver.isBeyondNanoRange(Numbers.parseInt(seq, yearLo, yearHi));
         } catch (NumericException e) {

@@ -69,11 +69,12 @@ import io.questdb.std.ObjectPool;
  * equi-join keys and narrows decorrelation domains with their master's filters.
  */
 final class FilterPushdown implements OptimiserPass {
+    private static final ExpressionVisitor NULL_LITERALS = FilterPushdown::nullLiteral;
     private static final int OFFSET_LEAVES = 3;
     private static final ConjunctTest ORDER_INDEPENDENT_CONJUNCTS = LogicalPlans::isOrderIndependent;
     private static final int OTHER_LEAVES = 4;
     private static final int PLAIN_LEAVES = 2;
-    private static final int RUNTIME_LEAVES = 1;    private static final ExpressionVisitor NULL_LITERALS = FilterPushdown::nullLiteral;
+    private static final int RUNTIME_LEAVES = 1;
     private static final int STATIC_LEAVES = 0;
     private final AggregateInputOrder aggregateInputOrder;
     private final ConjunctSplit conjunctSplit = new ConjunctSplit();

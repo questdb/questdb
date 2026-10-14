@@ -237,7 +237,7 @@ public class FunctionResolver implements Mutable {
     /**
      * Determines the appropriate timestamp type based on the string precision and year range.
      * If the string contains nanosecond precision (more than 6 digits after seconds) and
-     * the year is within nano timestamp range (&lt; 2262), returns nano type;
+     * the year is within nano timestamp range (1678 to 2261), returns nano type;
      * otherwise returns the original signature type.
      *
      * @param timestampStr the timestamp string to analyze
@@ -293,7 +293,7 @@ public class FunctionResolver implements Mutable {
      * Whether a timestamp in the given year cannot be represented at nanosecond precision.
      */
     public static boolean isBeyondNanoRange(int year) {
-        return year >= 2262;
+        return year < 1678 || year >= 2262;
     }
 
     /**

@@ -7048,17 +7048,17 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Count
-                                Hash Join Light
-                                  condition: T3.created=T2.created
-                                    Filter filter: T1.event<T2.event
-                                        Cross Join
+                                Filter filter: T1.event<T2.event
+                                    Cross Join
+                                        Hash Join Light
+                                          condition: T3.created=T2.created
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: test
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: test
-                                    Hash
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: test
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: test

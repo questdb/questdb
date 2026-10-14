@@ -39,8 +39,9 @@ import java.util.function.LongPredicate;
  * A timestamp literal finer than the column compares exactly, at the literal's precision, wherever the
  * predicate runs: interval scan, JIT or Java filter, join filter, runtime bound or Parquet pruning.
  * Binding rewrites a constant comparison into the same comparison at the column's precision. Nanosecond
- * values end at year 2262: a literal in a later year with a sub-microsecond fraction takes microsecond
- * precision, and its extra digits are dropped (see {@link #testFractionBeyondNanosecondRangeKeepsMicroseconds}).
+ * values span the years 1678 to 2261: a literal outside them with a sub-microsecond fraction takes microsecond
+ * precision, and its extra digits are dropped (see {@link #testFractionBeyondNanosecondRangeKeepsMicroseconds}
+ * and {@link #testFractionOutsideNanosecondRangeAgreesAcrossPredicates}).
  */
 public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
     private static final DateTimeFormatter NANOS = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSS'Z'").withZone(ZoneOffset.UTC);
@@ -233,6 +234,118 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHistoricalIntervalFractions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE h (ts TIMESTAMP, id INT)");
+            execute("""
+                    INSERT INTO h VALUES
+                    ('1500-01-01T00:00:00.500000Z', 1),
+                    ('1677-09-21T00:12:43.145225Z', 2),
+                    ('1677-09-21T00:12:44.000000Z', 3),
+                    ('1500-01-01T00:00:02.000000Z', 4),
+                    (null, 5)
+                    """);
+            final ObjList<String> intervals = new ObjList<>(
+                    "1500-01-01T00:00:00.000000001;1s",
+                    "1500-01-[01..02]T00:00:00.000000001;1s",
+                    "[1500]-01-01T00:00:00.000000001;1s",
+                    "[1500,1501]-01-01T00:00:00.000000001;1s",
+                    "[2020,1500]-01-01T00:00:00.000000001;1s",
+                    "[1500..1501]-01-01T00:00:00.000000001;1s",
+                    "[1500-01-01,1500-01-02]T00:00:00.000000001;1s",
+                    "[2020-01-01,1500-01-01]T00:00:00.000000001;1s",
+                    "[[2020,1500]-01-01]T00:00:00.000000001;1s",
+                    "[1500]T00:00:00.000000001;1s"
+            );
+            for (boolean isJit : new boolean[]{true, false}) {
+                setJit(isJit);
+                for (int i = 0; i < intervals.size(); i++) {
+                    final String interval = "'" + intervals.getQuick(i) + "'";
+                    assertQuery("SELECT id FROM h WHERE ts IN " + interval + " ORDER BY id")
+                            .noLeakCheck()
+                            .sizeMayVary()
+                            .returns("id\n1\n");
+                    assertQuery("SELECT id FROM h WHERE ts NOT IN " + interval + " ORDER BY id")
+                            .noLeakCheck()
+                            .sizeMayVary()
+                            .returns("id\n2\n3\n4\n5\n");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testIntervalBracketFieldPrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            final ObjList<String> intervals = new ObjList<>(
+                    "2020-[0001]-01T00:00:00.000000001;1s",
+                    "2020-01-[0001]T00:00:00.000000001;1s",
+                    "2020-01-01T[0000]:00:00.000000001;1s",
+                    "2020-[01,0001]-[01..0001]T00:[0000]:[0000].000000001;1s",
+                    "[2020-[0001]-01,2020-01-[0001]]T00:00:00.000000001;1s"
+            );
+            for (int i = 0; i < intervals.size(); i++) {
+                final String interval = intervals.getQuick(i);
+                assertQuery("SELECT '2020-01-01T00:00:00.000000Z'::TIMESTAMP IN '" + interval
+                        + "' AS at_start, '2020-01-01T00:00:00.500000Z'::TIMESTAMP IN '" + interval + "' AS middle")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("at_start\tmiddle\nfalse\ttrue\n");
+            }
+        });
+    }
+
+    @Test
+    public void testIntervalBracketFractionRangePrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            final ObjList<String> fractions = new ObjList<>(
+                    "123456001", "[123456001..123456001]", "[123456001..123456002]"
+            );
+            for (int i = 0; i < fractions.size(); i++) {
+                final String interval = "2020-01-01T00:00:00." + fractions.getQuick(i) + ";1s";
+                assertQuery("SELECT '2020-01-01T00:00:00.123456Z'::TIMESTAMP IN '" + interval
+                        + "' AS at_start, '2020-01-01T00:00:00.123457Z'::TIMESTAMP IN '" + interval + "' AS inside")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("at_start\tinside\nfalse\ttrue\n");
+            }
+        });
+    }
+
+    @Test
+    public void testIntervalFractionPrecisionRange() throws Exception {
+        assertMemoryLeak(() -> {
+            final ObjList<String> microDates = new ObjList<>(
+                    "-001-01-01", "-123-01-01", "+001-01-01", "0001-01-01", "1500-01-01", "1677-01-01",
+                    "1677-09-21", "1677-12-01", "2262-01-01", "3000-01-01"
+            );
+            for (int i = 0; i < microDates.size(); i++) {
+                final String date = microDates.getQuick(i);
+                assertQuery("SELECT '" + date + "T00:00:00.000000Z'::TIMESTAMP IN '" + date
+                        + "T00:00:00.000000001;1s' AS at_start, '" + date
+                        + "T00:00:00.500000Z'::TIMESTAMP IN '" + date + "T00:00:00.000000001;1s' AS middle")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("at_start\tmiddle\ntrue\ttrue\n");
+            }
+            assertQuery("SELECT '2262-01-01T00:00:00.000000Z'::TIMESTAMP IN '[2261..2262]-01-01T00:00:00.000000001;1s' AS at_start")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("at_start\ntrue\n");
+            final ObjList<String> nanoDates = new ObjList<>("1678-01-01", "2020-01-01", "2261-12-01");
+            for (int i = 0; i < nanoDates.size(); i++) {
+                final String date = nanoDates.getQuick(i);
+                assertQuery("SELECT '" + date + "T00:00:00.000000Z'::TIMESTAMP IN '" + date
+                        + "T00:00:00.000000001;1s' AS at_start, '" + date
+                        + "T00:00:00.500000Z'::TIMESTAMP IN '" + date + "T00:00:00.000000001;1s' AS middle")
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("at_start\tmiddle\nfalse\ttrue\n");
+            }
+        });
+    }
+
+    @Test
     public void testIntervalStringAtNanosecondRangeEdges() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE edge (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY YEAR");
@@ -276,6 +389,46 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
                             id
                             1
                             """);
+        });
+    }
+
+    @Test
+    public void testFractionOutsideNanosecondRangeAgreesAcrossPredicates() throws Exception {
+        assertMemoryLeak(() -> {
+            final ObjList<String> microDates = new ObjList<>("-001-01-01", "0001-01-01", "1500-01-01", "1677-12-01", "2262-01-01", "3000-01-01");
+            final ObjList<String> nanoDates = new ObjList<>("1678-01-01", "2020-01-01", "2261-12-01");
+            final ObjList<String> dates = new ObjList<>();
+            dates.addAll(microDates);
+            dates.addAll(nanoDates);
+            final StringBuilder insert = new StringBuilder("INSERT INTO o VALUES ");
+            for (int i = 0, n = dates.size(); i < n; i++) {
+                insert.append(i == 0 ? "" : ", ")
+                        .append("('").append(dates.getQuick(i)).append("T00:00:00.000000Z', ").append(2 * i).append("), ")
+                        .append("('").append(dates.getQuick(i)).append("T00:00:00.000001Z', ").append(2 * i + 1).append(')');
+            }
+            execute("CREATE TABLE o (ts TIMESTAMP, id INT)");
+            execute(insert);
+            for (boolean isJit : new boolean[]{true, false}) {
+                setJit(isJit);
+                for (int i = 0, n = dates.size(); i < n; i++) {
+                    final String date = dates.getQuick(i);
+                    final String literal = "'" + date + "T00:00:00.000000001'";
+                    final boolean isTruncated = i < microDates.size();
+                    final String fromLiteral = isTruncated ? "id\n" + 2 * i + "\n" + (2 * i + 1) + "\n" : "id\n" + (2 * i + 1) + "\n";
+                    assertQuery("SELECT id FROM o WHERE ts >= " + literal + " AND ts < '" + date + "T00:00:01' ORDER BY id")
+                            .noLeakCheck()
+                            .sizeMayVary()
+                            .returns(fromLiteral);
+                    assertQuery("SELECT id FROM o WHERE ts IN '" + date + "T00:00:00.000000001;1s' ORDER BY id")
+                            .noLeakCheck()
+                            .sizeMayVary()
+                            .returns(fromLiteral);
+                    assertQuery("SELECT id FROM o WHERE ts = " + literal + " ORDER BY id")
+                            .noLeakCheck()
+                            .sizeMayVary()
+                            .returns(isTruncated ? "id\n" + 2 * i + "\n" : "id\n");
+                }
+            }
         });
     }
 

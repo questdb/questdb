@@ -10061,20 +10061,20 @@ public class SqlParserTest extends AbstractSqlParserTest {
                             SelectedRecord
                                 Cross Join
                                     Cross Join
-                                        Hash Join Light
-                                          condition: suppliers.supplier=products.supplier
-                                          symbolKeyJoin: true
-                                            Cross Join
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: orders
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: suppliers.supplier=products.supplier
+                                              symbolKeyJoin: true
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: products
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: suppliers
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: suppliers
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: orders
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: customers
