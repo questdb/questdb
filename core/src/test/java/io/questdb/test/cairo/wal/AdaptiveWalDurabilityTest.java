@@ -1082,15 +1082,20 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             ff.reset(isBarrierFailing ? linkedDir : null);
             execute("alter table x attach partition list '1970-01-01'");
             drainWalQueue();
+            if (isBarrierFailing) {
+                // The ATTACH keeps its source, so every save point must cover it before anything else applies: a
+                // failed barrier publishes nothing and suspends the table, and RESUME WAL takes the save points
+                // once the barrier succeeds.
+                Assert.assertTrue("a failed barrier suspends the table", engine.getTableSequencerAPI().isSuspended(tt));
+                Assert.assertTrue("a failed barrier publishes nothing", tracker.getDurableEpochSeqTxn() < tracker.getSeqTxn());
+                ff.reset(null);
+                execute("alter table x resume wal");
+                drainWalQueue();
+                Assert.assertFalse("RESUME WAL takes the save points", engine.getTableSequencerAPI().isSuspended(tt));
+            }
             final long attachSeqTxn = tracker.getWriterTxn();
             try (TableWriter writer = getWriter(tt)) {
                 Assert.assertTrue("attached through a link", writer.getTxWriter().isPartitionReadOnlyByPartitionTimestamp(0L));
-                if (isBarrierFailing) {
-                    Assert.assertTrue("a failed barrier publishes nothing", tracker.getDurableEpochSeqTxn() < attachSeqTxn);
-                    Assert.assertFalse("the write set is kept", writer.getTxWriter().getDirtyPartitions().excludes(0L));
-                    ff.reset(null);
-                    writer.advanceDurableEpoch(2L);
-                }
                 Assert.assertEquals("the attach is saved", attachSeqTxn, tracker.getDurableEpochSeqTxn());
                 ff.assertBarrierThrough(linkedDir, true);
                 if (!isWide) {
