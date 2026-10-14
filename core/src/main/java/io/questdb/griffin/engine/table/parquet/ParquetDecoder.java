@@ -24,7 +24,9 @@
 
 package io.questdb.griffin.engine.table.parquet;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongList;
 
@@ -207,5 +209,15 @@ public interface ParquetDecoder {
      */
     default long takeDecodeResource() {
         return 0;
+    }
+
+    /** Warms selected compressed chunks without materializing decoded column buffers. */
+    default long touchRowGroup(
+            DirectIntList columns,
+            int rowGroup,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            long memoryTrackerAddr
+    ) {
+        throw CairoException.nonCritical().put("TOUCH is not supported by this parquet decoder");
     }
 }

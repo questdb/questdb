@@ -110,11 +110,13 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     public static final int HEADER_PARQUET_META_FILE_SIZE_OFF = 0;
     // Row group block offsets are stored right-shifted by this amount
     private static final int BLOCK_ALIGNMENT_SHIFT = 3;
+    private static final int COLUMN_CHUNK_BYTE_RANGE_START_OFF = 16;
     private static final int COLUMN_CHUNK_MAX_STAT_OFF = 56;
     private static final int COLUMN_CHUNK_MIN_STAT_OFF = 48;
     // Column chunk layout (64B per chunk, starting at row group block offset + 8)
     private static final int COLUMN_CHUNK_SIZE = 64;
     private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
+    private static final int COLUMN_CHUNK_TOTAL_COMPRESSED_OFF = 24;
     private static final int COLUMN_DESCRIPTOR_SIZE = 32;
     // Column descriptor layout (32B each, starting at header offset 24)
     private static final int COL_DESC_COL_TYPE_OFF = 12;
@@ -342,6 +344,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return addr;
     }
 
+    public long getChunkByteRangeStart(int rowGroupIndex, int columnIndex) {
+        return Unsafe.getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_BYTE_RANGE_START_OFF);
+    }
+
     public long getChunkMaxStat(int rowGroupIndex, int columnIndex) {
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         assert columnIndex >= 0 && columnIndex < columnCount;
@@ -360,6 +366,10 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
                 == (STAT_FLAG_MIN_PRESENT | STAT_FLAG_MIN_INLINED)
                 : "min_stat absent or not inlined for row group " + rowGroupIndex + ", column " + columnIndex;
         return Unsafe.getLong(chunkAddr + COLUMN_CHUNK_MIN_STAT_OFF);
+    }
+
+    public long getChunkTotalCompressed(int rowGroupIndex, int columnIndex) {
+        return Unsafe.getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_TOTAL_COMPRESSED_OFF);
     }
 
     public int getChunkStatFlags(int rowGroupIndex, int columnIndex) {
