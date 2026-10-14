@@ -13560,11 +13560,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     private void assertExplainAfterCompilerReuse(String sql, String otherSql) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            for (String format : new String[]{"text", "json"}) {
-                String explain = "explain (format " + format + ") " + sql;
+            ObjList<String> formats = list("text", "json");
+            ObjList<String> nextQueries = list("select * from long_sequence(1)", "explain " + otherSql);
+            for (int i = 0, n = formats.size(); i < n; i++) {
+                String explain = "explain (format " + formats.getQuick(i) + ") " + sql;
                 StringSink expected = new StringSink();
                 TestUtils.printSql(compiler, sqlExecutionContext, explain, expected);
-                for (String nextSql : new String[]{"select * from long_sequence(1)", "explain " + otherSql}) {
+                for (int j = 0, m = nextQueries.size(); j < m; j++) {
+                    String nextSql = nextQueries.getQuick(j);
                     try (RecordCursorFactory factory = compiler.compile(explain, sqlExecutionContext).getRecordCursorFactory()) {
                         try (RecordCursorFactory ignored = compiler.compile(nextSql, sqlExecutionContext).getRecordCursorFactory()) {
                             assertFactory(factory)
