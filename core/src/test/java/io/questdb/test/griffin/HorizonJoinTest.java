@@ -2204,6 +2204,9 @@ public class HorizonJoinTest extends AbstractCairoTest {
             execute("CREATE TABLE trades (ts TIMESTAMP_NS) TIMESTAMP(ts)");
             execute("CREATE TABLE prices (ts TIMESTAMP_NS, price DOUBLE) TIMESTAMP(ts)");
             final String query = "SELECT h.offset, count(p.price) FROM trades t HORIZON JOIN prices p RANGE FROM ";
+            assertQuery(query + "0s TO 3s STEP 1s AS h")
+                    .noLeakCheck()
+                    .fails(query.length(), "RANGE generates too many offsets [count=4, max=3]");
             assertQuery(query + "-9000000000000000000n TO 9000000000000000000n STEP 3000000000000000000n AS h")
                     .noLeakCheck()
                     .fails(query.length(), "RANGE generates too many offsets [count=7, max=3]");
