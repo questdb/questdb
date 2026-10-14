@@ -759,11 +759,6 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
     }
 
-    /**
-     * The boot cost outside adaptive: for each WAL table without a save point, recovery makes at most two existence
-     * checks and no other file system call. Measured as the difference between a database of one such table and
-     * one of eleven.
-     */
     @Test
     public void testNonPartitionedWalTableOnNonWideSyncfsPlatform() throws Exception {
         // A non-partitioned table names its default partition before the first row creates its directory: the
@@ -787,6 +782,11 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * The boot cost outside adaptive: for each WAL table without a save point, recovery makes at most two existence
+     * checks and no other file system call. Measured as the difference between a database of one such table and
+     * one of eleven.
+     */
     @Test
     public void testNosyncBootCostsAtMostTwoExistenceChecksPerWalTable() throws Exception {
         assertMemoryLeak(() -> {
@@ -1775,6 +1775,55 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     @Test
     public void testRebaseCloneAndConversionToWalLeaveValidCreationBaselineOnNonWideSyncfsPlatform() throws Exception {
         assertCreationBaselinesValid(false);
+    }
+
+    /**
+     * The start that converts a table without rows to WAL creates its sequencer files. The baseline of an empty
+     * table runs no partition flush and no syncfs, so its sequencer flush is the only one: without it a power loss
+     * before the first commit empties {@code txn_seq/}, the next start skips the finished conversion, and every
+     * write to the table fails.
+     */
+    @Test
+    public void testEmptyTableConversionToWalSurvivesPowerLoss() throws Exception {
+        org.junit.Assume.assumeFalse("the crash model rewrites files under a live engine, which Windows forbids", Os.isWindows());
+        final CrashFaultFilesFacade crashFf = new CrashFaultFilesFacade();
+        crashFf.setDbRoot(root);
+        try {
+            assertMemoryLeak(crashFf, () -> {
+                setCommitMode("adaptive");
+                execute("CREATE TABLE empty_conv (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("ALTER TABLE empty_conv SET TYPE WAL");
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                // The clean stop after the ALTER is durable; the start that converts is not.
+                crashFf.markDurableBaseline(engine.getConfiguration().getDbRoot());
+                new RecoveryCoordinator(engine).recover();
+                engine.load();
+                final TableToken tt = engine.verifyTableName("empty_conv");
+                Assert.assertTrue("precondition: converted", tt.isWal());
+                final List<String> sequencerFiles = listSequencerFiles(tt);
+                Assert.assertFalse("precondition: the conversion created the sequencer", sequencerFiles.isEmpty());
+                crashFf.powerLoss();
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                engine.releaseAllWalWriters();
+                crashFf.crash(engine.getConfiguration().getDbRoot());
+                Assert.assertEquals("sequencer files after a power loss", sequencerFiles, listSequencerFiles(tt));
+
+                // The next start, in startup order, then the first row.
+                engine.getTxnScoreboardPool().remove(tt);
+                engine.getTableSequencerAPI().resetForReboot(tt);
+                engine.getTableNameRegistry().reload();
+                new RecoveryCoordinator(engine).recover();
+                engine.load();
+                execute("INSERT INTO empty_conv VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+                assertQuery("SELECT v FROM empty_conv").expectSize().returns("v\n1\n");
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
     }
 
     /**
@@ -4662,6 +4711,16 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     private boolean hasSavePointFile(TableToken tt) {
         return epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, ".0")
                 || epochArtifactExists(tt, io.questdb.cairo.DurableEpochManifest.FILE_NAME, ".1");
+    }
+
+    private List<String> listSequencerFiles(TableToken tt) throws IOException {
+        final java.nio.file.Path seqDir = Paths.get(configuration.getDbRoot().toString(), tt.getDirName(), WalUtils.SEQ_DIR);
+        if (!Files.exists(seqDir)) {
+            return new ArrayList<>();
+        }
+        try (Stream<java.nio.file.Path> files = Files.walk(seqDir)) {
+            return files.filter(file -> !file.equals(seqDir)).map(file -> seqDir.relativize(file).toString()).sorted().toList();
+        }
     }
 
     private long newestSavePointSeqTxn(TableToken tt) {

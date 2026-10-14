@@ -930,10 +930,8 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         assertLinkedPartitionFlushedThroughItsTarget(false, false);
     }
 
-    static ColumnVersionWriter columnVersionWriter(TableWriter writer) throws Exception {
-        final java.lang.reflect.Field field = TableWriter.class.getDeclaredField("columnVersionWriter");
-        field.setAccessible(true);
-        return (ColumnVersionWriter) field.get(writer);
+    static ColumnVersionWriter columnVersionWriter(TableWriter writer) {
+        return (ColumnVersionWriter) writer.columnVersionReader();
     }
 
     private void assertNoPartitionWriteSets(String mode) throws Exception {
@@ -1047,8 +1045,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
      * A partition attached through a soft link lives wherever the link points, possibly on another filesystem, so
      * neither the table's syncfs nor the device barrier issued through {@code _txn} reaches it. The save point that
      * the attach takes, and a full table flush, must put the target behind a barrier of its own, through the link,
-     * before the manifest names the partition. A failed target barrier keeps the previous save point and the write
-     * set, and a later save point covers the partition.
+     * before the manifest names the partition. Off Linux it must also flush the target's own entry, in its parent,
+     * before the manifest. A failed target barrier keeps the previous save point and the write set, and a later save
+     * point covers the partition.
      */
     private void assertLinkedPartitionFlushedThroughItsTarget(boolean isWide, boolean isBarrierFailing) throws Exception {
         Assume.assumeFalse("partition soft links are POSIX only", Os.isWindows());
@@ -1094,6 +1093,9 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                 }
                 Assert.assertEquals("the attach is saved", attachSeqTxn, tracker.getDurableEpochSeqTxn());
                 ff.assertBarrierThrough(linkedDir, true);
+                if (!isWide) {
+                    ff.assertTargetParentFlushedBeforeManifest(linkedDir, java.nio.file.Paths.get(linkTargetRoot).toRealPath());
+                }
                 ff.reset(null);
                 DurableEpochManifest.fsyncTableFiles(
                         engine.getConfiguration(), tt,
@@ -2141,8 +2143,8 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * Records, in order, every {@code syncfs} with the path its fd was opened by, and every open of a save point
-     * manifest; it can fail the uncached opens under one directory.
+     * Records, in order, every {@code syncfs} and every directory fsync with the path its fd was opened by, and every
+     * open of a save point manifest; it can fail the uncached opens under one directory.
      */
     static class LinkTargetBarrierFacade extends TestFilesFacadeImpl {
         private final Map<Long, String> fdPaths = new java.util.concurrent.ConcurrentHashMap<>();
@@ -2172,6 +2174,41 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                     Assert.assertTrue("the barrier must precede the manifest: " + ops, manifest > barrier);
                 }
             }
+        }
+
+        public void assertTargetParentFlushedBeforeManifest(String linkedDir, java.nio.file.Path targetParent) throws java.io.IOException {
+            synchronized (ops) {
+                int parentFlush = -1;
+                int manifest = -1;
+                for (int i = 0, n = ops.size(); i < n; i++) {
+                    final String op = ops.get(i);
+                    // Opened through the link as "<partition>/..", which resolves to the target's parent.
+                    if (parentFlush < 0 && op.startsWith("fsync-dir ") && op.contains(linkedDir)
+                            && java.nio.file.Paths.get(op.substring("fsync-dir ".length())).toRealPath().equals(targetParent)) {
+                        parentFlush = i;
+                    }
+                    if (manifest < 0 && op.startsWith("manifest ")) {
+                        manifest = i;
+                    }
+                }
+                Assert.assertTrue("no flush of the link target's parent directory: " + ops, parentFlush > -1);
+                Assert.assertTrue("the parent flush must precede the manifest: " + ops, manifest > parentFlush);
+            }
+        }
+
+        @Override
+        public boolean close(long fd) {
+            fdPaths.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public void fsyncAndClose(long fd) {
+            final String path = fdPaths.remove(fd);
+            if (path != null && java.nio.file.Files.isDirectory(java.nio.file.Paths.get(path))) {
+                ops.add("fsync-dir " + path);
+            }
+            super.fsyncAndClose(fd);
         }
 
         @Override
