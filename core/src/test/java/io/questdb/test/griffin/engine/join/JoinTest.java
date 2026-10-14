@@ -17541,11 +17541,14 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testTimeSeriesJoinAfterKeyMoveFiltersTimestampKeyOfTwoPrecisions() throws Exception {
+    public void testTimeSeriesJoinAfterKeyMoveDerivesTimestampKeyOfTwoPrecisions() throws Exception {
         // As in testTimeSeriesJoinAfterKeyMoveDerivesConflictingKey, a2 gets two keys on one column:
         // a2.t = a1.t on microsecond timestamps and a2.t = a3.tn on a microsecond and a nanosecond one.
-        // a2.t = a1.t filters the join instead. The keys match NULL to NULL, so the third trade matches
-        // through its NULL book, desk and route, and its 1970-01-01 book and desk match no route.
+        // a2 keeps a2.t = a3.tn, and a3 joins on a1.t = a3.tn, which both keys imply, where a filter
+        // a1.t = a2.t above the join of a2 would read every row that a2.t = a3.tn matches. The keys
+        // match NULL to NULL, so the third trade matches through its NULL book, desk and route, and its
+        // 1970-01-01 book and desk match no route. The 9999-12-31 book and desk of the fourth trade,
+        // outside the TIMESTAMP_NS range, match no route either, and do not fail the query.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -17557,7 +17560,8 @@ public class JoinTest extends AbstractCairoTest {
                     INSERT INTO trades VALUES
                     (1, '2024-01-01T00:00:10.000000Z'),
                     (2, '2024-01-01T00:00:20.000000Z'),
-                    (3, '2024-01-01T00:00:30.000000Z')
+                    (3, '2024-01-01T00:00:30.000000Z'),
+                    (4, '2024-01-01T00:00:40.000000Z')
                     """);
             execute("""
                     INSERT INTO quotes VALUES
@@ -17569,27 +17573,31 @@ public class JoinTest extends AbstractCairoTest {
                     INSERT INTO accts VALUES
                     (1, 'S1', '2023-12-01T00:00:00.000000Z'),
                     (2, 'S2', '2023-12-01T00:00:01.000000Z'),
-                    (3, 'S3', '2023-12-01T00:00:02.000000Z')
+                    (3, 'S3', '2023-12-01T00:00:02.000000Z'),
+                    (4, 'S4', '2023-12-01T00:00:03.000000Z')
                     """);
             execute("""
                     INSERT INTO routes VALUES
                     ('S1', '2020-01-01T00:00:00.000000000Z', 1, '2023-12-01T00:00:00.000000Z'),
                     ('S2', '2020-01-02T00:00:00.000000000Z', 2, '2023-12-01T00:00:01.000000Z'),
-                    ('S3', NULL, 3, '2023-12-01T00:00:02.000000Z')
+                    ('S3', NULL, 3, '2023-12-01T00:00:02.000000Z'),
+                    ('S4', '2262-04-11T23:47:16.854775807Z', 4, '2023-12-01T00:00:03.000000Z')
                     """);
             execute("""
                     INSERT INTO books VALUES
                     ('2020-01-01T00:00:00.000000Z', 1, '2023-12-01T00:00:00.000000Z'),
                     ('2020-01-02T00:00:00.000000Z', 2, '2023-12-01T00:00:01.000000Z'),
                     (NULL, 3, '2023-12-01T00:00:02.000000Z'),
-                    ('1970-01-01T00:00:00.000000Z', 3, '2023-12-01T00:00:03.000000Z')
+                    ('1970-01-01T00:00:00.000000Z', 3, '2023-12-01T00:00:03.000000Z'),
+                    ('9999-12-31T23:59:59.999999Z', 4, '2023-12-01T00:00:04.000000Z')
                     """);
             execute("""
                     INSERT INTO desks VALUES
                     ('2020-01-01T00:00:00.000000Z', '2023-12-01T00:00:00.000000Z'),
                     ('2020-01-02T00:00:00.000000Z', '2023-12-01T00:00:01.000000Z'),
                     (NULL, '2023-12-01T00:00:02.000000Z'),
-                    ('1970-01-01T00:00:00.000000Z', '2023-12-01T00:00:03.000000Z')
+                    ('1970-01-01T00:00:00.000000Z', '2023-12-01T00:00:03.000000Z'),
+                    ('9999-12-31T23:59:59.999999Z', '2023-12-01T00:00:04.000000Z')
                     """);
             assertQuery("""
                     SELECT a0.k, a0.ts, a1.t, q.bid
@@ -17603,7 +17611,29 @@ public class JoinTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .timestamp("ts")
-                    .withPlanContaining("Filter filter: a1.t=a2.t", "condition: a2.t=a3.tn")
+                    .withPlanContaining("condition: a1.l=a3.l and a1.t=a3.tn", "condition: a2.t=a3.tn")
+                    .withPlanNotContaining("filter: a1.t=a2.t")
+                    .returns("""
+                            k\tts\tt\tbid
+                            1\t2024-01-01T00:00:10.000000Z\t2020-01-01T00:00:00.000000Z\t9.5
+                            2\t2024-01-01T00:00:20.000000Z\t2020-01-02T00:00:00.000000Z\t19.5
+                            3\t2024-01-01T00:00:30.000000Z\t\t19.5
+                            """);
+            // the equalities in another order derive the same key for an ASOF JOIN
+            assertQuery("""
+                    SELECT a0.k, a0.ts, a1.t, q.bid
+                    FROM trades a0
+                    CROSS JOIN books a1
+                    JOIN desks a2 ON a2.t = a1.t
+                    JOIN routes a3 ON a3.tn = a2.t AND a3.l = a1.l
+                    JOIN accts a4 ON a4.k = a0.k AND a4.s = a3.s
+                    ASOF JOIN quotes q
+                    """)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("condition: a1.l=a3.l and a1.t=a3.tn", "condition: a2.t=a3.tn")
+                    .withPlanNotContaining("filter: a1.t=a2.t")
                     .returns("""
                             k\tts\tt\tbid
                             1\t2024-01-01T00:00:10.000000Z\t2020-01-01T00:00:00.000000Z\t9.5

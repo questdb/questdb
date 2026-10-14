@@ -11468,12 +11468,11 @@ public class SqlOptimiser implements Mutable {
     // and c = y, with x and y on two models, x = y follows from both and becomes a key of whichever of the
     // two models is placed later. That model joins before this one, so the level drops the rows that fail
     // x = y earlier, and this model matches the same rows as before. Text keys compare the text whatever
-    // the column types, so the three keys agree. A key on timestamps of two precisions does not: the
-    // record copier turns a NULL microsecond timestamp into nanosecond 0. Such a key, and any other later
-    // key, filters the join instead, as an ON conjunct of it, and the model keeps the parent that the key
-    // gave it. runFromModelFirst resolves the models from the last placed to the first, so a derived key,
-    // which goes to an earlier model, is resolved in turn, and the resolution ends at the model placed
-    // after model 0, which can only filter.
+    // the column types, and keys on timestamps of two precisions compare nanoseconds, NULL included, so
+    // the three keys agree. Any other later key filters the join instead, as an ON conjunct of it, and
+    // the model keeps the parent that the key gave it. runFromModelFirst resolves the models from the
+    // last placed to the first, so a derived key, which goes to an earlier model, is resolved in turn,
+    // and the resolution ends at the model placed after model 0, which can only filter.
     private void resolveConflictingKeys(IQueryModel parent, int index, IntList rank) {
         final IQueryModel model = parent.getJoinModels().getQuick(index);
         final JoinContext jc = model.getJoinContext();
@@ -11542,11 +11541,9 @@ public class SqlOptimiser implements Mutable {
             final boolean isOwnAj = jc.aIndexes.getQuick(j) == index;
             final int yIndex = isOwnAk ? jc.bIndexes.getQuick(k) : jc.aIndexes.getQuick(k);
             final int xIndex = isOwnAj ? jc.bIndexes.getQuick(j) : jc.aIndexes.getQuick(j);
-            final int encodingJ = getJoinKeyEncoding(parent, jc, j);
-            final int encodingK = getJoinKeyEncoding(parent, jc, k);
             final CharSequence ownJ = isOwnAj ? jc.aNames.getQuick(j) : jc.bNames.getQuick(j);
             final boolean isSharedOwn = Chars.equalsIgnoreCase(ownJ, isOwnAk ? jc.aNames.getQuick(k) : jc.bNames.getQuick(k));
-            if (isSharedOwn && xIndex != yIndex && encodingJ != ColumnType.TIMESTAMP_NANO && encodingK != ColumnType.TIMESTAMP_NANO) {
+            if (isSharedOwn && xIndex != yIndex) {
                 final CharSequence yName = isOwnAk ? jc.bNames.getQuick(k) : jc.aNames.getQuick(k);
                 final ExpressionNode yNode = isOwnAk ? jc.bNodes.getQuick(k) : jc.aNodes.getQuick(k);
                 final CharSequence xName = isOwnAj ? jc.bNames.getQuick(j) : jc.aNames.getQuick(j);
