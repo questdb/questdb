@@ -1875,36 +1875,50 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
         // FROM and TO lie more than Long.MAX_VALUE timestamp units apart, so TO - FROM does not
         // fit a long. Depending on the STEP, the wrapped difference used to yield no offsets at
         // all, which both projection factories divide by, a negative number of them or a wrong
-        // positive one. The values of a RANGE take no underscore separators.
+        // positive one. The span now counts as an unsigned number, so each of these ranges yields
+        // all of its offsets. The values of a RANGE take no underscore separators.
         assertMemoryLeak(() -> {
             createTradesAndQuotes();
             execute("CREATE TABLE nanoTrades AS (SELECT ts::TIMESTAMP_NS ts, sym, price FROM TaqTrade) TIMESTAMP(ts) PARTITION BY DAY");
             final String micros = "SELECT t.sym, h.offset, q.bid FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) RANGE FROM ";
             final String nanos = "SELECT t.sym, h.offset, q.bid FROM nanoTrades t HORIZON JOIN TaqQuote q ON (sym) RANGE FROM ";
-            final String noOffsets = "-9000000000000000000U TO 9000000000000000000U STEP 300000000000000000U AS h";
+            final String summary = "SELECT count() AS n, count(bid) AS matches, count_distinct(offset) AS offsets, min(offset) AS lo, max(offset) AS hi FROM (";
+            // 61 offsets, 31 of them non-negative. Only a non-negative offset finds a quote.
+            final String wideRange = "-9000000000000000000U TO 9000000000000000000U STEP 300000000000000000U AS h";
             for (boolean isParallel : MODES) {
                 sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
                 // Unfiltered, with a JIT-compiled filter and with a Java filter, which the
-                // parallel factory steals from the master.
-                for (String filter : List.of("", " WHERE t.price > 15", " WHERE concat(t.sym, '') = 'A'")) {
-                    assertQuery(micros + noOffsets + filter).fails(micros.length(), "RANGE span overflow");
-                    assertQuery("EXPLAIN " + micros + noOffsets + filter).fails(micros.length() + 8, "RANGE span overflow");
-                }
-                for (String range : List.of(
-                        // The wrapped difference yields -3 offsets.
-                        "-9000000000000000000U TO 9000000000000000000U STEP 100000000000000000U AS h",
-                        // The wrapped difference yields one offset; the range has 37.
-                        "-9000000000000000000U TO 9000000000000000000U STEP 500000000000000000U AS h",
-                        // The narrowest span that overflows, one unit past Long.MAX_VALUE.
-                        "-4611686018427387904U TO 4611686018427387904U STEP 9223372036854775807U AS h",
-                        // The span fits; the STEP of one unit overflows the number of offsets.
-                        "0U TO 9223372036854775807U STEP 1U AS h"
-                )) {
-                    assertQuery(micros + range).fails(micros.length(), "RANGE span overflow");
-                }
+                // parallel factory steals from the master. A and B have quotes; C has none.
+                assertQuery(summary + micros + wideRange + ")").noRandomAccess().expectSize()
+                        .withPlanContaining(projectionPlan(isParallel, 61))
+                        .returns("n\tmatches\toffsets\tlo\thi\n366\t124\t61\t-9000000000000000000\t9000000000000000000\n");
+                assertQuery(summary + micros + wideRange + " WHERE t.price > 15)").noRandomAccess().expectSize()
+                        .withPlanContaining(projectionPlan(isParallel, 61))
+                        .returns("n\tmatches\toffsets\tlo\thi\n183\t31\t61\t-9000000000000000000\t9000000000000000000\n");
+                assertQuery(summary + micros + wideRange + " WHERE concat(t.sym, '') = 'A')").noRandomAccess().expectSize()
+                        .withPlanContaining(projectionPlan(isParallel, 61))
+                        .returns("n\tmatches\toffsets\tlo\thi\n183\t93\t61\t-9000000000000000000\t9000000000000000000\n");
+
+                // The wrapped difference used to yield -3 offsets; the range has 181. They exceed
+                // the slot cap, so the serial projection runs in both modes.
+                assertQuery(summary + micros + "-9000000000000000000U TO 9000000000000000000U STEP 100000000000000000U AS h)")
+                        .noRandomAccess().expectSize().withPlanContaining(projectionPlan(false, 181))
+                        .returns("n\tmatches\toffsets\tlo\thi\n1086\t364\t181\t-9000000000000000000\t9000000000000000000\n");
+                // The wrapped difference used to yield one offset; the range has 37.
+                assertQuery(summary + micros + "-9000000000000000000U TO 9000000000000000000U STEP 500000000000000000U AS h)")
+                        .noRandomAccess().expectSize().withPlanContaining(projectionPlan(isParallel, 37))
+                        .returns("n\tmatches\toffsets\tlo\thi\n222\t76\t37\t-9000000000000000000\t9000000000000000000\n");
+                // The narrowest span that overflows, one unit past Long.MAX_VALUE.
+                assertQuery(summary + micros + "-4611686018427387904U TO 4611686018427387904U STEP 9223372036854775807U AS h)")
+                        .noRandomAccess().expectSize().withPlanContaining(projectionPlan(isParallel, 2))
+                        .returns("n\tmatches\toffsets\tlo\thi\n12\t4\t2\t-4611686018427387904\t4611686018427387903\n");
+                // The span fits; the STEP of one unit overflows the number of offsets.
+                assertQuery(micros + "0U TO 9223372036854775807U STEP 1U AS h")
+                        .fails(micros.length(), "RANGE generates too many offsets [count>9223372036854775807");
                 // 120,000 days exceed Long.MAX_VALUE in nanoseconds.
-                assertQuery(nanos + "-60000d TO 60000d STEP 50000d AS h").fails(nanos.length(), "RANGE span overflow");
-                assertQuery("EXPLAIN " + nanos + "-60000d TO 60000d STEP 50000d AS h").fails(nanos.length() + 8, "RANGE span overflow");
+                assertQuery(summary + nanos + "-60000d TO 60000d STEP 50000d AS h)")
+                        .noRandomAccess().expectSize().withPlanContaining(projectionPlan(isParallel, 3))
+                        .returns("n\tmatches\toffsets\tlo\thi\n18\t4\t3\t-5184000000000000000\t3456000000000000000\n");
 
                 // The same days fit a microsecond master.
                 assertQuery("SELECT offset / 86_400_000_000 AS days, count() AS n FROM ("

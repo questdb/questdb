@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -131,7 +130,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         long nextPos = pos + 1;
         if (nextPos < positionHi) {
             long nextRowIdx = isFiltered ? filteredRows.get(nextPos) : (frameRowLo + nextPos);
-            long nextHorizonTs = addOffset(readTimestamp(nextRowIdx), offsets[offsetIdx]);
+            long nextHorizonTs = HorizonTimestampIterator.addTimestampAndOffset(readTimestamp(nextRowIdx), offsets[offsetIdx]);
             // Replace root and restore heap property
             heapTs[0] = nextHorizonTs;
             heapPos[0] = nextPos;
@@ -197,15 +196,6 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         initHeap(hi > lo ? filteredRows.get(lo) : -1, lo, hi > lo);
     }
 
-    private static long addOffset(long timestamp, long offset) {
-        try {
-            return Math.addExact(timestamp, offset);
-        } catch (ArithmeticException e) {
-            throw CairoException.nonCritical().put("horizon timestamp overflow [timestamp=").put(timestamp)
-                    .put(", offset=").put(offset).put(']');
-        }
-    }
-
     private void heapInsert(long ts, long pos, int offsetIdx) {
         int i = heapSize++;
         heapTs[i] = ts;
@@ -219,7 +209,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         if (hasRows) {
             long firstMasterTs = readTimestamp(firstRowIdx);
             for (int k = 0, n = offsets.length; k < n; k++) {
-                long horizonTs = addOffset(firstMasterTs, offsets[k]);
+                long horizonTs = HorizonTimestampIterator.addTimestampAndOffset(firstMasterTs, offsets[k]);
                 heapInsert(horizonTs, firstPos, k);
             }
         }
