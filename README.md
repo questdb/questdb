@@ -324,6 +324,8 @@ with [Bring Your Own Cloud](https://questdb.com/byoc/). See the
 [feature comparison](https://questdb.com/enterprise/#compare-features) and the
 [Enterprise page](https://questdb.com/enterprise/).
 
+**[Start a free Enterprise trial](https://questdb.com/enterprise/trial/)**
+
 ## Additional resources
 
 ### 📚 Read the docs
