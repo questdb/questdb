@@ -132,6 +132,7 @@ final class Decorrelation implements OptimiserPass {
             OutputSchema tmpSchema,
             ObjList<JoinInput> tmpSteps,
             IntIntHashMap substitution,
+            IntIntHashMap consumerRemap,
             UniqueColumnNames takenNames,
             OuterColumnReads outerColumnReads
     ) {
@@ -144,7 +145,7 @@ final class Decorrelation implements OptimiserPass {
         final IntList ids = new IntList();
         keys = new CorrelationKeys(ctx, tmpPairs, ids);
         carriers = new OuterJoinCarriers(ctx, domains, keys, ids);
-        compensation = new ScalarCompensation(ctx, domains, tmpConjuncts);
+        compensation = new ScalarCompensation(ctx, domains, tmpConjuncts, consumerRemap);
         rewriter = new CorrelatedChainRewriter(ctx, keys, compensation);
     }
 

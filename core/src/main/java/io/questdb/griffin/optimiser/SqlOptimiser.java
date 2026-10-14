@@ -81,10 +81,12 @@ public final class SqlOptimiser implements Mutable {
     private final OperatorPlanning operatorPlanning;
     private final ObjList<OptimiserPass> passes = new ObjList<>(10);
     private final ColumnExpression tmpColumn = new ColumnExpression();
+    private final IntIntHashMap tmpColumnMap = new IntIntHashMap();
     private final ObjList<BoundExpression> tmpConjuncts = new ObjList<>();
     private final IntList tmpOrder = new IntList();
     private final IntList tmpPairs = new IntList();
     private final IntList tmpPending = new IntList();
+    private final ObjList<LogicalPlan> tmpPlanPath = new ObjList<>();
     private final ObjList<LogicalPlan> tmpPlans = new ObjList<>();
     private final ProjectPlan tmpProjection = new ProjectPlan();
     private final ObjList<JoinInput> tmpSteps = new ObjList<>();
@@ -134,12 +136,12 @@ public final class SqlOptimiser implements Mutable {
         final ObjectPool<ProjectPlan> projects = planNodes.projects;
         final ObjectPool<SortPlan> sorts = planNodes.sorts;
         decorrelation = new Decorrelation(context, planNodes, characterStore, tmpConjuncts, tmpIndexes, tmpValues,
-                tmpKeys, tmpSlaveKeys, tmpOrder, tmpPending, tmpPairs, tmpPlans, tmpSchema, tmpSteps, substitution, takenNames, outerColumnReads);
+                tmpKeys, tmpSlaveKeys, tmpOrder, tmpPending, tmpPairs, tmpPlans, tmpSchema, tmpSteps, substitution, tmpColumnMap, takenNames, outerColumnReads);
         aggregateInputOrder = new AggregateInputOrder();
         final FilterPushdown filterPushdown = new FilterPushdown(context, aggregateInputOrder, tmpExpressions, filters, columns, tmpProjection,
                 tmpColumn, tmpSlaveKeys, tmpIndexes, tmpValues, tmpConjuncts);
         final ColumnPruning columnPruning = new ColumnPruning(context, aggregateInputOrder, tmpExpressions, columns, projects, tmpIndexes, tmpValues,
-                columnIds, tmpPlans, tmpSchema);
+                columnIds, tmpPlans, tmpPlanPath, tmpSchema);
         final ProjectionMerge projectionMerge = new ProjectionMerge(context, columnIds);
         final AggregateRewrite aggregateRewrite = new AggregateRewrite(context, projectionMerge, tmpProjection, tmpColumn, tmpKeys);
         joinOrdering = new JoinOrdering(context, filters, new JoinOrderSolver(planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys, tmpKeys,
@@ -149,7 +151,8 @@ public final class SqlOptimiser implements Mutable {
         passes.add(aggregateRewrite);
         passes.add(filterPushdown);
         // Window calls merge before pruning drops the columns a merge leaves unread.
-        windowCallMerge = new WindowCallMerge(context, columns, tmpProjection, tmpPlans, tmpIndexes, substitution, tmpOrder, tmpPairs);
+        windowCallMerge = new WindowCallMerge(context, columns, tmpProjection, tmpPlans, tmpPlanPath, tmpIndexes, substitution, tmpOrder,
+                tmpPairs, tmpColumnMap);
         passes.add(windowCallMerge);
         passes.add(columnPruning);
         passes.add(projectionMerge);
@@ -165,11 +168,13 @@ public final class SqlOptimiser implements Mutable {
     @Override
     public void clear() {
         tmpColumn.clear();
+        tmpColumnMap.clear();
         tmpConjuncts.clear();
         context.clear();
         tmpOrder.clear();
         tmpPairs.clear();
         tmpPending.clear();
+        tmpPlanPath.clear();
         tmpPlans.clear();
         tmpProjection.clear();
         tmpSteps.clear();

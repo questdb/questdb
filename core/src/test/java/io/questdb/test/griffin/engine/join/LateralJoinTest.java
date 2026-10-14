@@ -8558,6 +8558,144 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScalarAggregateWrappersPreserveCarriers() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (1), (2), (3)");
+            execute("CREATE TABLE i (k INT, v INT)");
+
+            for (boolean hasRows : new boolean[]{false, true}) {
+                if (hasRows) {
+                    execute("INSERT INTO i VALUES (1, 10), (1, null), (3, null)");
+                }
+                for (boolean isLeft : new boolean[]{false, true}) {
+                    assertQuery("SELECT o.k, l.c, l.s FROM o " + (isLeft ? "LEFT" : "CROSS") + " JOIN LATERAL ("
+                            + "SELECT DISTINCT count(*) + count(v) + coalesce(sum(v), 0) c, sum(v) s "
+                            + "FROM i WHERE i.k = o.k ORDER BY c DESC) l" + (isLeft ? " ON true" : "") + " ORDER BY o.k")
+                            .noLeakCheck()
+                            .returns(hasRows ? """
+                                    k\tc\ts
+                                    1\t13\t10
+                                    1\t13\t10
+                                    2\t0\tnull
+                                    3\t1\tnull
+                                    """ : """
+                                    k\tc\ts
+                                    1\t0\tnull
+                                    1\t0\tnull
+                                    2\t0\tnull
+                                    3\t0\tnull
+                                    """);
+                    assertQuery("SELECT o.k, l.s FROM o " + (isLeft ? "LEFT" : "CROSS") + " JOIN LATERAL ("
+                            + "SELECT DISTINCT sum(v) s FROM i WHERE i.k = o.k ORDER BY s) l"
+                            + (isLeft ? " ON true" : "") + " ORDER BY o.k")
+                            .noLeakCheck()
+                            .returns(hasRows ? """
+                                    k\ts
+                                    1\t10
+                                    1\t10
+                                    2\tnull
+                                    3\tnull
+                                    """ : """
+                                    k\ts
+                                    1\tnull
+                                    1\tnull
+                                    2\tnull
+                                    3\tnull
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testScalarCountWrappersKeepFiltersAndLimits() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("CREATE TABLE i (k INT)");
+            execute("INSERT INTO i VALUES (1)");
+
+            for (boolean isLeft : new boolean[]{false, true}) {
+                final String join = "SELECT o.k, l.c FROM o " + (isLeft ? "LEFT" : "CROSS") + " JOIN LATERAL (";
+                final String tail = ") l" + (isLeft ? " ON true" : "") + " ORDER BY o.k";
+                final String scalar = "SELECT DISTINCT count(*) c FROM i WHERE i.k = o.k ORDER BY c";
+                for (int lo = 0; lo < 2; lo++) {
+                    for (int hi = 0; hi < 3; hi++) {
+                        assertQuery(join + scalar + " LIMIT " + lo + "," + hi + tail)
+                                .noLeakCheck()
+                                .returns(lo == 0 && hi > 0 ? """
+                                        k\tc
+                                        1\t1
+                                        2\t0
+                                        """ : isLeft ? """
+                                        k\tc
+                                        1\tnull
+                                        2\tnull
+                                        """ : "k\tc\n");
+                    }
+                }
+                assertQuery(join + "SELECT c FROM (" + scalar + ") WHERE c > 0" + tail)
+                        .noLeakCheck()
+                        .returns(isLeft ? """
+                                k\tc
+                                1\t1
+                                2\tnull
+                                """ : """
+                                k\tc
+                                1\t1
+                                """);
+            }
+            assertQuery("""
+                    SELECT o.k, l.c FROM o
+                    LEFT JOIN LATERAL (
+                        SELECT DISTINCT count(*) c FROM i WHERE i.k = o.k ORDER BY c
+                    ) l ON o.k = 1
+                    ORDER BY o.k
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            k\tc
+                            1\t1
+                            2\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testScalarCountWrappersPreserveEmptyInput() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("CREATE TABLE i (k INT)");
+            execute("INSERT INTO i VALUES (1)");
+
+            final ObjList<String> bodies = new ObjList<>();
+            bodies.add("SELECT count(*) c FROM i WHERE i.k = o.k");
+            bodies.add("SELECT count(*) c FROM i WHERE i.k = o.k LIMIT 1");
+            bodies.add("SELECT DISTINCT count(*) c FROM i WHERE i.k = o.k");
+            bodies.add("SELECT count(*) c FROM i WHERE i.k = o.k ORDER BY c");
+            bodies.add("SELECT DISTINCT count(*) c FROM i WHERE i.k = o.k ORDER BY c");
+            for (boolean isFullFat : new boolean[]{false, true}) {
+                for (boolean isLeft : new boolean[]{false, true}) {
+                    for (int j = 0; j < bodies.size(); j++) {
+                        assertQuery("SELECT o.k, l.c FROM o " + (isLeft ? "LEFT" : "CROSS")
+                                + " JOIN LATERAL (" + bodies.getQuick(j) + ") l"
+                                + (isLeft ? " ON true" : "") + " ORDER BY o.k")
+                                .noLeakCheck()
+                                .fullFatJoins(isFullFat)
+                                .returns("""
+                                        k\tc
+                                        1\t1
+                                        2\t0
+                                        """);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testT01ScanInner() throws Exception {
         assertMemoryLeak(() -> {
             createOrdersAndTrades();

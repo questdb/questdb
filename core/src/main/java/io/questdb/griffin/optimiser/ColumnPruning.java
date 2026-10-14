@@ -70,7 +70,7 @@ import io.questdb.std.ObjectPool;
  */
 final class ColumnPruning implements OptimiserPass {
     private final AggregateInputOrder aggregateInputOrder;
-    private final ObjList<LogicalPlan> alignedPath = new ObjList<>();
+    private final ObjList<LogicalPlan> alignedPath;
     private final OptimiserContext context;
     private final ObjectPool<ColumnExpression> narrowingColumns;
     private final ObjectPool<ProjectPlan> narrowingProjects;
@@ -107,6 +107,7 @@ final class ColumnPruning implements OptimiserPass {
             IntList remappedSymbolColumns,
             IntHashSet requiredColumnIds,
             ObjList<LogicalPlan> pruneAncestors,
+            ObjList<LogicalPlan> alignedPath,
             OutputSchema tmpSchema
     ) {
         this.context = context;
@@ -118,6 +119,7 @@ final class ColumnPruning implements OptimiserPass {
         this.remappedSymbolColumns = remappedSymbolColumns;
         this.requiredColumnIds = requiredColumnIds;
         this.pruneAncestors = pruneAncestors;
+        this.alignedPath = alignedPath;
         this.tmpSchema = tmpSchema;
     }
 
@@ -130,7 +132,6 @@ final class ColumnPruning implements OptimiserPass {
     @Override
     public void clear() {
         joinInputPlan = null;
-        alignedPath.clear();
         sharedSetOperations.clear();
     }
 

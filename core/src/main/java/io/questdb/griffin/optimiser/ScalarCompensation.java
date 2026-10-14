@@ -33,6 +33,7 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
@@ -68,7 +69,7 @@ final class ScalarCompensation implements Mutable {
     final ObjList<CharSequence> compensatedNames = new ObjList<>();
     final ObjList<ProjectPlan> compensatedScalars = new ObjList<>();
     final ObjList<BoundExpression> compensations = new ObjList<>();
-    final IntIntHashMap consumerRemap = new IntIntHashMap();
+    final IntIntHashMap consumerRemap;
     final ObjList<JoinInput> drivenInputs = new ObjList<>();
     final ObjList<ProjectPlan> drivenScalars = new ObjList<>();
     final ObjList<AggregatePlan> scalarAggregates = new ObjList<>();
@@ -84,10 +85,11 @@ final class ScalarCompensation implements Mutable {
     private BoundExpression pendingConjuncts;
     private ProjectPlan scalarProjection;
 
-    ScalarCompensation(DecorrelationContext ctx, DecorrelationDomains domains, ObjList<BoundExpression> hoistedConjuncts) {
+    ScalarCompensation(DecorrelationContext ctx, DecorrelationDomains domains, ObjList<BoundExpression> hoistedConjuncts, IntIntHashMap consumerRemap) {
         this.ctx = ctx;
         this.domains = domains;
         this.hoistedConjuncts = hoistedConjuncts;
+        this.consumerRemap = consumerRemap;
     }
 
     @Override
@@ -97,7 +99,6 @@ final class ScalarCompensation implements Mutable {
         compensatedNames.clear();
         compensatedScalars.clear();
         compensations.clear();
-        consumerRemap.clear();
         drivenInputs.clear();
         drivenScalars.clear();
         markedInputs.clear();
@@ -211,11 +212,11 @@ final class ScalarCompensation implements Mutable {
     }
 
     /**
-     * The projection under the filters and windows at the top of the body, or null when another node is there.
+     * The projection under the filters, windows, sorts and distincts at the top of the body, or null.
      */
     private static ProjectPlan topProjection(LogicalPlan body) {
         LogicalPlan node = body;
-        while (node instanceof FilterPlan || node instanceof WindowPlan) {
+        while (node instanceof FilterPlan || node instanceof WindowPlan || node instanceof SortPlan || node instanceof DistinctPlan) {
             node = node.inputAt(0);
         }
         return node instanceof ProjectPlan project ? project : null;

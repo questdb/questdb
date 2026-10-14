@@ -69,7 +69,6 @@ import io.questdb.std.ObjectPool;
  * equi-join keys and narrows decorrelation domains with their master's filters.
  */
 final class FilterPushdown implements OptimiserPass {
-    private static final ExpressionVisitor NULL_LITERALS = FilterPushdown::nullLiteral;
     private static final int OFFSET_LEAVES = 3;
     private static final ConjunctTest ORDER_INDEPENDENT_CONJUNCTS = LogicalPlans::isOrderIndependent;
     private static final int OTHER_LEAVES = 4;
@@ -236,7 +235,7 @@ final class FilterPushdown implements OptimiserPass {
      * Whether the expression, or any call a constant folds from, has a NULL literal argument.
      */
     private static boolean hasNullLiteral(BoundExpression expression) {
-        return !expression.walk(NULL_LITERALS);
+        return !expression.walk(FilterPushdown::nullLiteral);
     }
 
     private static boolean isColumnConstantComparison(BoundExpression predicate) {
