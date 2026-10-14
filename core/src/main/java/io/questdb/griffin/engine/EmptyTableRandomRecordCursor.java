@@ -69,6 +69,11 @@ public final class EmptyTableRandomRecordCursor implements RecordCursor {
     }
 
     @Override
+    public boolean isKnownEmpty() {
+        return true;
+    }
+
+    @Override
     public SymbolTable newSymbolTable(int columnIndex) {
         // The empty symbol table is immutable, so a parallel consumer can safely share the
         // single instance; this mirrors getSymbolTable() and honors the newSymbolTable contract.

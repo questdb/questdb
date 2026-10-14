@@ -25,7 +25,9 @@
 package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.QueryAssertion;
@@ -403,6 +405,40 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                                 count
                                 0
                                 """);
+            }
+        });
+    }
+
+    @Test
+    public void testJoinGateFalseLeavesLateralUnread() throws Exception {
+        // While the gate of the INNER join is false, the INNER join knows that it has no rows, so the LEFT join
+        // that aligns the LATERAL with it reads no row of the LATERAL, see RecordCursor.isKnownEmpty(). The
+        // filter in the LATERAL counts the pairs of a row of u and a key of t that the correlation keeps:
+        // 1 + 2 + 3 for the keys 1, 2 and 3 of t.
+        assertMemoryLeak(() -> {
+            createGateTables();
+            final String query = """
+                    SELECT a.id, l.mv, d.id did
+                    FROM a
+                    JOIN (SELECT k, count() n FROM t GROUP BY k) o ON a.k = o.k AND $1
+                    CROSS JOIN LATERAL (SELECT max(u.v) mv FROM u WHERE u.k <= o.k AND test_latched_counter()) l
+                    RIGHT JOIN d ON d.k = a.k
+                    """;
+            bindVariableService.clear();
+            bindVariableService.setBoolean(0, false);
+            try (RecordCursorFactory factory = select(query)) {
+                for (boolean flag : new boolean[]{false, true, false}) {
+                    bindVariableService.setBoolean(0, flag);
+                    TestLatchedCounterFunctionFactory.reset(null);
+                    int rowCount = 0;
+                    try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                        while (cursor.hasNext()) {
+                            rowCount++;
+                        }
+                    }
+                    Assert.assertEquals("the RIGHT join returns every row of d", 3, rowCount);
+                    Assert.assertEquals("the rows that the LATERAL reads", flag ? 6 : 0, TestLatchedCounterFunctionFactory.getCount());
+                }
             }
         });
     }

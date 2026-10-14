@@ -129,15 +129,6 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         this.isBaseOpenRequired = isBaseOpenRequired;
     }
 
-    /**
-     * Returns whether the cursor is the empty cursor that the gate returns over a base that has to
-     * open in every execution, see the class comment. Like {@link EmptyTableRandomRecordCursor},
-     * which the gate returns over any other base, it has no rows.
-     */
-    public static boolean isEmptyOpenBaseCursor(RecordCursor cursor) {
-        return cursor instanceof EmptyRecordCursor;
-    }
-
     @Override
     public RecordCursorFactory getBaseFactory() {
         return base;
@@ -439,6 +430,11 @@ public class RuntimeConstGateRecordCursorFactory extends AbstractRecordCursorFac
         @Override
         public boolean hasNext() {
             return false;
+        }
+
+        @Override
+        public boolean isKnownEmpty() {
+            return true;
         }
 
         @Override

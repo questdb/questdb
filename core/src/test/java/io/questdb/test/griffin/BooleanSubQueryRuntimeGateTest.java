@@ -290,6 +290,7 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
             OpenCountingRecordCursorFactory base = new OpenCountingRecordCursorFactory(select("select * from t"));
             try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false), null)) {
                 try (RecordCursor cursor = gate.getCursor(sqlExecutionContext)) {
+                    Assert.assertTrue("a parent may skip the rows of the gate", cursor.isKnownEmpty());
                     Assert.assertFalse("false predicate must yield no rows", cursor.hasNext());
                 }
                 Assert.assertEquals("base must not be opened when the predicate is false", 0, base.openCount);
@@ -308,7 +309,7 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
             try (RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false), null, true)) {
                 for (int execution = 1; execution < 3; execution++) {
                     try (RecordCursor cursor = gate.getCursor(sqlExecutionContext)) {
-                        Assert.assertTrue(RuntimeConstGateRecordCursorFactory.isEmptyOpenBaseCursor(cursor));
+                        Assert.assertTrue("a parent may skip the rows of the gate", cursor.isKnownEmpty());
                         Assert.assertEquals(0, cursor.size());
                         Assert.assertFalse(cursor.hasNext());
                         cursor.toTop();

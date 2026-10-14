@@ -189,6 +189,7 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         private final JoinRecord recordA;
         private final RecordChain slaveChain;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isKnownEmpty;
         private boolean isMapBuilt;
         private boolean isMapEmpty;
         private boolean isOpen;
@@ -262,6 +263,11 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
         }
 
         @Override
+        public boolean isKnownEmpty() {
+            return isKnownEmpty;
+        }
+
+        @Override
         public long preComputedStateSize() {
             return isMapBuilt ? 1 : 0;
         }
@@ -319,6 +325,13 @@ public class HashJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             useSlaveCursor = false;
             size = -1;
             isMapBuilt = false;
+            // A side that knows it has no rows, see RecordCursor.isKnownEmpty(), empties the join. The hash table
+            // of the slave then stays empty, and the cursor reads neither side.
+            isKnownEmpty = masterCursor.isKnownEmpty() || slaveCursor.isKnownEmpty();
+            if (isKnownEmpty) {
+                isMapBuilt = true;
+                isMapEmpty = true;
+            }
             // Adopt the cursors last so an initSources() breach above leaves them unset for the getCursor() catch.
             this.masterCursor = masterCursor;
             this.slaveCursor = slaveCursor;

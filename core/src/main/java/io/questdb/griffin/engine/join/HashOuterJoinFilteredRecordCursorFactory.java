@@ -375,6 +375,7 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
 
     private class HashLeftOuterJoinFilteredRecordCursor extends AbstractHashOuterJoinRecordCursor {
         private final OuterJoinRecord record;
+        private boolean isKnownEmpty;
 
         public HashLeftOuterJoinFilteredRecordCursor(
                 int columnSplit,
@@ -434,6 +435,11 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         }
 
         @Override
+        public boolean isKnownEmpty() {
+            return isKnownEmpty;
+        }
+
+        @Override
         public void toTop() {
             super.toTop();
             filter.toTop();
@@ -448,6 +454,13 @@ public class HashOuterJoinFilteredRecordCursorFactory extends AbstractJoinRecord
         @Override
         protected void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext sqlExecutionContext) throws SqlException {
             ofWithoutAdopt(masterCursor, slaveCursor, sqlExecutionContext);
+            // A LEFT join returns no row without a master row, so a master that knows it has none, see
+            // RecordCursor.isKnownEmpty(), empties the join. The hash table then stays empty, and the cursor
+            // leaves the slave unread.
+            isKnownEmpty = masterCursor.isKnownEmpty();
+            if (isKnownEmpty) {
+                isMapBuilt = true;
+            }
             record.of(masterRecord, slaveRecord);
             filterSymbolTableSource.of(masterCursor, slaveCursor);
             filter.init(filterSymbolTableSource, sqlExecutionContext);

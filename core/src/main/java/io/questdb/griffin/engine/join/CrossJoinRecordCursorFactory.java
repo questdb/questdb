@@ -35,8 +35,6 @@ import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.EmptyTableRandomRecordCursor;
-import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.std.Misc;
 
 // This exec plan is filter-less Nested Loop
@@ -116,6 +114,7 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
         private final JoinRecord record;
         private final RecordCursor.Counter tmpCounter;
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private boolean isKnownEmpty;
         private boolean isMasterHasNextPending;
         private boolean isMasterSizeCalculated;
         private boolean isSlaveEmpty;
@@ -138,7 +137,7 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
 
         @Override
         public void calculateSize(SqlExecutionCircuitBreaker circuitBreaker, RecordCursor.Counter counter) {
-            if (isSlaveEmpty || (!isMasterHasNextPending && !masterHasNext)) {
+            if (isKnownEmpty || (!isMasterHasNextPending && !masterHasNext)) {
                 return;
             }
             if (keyFilterGate.hasFilter()) {
@@ -216,6 +215,11 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
                 slaveCursor.toTop();
                 isMasterHasNextPending = true;
             }
+        }
+
+        @Override
+        public boolean isKnownEmpty() {
+            return isKnownEmpty;
         }
 
         @Override
@@ -332,10 +336,10 @@ public class CrossJoinRecordCursorFactory extends AbstractJoinRecordCursorFactor
             this.slaveCursor = slaveCursor;
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             isMasterHasNextPending = true;
-            // EmptyTableRecordCursorFactory returns the first cursor, and RuntimeConstGateRecordCursorFactory
-            // returns one of the two while its filter is false
-            isSlaveEmpty = slaveCursor == EmptyTableRandomRecordCursor.INSTANCE
-                    || RuntimeConstGateRecordCursorFactory.isEmptyOpenBaseCursor(slaveCursor);
+            // the cursors of EmptyTableRecordCursorFactory and of a false RuntimeConstGateRecordCursorFactory know
+            // that they have no rows, as do the joins that they empty, see RecordCursor.isKnownEmpty()
+            isSlaveEmpty = slaveCursor.isKnownEmpty();
+            isKnownEmpty = isSlaveEmpty || masterCursor.isKnownEmpty();
             // not the slave's size: a parent may still be opening its other cursors, see JoinKeyFilterGate
             keyFilterGate.of(slaveCursor);
             this.circuitBreaker = circuitBreaker;

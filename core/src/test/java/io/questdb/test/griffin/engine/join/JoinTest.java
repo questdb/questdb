@@ -9416,6 +9416,44 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinWithKnownEmptyMasterReadsNoSlave() throws Exception {
+        // A LEFT or INNER hash join returns no rows when its master knows that it has none, see
+        // RecordCursor.isKnownEmpty(): an empty table, a false gate, or a join that one of them empties. The
+        // join then builds no hash table and leaves its slave unread; the filter on b counts the rows of b that
+        // a join reads. A CROSS join reads no master when its right side is such a join, under a projection. A
+        // master with rows reads b once, and so does a RIGHT join, which returns every row of b.
+        assertMemoryLeak(() -> {
+            createTablesForCrossJoinBeforeRightJoin();
+            final String filteredB = "(SELECT * FROM b WHERE test_latched_counter()) b";
+            final String emptyA = "(SELECT * FROM a WHERE 1 = 2) a";
+            final String gatedA = "(SELECT * FROM a WHERE now() < '1960-01-01') a";
+            assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM " + emptyA + " LEFT JOIN " + filteredB + " ON a.k = b.k", 0, 0);
+            assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM " + gatedA + " LEFT JOIN " + filteredB + " ON a.k = b.k", 0, 0);
+            assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM " + emptyA + " LEFT JOIN " + filteredB + " ON a.k = b.k AND a.x > b.k", 0, 0);
+            assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM " + emptyA + " JOIN " + filteredB + " ON a.k = b.k", 0, 0);
+            assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM " + gatedA + " JOIN " + filteredB + " ON a.k = b.k", 0, 0);
+            // the empty a empties the first LEFT join, which is the master of the second
+            assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM " + emptyA + " LEFT JOIN c ON a.k = c.y LEFT JOIN " + filteredB + " ON a.k = b.k", 0, 0);
+            assertJoinFilterEvaluationCount("SELECT b.k, j.k jk FROM " + filteredB + " CROSS JOIN (SELECT a.k FROM " + emptyA + " JOIN c ON a.k = c.y) j", 0, 0);
+            // the master computes a column of, or filters, an INNER join that the empty a empties
+            assertJoinFilterEvaluationCount("SELECT m.k, b.k bk FROM (SELECT a.k + 1 k FROM " + emptyA + " JOIN c ON a.k = c.y) m LEFT JOIN " + filteredB + " ON m.k = b.k", 0, 0);
+            assertJoinFilterEvaluationCount("SELECT m.k, b.k bk FROM (SELECT a.k FROM " + emptyA + " JOIN c ON a.k = c.y WHERE a.x > c.y) m LEFT JOIN " + filteredB + " ON m.k = b.k", 0, 0);
+            assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM a LEFT JOIN " + filteredB + " ON a.k = b.k", 6, 4);
+            assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM " + emptyA + " RIGHT JOIN " + filteredB + " ON a.k = b.k", 4, 4);
+            // the rows, read twice with a size check in between, under a join that knows it is empty
+            assertQuery("SELECT a.k, b.k bk FROM " + emptyA + " LEFT JOIN c ON a.k = c.y LEFT JOIN b ON a.k = b.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("k\tbk\n");
+            assertQuery("SELECT a.k, b.k bk FROM " + emptyA + " LEFT JOIN c ON a.k = c.y LEFT JOIN b ON a.k = b.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .fullFatJoins()
+                    .returns("k\tbk\n");
+        });
+    }
+
+    @Test
     public void testJoiningSubqueriesWithDuplicateDottedColumnNames() throws Exception {
         // Two join sides project the same dotted alias; wildcard deduplication must keep the
         // second name quote-protected so it also strips to a clean display name ("a.b" / "a.b1",
