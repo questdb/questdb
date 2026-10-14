@@ -113,6 +113,7 @@ final class FilterPushdown implements OptimiserPass {
         }
         return TreeWalk.CONTINUE;
     };
+
     FilterPushdown(
             OptimiserContext context,
             AggregateInputOrder aggregateInputOrder,
@@ -1302,8 +1303,6 @@ final class FilterPushdown implements OptimiserPass {
         expression.walk(singleColumnReads);
         return singleColumnId;
     }
-
-
 
 
 }
