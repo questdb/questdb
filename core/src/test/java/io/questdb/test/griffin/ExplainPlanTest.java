@@ -33,7 +33,6 @@ import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.security.ReadOnlySecurityContext;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryCache;
@@ -13568,9 +13567,11 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 for (String nextSql : new String[]{"select * from long_sequence(1)", "explain " + otherSql}) {
                     try (RecordCursorFactory factory = compiler.compile(explain, sqlExecutionContext).getRecordCursorFactory()) {
                         try (RecordCursorFactory ignored = compiler.compile(nextSql, sqlExecutionContext).getRecordCursorFactory()) {
-                            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                                assertCursorTwoPass(expected, cursor, factory.getMetadata());
-                            }
+                            assertFactory(factory)
+                                    .withContext(sqlExecutionContext)
+                                    .noRandomAccess()
+                                    .expectSize()
+                                    .returns(expected);
                         }
                     }
                 }
