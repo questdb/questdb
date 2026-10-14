@@ -494,7 +494,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     // lexer.restart() rewinds to. A retry, in generateSelectWithRetries() or below,
                     // must re-parse this statement, not the batch's first one.
                     lexer.of(batchText, position, batchText.length());
-                    compileInner(executionContext, sqlText, true);
+                    try {
+                        compileInner(executionContext, sqlText, true);
+                    } finally {
+                        // see compile()
+                        optimiser.freePivotInListChecks();
+                    }
 
                     // consume residual text, such as semicolon
                     goToQueryEnd();

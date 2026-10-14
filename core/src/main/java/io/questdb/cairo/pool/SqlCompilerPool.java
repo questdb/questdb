@@ -133,6 +133,10 @@ public final class SqlCompilerPool extends AbstractMultiTenantPool<SqlCompilerPo
             setFullFatJoins(false);
             final AbstractMultiTenantPool<C> pool = this.pool;
             if (pool != null && entry != null) {
+                // An idle compiler holds nothing for its last caller: the plans of PIVOT IN
+                // sub-queries that a model compile left unclaimed are freed here, not at the
+                // next borrow.
+                delegate.clear();
                 if (pool.returnToPool(this)) {
                     return;
                 }

@@ -76,7 +76,7 @@ public class DeferredSymbolIndexRowCursorFactory implements FunctionBasedRowCurs
      * table does not have the symbol, which leaves the cursor empty.
      */
     public int getIndexKey() {
-        return symbolKey == SymbolTable.VALUE_NOT_FOUND ? -1 : symbolKey;
+        return symbolKey == SymbolTable.VALUE_NOT_FOUND ? -1 : TableUtils.toIndexKey(symbolKey);
     }
 
     @Override
