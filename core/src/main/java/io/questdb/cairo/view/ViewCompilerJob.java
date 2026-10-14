@@ -31,6 +31,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
@@ -151,15 +152,43 @@ public class ViewCompilerJob implements Job, QuietCloseable {
         }
 
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            final ExecutionModel executionModel = compiler.generateExecutionModel(viewDefinition.getViewSql(), executionContext);
+            final ViewMetadata viewMetadata = compileViewMetadata(engine, executionContext, viewToken, viewDefinition.getViewSql(), compiler);
             // view went from invalid to valid state
             // we should also update view metadata, if there was a change
-            final ViewMetadata viewMetadata = getUpdatedViewMetadata(executionContext, viewToken, compiler, executionModel);
             reset(engine, viewToken, viewMetadata, updateTimestamp);
         } catch (SqlException | CairoException e) {
             invalidate(engine, viewToken, e.getFlyweightMessage(), updateTimestamp, invalidateViewsSink);
         } catch (Throwable e) {
             invalidate(engine, viewToken, e.getMessage(), updateTimestamp, invalidateViewsSink);
+        }
+    }
+
+    // Compiles the view SQL and returns the view metadata if it changed, otherwise null.
+    // A table the view reads can change while the view compiles. The compiler retries an
+    // out-of-date table that code generation finds, but not one that execution model generation
+    // finds, where the optimiser opens table readers and runs PIVOT IN sub-queries. This method
+    // recompiles the view's own SQL on such an exception, up to the compiler's recompile limit,
+    // so that the race does not mark the view and its dependent views invalid.
+    private static @Nullable ViewMetadata compileViewMetadata(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            TableToken viewToken,
+            CharSequence viewSql,
+            SqlCompiler compiler
+    ) throws SqlException {
+        final int maxRecompileAttempts = engine.getConfiguration().getMaxSqlRecompileAttempts();
+        for (int retries = 0; ; retries++) {
+            try {
+                final ExecutionModel executionModel = compiler.generateExecutionModel(viewSql, executionContext);
+                return getUpdatedViewMetadata(executionContext, viewToken, compiler, executionModel);
+            } catch (TableReferenceOutOfDateException e) {
+                if (retries == maxRecompileAttempts) {
+                    throw e;
+                }
+                LOG.info().$("retrying view compilation [view=").$(viewToken)
+                        .$(", reason=").$safe(e.getFlyweightMessage())
+                        .I$();
+            }
         }
     }
 
