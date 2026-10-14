@@ -35,7 +35,6 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.SingleSymbolFilter;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
@@ -88,7 +87,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
 
             @Override
             public int getSymbolFilterKey() {
-                return symbolKey;
+                return symbolKey != SymbolTable.VALUE_NOT_FOUND ? TableUtils.toIndexKey(symbolKey) : SymbolTable.VALUE_NOT_FOUND;
             }
         };
     }
@@ -123,14 +122,7 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
         PartitionFrameCursor partitionFrameCursor = partitionFrameCursorFactory.getCursor(executionContext, columnIndexes, order);
         initFwdPageFrameCursor(partitionFrameCursor, executionContext);
         try {
-            if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-                final CharSequence symbol = symbolFunc.getStrA(null);
-                final StaticSymbolTable symbolMapReader = fwdPageFrameCursor.getSymbolTable(symbolColumnIndex);
-                symbolKey = symbolMapReader.keyOf(symbol);
-                if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKey = TableUtils.toIndexKey(symbolKey);
-                }
-            }
+            symbolKey = fwdPageFrameCursor.getSymbolTable(symbolColumnIndex).keyOf(symbolFunc.getStrA(null), symbolKey);
             return fwdPageFrameCursor;
         } catch (Throwable th) {
             Misc.free(fwdPageFrameCursor);
