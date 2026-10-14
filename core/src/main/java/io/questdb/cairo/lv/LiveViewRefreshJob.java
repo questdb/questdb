@@ -3144,7 +3144,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // break out of the loop, and hand off to o3Replay.
                 final long latestSeen = instance.getLatestSeenTs();
                 final long txnMinTs = dataInfo.getMinTimestamp();
-                boolean crossCommitO3 = latestSeen != Numbers.LONG_NULL && txnMinTs < latestSeen;
+                // A commit at or below a deferred repair's pinned snapshot is one that repair
+                // replayed, so its output can already be in the replacement the table applied.
+                // A replay that ran through the frontier left latestSeenTs at its newest row,
+                // and a commit whose rows tie it passes the strict compare: appending it would
+                // store those rows twice. The compare turns non-strict for such commits, so
+                // the drain hands them back to the repair it is repeating. One whose rows the
+                // replacement does not hold costs that repair and nothing else.
+                final boolean isReplayedByDeferredRepair = txn <= instance.getDeferredRepairPinnedSeqTxn();
+                boolean crossCommitO3 = latestSeen != Numbers.LONG_NULL
+                        && (txnMinTs < latestSeen || (isReplayedByDeferredRepair && txnMinTs == latestSeen));
                 long o3TriggerTs = txnMinTs;
                 // A REPLACE_RANGE data commit atomically deletes every base row in
                 // [rangeLo, rangeHi) and inserts the commit's rows, all inside the
@@ -10363,8 +10372,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // stops short and leaves the repair to be repeated: the base range stays
                     // unconsumed, the retire below leaves nothing describing superseded
                     // output, and the next turn blocks on this same seqTxn until the block
-                    // lands.
+                    // lands. The block holds the output of every base commit up to the pinned
+                    // snapshot, so the drain that repeats the repair must send each of those
+                    // commits back to it rather than append one whose rows tie the frontier
+                    // the replay left the runtime at (drainBaseWal).
                     instance.setPendingReplacementLvSeqTxn(repairPublication.getCommittedLvSeqTxn());
+                    instance.setDeferredRepairPinnedSeqTxn(plan.getPinnedSeqTxn());
                     LOG.critical().$("live view O3 replacement committed but did not apply, deferring repair [view=")
                             .$(viewName)
                             .$(", lvSeqTxn=").$(repairPublication.getCommittedLvSeqTxn())
@@ -10709,6 +10722,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * transactions nothing materialised. So the view stays blocked here until the
      * block lands, at which point the deferred repair simply runs again from the
      * base range it never consumed.
+     * <p>
+     * The block already holds that range's output, so the drain must not append any
+     * of it: a commit of that range whose rows tie the runtime frontier passes the
+     * strict out-of-order compare, and a turn budget can split it from the late
+     * commit that would discard it. The drain therefore compares non-strictly up to
+     * {@link LiveViewInstance#getDeferredRepairPinnedSeqTxn()}, which sends such a
+     * commit back to the repair.
      * <p>
      * Called under the refresh latch, before any other work in the turn.
      */

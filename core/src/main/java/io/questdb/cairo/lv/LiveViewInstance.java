@@ -672,6 +672,16 @@ public class LiveViewInstance implements QuietCloseable {
     // window through LiveViewRefreshJob.reconcileAppliedFloorAfterRestart. Mutated
     // and read under the refresh latch.
     private long pendingReplacementLvSeqTxn = Numbers.LONG_NULL;
+    // BASE space: the highest pinned base seqTxn of a repair whose replacement deferred
+    // on an unapplied apply, LONG_NULL before any did. The replacement holds the output
+    // of every base commit up to here while the consumed watermark stays below, so once
+    // it lands the drain that repeats the repair re-reads commits whose rows the table
+    // already holds. Up to this seqTxn a commit whose rows tie the runtime frontier is
+    // one of those, not new output to append. Only ever raised: the drain never reads at
+    // or below the consumed watermark, so a value it has passed decides nothing. In-RAM
+    // only - a restart clamps the watermark over the applied block instead (see
+    // pendingReplacementLvSeqTxn). Mutated and read under the refresh latch.
+    private long deferredRepairPinnedSeqTxn = Numbers.LONG_NULL;
     // Cached RecordToRowCopier (compiled bytecode bridging the SELECT cursor's record
     // shape to the LV's WalWriter row). Invalidated when the WalWriter's metadata version
     // moves past recordRowCopierMetadataVersion. Accessed only while the refresh latch is held.
@@ -1241,6 +1251,14 @@ public class LiveViewInstance implements QuietCloseable {
 
     public long getDedupRawWalCleanCycles() {
         return dedupRawWalCleanCycles;
+    }
+
+    /**
+     * @return the highest pinned base seqTxn of a repair whose replacement deferred, or
+     * {@link Numbers#LONG_NULL} when none did. See {@link #deferredRepairPinnedSeqTxn}.
+     */
+    public long getDeferredRepairPinnedSeqTxn() {
+        return deferredRepairPinnedSeqTxn;
     }
 
     public LiveViewDefinition getDefinition() {
@@ -3001,6 +3019,15 @@ public class LiveViewInstance implements QuietCloseable {
             compiledFactory = factory;
         }
         compiledPlan = plan;
+    }
+
+    /**
+     * Raises {@link #deferredRepairPinnedSeqTxn} to the pinned base seqTxn of a repair
+     * whose replacement deferred.
+     */
+    public void setDeferredRepairPinnedSeqTxn(long pinnedSeqTxn) {
+        // LONG_NULL is Long.MIN_VALUE, so the first deferral takes the max as well.
+        deferredRepairPinnedSeqTxn = Math.max(deferredRepairPinnedSeqTxn, pinnedSeqTxn);
     }
 
     /**

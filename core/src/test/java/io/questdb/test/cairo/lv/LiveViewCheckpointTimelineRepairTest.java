@@ -3078,6 +3078,16 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testStalledApplyRepeatsTheRepairOverACommitTyingTheFrontier() throws Exception {
+        assertStalledApplyRepeatsTheRepairOverATieCommit(false);
+    }
+
+    @Test
+    public void testStalledApplyRepeatsTheRepairOverACommitTyingTheFrontierInMemory() throws Exception {
+        assertStalledApplyRepeatsTheRepairOverATieCommit(true);
+    }
+
+    @Test
     public void testSuffixDeltaAccumulatesAcrossRepairs() throws Exception {
         assertMemoryLeak(() -> {
             createView();
@@ -3768,6 +3778,85 @@ public class LiveViewCheckpointTimelineRepairTest extends AbstractLiveViewTest {
                         2026-01-01T00:01:50.000000Z\ta\t38.0
                         2026-01-01T00:02:00.000000Z\ta\t42.0
                         """);
+    }
+
+    /**
+     * A stalled repair replays through the frontier, so its replacement holds the output of
+     * every base commit up to its pinned snapshot, the un-consumed commit of a row tying the
+     * frontier included. The drain that repeats the repair once the block lands re-reads
+     * that commit, on a turn of its own under a one-commit budget, and its row ties the
+     * frontier the replay left the runtime at, so a strict out-of-order compare lets it
+     * through. The turn's flush appended the row next to the copy the block holds, and the
+     * late commit's repair on the next turn covered its own segment only, which left both
+     * copies in place.
+     */
+    private void assertStalledApplyRepeatsTheRepairOverATieCommit(boolean isInMemory) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_TURN_MAX_COMMITS, 1);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL INDEX, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms " + (isInMemory ? "IN MEMORY 1h " : "")
+                    + "START FROM BEGINNING AS SELECT ts, sym, rank() OVER w AS r FROM base"
+                    + " WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR EXPRESSION timestamp_floor('1h', ts))");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("""
+                        INSERT INTO base VALUES
+                        ('2026-01-14T23:10:00.000000Z', 'AA', 1),
+                        ('2026-01-14T23:40:00.000000Z', 'AA', 2),
+                        ('2026-01-15T00:05:00.000000Z', 'ZZ', 3),
+                        ('2026-01-15T00:09:00.000000Z', 'AA', 4)
+                        """);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+
+                // A commit whose only row ties the frontier, drained under a held flush.
+                execute("INSERT INTO base VALUES ('2026-01-15T00:09:00.000000Z', 'ZZ', 5)");
+                drainWalQueue();
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                instance.setLastFlushTimeUs(currentMicros);
+                drainJob(job);
+                Assert.assertEquals(
+                        "the held flush must leave the tie commit unconsumed",
+                        processedBefore,
+                        instance.getLastProcessedSeqTxn()
+                );
+
+                // A late row a segment below, whose repair replays through the frontier.
+                execute("INSERT INTO base VALUES ('2026-01-14T23:50:00.000000Z', 'ZZ', 6)");
+                drainWalQueue();
+                setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                instance.setLastFlushTimeUs(currentMicros);
+                hooks(job).setSimulateRepairApplyFailure(true);
+                // Exactly one pass, so the fallback scan does not land the replacement.
+                Assert.assertTrue(job.run());
+                drainWalQueue();
+                Assert.assertNotEquals(
+                        "the repair's replacement must stay unapplied",
+                        Numbers.LONG_NULL,
+                        instance.getPendingReplacementLvSeqTxn()
+                );
+                Assert.assertEquals(processedBefore, instance.getLastProcessedSeqTxn());
+
+                hooks(job).setSimulateRepairApplyFailure(false);
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getPendingReplacementLvSeqTxn());
+            }
+
+            assertQuery("SELECT * FROM lv ORDER BY ts, sym")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tr
+                            2026-01-14T23:10:00.000000Z\tAA\t1
+                            2026-01-14T23:40:00.000000Z\tAA\t2
+                            2026-01-14T23:50:00.000000Z\tZZ\t1
+                            2026-01-15T00:05:00.000000Z\tZZ\t1
+                            2026-01-15T00:09:00.000000Z\tAA\t1
+                            2026-01-15T00:09:00.000000Z\tZZ\t2
+                            """);
+        });
     }
 
     private LiveViewInstance buildHistory(LiveViewRefreshJob job) throws Exception {
