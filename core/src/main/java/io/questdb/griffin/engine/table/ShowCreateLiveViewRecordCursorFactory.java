@@ -50,23 +50,32 @@ import org.jetbrains.annotations.NotNull;
 public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
     private static final RecordMetadata METADATA;
+    // the view a SHOW written in a view reads the live view through, see
+    // SqlExecutionContext.isTableFunctionVisible()
+    protected final SqlExecutionContext.TableFunctionView tableFunctionView;
     protected final int tokenPosition;
     protected final TableToken viewToken;
     private final ShowCreateLiveViewCursor cursor = new ShowCreateLiveViewCursor();
     private final boolean isTokenRebindingEnabled;
 
-    public ShowCreateLiveViewRecordCursorFactory(TableToken viewToken, int tokenPosition) {
-        this(viewToken, tokenPosition, true);
+    public ShowCreateLiveViewRecordCursorFactory(
+            TableToken viewToken,
+            int tokenPosition,
+            SqlExecutionContext.TableFunctionView tableFunctionView
+    ) {
+        this(viewToken, tokenPosition, tableFunctionView, true);
     }
 
     ShowCreateLiveViewRecordCursorFactory(
             TableToken viewToken,
             int tokenPosition,
+            SqlExecutionContext.TableFunctionView tableFunctionView,
             boolean isTokenRebindingEnabled
     ) {
         super(METADATA);
         this.viewToken = viewToken;
         this.tokenPosition = tokenPosition;
+        this.tableFunctionView = tableFunctionView;
         this.isTokenRebindingEnabled = isTokenRebindingEnabled;
     }
 
@@ -82,10 +91,9 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
         if (currentViewToken == null) {
             throw SqlException.$(tokenPosition, "live view does not exist [view=").put(viewToken.getTableName()).put(']');
         }
-        if (!currentViewToken.isLiveView()) {
-            throw SqlException.$(tokenPosition, "live view name expected, got table name");
-        }
-        return cursor.of(executionContext, currentViewToken, tokenPosition);
+        // of() checks visibility before the object kind, so a same-name table the caller may not see
+        // reports as missing
+        return cursor.of(executionContext, currentViewToken, tokenPosition, tableFunctionView);
     }
 
     @Override
@@ -153,8 +161,15 @@ public class ShowCreateLiveViewRecordCursorFactory extends AbstractRecordCursorF
         public ShowCreateLiveViewCursor of(
                 SqlExecutionContext executionContext,
                 TableToken viewToken,
-                int tokenPosition
+                int tokenPosition,
+                SqlExecutionContext.TableFunctionView tableFunctionView
         ) throws SqlException {
+            // Compilation already hid the view from a principal who may not see it, but the
+            // factory can come from a select cache that another principal populated. The
+            // message matches SqlParserCallback.getLiveViewToken() for a missing live view.
+            if (!executionContext.isTableFunctionVisible(viewToken, tableFunctionView)) {
+                throw SqlException.$(tokenPosition, "live view does not exist [view=").put(viewToken.getTableName()).put(']');
+            }
             this.viewToken = viewToken;
             this.executionContext = executionContext;
 

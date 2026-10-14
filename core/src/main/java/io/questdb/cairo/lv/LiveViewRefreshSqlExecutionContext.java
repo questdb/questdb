@@ -195,6 +195,11 @@ public class LiveViewRefreshSqlExecutionContext extends SqlExecutionContextImpl 
     }
 
     @Override
+    public boolean isLiveViewRefresh() {
+        return true;
+    }
+
+    @Override
     public boolean isPartitionFormatChangeTolerated() {
         return true;
     }

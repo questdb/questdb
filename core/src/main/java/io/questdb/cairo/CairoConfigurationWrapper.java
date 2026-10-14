@@ -1870,6 +1870,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlLatestByJitEnabled() {
+        return getDelegate().isSqlLatestByJitEnabled();
+    }
+
+    @Override
     public boolean isSqlOrderBySortEnabled() {
         return getDelegate().isSqlOrderBySortEnabled();
     }

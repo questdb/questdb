@@ -25,11 +25,14 @@
 package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.SymbolMapReaderImpl;
 import io.questdb.cairo.SymbolMapUtil;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.SymbolValueCountCollector;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.lv.LiveViewSymbolCache;
+import io.questdb.cairo.lv.LiveViewSymbolTable;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.vm.Vm;
@@ -463,6 +466,82 @@ public class SymbolMapTest extends AbstractCairoTest {
                     Assert.assertEquals(2, writer.put("A3"));
                     Assert.assertEquals(1, writer.put("A2"));
                     Assert.assertEquals(0, writer.put("A1"));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testKeyOfCachedKeyLeavesReaderCacheEmpty() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int n = 1000;
+                create(path, "x", n, true);
+                try (SymbolMapWriter writer = new SymbolMapWriter(
+                        configuration,
+                        path,
+                        "x",
+                        COLUMN_NAME_TXN_NONE,
+                        0,
+                        -1,
+                        NOOP_COLLECTOR,
+                        -1
+                )) {
+                    for (int i = 0; i < n; i++) {
+                        writer.put("key" + i);
+                    }
+                }
+
+                try (SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, n)) {
+                    Assert.assertTrue(reader.isCached());
+                    Assert.assertEquals(n - 1, reader.keyOf("key" + (n - 1), n - 1));
+                    Assert.assertEquals(5, reader.keyOf("key5", n - 1));
+                    Assert.assertEquals(7, reader.keyOf("key7", SymbolTable.VALUE_NOT_FOUND));
+                    Assert.assertEquals(9, reader.keyOf("key9", n));
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, reader.keyOf("missing", 3));
+                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, reader.keyOf(null, 3));
+                    Assert.assertEquals(0, reader.getCacheSize());
+                    TestUtils.assertEquals("key3", reader.valueOf(3));
+                    Assert.assertEquals(4, reader.getCacheSize());
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testKeyOfCachedKeyThroughLiveViewOverlayLeavesReaderCacheEmpty() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            try (Path path = new Path().of(configuration.getDbRoot())) {
+                final int n = 1000;
+                create(path, "x", n, true);
+                try (SymbolMapWriter writer = new SymbolMapWriter(
+                        configuration,
+                        path,
+                        "x",
+                        COLUMN_NAME_TXN_NONE,
+                        0,
+                        -1,
+                        NOOP_COLLECTOR,
+                        -1
+                )) {
+                    for (int i = 0; i < n; i++) {
+                        writer.put("key" + i);
+                    }
+                }
+
+                final IntList columnTypes = new IntList();
+                columnTypes.add(ColumnType.SYMBOL);
+                try (
+                        SymbolMapReaderImpl reader = new SymbolMapReaderImpl(configuration, path, "x", COLUMN_NAME_TXN_NONE, n);
+                        LiveViewSymbolCache cache = new LiveViewSymbolCache(columnTypes);
+                        LiveViewSymbolTable overlay = new LiveViewSymbolTable().of(reader, cache, 0, 0, false, false)
+                ) {
+                    Assert.assertTrue(reader.isCached());
+                    Assert.assertEquals(n - 1, overlay.keyOf("key" + (n - 1), n - 1));
+                    Assert.assertEquals(5, overlay.keyOf("key5", n - 1));
+                    Assert.assertEquals(SymbolTable.VALUE_NOT_FOUND, overlay.keyOf("missing", n));
+                    Assert.assertEquals(SymbolTable.VALUE_IS_NULL, overlay.keyOf(null, 3));
+                    Assert.assertEquals(0, reader.getCacheSize());
                 }
             }
         });

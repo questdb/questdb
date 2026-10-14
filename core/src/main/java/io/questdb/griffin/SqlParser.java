@@ -34,6 +34,7 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.MetadataCacheReader;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewDefinition;
@@ -267,6 +268,8 @@ public class SqlParser {
     private int declaredVariableNodeCount;
     private int digit;
     private boolean pivotMode = false;
+    // the principal of the statement being parsed, see isExpandableView()
+    private SecurityContext securityContext;
     // The length of the text the statement came in, for its parse budget, see checkParseBudget().
     private int statementTextLength;
     private boolean subQueryMode = false;
@@ -1081,6 +1084,9 @@ public class SqlParser {
             idleViewLexers.add(viewLexer);
         }
         final ExpressionNode viewExpr = literal(viewDefinition.getViewToken().getTableName(), viewPosition);
+        // the definition the model is expanded from, whose dependencies the view's authority covers,
+        // see TableUtils.getTableFunctionView()
+        viewExpr.tableFunctionView = new SqlExecutionContext.TableFunctionView(viewDefinition);
         viewModel.setOriginatingViewNameExpr(viewExpr);
         viewModel.setViewNameExpr(viewExpr);
         return viewModel;
@@ -1420,6 +1426,13 @@ public class SqlParser {
         return createTableOperationBuilder.getColumnModel(columnName);
     }
 
+    // Resolves the name of an existing object the statement acts on. An object the principal may not see
+    // resolves like a missing one, so that neither a kind check nor its metadata can disclose it.
+    private @Nullable TableToken getVisibleTableTokenIfExists(CharSequence tableName) {
+        final TableToken tableToken = cairoEngine.getTableTokenIfExists(tableName);
+        return tableToken != null && (securityContext == null || securityContext.isTableVisible(tableToken)) ? tableToken : null;
+    }
+
     private boolean isCurrentRow(GenericLexer lexer, CharSequence tok) throws SqlException {
         if (isCurrentKeyword(tok)) {
             tok = tok(lexer, "'row'");
@@ -1440,6 +1453,19 @@ public class SqlParser {
             throw SqlException.$(lexer.lastTokenPosition(), "'prevailing' expected");
         }
         return false;
+    }
+
+    // Whether a FROM or JOIN reference to the object should expand as a view. A view the principal
+    // may not see stays unexpanded: it reaches the optimiser as a plain table reference, which fails
+    // there exactly like a missing table does, at the same stage and echoing the name as spelled in
+    // the statement. Only references the statement itself makes are subject to the check; the
+    // objects a view reads are accessed through the view, so references inside a view definition
+    // being expanded always resolve.
+    private boolean isExpandableView(@Nullable TableToken tableToken) {
+        if (tableToken == null || !tableToken.isView()) {
+            return false;
+        }
+        return viewsBeingCompiled.size() > 0 || securityContext == null || securityContext.isTableVisible(tableToken);
     }
 
     private boolean isFieldTerm(CharSequence tok) {
@@ -1623,6 +1649,7 @@ public class SqlParser {
         // set; parseCreateLiveView turns it on for the CREATE body itself, where
         // the flag is still false. Every other statement rejects the clause.
         expressionParser.setAnchorAllowed(executionContext.isLiveViewCompile());
+        securityContext = executionContext.getSecurityContext();
         final CharSequence tok = tok(lexer, "'create', 'rename' or 'select'");
 
         if (isExplainKeyword(tok)) {
@@ -1718,7 +1745,7 @@ public class SqlParser {
         expectTok(lexer, "view");
 
         CharSequence tok = tok(lexer, "view name");
-        final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
+        final TableToken tt = getVisibleTableTokenIfExists(unquote(tok));
         if (tt == null) {
             throw SqlException.viewDoesNotExist(lexer.lastTokenPosition(), tok);
         }
@@ -2487,7 +2514,8 @@ public class SqlParser {
         }
         String designatedTsName = null;
         if (baseTableName != null) {
-            final TableToken baseToken = cairoEngine.getTableTokenIfExists(baseTableName);
+            // the error below names the designated timestamp, which must not disclose an invisible table
+            final TableToken baseToken = getVisibleTableTokenIfExists(baseTableName);
             if (baseToken != null) {
                 try (MetadataCacheReader metaRO = cairoEngine.getMetadataCache().readLock()) {
                     final CairoTable baseTable = metaRO.getTable(baseToken);
@@ -3459,7 +3487,7 @@ public class SqlParser {
 
             // Basic validation - check all nested models that read from the base table for window functions, unions, FROM-TO, or FILL.
             if (!tableNames.contains(baseTableNameStr)) {
-                final TableToken baseTableToken = cairoEngine.getTableTokenIfExists(baseTableNameStr);
+                final TableToken baseTableToken = getVisibleTableTokenIfExists(baseTableNameStr);
                 if (baseTableToken != null && baseTableToken.isView()) {
                     throw SqlException.position(baseTableNamePos)
                             .put("base table should be a physical table, cannot be a view: ").put(baseTableName);
@@ -5031,7 +5059,7 @@ public class SqlParser {
             }
 
             final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
-            if (tt != null && tt.isView()) {
+            if (isExpandableView(tt)) {
                 compileViewQuery(model, tt, lexer.lastTokenPosition());
                 tok = setModelAliasAndTimestamp(lexer, model);
                 // expect "(" in case of sub-query
@@ -5819,7 +5847,7 @@ public class SqlParser {
         joinModel.setJoinKeywordPosition(errorPos);
 
         final TableToken tt = cairoEngine.getTableTokenIfExists(unquote(tok));
-        if (tt != null && tt.isView()) {
+        if (isExpandableView(tt)) {
             compileViewQuery(joinModel, tt, lexer.lastTokenPosition());
         } else if (Chars.equals(tok, '(')) {
             joinModel.setNestedModel(parseAsSubQueryAndExpectClosingBrace(lexer, parent, false, sqlParserCallback, decls));
@@ -8473,6 +8501,7 @@ public class SqlParser {
         aliasSequenceMap.clear();
         pivotAliasMap.clear();
         clearRecordedViews();
+        securityContext = null;
     }
 
     ExpressionNode expr(
