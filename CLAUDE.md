@@ -434,12 +434,16 @@ python3 ci/incremental_compile.py -- test -Dtest=ClassNameTest
 ```
 
 Maven's compiler plugin recompiles all of core's ~6,000 sources (about 40
-seconds) whenever any one of them changed. The script compiles only the changed
-sources, then reads the class files to confirm that nothing other classes
+seconds) whenever any one of them changed. The script compiles the changed
+sources, then reads the class files to see whether anything other classes
 compile against changed: signatures, supertypes, non-private members, constant
-values. If something did, or a source was deleted, it falls back to Maven's full
-rebuild. An edit to a method body or a private member compiles in about two
-seconds.
+values. If not, it is done: an edit to a method body or a private member
+compiles in about two seconds. If so, it recompiles only the sources that use
+what changed, found in the class files and, for constants and imports, in the
+sources: a new public method on a leaf class compiles in about six seconds, on
+a widely used class such as `TableUtils` in about 25. When the dependents
+exceed about half of the code, it falls back to Maven's full rebuild. Add
+`--verbose` to see what compiles and why.
 
 Every source file must compile to a class of its own name; `SourceFileNameTest`
 checks it. A file whose only top-level type has another name, or an empty file,

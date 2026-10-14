@@ -52,7 +52,7 @@ that no longer matches), and the script names those files: re-run their tests
 without --append.
 
 The script compiles through ci/incremental_compile.py, so a run compiles only
-the changed sources unless their API changed.
+the changed sources and the sources that depend on what changed.
 
 Prerequisites: the java-questdb-client version core/pom.xml expects, installed
 in ~/.m2 (see CLAUDE.md), and for Rust the llvm-tools component of the qdbr
