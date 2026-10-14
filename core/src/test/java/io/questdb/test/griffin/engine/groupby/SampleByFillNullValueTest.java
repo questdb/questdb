@@ -688,6 +688,30 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullOuterBucketShapedFloorSameStrideDoesNotRefill() throws Exception {
+        // Same shape with the inner bucket's own stride, so the outer key is structurally
+        // identical to the node that rewriteSampleBy recorded. Only node identity tells
+        // the two apart: a structural match would hand the inner fill to the outer
+        // GROUP BY and re-insert the filtered 02:00 gap row.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("""
+                    SELECT timestamp_floor_utc('1h', ts, null, '00:00', null) AS ts, count() AS c
+                    FROM (SELECT ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL))
+                    WHERE v > 1.5
+                    ORDER BY ts""")
+                    .timestamp("ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            ts\tc
+                            2024-01-01T01:00:00.000000Z\t1
+                            2024-01-01T03:00:00.000000Z\t1
+                            """);
+        });
+    }
+
+    @Test
     public void testFillNullOuterFilteredGroupByDoesNotRefill() throws Exception {
         // The filter removes the inner 02:00 gap row; a leaked outer fill re-inserted it.
         assertMemoryLeak(() -> {
