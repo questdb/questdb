@@ -26,6 +26,7 @@ package io.questdb.test.griffin.engine.join;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -47,6 +48,63 @@ import org.junit.Test;
 import java.util.Arrays;
 
 public class AsOfJoinTest extends AbstractCairoTest {
+    // Rows of the joins over createMixedTimestampKeyTables(). t ASOF JOIN p ON t.n = p.a: the key
+    // compares nanoseconds, NULL with NULL and 1970-01-01 with 1970-01-01.
+    private static final String TS_KEY_MASTER_NANOS_ROWS = """
+            id\tpid\ta
+            1\t11\t
+            2\t10\t1970-01-01T00:00:00.000000Z
+            3\t10\t1970-01-01T00:00:00.000000Z
+            4\t11\t
+            5\t12\t1970-01-01T00:00:00.000001Z
+            6\tnull\t
+            7\tnull\t
+            """;
+    // t ASOF JOIN p ON t.m = p.a: a key of two TIMESTAMP columns compares microseconds, so 9999-12-31
+    // matches too
+    private static final String TS_KEY_MICROS_ROWS = """
+            id\tpid\ta
+            1\t11\t
+            2\t10\t1970-01-01T00:00:00.000000Z
+            3\t11\t
+            4\t10\t1970-01-01T00:00:00.000000Z
+            5\t12\t1970-01-01T00:00:00.000001Z
+            6\t12\t1970-01-01T00:00:00.000001Z
+            7\t13\t9999-12-31T23:59:59.999999Z
+            """;
+    // t ASOF JOIN p ON t.n = p.a AND t.m = p.a: only rows whose two columns hold the same instant match
+    private static final String TS_KEY_SHARED_MICROS_ROWS = """
+            id\tpid\ta
+            1\t11\t
+            2\t10\t1970-01-01T00:00:00.000000Z
+            3\tnull\t
+            4\tnull\t
+            5\t12\t1970-01-01T00:00:00.000001Z
+            6\tnull\t
+            7\tnull\t
+            """;
+    // t ASOF JOIN pn ON t.m = pn.a AND t.n = pn.a
+    private static final String TS_KEY_SHARED_NANOS_ROWS = """
+            id\tpid\ta
+            1\t21\t
+            2\t20\t1970-01-01T00:00:00.000000000Z
+            3\tnull\t
+            4\tnull\t
+            5\t22\t1970-01-01T00:00:00.000001000Z
+            6\tnull\t
+            7\tnull\t
+            """;
+    // t ASOF JOIN pn ON t.m = pn.a: the key converts the master column
+    private static final String TS_KEY_SLAVE_NANOS_ROWS = """
+            id\tpid\ta
+            1\t21\t
+            2\t20\t1970-01-01T00:00:00.000000000Z
+            3\t21\t
+            4\t20\t1970-01-01T00:00:00.000000000Z
+            5\t22\t1970-01-01T00:00:00.000001000Z
+            6\t22\t1970-01-01T00:00:00.000001000Z
+            7\tnull\t
+            """;
     private final String defaultIndexTypeName;
     private final TestTimestampType leftTableTimestampType;
     private final TestTimestampType rightTableTimestampType;
@@ -1513,6 +1571,53 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnKeysSharingColumnMixedTimestampsCopierTypes() throws Exception {
+        // the generated record copier and the loop-based one convert a TIMESTAMP key column alike; a join
+        // key copier never needs chunks, so a forced chunked copier is a single-method one
+        assertMemoryLeak(() -> {
+            createMixedTimestampKeyTables();
+            for (int copierType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                assertMixedTimestampKeyJoins("p", "t.n = p.a AND t.m = p.a", TS_KEY_SHARED_MICROS_ROWS, true);
+                assertMixedTimestampKeyJoins("pn", "t.m = pn.a AND t.n = pn.a", TS_KEY_SHARED_NANOS_ROWS, true);
+                assertMixedTimestampKeyJoins("p", "t.n = p.a", TS_KEY_MASTER_NANOS_ROWS, false);
+                assertMixedTimestampKeyJoins("pn", "t.m = pn.a", TS_KEY_SLAVE_NANOS_ROWS, false);
+            }
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnKeysSharingColumnMixedTimestampsKeepNull() throws Exception {
+        // p.a is compared with the TIMESTAMP_NS t.n and the TIMESTAMP t.m, so both key positions compare
+        // nanoseconds, and the record copiers convert t.m and p.a. A NULL TIMESTAMP must stay NULL
+        // rather than turn into 1970-01-01: t1 matches the NULL row of p, t2 its 1970-01-01 row, and t3
+        // and t4, whose two columns disagree, match nothing. t6 is 500 nanoseconds off the 1 microsecond
+        // row of p, and t7 compares a TIMESTAMP outside the TIMESTAMP_NS range, which must not fail the
+        // query. Every order of the equalities returns the rows of the ON clause. With the TIMESTAMP_NS
+        // pn.a, the key positions compare nanoseconds already, and the copier converts t.m.
+        assertMemoryLeak(() -> {
+            createMixedTimestampKeyTables();
+            for (String on : new String[]{"t.n = p.a AND t.m = p.a", "t.m = p.a AND t.n = p.a", "p.a = t.n AND p.a = t.m"}) {
+                assertMixedTimestampKeyJoins("p", on, TS_KEY_SHARED_MICROS_ROWS, true);
+                assertQuery("SELECT t.id, p.pid, p.a FROM t SPLICE JOIN p ON " + on)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .withPlanContaining("Splice Join")
+                        .returns(spliceRows("p", TS_KEY_SHARED_MICROS_ROWS));
+            }
+            for (String on : new String[]{"t.m = pn.a AND t.n = pn.a", "pn.a = t.n AND pn.a = t.m"}) {
+                assertMixedTimestampKeyJoins("pn", on, TS_KEY_SHARED_NANOS_ROWS, true);
+                assertQuery("SELECT t.id, pn.pid, pn.a FROM t SPLICE JOIN pn ON " + on)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(spliceRows("pn", TS_KEY_SHARED_NANOS_ROWS));
+            }
+            // a key of two TIMESTAMP columns alone compares microseconds
+            assertMixedTimestampKeyJoins("p", "t.m = p.a", TS_KEY_MICROS_ROWS, false);
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnKeysSharingColumnMixedTypes() throws Exception {
         // sl.s, sl.t and sl.sy each pair with two master columns whose key types differ. The keys of a
         // shared column compare the widest type of the group, VARCHAR or TIMESTAMP_NS, so a master row
@@ -2401,6 +2506,30 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             2\tnull
                             3\tnull
                             """);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnTimestampKeyComparedWithNanosKeepsNull() throws Exception {
+        // A key of a TIMESTAMP and a TIMESTAMP_NS column compares nanoseconds, and the record copier
+        // converts the TIMESTAMP column, of the right side or of the left side. NULL matches NULL and
+        // 1970-01-01 matches 1970-01-01, as in a key of two TIMESTAMP columns (#7757).
+        assertMemoryLeak(() -> {
+            createMixedTimestampKeyTables();
+            for (String on : new String[]{"t.n = p.a", "p.a = t.n"}) {
+                assertMixedTimestampKeyJoins("p", on, TS_KEY_MASTER_NANOS_ROWS, false);
+                assertQuery("SELECT t.id, p.pid, p.a FROM t SPLICE JOIN p ON " + on)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(spliceRows("p", TS_KEY_MASTER_NANOS_ROWS));
+            }
+            for (String on : new String[]{"t.m = pn.a", "pn.a = t.m"}) {
+                assertMixedTimestampKeyJoins("pn", on, TS_KEY_SLAVE_NANOS_ROWS, false);
+                assertQuery("SELECT t.id, pn.pid, pn.a FROM t SPLICE JOIN pn ON " + on)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns(spliceRows("pn", TS_KEY_SLAVE_NANOS_ROWS));
+            }
         });
     }
 
@@ -7477,6 +7606,26 @@ public class AsOfJoinTest extends AbstractCairoTest {
         return lines[0] + '\n' + String.join("\n", rows) + '\n';
     }
 
+    // A SPLICE JOIN of t with p or pn of createMixedTimestampKeyTables() returns the rows of the right
+    // side, which all precede the rows of t, and then the ASOF rows of t.
+    private static String spliceRows(String right, String asOfRows) {
+        final String rightRows = "p".equals(right)
+                ? """
+                null\t10\t1970-01-01T00:00:00.000000Z
+                null\t11\t
+                null\t12\t1970-01-01T00:00:00.000001Z
+                null\t13\t9999-12-31T23:59:59.999999Z
+                """
+                : """
+                null\t20\t1970-01-01T00:00:00.000000000Z
+                null\t21\t
+                null\t22\t1970-01-01T00:00:00.000001000Z
+                null\t23\t1970-01-01T00:00:00.000001500Z
+                """;
+        final int header = asOfRows.indexOf('\n') + 1;
+        return asOfRows.substring(0, header) + rightRows + asOfRows.substring(header);
+    }
+
     private void assertAlgoAndResult(String queryBody, String hint, String expectedAlgo, String expectedResult) throws Exception {
         assertAlgoAndResult(queryBody, hint, expectedAlgo, expectedResult, false);
     }
@@ -7598,6 +7747,42 @@ public class AsOfJoinTest extends AbstractCairoTest {
                         """, leftTableTimestampType.getTypeName()));
     }
 
+    private void assertMixedTimestampKeyJoin(String query, String expected, CharSequence... planFragments) throws Exception {
+        assertQuery(query)
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .withPlanContaining(planFragments)
+                .returns(expected);
+    }
+
+    // Runs t ASOF JOIN right and t LT JOIN right on each algorithm that compares the keys with record
+    // copiers: the ASOF Fast, Dense and Light algorithms, ASOF with TOLERANCE and the joins over a
+    // filtered right side, and the full-fat joins, forced and over a UNION ALL, which read right.a back
+    // from the join map.
+    private void assertMixedTimestampKeyJoins(String right, String on, String expected, boolean hasSharedKey) throws Exception {
+        final String columns = "t.id, " + right + ".pid, " + right + ".a FROM t ";
+        final String filtered = "(SELECT * FROM " + right + " WHERE pid > 0) " + right;
+        final String union = "((SELECT * FROM " + right + " UNION ALL SELECT * FROM " + right + " WHERE 1 = 0) TIMESTAMP(ts)) " + right;
+        final String fast = hasSharedKey ? "sharedKeyCheck: true" : "AsOf Join Fast";
+        assertMixedTimestampKeyJoin("SELECT " + columns + "ASOF JOIN " + right + " ON " + on, expected, "AsOf Join Fast", fast);
+        assertMixedTimestampKeyJoin("SELECT /*+ asof_dense(t " + right + ") */ " + columns + "ASOF JOIN " + right + " ON " + on, expected, "AsOf Join Dense");
+        assertMixedTimestampKeyJoin("SELECT /*+ asof_linear(t " + right + ") */ " + columns + "ASOF JOIN " + right + " ON " + on, expected, "AsOf Join Light");
+        assertMixedTimestampKeyJoin("SELECT " + columns + "ASOF JOIN " + right + " ON " + on + " TOLERANCE 1h", expected, "AsOf Join Fast", fast);
+        assertMixedTimestampKeyJoin("SELECT " + columns + "ASOF JOIN " + filtered + " ON " + on, expected, "Filtered AsOf Join Fast", fast);
+        assertMixedTimestampKeyJoin("SELECT " + columns + "LT JOIN " + right + " ON " + on, expected, "Lt Join Light");
+        assertMixedTimestampKeyJoin("SELECT " + columns + "LT JOIN " + filtered + " ON " + on, expected, "Lt Join Light");
+        for (String join : new String[]{"ASOF", "LT"}) {
+            assertQuery("SELECT " + columns + join + " JOIN " + right + " ON " + on)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .fullFatJoins()
+                    .returns(expected);
+            assertMixedTimestampKeyJoin("SELECT " + columns + join + " JOIN " + union + " ON " + on, expected, "Union All");
+        }
+    }
+
     private void assertResultSetsMatch(String leftTable, String rightTable) throws Exception {
         final StringSink expectedSink = new StringSink();
         // equivalent of the below query, but uses slow factory
@@ -7620,6 +7805,41 @@ public class AsOfJoinTest extends AbstractCairoTest {
                     ('2024-01-01T00:00:02.000000Z', 'MSFT', 'sell', 'sell', 2),
                     ('2024-01-01T00:00:03.000000Z', 'IBM', 'buy', 'sell', 3),
                     ('2024-01-01T00:00:04.000000Z', 'AAPL', 'buy', 'buy', 4)
+                """);
+    }
+
+    // p.a holds 1970-01-01, NULL, 1 microsecond and 9999-12-31, a TIMESTAMP outside the TIMESTAMP_NS
+    // range, and the TIMESTAMP_NS pn.a holds 1970-01-01, NULL, 1,000 and 1,500 nanoseconds. Each row of
+    // t pairs a TIMESTAMP m with a TIMESTAMP_NS n: both NULL, both 1970-01-01, NULL next to 1970-01-01
+    // and the reverse, 1 microsecond in both units, 1 microsecond next to 1,500 nanoseconds, and
+    // 9999-12-31 next to the last TIMESTAMP_NS value. The right sides precede every row of t.
+    private void createMixedTimestampKeyTables() throws SqlException {
+        execute("CREATE TABLE p (pid INT, a TIMESTAMP, ts TIMESTAMP) TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO p VALUES
+                    (10, 0::TIMESTAMP, '2024-01-01T00:00:00.000000Z'),
+                    (11, NULL, '2024-01-01T00:00:01.000000Z'),
+                    (12, 1::TIMESTAMP, '2024-01-01T00:00:02.000000Z'),
+                    (13, '9999-12-31T23:59:59.999999Z', '2024-01-01T00:00:03.000000Z')
+                """);
+        execute("CREATE TABLE pn (pid INT, a TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO pn VALUES
+                    (20, 0::TIMESTAMP_NS, '2024-01-01T00:00:00.000000Z'),
+                    (21, NULL, '2024-01-01T00:00:01.000000Z'),
+                    (22, 1_000::TIMESTAMP_NS, '2024-01-01T00:00:02.000000Z'),
+                    (23, 1_500::TIMESTAMP_NS, '2024-01-01T00:00:03.000000Z')
+                """);
+        execute("CREATE TABLE t (id INT, m TIMESTAMP, n TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts)");
+        execute("""
+                INSERT INTO t VALUES
+                    (1, NULL, NULL, '2024-01-01T00:00:05.000000Z'),
+                    (2, 0::TIMESTAMP, 0::TIMESTAMP_NS, '2024-01-01T00:00:06.000000Z'),
+                    (3, NULL, 0::TIMESTAMP_NS, '2024-01-01T00:00:07.000000Z'),
+                    (4, 0::TIMESTAMP, NULL, '2024-01-01T00:00:08.000000Z'),
+                    (5, 1::TIMESTAMP, 1_000::TIMESTAMP_NS, '2024-01-01T00:00:09.000000Z'),
+                    (6, 1::TIMESTAMP, 1_500::TIMESTAMP_NS, '2024-01-01T00:00:10.000000Z'),
+                    (7, '9999-12-31T23:59:59.999999Z', '2262-04-11T23:47:16.854775807Z', '2024-01-01T00:00:11.000000Z')
                 """);
     }
 

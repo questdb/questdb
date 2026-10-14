@@ -24,11 +24,13 @@
 
 package io.questdb.test.griffin.engine.join;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
@@ -8706,6 +8708,81 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testJoinOnKeysSharingColumnMixedTimestampsKeepNull() throws Exception {
+        // Written in the first order, the equalities leave the keys hs.m = hm.n and hs.m = hm.m, which
+        // share hs.m and compare nanoseconds, so the record copiers convert hs.m and hm.m. A NULL
+        // TIMESTAMP must stay NULL rather than turn into 1970-01-01: the NULL rows match each other, and
+        // the rows whose m and n disagree, NULL next to 1970-01-01 or 1 microsecond next to 1,500
+        // nanoseconds, match nothing. The second order leaves one key of two TIMESTAMP columns and
+        // returns the same rows.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE hm (id INT, m TIMESTAMP, n TIMESTAMP_NS)");
+            execute("""
+                    INSERT INTO hm VALUES
+                        (1, NULL, NULL),
+                        (2, 0::TIMESTAMP, 0::TIMESTAMP_NS),
+                        (3, '2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000000Z'),
+                        (4, NULL, 0::TIMESTAMP_NS),
+                        (5, 1::TIMESTAMP, 1_500::TIMESTAMP_NS)
+                    """);
+            execute("CREATE TABLE hs (sid INT, m TIMESTAMP, n TIMESTAMP_NS)");
+            execute("""
+                    INSERT INTO hs VALUES
+                        (10, NULL, NULL),
+                        (11, 0::TIMESTAMP, 0::TIMESTAMP_NS),
+                        (12, '2024-01-01T00:00:00.000000Z', '2024-01-01T00:00:00.000000000Z'),
+                        (13, NULL, 0::TIMESTAMP_NS),
+                        (14, 1::TIMESTAMP, 1_500::TIMESTAMP_NS)
+                    """);
+            final String[] joins = {"JOIN", "LEFT JOIN", "RIGHT JOIN", "FULL JOIN"};
+            final String[] expectedRows = {
+                    """
+                    1\t10
+                    2\t11
+                    3\t12
+                    """,
+                    """
+                    1\t10
+                    2\t11
+                    3\t12
+                    4\tnull
+                    5\tnull
+                    """,
+                    """
+                    null\t13
+                    null\t14
+                    1\t10
+                    2\t11
+                    3\t12
+                    """,
+                    """
+                    null\t13
+                    null\t14
+                    1\t10
+                    2\t11
+                    3\t12
+                    4\tnull
+                    5\tnull
+                    """
+            };
+            final String[] onClauses = {
+                    "hs.m = hm.m AND hs.n = hm.n AND hs.m = hm.n",
+                    "hs.n = hm.n AND hs.m = hm.n AND hs.m = hm.m"
+            };
+            for (int i = 0; i < joins.length; i++) {
+                final String expected = "id\tsid\n" + expectedRows[i];
+                for (int j = 0; j < onClauses.length; j++) {
+                    final String query = "SELECT hm.id, hs.sid FROM hm " + joins[i] + " hs ON " + onClauses[j] + " ORDER BY 1, 2";
+                    final QueryAssertion light = assertQuery(query).noLeakCheck();
+                    (j == 0 ? light.withPlanContaining("condition: hs.m=hm.n and hs.m=hm.m") : light).returns(expected);
+                    // only the full-fat INNER join knows its size
+                    assertQuery(query).noLeakCheck().expectSize(i == 0).fullFatJoins().returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testJoinOnKeysSharingColumnMixedTypes() throws Exception {
         // s.s1 is compared with the SYMBOL m.s1 and the VARCHAR m.v, and s.st with the STRING m.st and
         // m.v. The record copier encodes the shared column once, so both key positions compare VARCHAR
@@ -8814,6 +8891,113 @@ public class JoinTest extends AbstractCairoTest {
                             x\ty\t1\ty\tx\tx\t100
                             q\tr\t2\t\t\t\tnull
                             """);
+        });
+    }
+
+    @Test
+    public void testJoinOnTimestampKeyComparedWithNanosKeepsNull() throws Exception {
+        // A key of a TIMESTAMP and a TIMESTAMP_NS column compares nanoseconds, and the record copier
+        // converts ta.x, on the build or the probe side. NULL matches NULL and 1970-01-01 matches
+        // 1970-01-01, as the = operator and a key of two TIMESTAMP columns do (#7757). 1 microsecond
+        // matches 1,000 nanoseconds and not 1,500, the last TIMESTAMP_NS microsecond matches, and
+        // 9999-12-31, outside the TIMESTAMP_NS range, matches nothing and does not fail the query.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ta (id INT, x TIMESTAMP)");
+            execute("""
+                    INSERT INTO ta VALUES
+                        (1, NULL),
+                        (2, '2024-01-01T00:00:00.000000Z'),
+                        (3, '1970-01-01T00:00:00.000000Z'),
+                        (4, 1::TIMESTAMP),
+                        (5, '9999-12-31T23:59:59.999999Z'),
+                        (6, '2262-04-11T23:47:16.854775Z')
+                    """);
+            execute("CREATE TABLE tb (k TIMESTAMP_NS, v INT)");
+            execute("""
+                    INSERT INTO tb VALUES
+                        (NULL, 10),
+                        ('2024-01-01T00:00:00.000000000Z', 20),
+                        ('1970-01-01T00:00:00.000000000Z', 30),
+                        (1_500::TIMESTAMP_NS, 40),
+                        (1_000::TIMESTAMP_NS, 50),
+                        ('2262-04-11T23:47:16.854775000Z', 60)
+                    """);
+            final String inner = """
+                    id\tv
+                    1\t10
+                    2\t20
+                    3\t30
+                    4\t50
+                    6\t60
+                    """;
+            final String withTa = """
+                    id\tv
+                    1\t10
+                    2\t20
+                    3\t30
+                    4\t50
+                    5\tnull
+                    6\t60
+                    """;
+            final String withTb = """
+                    id\tv
+                    null\t40
+                    1\t10
+                    2\t20
+                    3\t30
+                    4\t50
+                    6\t60
+                    """;
+            final String full = """
+                    id\tv
+                    null\t40
+                    1\t10
+                    2\t20
+                    3\t30
+                    4\t50
+                    5\tnull
+                    6\t60
+                    """;
+            final String[][] joins = {
+                    {"ta JOIN tb", inner},
+                    {"tb JOIN ta", inner},
+                    {"ta LEFT JOIN tb", withTa},
+                    {"tb LEFT JOIN ta", withTb},
+                    {"ta RIGHT JOIN tb", withTb},
+                    {"tb RIGHT JOIN ta", withTa},
+                    {"ta FULL JOIN tb", full},
+                    {"tb FULL JOIN ta", full}
+            };
+            // the generated record copier and the loop-based one convert ta.x alike; a join key copier
+            // never needs chunks, so a forced chunked copier is a single-method one
+            for (int copierType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+                setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, copierType);
+                for (String[] join : joins) {
+                    // only the full-fat INNER join knows its size
+                    final boolean isOuter = join[0].contains("LEFT") || join[0].contains("RIGHT") || join[0].contains("FULL");
+                    for (String on : new String[]{"ta.x = tb.k", "tb.k = ta.x"}) {
+                        final String query = "SELECT ta.id, tb.v FROM " + join[0] + " ON " + on + " ORDER BY 1, 2";
+                        assertQuery(query).noLeakCheck().returns(join[1]);
+                        assertQuery(query).noLeakCheck().expectSize(!isOuter).fullFatJoins().returns(join[1]);
+                    }
+                }
+                // the optimiser turns the equality into the key of a hash join
+                assertQuery("SELECT ta.id, tb.v FROM ta CROSS JOIN tb WHERE ta.x = tb.k ORDER BY 1, 2")
+                        .noLeakCheck()
+                        .withPlanContaining("Hash Join Light", "condition: tb.k=ta.x")
+                        .returns(inner);
+                // an ON conjunct that reads both sides filters the matches of the key
+                final String[][] filteredJoins = {
+                        {"LEFT JOIN", withTa},
+                        {"RIGHT JOIN", withTb},
+                        {"FULL JOIN", full}
+                };
+                for (String[] join : filteredJoins) {
+                    final String query = "SELECT ta.id, tb.v FROM ta " + join[0] + " tb ON ta.x = tb.k AND tb.v > ta.id ORDER BY 1, 2";
+                    assertQuery(query).noLeakCheck().withPlanContaining("filter: ta.id<tb.v").returns(join[1]);
+                    assertQuery(query).noLeakCheck().fullFatJoins().returns(join[1]);
+                }
+            }
         });
     }
 
@@ -17360,9 +17544,8 @@ public class JoinTest extends AbstractCairoTest {
     public void testTimeSeriesJoinAfterKeyMoveFiltersTimestampKeyOfTwoPrecisions() throws Exception {
         // As in testTimeSeriesJoinAfterKeyMoveDerivesConflictingKey, a2 gets two keys on one column:
         // a2.t = a1.t on microsecond timestamps and a2.t = a3.tn on a microsecond and a nanosecond one.
-        // The record copier turns a NULL microsecond timestamp into nanosecond 0, so a1.t = a3.tn would
-        // not agree with them, and a2.t = a1.t filters the join instead. The NULL and epoch rows of the
-        // third trade match nothing either way.
+        // a2.t = a1.t filters the join instead. The keys match NULL to NULL, so the third trade matches
+        // through its NULL book, desk and route, and its 1970-01-01 book and desk match no route.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -17425,6 +17608,7 @@ public class JoinTest extends AbstractCairoTest {
                             k\tts\tt\tbid
                             1\t2024-01-01T00:00:10.000000Z\t2020-01-01T00:00:00.000000Z\t9.5
                             2\t2024-01-01T00:00:20.000000Z\t2020-01-02T00:00:00.000000Z\t19.5
+                            3\t2024-01-01T00:00:30.000000Z\t\t19.5
                             """);
         });
     }

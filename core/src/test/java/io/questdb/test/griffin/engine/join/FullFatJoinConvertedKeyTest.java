@@ -56,11 +56,15 @@ public class FullFatJoinConvertedKeyTest extends AbstractCairoTest {
             1970-01-01T00:00:11.000000Z\tx\tx\tx\t1\tfalse\ttrue\t4\t1970-01-01T00:00:06.000000Z
             1970-01-01T00:00:13.000000Z\ty\ty\t\t-1\tfalse\tfalse\tnull\t
             """;
+    // the NULL key at 7s matches the NULL key at 6s and reads it back as NULL, and the 1970-01-01 key
+    // at 9s matches no key
     private static final String TIMESTAMP_OVER_NANOS_ROWS = """
             ts\tk\tk1\tk_micros\tts1
             1970-01-01T00:00:01.000000Z\t2024-01-01T00:00:00.000001000Z\t2024-01-01T00:00:00.000001Z\t1704067200000001\t1970-01-01T00:00:00.000000Z
             1970-01-01T00:00:03.000000Z\t1969-12-31T23:59:59.999999000Z\t1969-12-31T23:59:59.999999Z\t-1\t1970-01-01T00:00:02.000000Z
             1970-01-01T00:00:05.000000Z\t2024-01-03T00:00:00.000000000Z\t\tnull\t
+            1970-01-01T00:00:07.000000Z\t\t\tnull\t1970-01-01T00:00:06.000000Z
+            1970-01-01T00:00:09.000000Z\t1970-01-01T00:00:00.000000000Z\t\tnull\t
             """;
 
     @Test
@@ -297,13 +301,16 @@ public class FullFatJoinConvertedKeyTest extends AbstractCairoTest {
                     INSERT INTO m VALUES
                         ('2024-01-01T00:00:00.000001Z', 1, '1970-01-01T00:00:01Z'),
                         ('1969-12-31T23:59:59.999999Z', 1, '1970-01-01T00:00:03Z'),
-                        ('2024-01-03T00:00:00Z', 1, '1970-01-01T00:00:05Z')
+                        ('2024-01-03T00:00:00Z', 1, '1970-01-01T00:00:05Z'),
+                        (NULL, 1, '1970-01-01T00:00:07Z'),
+                        ('1970-01-01T00:00:00Z', 1, '1970-01-01T00:00:09Z')
                     """);
             execute("""
                     INSERT INTO s VALUES
                         ('2024-01-01T00:00:00.000001Z', 1, '1970-01-01T00:00:00Z'),
                         ('1969-12-31T23:59:59.999999Z', 1, '1970-01-01T00:00:02Z'),
-                        ('2024-01-04T00:00:00Z', 1, '1970-01-01T00:00:04Z')
+                        ('2024-01-04T00:00:00Z', 1, '1970-01-01T00:00:04Z'),
+                        (NULL, 1, '1970-01-01T00:00:06Z')
                     """);
             for (String on : new String[]{" a1 ON a1.k = a0.k", " a1 ON a1.k = a0.k AND a1.j = a0.j"}) {
                 final String select = "SELECT a0.ts, a0.k, a1.k, a1.k::LONG k_micros, a1.ts FROM m a0 " + join + " JOIN ";

@@ -2731,6 +2731,31 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinOnSlaveKeySharedByMixedTimestampColumnsKeepsNull() throws Exception {
+        // p.a is compared with the TIMESTAMP_NS t.n and the TIMESTAMP t.m, so both key positions compare
+        // nanoseconds, and the key copiers convert t.m and p.a. A NULL TIMESTAMP must stay NULL rather
+        // than turn into 1970-01-01: t1 matches the NULL row of p, t2 its 1970-01-01 row, and t3 and t4,
+        // whose two columns disagree, match nothing. t6 is 500 nanoseconds off the 1 microsecond row of
+        // p, and t7 compares a TIMESTAMP outside the TIMESTAMP_NS range, which must not fail the query.
+        assertMemoryLeak(() -> {
+            createMixedTimestampKeyTables();
+            assertMixedTimestampKeyHorizonJoins(
+                    new String[]{"t.n = p.a AND t.m = p.a", "t.m = p.a AND t.n = p.a", "p.a = t.n AND p.a = t.m"},
+                    """
+                            id\tavg
+                            1\t11.0
+                            2\t10.0
+                            3\tnull
+                            4\tnull
+                            5\t12.0
+                            6\tnull
+                            7\tnull
+                            """
+            );
+        });
+    }
+
+    @Test
     public void testHorizonJoinOnSlaveSymbolSharedBySymbolAndStringColumns() throws Exception {
         // The slave key copier writes p.s once, so the SYMBOL pair and the STRING pair must
         // both compare strings.
@@ -5102,6 +5127,29 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             0\t150.0\t300
                             1\t160.0\t300
                             """);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinWithMixedTimestampKeyKeepsNull() throws Exception {
+        // A key of the TIMESTAMP_NS t.n and the TIMESTAMP p.a compares nanoseconds, and the key copier
+        // converts p.a. NULL matches NULL and 1970-01-01 matches 1970-01-01, as in a key of two TIMESTAMP
+        // columns (#7757).
+        assertMemoryLeak(() -> {
+            createMixedTimestampKeyTables();
+            assertMixedTimestampKeyHorizonJoins(
+                    new String[]{"t.n = p.a", "p.a = t.n"},
+                    """
+                            id\tavg
+                            1\t11.0
+                            2\t10.0
+                            3\t10.0
+                            4\t11.0
+                            5\t12.0
+                            6\tnull
+                            7\tnull
+                            """
+            );
         });
     }
 
@@ -8833,6 +8881,31 @@ public class HorizonJoinTest extends AbstractCairoTest {
         });
     }
 
+    // Runs one HORIZON JOIN of t and p, and two, serial and parallel, on each ON clause. Every HORIZON
+    // JOIN of the two returns the rows of the one.
+    private void assertMixedTimestampKeyHorizonJoins(String[] onClauses, String expected) throws Exception {
+        final StringBuilder expectedTwoJoins = new StringBuilder("id\tavg\tavg1\n");
+        final String[] lines = expected.split("\n");
+        for (int i = 1; i < lines.length; i++) {
+            expectedTwoJoins.append(lines[i]).append('\t').append(lines[i].substring(lines[i].indexOf('\t') + 1)).append('\n');
+        }
+        for (boolean parallel : new boolean[]{false, true}) {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(parallel);
+            for (String on : onClauses) {
+                final QueryAssertion oneJoin = assertQuery(
+                        "SELECT t.id, avg(p.pid) FROM t HORIZON JOIN p ON (" + on + ") RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id"
+                ).noLeakCheck().expectSize();
+                (parallel ? oneJoin.withPlanContaining("Async Horizon Join") : oneJoin.withPlanNotContaining("Async")).returns(expected);
+                final QueryAssertion twoJoins = assertQuery(
+                        "SELECT t.id, avg(p.pid), avg(q.pid) FROM t HORIZON JOIN p ON (" + on + ") HORIZON JOIN p AS q ON ("
+                                + on.replace("p.", "q.") + ") RANGE FROM 0s TO 0s STEP 1s AS h ORDER BY t.id"
+                ).noLeakCheck().expectSize();
+                (parallel ? twoJoins.withPlanContaining("Async Multi Horizon Join") : twoJoins.withPlanContaining("Multi Horizon Join").withPlanNotContaining("Async"))
+                        .returns(expectedTwoJoins.toString());
+            }
+        }
+    }
+
     private void createHorizonJoinOnPredicateTables() throws Exception {
         executeWithRewriteTimestamp("CREATE TABLE trades (id INT, k INT, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
         executeWithRewriteTimestamp("CREATE TABLE prices (k INT, m INT, price DOUBLE, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
@@ -8902,6 +8975,33 @@ public class HorizonJoinTest extends AbstractCairoTest {
         executeWithRewriteTimestamp("CREATE TABLE hp (ts #TIMESTAMP, s SYMBOL, st STRING, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
         execute("INSERT INTO hp VALUES ('1970-01-01T00:00:01.000000Z', 'k', 'q', 5.0)");
         execute("INSERT INTO ht VALUES ('1970-01-01T00:00:02.000000Z', 1, 'k', 'q')");
+    }
+
+    // p.a holds 1970-01-01, NULL, 1 microsecond and 9999-12-31, a TIMESTAMP outside the TIMESTAMP_NS
+    // range. Each row of t pairs a TIMESTAMP m with a TIMESTAMP_NS n: both NULL, both 1970-01-01, NULL
+    // next to 1970-01-01 and the reverse, 1 microsecond in both units, 1 microsecond next to 1,500
+    // nanoseconds, and 9999-12-31 next to the last TIMESTAMP_NS value. The rows of p precede every row
+    // of t.
+    private void createMixedTimestampKeyTables() throws Exception {
+        executeWithRewriteTimestamp("CREATE TABLE p (pid INT, a TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+        execute("""
+                INSERT INTO p VALUES
+                    (10, 0::TIMESTAMP, '2024-01-01T00:00:00.000000Z'),
+                    (11, NULL, '2024-01-01T00:00:01.000000Z'),
+                    (12, 1::TIMESTAMP, '2024-01-01T00:00:02.000000Z'),
+                    (13, '9999-12-31T23:59:59.999999Z', '2024-01-01T00:00:03.000000Z')
+                """);
+        executeWithRewriteTimestamp("CREATE TABLE t (id INT, m TIMESTAMP, n TIMESTAMP_NS, ts #TIMESTAMP) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+        execute("""
+                INSERT INTO t VALUES
+                    (1, NULL, NULL, '2024-01-01T00:00:05.000000Z'),
+                    (2, 0::TIMESTAMP, 0::TIMESTAMP_NS, '2024-01-01T00:00:06.000000Z'),
+                    (3, NULL, 0::TIMESTAMP_NS, '2024-01-01T00:00:07.000000Z'),
+                    (4, 0::TIMESTAMP, NULL, '2024-01-01T00:00:08.000000Z'),
+                    (5, 1::TIMESTAMP, 1_000::TIMESTAMP_NS, '2024-01-01T00:00:09.000000Z'),
+                    (6, 1::TIMESTAMP, 1_500::TIMESTAMP_NS, '2024-01-01T00:00:10.000000Z'),
+                    (7, '9999-12-31T23:59:59.999999Z', '2262-04-11T23:47:16.854775807Z', '2024-01-01T00:00:11.000000Z')
+                """);
     }
 
     private void createSelfJoinSymbolSharedTable() throws Exception {

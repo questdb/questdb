@@ -2096,7 +2096,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // share a slave or master column, directly or through other positions, form a group, and every
     // position of a group takes the widest key type of the group: strings widen to VARCHAR, or to
     // STRING when no position compares VARCHAR, and timestamps widen to TIMESTAMP_NS. The widest type
-    // compares the same values as the key type of each pair, so the group keeps the rows of its pairs.
+    // compares the same values as the key type of each pair, so the group keeps the rows of its pairs:
+    // RecordSinkFactory.timestampToNanos() keeps a NULL TIMESTAMP as NULL. Only TIMESTAMP values
+    // outside the TIMESTAMP_NS range, which wrap in nanoseconds, can compare differently.
     private static void unifyRepeatedKeyColumnTypes(
             ArrayColumnTypes keyTypes,
             ListColumnFilter slaveKeyColumns,
