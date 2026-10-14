@@ -565,6 +565,9 @@ public class TableSequencerAPI implements QuietCloseable {
                         && engine.getResolvedCommitMode() == CommitMode.ADAPTIVE;
                 // Re-notify an already resumed table too. Ordinary RESUME must not contend with its apply writer.
                 if (!isCompletionOutstanding && (!isSuspended(tableToken) || resumeFromTxn <= 0)) {
+                    // Lift SUSPEND WAL only once the resume is certain, and before the notification, which
+                    // the apply job drops for a table still hard-suspended.
+                    engine.removeWalApplySuspended(tableToken);
                     sequencer.resumeTable();
                     return;
                 }
@@ -594,14 +597,15 @@ public class TableSequencerAPI implements QuietCloseable {
             writer.completeDurableEpochAfter("resume wal");
             try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
                 try {
+                    engine.removeWalApplySuspended(tableToken);
                     sequencer.resumeTable();
                 } finally {
                     sequencer.unlockWrite();
                 }
             }
         } catch (EntryUnavailableException busy) {
-            // Another thread holds the writer and nothing was attempted: the suspension and its reason
-            // stay as they were, and the caller retries.
+            // Another thread holds the writer and nothing was attempted: the suspension, its reason and
+            // its write denial stay as they were, and the caller retries.
             throw busy;
         } catch (CairoException e) {
             if (engine.isDataSyncFailureFatal(e)) {

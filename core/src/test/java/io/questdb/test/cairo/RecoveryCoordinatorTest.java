@@ -3318,12 +3318,21 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
 
     @Test
     public void testPlainResumeDuringForceDropKeepsSuspensionReason() throws Exception {
-        assertPlainResumeDuringForceDrop(true);
+        assertPlainResumeDuringForceDrop(true, false);
     }
 
     @Test
     public void testPlainResumeDuringForceDropKeepsTableRunning() throws Exception {
-        assertPlainResumeDuringForceDrop(false);
+        assertPlainResumeDuringForceDrop(false, false);
+    }
+
+    /**
+     * A RESUME that fails keeps the write denial of a SUSPEND WAL: a plain and a FROM TXN RESUME that meet the busy
+     * writer, and a FROM TXN RESUME refused for its txn, each leave inserts denied and REBASE allowed.
+     */
+    @Test
+    public void testPlainResumeDuringForceDropKeepsWriteDenial() throws Exception {
+        assertPlainResumeDuringForceDrop(true, true);
     }
 
     @Test
@@ -3393,8 +3402,11 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         });
     }
 
-    private void assertPlainResumeDuringForceDrop(boolean isSuspendedBefore) throws Exception {
+    private void assertPlainResumeDuringForceDrop(boolean isSuspendedBefore, boolean isWriteDenied) throws Exception {
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        if (isWriteDenied) {
+            setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        }
         final AtomicReference<TableToken> blockedToken = new AtomicReference<>();
         final AtomicReference<Thread> holder = new AtomicReference<>();
         final AtomicBoolean isBlocked = new AtomicBoolean();
@@ -3432,8 +3444,9 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             final TableToken token = engine.verifyTableName("resume_force");
             final String walTablesQuery = "SELECT suspended, errorTag, errorMessage FROM wal_tables() WHERE name = 'resume_force'";
             final String operatorSuspension = "suspended\terrorTag\terrorMessage\ntrue\tDISK FULL\toriginal operator reason\n";
-            if (isSuspendedBefore) {
-                execute("ALTER TABLE resume_force SUSPEND WAL WITH 'DISK FULL', 'original operator reason'");
+            final String suspend = "ALTER TABLE resume_force SUSPEND WAL WITH 'DISK FULL', 'original operator reason'";
+            if (isSuspendedBefore && !isWriteDenied) {
+                execute(suspend);
             }
             final AtomicReference<Throwable> failure = new AtomicReference<>();
             final Thread forceDrop = new Thread(() -> {
@@ -3454,6 +3467,11 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 Assert.assertNull(failure.get());
                 Assert.assertTrue(isBlocked.get());
                 Assert.assertEquals(1, engine.getBusyWriterCount());
+                if (isWriteDenied) {
+                    // A write-denied suspension refuses the FORCE DROP itself, so suspend while it is parked.
+                    execute(suspend);
+                    assertWriteDenied(token);
+                }
                 final CairoException e = Assert.assertThrows(CairoException.class, () -> execute("ALTER TABLE resume_force RESUME WAL"));
                 // Nothing was attempted, so the suspension state and its reason stay as they were.
                 Assert.assertEquals(isSuspendedBefore, engine.getTableSequencerAPI().isSuspended(token));
@@ -3462,15 +3480,33 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 }
                 Assert.assertTrue(e instanceof EntryUnavailableException);
                 TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
+                if (isWriteDenied) {
+                    assertWriteDenied(token);
+                    final long nextTxn = engine.getTableSequencerAPI().lastTxn(token) + 1;
+                    final CairoException busy = Assert.assertThrows(CairoException.class, () -> execute("ALTER TABLE resume_force RESUME WAL FROM TXN " + nextTxn));
+                    Assert.assertTrue(busy instanceof EntryUnavailableException);
+                    assertWriteDenied(token);
+                    final CairoException refused = Assert.assertThrows(CairoException.class, () -> execute("ALTER TABLE resume_force RESUME WAL FROM TXN " + (nextTxn + 1)));
+                    TestUtils.assertContains(refused.getFlyweightMessage(), "resume txn is higher than next available transaction");
+                    assertWriteDenied(token);
+                    assertQuery(walTablesQuery).noLeakCheck().noRandomAccess().returns(operatorSuspension);
+                }
             } finally {
                 release.countDown();
                 forceDrop.join();
             }
             Assert.assertNull(failure.get());
+            if (isWriteDenied) {
+                // Only a RESUME that succeeds lifts the denial; the holder finishing does not.
+                assertWriteDenied(token);
+                execute("ALTER TABLE resume_force RESUME WAL");
+                Assert.assertFalse(engine.isWalApplySuspended(token));
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            }
             execute("INSERT INTO resume_force VALUES ('2024-01-02T01:00:00.000000Z', 3)");
             drainWalQueue();
-            Assert.assertEquals(isSuspendedBefore, engine.getTableSequencerAPI().isSuspended(token));
-            if (isSuspendedBefore) {
+            Assert.assertEquals(isSuspendedBefore && !isWriteDenied, engine.getTableSequencerAPI().isSuspended(token));
+            if (isSuspendedBefore && !isWriteDenied) {
                 assertQuery(walTablesQuery).noLeakCheck().noRandomAccess().returns(operatorSuspension);
                 execute("ALTER TABLE resume_force RESUME WAL");
                 drainWalQueue();
@@ -3478,6 +3514,13 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             }
             assertQuery("SELECT id FROM resume_force ORDER BY id").expectSize().returns("id\n2\n3\n");
         });
+    }
+
+    // The runtime SUSPEND WAL flag, which REBASE WAL requires, is set and an insert is denied.
+    private void assertWriteDenied(TableToken token) {
+        Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(token).isHardSuspended());
+        final CairoException e = Assert.assertThrows(CairoException.class, () -> execute("INSERT INTO resume_force VALUES ('2024-01-02T00:30:00.000000Z', 4)"));
+        Assert.assertTrue(e.isTableSuspended());
     }
 
     @Test
@@ -3630,6 +3673,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 Assert.assertThrows(CairoException.class, () -> execute("ALTER TABLE resume_cover RESUME WAL FROM TXN " + (skippedThrough + 1)));
                 Assert.assertEquals(2, publications.get());
                 Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
+                // A RESUME whose certification fails keeps the SUSPEND WAL flag too.
+                Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(token).isHardSuspended());
                 final io.questdb.cairo.DurableEpochManifest.Candidate[] cuts = operationCompletionCuts(token);
                 Assert.assertEquals(2, cuts.length);
                 Assert.assertEquals(skippedThrough, cuts[0].epochSeqTxn);
@@ -3646,6 +3691,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 tracker.setDurableEpochOwed(false);
                 Assert.assertThrows(CairoException.class, () -> execute("ALTER TABLE resume_cover RESUME WAL" + (plainRetry ? "" : " FROM TXN " + (skippedThrough + 1))));
                 Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(token));
+                Assert.assertTrue(engine.getTableSequencerAPI().getTxnTracker(token).isHardSuspended());
             } finally {
                 isFailing.set(false);
             }

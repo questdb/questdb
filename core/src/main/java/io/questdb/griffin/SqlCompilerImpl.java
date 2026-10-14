@@ -1941,9 +1941,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private void alterTableResume(int tableNamePosition, TableToken tableToken, long resumeFromTxn, SqlExecutionContext executionContext) {
         try {
             if (!executionContext.isValidationOnly()) {
-                // Clear the runtime hard-suspend entry before resuming so the resume re-notification
-                // is not swallowed. A config-listed table stays suspended until removed from config.
-                engine.removeWalApplySuspended(tableToken);
+                // Lifts the runtime SUSPEND WAL only if it succeeds. A config-listed table stays suspended
+                // until removed from config.
                 engine.getTableSequencerAPI().resumeTable(tableToken, resumeFromTxn);
                 executionContext.storeTelemetry(TelemetryEvent.WAL_APPLY_RESUME, TelemetryOrigin.WAL_APPLY);
             }
