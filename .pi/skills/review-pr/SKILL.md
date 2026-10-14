@@ -272,8 +272,16 @@ Then apply the result to the map:
 
 - Each changed line, branch or condition that never ran belongs to an `UNTESTED` row; add a row where the map has none.
 - A `COVERED` row whose lines never ran is `UNTESTED`: its test does not reach the change.
-- A changed line, branch or condition that no test runs breaks CLAUDE.md "Testing" (lines, branches and conditions). It is a concrete changed-line standards violation: at least a Moderate gap, and a Critical gap when it meets the bar below. Only a line proven unreachable and guarded by an assertion is exempt. An accepted gap weighs how strongly a test must assert a behavior; it never excuses a line that no test runs.
-- Once Step 3b admits them, publish measured gaps as one finding per production file, listing its never-run lines, branches and conditions.
+- **Grade never-run code by its exposure, not its line count.** Code that never ran may be wrong today, not only after a later regression. Assume it does not do what it says (the guard lets the bad value through, the cleanup keeps the resource, the conversion returns the wrong number) and trace what a user would get:
+  - **What it controls:** rows returned or written, on-disk state, which path runs, a release or rollback, a permission check, or only message text and logging.
+  - **Loud or silent:** an exception gets noticed; a wrong value, a lost row or a swallowed error does not.
+  - **Reach:** the supported operation that gets there, and how often: routine SQL, a rare configuration, or only a fault.
+  - **Blast radius:** one query, the table on disk, replicas and backups, or the whole process (a Rust panic aborts the JVM).
+  - **Containment:** an assertion, validation or checksum downstream that would catch the mistake.
+
+  Silent wrong or lost data, corruption, a security failure, or a crash or hang on a reachable path makes a Critical gap when it meets the bar below; a loud, bounded failure makes a Moderate gap. Error and cleanup paths are the code most often never run, and a mistake there tends to hide the failure or leave state half-written, so rarity alone never makes them low exposure: disks fill and connections drop in production. One hunk can hold both grades: in a guard that rejects an oversized `RANGE`, a wrong count in the error message is cosmetic, but a guard that lets the range through can let `(int) steps + 1` wrap, so the join silently uses too few offsets.
+- When the exposure is Critical, reach the code with a probe test in the scratch worktree before you classify it, with the expected result worked out independently. If the code already does the wrong thing, that is a functional defect, admitted on the probe's evidence, not a coverage gap. Either way, the finding carries the probe as the test to add.
+- Never-run lines are never private. The Coverage map section lists those that become no finding, each with the reason its exposure is low. Only a line proven unreachable and guarded by an assertion is exempt.
 
 Rows with no effective test are marked **UNTESTED**, then classified by evidence rather than category:
 
@@ -902,7 +910,7 @@ Report each as a ready-to-file issue draft, so it can move to GitHub without re-
 Offer to file them; do not file anything without being asked. Their count and severity sit outside the finding-proportionality budget and outside every gate in the Summary. If one is severe enough that shipping this PR without it is genuinely unsafe — because this PR moves code onto a path where the pre-existing bug now fires — then it is not adjacent: it is out-of-diff-breakage, it belongs under Critical, and you state that argument explicitly.
 
 ### Coverage map
-State the test-gate result, the number of **admitted** coverage gaps, and the measured coverage: changed lines and branches covered (e.g. `118/124 L, 40/46 B`), the tests run and the revision, or that coverage was not measured and why. Render admitted gap rows with their recorded search and failure link. Do not expose counts for omitted candidates or private UNTESTED rows; keep the full Step 2.6 matrix private unless the user asks to see it.
+State the test-gate result, the number of **admitted** coverage gaps, and the measured coverage: changed lines and branches covered (e.g. `118/124 L, 40/46 B`), the tests run and the revision, or that coverage was not measured and why. Render admitted gap rows with their recorded search and failure link, then list the never-run lines that became no finding, each with the reason its exposure is low. Do not expose counts for omitted candidates or private UNTESTED rows; keep the full Step 2.6 matrix private unless the user asks to see it.
 
 ### Summary
 - **Verdict**, exactly one of:

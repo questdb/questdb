@@ -134,13 +134,14 @@ When the queue is empty:
    measures the coverage of the whole range at HEAD, in a scratch worktree.
    That catches what the per-item runs miss, since each measured one item's
    files at its own commit: coverage a later item broke, lines a helper left
-   open, files an item didn't measure. Never-run lines return as Moderate
-   findings, one per file.
+   open, files an item didn't measure. It grades never-run code by what it
+   would break if it were wrong.
 2. Queue its Critical and Moderate findings as new items and run them through
    the per-item steps. Each one is a test the standard should have produced:
    its test plan names the dimension of CLAUDE.md "Testing" that missed it.
-   List Minor findings. Send Adjacent findings to the issue list; invoking this
-   skill is the user's request to file them.
+   List Minor findings. List the never-run lines the review judged
+   low-exposure as open coverage gaps. Send Adjacent findings to the issue
+   list; invoking this skill is the user's request to file them.
 3. If a finding concerns an item this run already built or skipped, don't loop
    on it: list it for the user with both views.
 4. Repeat until a review finds no Critical or Moderate items, or
