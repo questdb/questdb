@@ -46,6 +46,7 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.test.tools.CountingSqlExecutionCircuitBreaker;
 import org.jetbrains.annotations.Nullable;
+import org.junit.Assert;
 
 import java.lang.reflect.Field;
 import java.util.function.LongPredicate;
@@ -214,13 +215,91 @@ final class FrameBuilds {
         return build.freeze(frames);
     }
 
-    /** The row count of every open frame, in frame order, as the operator hands a build that keeps every row. */
+    /**
+     * Counts the key rows of a frozen parallel build as the operator's count round does, a task per
+     * partition, running every task on this thread, in reverse order, so that no partition relies on
+     * an earlier one having been counted, and then ends the count. On failure the build is closed, as
+     * the operator closes it once the failed round has drained.
+     */
+    static void countIntPartitions(IntHashJoinBuild build, SqlExecutionCircuitBreaker circuitBreaker) {
+        countIntPartitions(build, 1, circuitBreaker);
+    }
+
+    /**
+     * Counts as {@link #countIntPartitions(IntHashJoinBuild, SqlExecutionCircuitBreaker)} does, a task
+     * per this many consecutive partitions, which must divide the partition count.
+     */
+    static void countIntPartitions(IntHashJoinBuild build, int partitionsPerTask, SqlExecutionCircuitBreaker circuitBreaker) {
+        try {
+            Assert.assertEquals(0, build.getPartitionCount() % partitionsPerTask);
+            for (int partitionLo = build.getPartitionCount() - partitionsPerTask; partitionLo >= 0; partitionLo -= partitionsPerTask) {
+                build.countPartitionKeyRows(partitionLo, partitionLo + partitionsPerTask, circuitBreaker);
+            }
+            build.endPartitionedKeyRowCount();
+        } catch (Throwable th) {
+            build.close();
+            throw th;
+        }
+    }
+
+    /**
+     * The staged-key twin of {@link #countIntPartitions(IntHashJoinBuild, SqlExecutionCircuitBreaker)}.
+     */
+    static void countMapPartitions(MapHashJoinBuild build, SqlExecutionCircuitBreaker circuitBreaker) {
+        countMapPartitions(build, 1, circuitBreaker);
+    }
+
+    /**
+     * The staged-key twin of {@link #countIntPartitions(IntHashJoinBuild, int, SqlExecutionCircuitBreaker)}.
+     */
+    static void countMapPartitions(MapHashJoinBuild build, int partitionsPerTask, SqlExecutionCircuitBreaker circuitBreaker) {
+        try {
+            Assert.assertEquals(0, build.getPartitionCount() % partitionsPerTask);
+            for (int partitionLo = build.getPartitionCount() - partitionsPerTask; partitionLo >= 0; partitionLo -= partitionsPerTask) {
+                build.countPartitionKeyRows(partitionLo, partitionLo + partitionsPerTask, circuitBreaker);
+            }
+            build.endPartitionedKeyRowCount();
+        } catch (Throwable th) {
+            build.close();
+            throw th;
+        }
+    }
+
+    /**
+     * The row count of every open frame, in frame order, as the operator hands a build that keeps every row.
+     */
     static LongList frameRowCounts(HashJoinBuildFrames frames) {
         final LongList rowCounts = new LongList();
         for (int frameIndex = 0; frameIndex < frames.getFrameCount(); frameIndex++) {
             rowCounts.add(frames.getFrameRowCount(frameIndex));
         }
         return rowCounts;
+    }
+
+    /**
+     * A copy of the row heap of an open build, either kind: every row's link, or once counted its
+     * chain length, and its row id when it has one. Two builds over the same frames with the same
+     * partitions lay their rows out alike, so their copies compare byte for byte.
+     */
+    static byte[] heapBytes(Object build) {
+        try {
+            final Object heap = field(build, "heap");
+            final long address = (long) field(field(heap, "rows"), "address");
+            final long size = (long) field(heap, "rowBytes");
+            final byte[] bytes = new byte[(int) size];
+            for (int i = 0; i < bytes.length; i++) {
+                bytes[i] = Unsafe.getByte(address + i);
+            }
+            return bytes;
+        } catch (ReflectiveOperationException e) {
+            throw new AssertionError(e);
+        }
+    }
+
+    private static Object field(Object owner, String name) throws ReflectiveOperationException {
+        final Field field = owner.getClass().getDeclaredField(name);
+        field.setAccessible(true);
+        return field.get(owner);
     }
 
     /**
@@ -269,12 +348,6 @@ final class FrameBuilds {
                 throw new AssertionError(e);
             }
             throw CairoException.queryCancelled(1);
-        }
-
-        private static Object field(Object owner, String name) throws ReflectiveOperationException {
-            final Field field = owner.getClass().getDeclaredField(name);
-            field.setAccessible(true);
-            return field.get(owner);
         }
     }
 }

@@ -380,7 +380,20 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                                 bindVariableService.setStr(1, "new");
                                 assertAgainstBaseline(sql, factory, context);
                                 execute("truncate table p");
-                                assertAgainstBaseline(sql, factory, context);
+                                if (join.equals(JOINS[3]) || join.equals(JOINS[4])) {
+                                    // These joins build r, and compiled while r had no more rows than p,
+                                    // so they size the key table by the rows of r. An empty p no longer
+                                    // bounds them, and an execution asks for a recompile instead.
+                                    Assert.assertThrows(TableReferenceOutOfDateException.class, () -> result(factory, context));
+                                    Assert.assertEquals(0, fused(factory).getAtom().getPerWorkerLocks().getAcquiredSlotCount());
+                                    Assert.assertNull(context.getMemoryTracker());
+                                    try (RecordCursorFactory recompiled = engine.select(sql, context)) {
+                                        fused(recompiled);
+                                        assertAgainstBaseline(sql, recompiled, context);
+                                    }
+                                } else {
+                                    assertAgainstBaseline(sql, factory, context);
+                                }
                                 execute("insert into p values (1,4,'old','1'), (1,null,null,'1'), (null,32,'old',null)");
                             }
                         }

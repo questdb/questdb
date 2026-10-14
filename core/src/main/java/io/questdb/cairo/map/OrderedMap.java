@@ -1332,10 +1332,10 @@ public class OrderedMap implements Map, Reopenable {
     public static final class ProbeView implements MapProbeView {
         private static final long MIN_STAGING_CAPACITY = 64;
         private long appendAddr;
-        private boolean committed;
         private long hashCode;
         private int hashCodeLo;
         private long heapAddr;
+        private boolean isCommitted;
         // -1 marks a view that has not bound a map yet; a bound view holds the map's 0 or 4.
         private long keyOffset = -1;
         // Set to -1 when the bound key is var-size, mirroring the map's own field.
@@ -1360,7 +1360,7 @@ public class OrderedMap implements Map, Reopenable {
             stagingCapacity = 0;
             stagingLimit = 0;
             appendAddr = 0;
-            committed = false;
+            isCommitted = false;
             // Drop the snapshot, so that a probe after close faults instead of reading a block
             // the map may meanwhile have freed. The key and value layout stays, so that a view
             // rebound to a reopened map keeps its value flyweight.
@@ -1371,7 +1371,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public long copyStagedKey(long address) {
-            if (!committed) {
+            if (!isCommitted) {
                 commit();
             }
             Unsafe.copyMemory(stagingAddr + keyOffset, address, stagedKeySize);
@@ -1398,7 +1398,9 @@ public class OrderedMap implements Map, Reopenable {
             return lookup(orderedMap.heapAddr, orderedMap.offsetsAddr, orderedMap.mask);
         }
 
-        /** Allocated native bytes, including unused capacity. */
+        /**
+         * Allocated native bytes, including unused capacity.
+         */
         @Override
         public long getSizeInBytes() {
             return stagingCapacity;
@@ -1406,7 +1408,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public long getStagedKeySize() {
-            if (!committed) {
+            if (!isCommitted) {
                 commit();
             }
             return stagedKeySize;
@@ -1414,7 +1416,7 @@ public class OrderedMap implements Map, Reopenable {
 
         @Override
         public long hash() {
-            if (!committed) {
+            if (!isCommitted) {
                 commit();
             }
             return hashCode;
@@ -1694,7 +1696,7 @@ public class OrderedMap implements Map, Reopenable {
                 stagingCapacity = 0;
                 stagingLimit = 0;
                 appendAddr = 0;
-                committed = false;
+                isCommitted = false;
             }
             memoryTracker = tracker;
             if (wasPrimed) {
@@ -1710,7 +1712,9 @@ public class OrderedMap implements Map, Reopenable {
             appendAddr += bytes;
         }
 
-        /** Discards the staged key and starts a new one. The view must already be bound. */
+        /**
+         * Discards the staged key and starts a new one. The view must already be bound.
+         */
         @Override
         public ProbeView withKey() {
             assert stagingAddr != 0 : "probe view is not bound to a map";
@@ -1735,7 +1739,7 @@ public class OrderedMap implements Map, Reopenable {
                 hashCode = Hash.hashMem64(stagingAddr + keyOffset, stagedKeySize);
             }
             hashCodeLo = Numbers.decodeLowInt(hashCode);
-            committed = true;
+            isCommitted = true;
         }
 
         private void ensureStagingCapacity(long capacity) {
@@ -1776,7 +1780,7 @@ public class OrderedMap implements Map, Reopenable {
 
         // The lookup of findValue(), over the lookup state of the bound map or of another map of its layout.
         private MapValue lookup(long heap, long offsets, int slotMask) {
-            if (!committed) {
+            if (!isCommitted) {
                 commit();
             }
             int index = hashCodeLo & slotMask;
@@ -1826,7 +1830,7 @@ public class OrderedMap implements Map, Reopenable {
 
         private void reset() {
             appendAddr = stagingAddr + keyOffset;
-            committed = false;
+            isCommitted = false;
         }
 
         private boolean sameValueOffsets(long[] other) {

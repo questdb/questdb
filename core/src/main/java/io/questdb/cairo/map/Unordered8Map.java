@@ -1071,7 +1071,9 @@ public class Unordered8Map implements Map, Reopenable {
             throw new UnsupportedOperationException();
         }
 
-        /** Discards the staged key and starts a new one. */
+        /**
+         * Discards the staged key and starts a new one.
+         */
         @Override
         public ProbeView withKey() {
             key = 0;

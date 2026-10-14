@@ -26,6 +26,7 @@ package io.questdb.griffin.engine.join;
 
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.griffin.engine.CompressedOffsets;
 import io.questdb.std.Misc;
 import io.questdb.std.Unsafe;
 import org.jetbrains.annotations.Nullable;
@@ -49,7 +50,9 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
     // A generation no snapshot carries: the heap's first freeze is 1.
     private static final long EXPIRED = -1;
     protected final HashJoinRowHeap rowHeap;
-    /** The row link of the next duplicate: a byte offset plus eight, zero at a chain end. */
+    /**
+     * The row link of the next duplicate: a byte offset plus eight, zero at a chain end.
+     */
     protected long next;
     // Null for a build without payload columns, whose rows store no id.
     @Nullable
@@ -77,7 +80,9 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         probeGeneration = EXPIRED;
     }
 
-    /** The payload reader, positioned at the last match; null for a build without payload columns. */
+    /**
+     * The payload reader, positioned at the last match; null for a build without payload columns.
+     */
     @Override
     public final Record getRecord() {
         return payload;
@@ -102,7 +107,8 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
 
     @Override
     public final long next() {
-        assert isCurrent();
+        // A build that counted its key rows has no links left to follow.
+        assert isCurrent() && !rowHeap.hasChainLengths();
         if (next == 0) {
             throw new IllegalStateException("hash join probe is exhausted");
         }
@@ -123,7 +129,23 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         positionAt(offset);
     }
 
-    /** True while this probe is bound to the build's current frozen snapshot. */
+    /**
+     * The rows of the key whose chain this compressed head starts, zero for the empty head of a key
+     * the build lacks. Only a build that counted its key rows keeps them; see
+     * {@link HashJoinRowHeap#countChains()}.
+     * <p>
+     * A caller reads one count per probe row, so this read asserts nothing: assertions run in
+     * production, and a per-row check here measurably slows every count. The lookup that found the
+     * head asserts that the probe is current. The fused reducers pick a count loop once per page
+     * frame, and only for a build whose count pass has returned.
+     */
+    protected final long getKeyRowCount(int head) {
+        return head != 0 ? Unsafe.getLong(heapAddress + CompressedOffsets.uncompressBiased8(head)) : 0;
+    }
+
+    /**
+     * True while this probe is bound to the build's current frozen snapshot.
+     */
     protected final boolean isCurrent() {
         return probeGeneration == rowHeap.getGeneration();
     }
@@ -151,7 +173,9 @@ abstract class AbstractHashJoinProbe implements FrozenHashJoinBuild.Probe {
         }
     }
 
-    /** Positions the payload reader at the row at this byte offset of the heap. */
+    /**
+     * Positions the payload reader at the row at this byte offset of the heap.
+     */
     protected final void positionAt(long offset) {
         if (payload != null) {
             payload.position(HashJoinRowHeap.getRowIdAddress(heapAddress + offset), HashJoinRowHeap.getOrdinal(offset));

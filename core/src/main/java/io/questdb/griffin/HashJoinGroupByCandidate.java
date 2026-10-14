@@ -38,6 +38,7 @@ import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.groupby.HashJoinGroupByAggregates;
 import io.questdb.griffin.engine.join.FrozenHashJoinBuild;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.IQueryModel;
@@ -72,13 +73,20 @@ public final class HashJoinGroupByCandidate {
     private final IQueryModel joinModel;
     private final HashJoinGroupByKeys keys;
     private final int logicalJoinType;
+    private final long maxBuildTableRows;
     private final ExpressionNode resolvedBuildOnFilter;
     private final IntList requiredBuildColumns;
     private final ObjList<QueryColumn> resolvedColumns;
     private final RecordMetadata resolvedMetadata;
     private final ObjList<ExpressionNode> resolvedPostJoinFilters;
 
-    private HashJoinGroupByCandidate(Analyzer analyzer, HashJoinGroupByKeys keys, boolean isInputSwapped, boolean isKeyCapacityPresized) {
+    private HashJoinGroupByCandidate(
+            Analyzer analyzer,
+            HashJoinGroupByKeys keys,
+            boolean isInputSwapped,
+            boolean isKeyCapacityPresized,
+            long maxBuildTableRows
+    ) {
         this.inputColumns = analyzer.inputColumns;
         this.resolvedBuildOnFilter = analyzer.resolvedBuildOnFilter;
         this.baseColumnIndexes = analyzer.columnIndexes;
@@ -90,6 +98,7 @@ public final class HashJoinGroupByCandidate {
         this.keys = keys;
         this.isInputSwapped = isInputSwapped;
         this.isKeyCapacityPresized = isKeyCapacityPresized;
+        this.maxBuildTableRows = maxBuildTableRows;
         this.buildOnFilter = analyzer.buildOnFilter;
         this.joinModel = analyzer.join;
         this.logicalJoinType = analyzer.joinType;
@@ -100,19 +109,31 @@ public final class HashJoinGroupByCandidate {
         return joinModel.getJoinModels().getQuick(buildIndex);
     }
 
-    /** Borrowed ON predicate, safe to apply only to the physical build input. */
+    /**
+     * Borrowed ON predicate, safe to apply only to the physical build input.
+     */
     @Nullable
     public ExpressionNode getBuildOnFilter() {
         return buildOnFilter;
     }
 
-    /** Reconciled equality keys in sink order, with base-table column indexes. */
+    /**
+     * Reconciled equality keys in sink order, with base-table column indexes.
+     */
     public HashJoinGroupByKeys getKeys() {
         return keys;
     }
 
     public int getLogicalJoinType() {
         return logicalJoinType;
+    }
+
+    /**
+     * The most rows the build table may hold before the planner would keep the ordinary plan:
+     * the RIGHT join bound in rows, and Long.MAX_VALUE for the joins that take no bound.
+     */
+    public long getMaxBuildTableRows() {
+        return maxBuildTableRows;
     }
 
     public int getPhysicalJoinType() {
@@ -123,12 +144,16 @@ public final class HashJoinGroupByCandidate {
         return joinModel.getJoinModels().getQuick(1 - buildIndex);
     }
 
-    /** Base-table indexes, including columns used only by post-join filters. */
+    /**
+     * Base-table indexes, including columns used only by post-join filters.
+     */
     public IntList getRequiredBuildColumns() {
         return requiredBuildColumns;
     }
 
-    /** True when the build is the first input in join order: every RIGHT join, and an INNER join whose first table is smaller. */
+    /**
+     * True when the build is the first input in join order: every RIGHT join, and an INNER join whose first table is smaller.
+     */
     public boolean isInputSwapped() {
         return isInputSwapped;
     }
@@ -138,13 +163,19 @@ public final class HashJoinGroupByCandidate {
      * knows its build's row count may size the key table by it. A build table with more rows is
      * the shape of a fact table built for its dimension - {@code dim LEFT JOIN fact},
      * {@code fact RIGHT JOIN dim} - whose join key repeats, and a key table sized by its rows
-     * would hold mostly empty slots. The sizes are those at compile time, as for the build side.
+     * would hold mostly empty slots. The sizes are those at compile time, as for the build side,
+     * and an execution that finds the build table grown past twice the probe table throws
+     * {@link io.questdb.cairo.sql.TableReferenceOutOfDateException}, on which the holder of the
+     * factory compiles the query again. An execution whose context tolerates row count changes
+     * keeps the compile-time choice; see {@link io.questdb.griffin.engine.table.AsyncHashJoinGroupByAtom}.
      */
     public boolean isKeyCapacityPresized() {
         return isKeyCapacityPresized;
     }
 
-    /** Exact implementations from HashJoinGroupByAggregates, not SQL names or supportsParallelism() alone. */
+    /**
+     * Exact implementations from HashJoinGroupByAggregates, not SQL names or supportsParallelism() alone.
+     */
     public static boolean supportsAggregate(Function function) {
         if (!isParallelSafe(function)) {
             return false;
@@ -161,7 +192,9 @@ public final class HashJoinGroupByCandidate {
         return HashJoinGroupByAggregates.isSupportedNullary(type);
     }
 
-    /** The fused scan reads page frames directly and does not support covering-index frame descriptors or their decode caches. */
+    /**
+     * The fused scan reads page frames directly and does not support covering-index frame descriptors or their decode caches.
+     */
     private static boolean supportsInputFactory(RecordCursorFactory factory) {
         for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
             if (current instanceof CoveringIndexRecordCursorFactory) {
@@ -199,6 +232,25 @@ public final class HashJoinGroupByCandidate {
                 && factory.getFilter() != null
                 && factory.getFilter().supportsParallelism()
                 && factory.getFilter().isStableWithinExecution();
+    }
+
+    /**
+     * Returns false when the build input's dictionary may hold a text under two keys. A SYMBOL key
+     * that the probe translates into the build's dictionary would then miss rows: the build keeps
+     * each row's own key, while the probe resolves its key to a text and looks that text up in the
+     * build's dictionary with keyOf(), which returns only one of the two keys. A table's symbol
+     * map holds each text once. A live view that serves rows from its in-memory tier overlays its
+     * table's map with the texts it interned since, and the overlay can hold a text under two
+     * keys, so such a build keeps the ordinary hash join, which translates each build row's key
+     * into the probe's dictionary through the row's text.
+     */
+    public static boolean supportsTranslatedSymbolBuild(RecordCursorFactory factory) {
+        for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
+            if (current instanceof LiveViewRecordCursorFactory) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -353,19 +405,23 @@ public final class HashJoinGroupByCandidate {
             // row of it before the workers start probing. The ordinary plan hashes the preserved
             // table instead and streams this one, and it overtook the fused plan between a 31 MiB
             // and a 61 MiB row heap of copied payloads. The unfiltered row count bounds the heap for
-            // every bind value, as it bounds the INNER build in selectBuildIndex(). LEFT joins take
-            // no bound: their ordinary plan chains every row of the same table, and the fused plan
-            // stayed faster.
+            // every bind value, as it bounds the INNER build in selectBuildIndex(), and each execution
+            // holds the table to the bound unless its context tolerates row count changes. LEFT joins
+            // take no bound: their ordinary plan chains every row of the same table, and the fused
+            // plan stayed faster.
             final long buildRows = buildIndex == 0 ? leftReader.size() : rightReader.size();
+            long maxBuildTableRows = Long.MAX_VALUE;
             if (joinType == IQueryModel.JOIN_RIGHT_OUTER) {
                 final long maxBuildSize = executionContext.getCairoEngine().getConfiguration()
                         .getSqlParallelHashJoinGroupByRightJoinMaxBuildSize();
-                if (buildRows > maxBuildSize / analyzer.getBuildRowSize()) {
+                maxBuildTableRows = maxBuildSize / analyzer.getBuildRowSize();
+                if (buildRows > maxBuildTableRows) {
                     return null;
                 }
             }
             final long probeRows = buildIndex == 0 ? rightReader.size() : leftReader.size();
-            return new HashJoinGroupByCandidate(analyzer, keys, buildIndex == order.getQuick(0), buildRows <= probeRows);
+            return new HashJoinGroupByCandidate(analyzer, keys, buildIndex == order.getQuick(0), buildRows <= probeRows,
+                    maxBuildTableRows);
         } catch (SqlException e) {
             // The ordinary plan reports errors in its own compile order, and only its interval extraction
             // and generateFilter() compile optimiser-internal nodes such as and_offset. A failed
@@ -509,7 +565,13 @@ public final class HashJoinGroupByCandidate {
      * the join for LEFT, the one before it for RIGHT. An INNER join builds the table with fewer
      * rows and keeps the join order on a tie. Row counts ignore filters and bind values on
      * purpose: one cached factory serves every bind value, and the unfiltered count bounds the
-     * build at min(|left|, |right|) rows whatever the filters select.
+     * build at min(|left|, |right|) rows whatever the filters select. The tables may grow after
+     * the compile: an execution that finds the build table holding more than twice the rows of the
+     * probe table throws {@link io.questdb.cairo.sql.TableReferenceOutOfDateException}, on which the
+     * holder of the factory compiles the query again. The new compile of an INNER join builds the
+     * other table. An outer join keeps its build table, and the new compile stops presizing the key
+     * table by the build's rows. An execution whose context tolerates row count changes, such as a
+     * queued export, keeps the compile-time build and throws nothing.
      */
     private static int selectBuildIndex(int joinType, IntList order, long leftSize, long rightSize) {
         final int first = order.getQuick(0);
@@ -717,7 +779,9 @@ public final class HashJoinGroupByCandidate {
             return ExpressionNode.FACTORY.newInstance().of(ExpressionNode.LITERAL, metadata.getColumnName(index), 0, position);
         }
 
-        /** Row heap bytes of one build row: a link, plus a row id when any build column is required. */
+        /**
+         * Row heap bytes of one build row: a link, plus a row id when any build column is required.
+         */
         private long getBuildRowSize() {
             return FrozenHashJoinBuild.getRowSize(requiredBuildColumns.size() > 0);
         }

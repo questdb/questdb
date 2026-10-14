@@ -86,7 +86,9 @@ final class HashJoinPartitions implements QuietCloseable {
         return (int) ((hash >>> 32) >>> shift);
     }
 
-    /** Allocates the chunk of this frame and returns its address; {@link #freeChunks()} frees it. */
+    /**
+     * Allocates the chunk of this frame and returns its address; {@link #freeChunks()} frees it.
+     */
     long allocateChunk(int frameIndex, long size) {
         final long chunk = Unsafe.malloc(size, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
         final long chunkEntry = chunks.address + (long) frameIndex * CHUNK_ENTRY_SIZE;
@@ -166,12 +168,16 @@ final class HashJoinPartitions implements QuietCloseable {
         return 1 << bucketBits;
     }
 
-    /** The shift that {@link #bucketOf} takes for a bucket. */
+    /**
+     * The shift that {@link #bucketOf} takes for a bucket.
+     */
     int getBucketShift() {
         return 32 - bucketBits;
     }
 
-    /** Bytes of one frame's row of the bucket table. */
+    /**
+     * Bytes of one frame's row of the bucket table.
+     */
     long getBucketStride() {
         return (long) Integer.BYTES * ((1 << bucketBits) + 1);
     }
@@ -192,20 +198,26 @@ final class HashJoinPartitions implements QuietCloseable {
         return frameCount;
     }
 
-    /** Rows of this frame's region of the heap; see {@link #beginFrameRegions}. */
+    /**
+     * Rows of this frame's region of the heap; see {@link #beginFrameRegions}.
+     */
     long getFrameRegionRowCount(int frameIndex) {
         assert hasFrameRegions && frameIndex >= 0 && frameIndex < frameCount;
         final long start = frameStarts.address + (long) frameIndex * Long.BYTES;
         return Unsafe.getLong(start + Long.BYTES) - Unsafe.getLong(start);
     }
 
-    /** Heap ordinal of the first row of this frame's region; see {@link #beginFrameRegions}. */
+    /**
+     * Heap ordinal of the first row of this frame's region; see {@link #beginFrameRegions}.
+     */
     long getFrameRegionStart(int frameIndex) {
         assert hasFrameRegions && frameIndex >= 0 && frameIndex < frameCount;
         return Unsafe.getLong(frameStarts.address + (long) frameIndex * Long.BYTES);
     }
 
-    /** Byte offset, within a frame's row of the bucket table, of the first bucket of this partition. */
+    /**
+     * Byte offset, within a frame's row of the bucket table, of the first bucket of this partition.
+     */
     long getPartitionBucketLo(int partition) {
         return (long) Integer.BYTES * (partition << (bucketBits - partitionBits));
     }
@@ -214,7 +226,9 @@ final class HashJoinPartitions implements QuietCloseable {
         return 1 << partitionBits;
     }
 
-    /** The shift that {@link #bucketOf} takes for a partition, once the partitions are planned. */
+    /**
+     * The shift that {@link #bucketOf} takes for a partition, once the partitions are planned.
+     */
     int getPartitionShift() {
         return 32 - partitionBits;
     }
@@ -223,7 +237,9 @@ final class HashJoinPartitions implements QuietCloseable {
         return partitionKeyHints[partition];
     }
 
-    /** Rows of this partition, once the partitions are planned. */
+    /**
+     * Rows of this partition, once the partitions are planned.
+     */
     long getPartitionRowCount(int partition) {
         assert frameCount > 0 && partition >= 0 && partition < 1 << partitionBits;
         final long end = partition + 1 < 1 << partitionBits ? partitionStarts[partition + 1] : rowCount;
@@ -238,7 +254,9 @@ final class HashJoinPartitions implements QuietCloseable {
         return partitionStarts[partition];
     }
 
-    /** Rows the frames kept, once every frame is partitioned. */
+    /**
+     * Rows the frames kept, once every frame is partitioned.
+     */
     long getPartitionedRowCount() {
         final long stride = getBucketStride();
         final long total = (long) Integer.BYTES * (1 << bucketBits);
@@ -249,35 +267,47 @@ final class HashJoinPartitions implements QuietCloseable {
         return keptCount;
     }
 
-    /** Rows that this frame keeps in this partition. */
+    /**
+     * Rows that this frame keeps in this partition.
+     */
     long getSegmentRowCount(int frameIndex, int partition) {
         assert frameIndex >= 0 && frameIndex < frameCount && partition >= 0 && partition < 1 << partitionBits;
         final long counts = getBucketStarts(frameIndex);
         return Unsafe.getInt(counts + getPartitionBucketLo(partition + 1)) - Unsafe.getInt(counts + getPartitionBucketLo(partition));
     }
 
-    /** Heap ordinal of the first row that this frame keeps in this partition, once the partition is built. */
+    /**
+     * Heap ordinal of the first row that this frame keeps in this partition, once the partition is built.
+     */
     long getSegmentStart(int frameIndex, int partition) {
         assert frameIndex >= 0 && frameIndex < frameCount && partition >= 0 && partition < 1 << partitionBits;
         return Unsafe.getLong(segmentStarts.address + ((long) frameIndex * (1 << partitionBits) + partition) * Long.BYTES);
     }
 
-    /** Native bytes of the tables, not counting the chunks they point at. */
+    /**
+     * Native bytes of the tables, not counting the chunks they point at.
+     */
     long getSizeInBytes() {
         return bucketStarts.capacity + chunks.capacity + frameStarts.capacity + segmentStarts.capacity;
     }
 
-    /** True for a build that {@link #beginFrameRegions} started, until {@link #close()}. */
+    /**
+     * True for a build that {@link #beginFrameRegions} started, until {@link #close()}.
+     */
     boolean hasFrameRegions() {
         return hasFrameRegions;
     }
 
-    /** True between {@link #begin} and {@link #close()}. */
+    /**
+     * True between {@link #begin} and {@link #close()}.
+     */
     boolean isPartitioning() {
         return frameCount != 0;
     }
 
-    /** Binds the execution that charges and cancels this build's allocations. */
+    /**
+     * Binds the execution that charges and cancels this build's allocations.
+     */
     void of(@Nullable MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker) {
         this.memoryTracker = memoryTracker;
         chunks.of(memoryTracker, circuitBreaker);
@@ -316,7 +346,7 @@ final class HashJoinPartitions implements QuietCloseable {
             // them, so each takes twice its share and grows past it if it must.
             partitionKeyHints[p] = keyCountHint < 1 ? -1
                     : partitionCount == 1 ? keyCountHint
-                    : Math.min(rows, Numbers.ceilDiv(2 * keyCountHint, partitionCount));
+                      : Math.min(rows, Numbers.ceilDiv(2 * keyCountHint, partitionCount));
         }
         assert start == rowCount;
         assert !hasFrameRegions || rowCount == Unsafe.getLong(frameStarts.address + (long) frameCount * Long.BYTES);
@@ -324,7 +354,9 @@ final class HashJoinPartitions implements QuietCloseable {
         return partitionCount;
     }
 
-    /** Records where this frame's rows of this partition start in the heap; the partition's task does. */
+    /**
+     * Records where this frame's rows of this partition start in the heap; the partition's task does.
+     */
     void setSegmentStart(int frameIndex, int partition, long ordinal) {
         Unsafe.putLong(segmentStarts.address + ((long) frameIndex * (1 << partitionBits) + partition) * Long.BYTES, ordinal);
     }

@@ -344,6 +344,202 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyRowCountCancellationPerMiBOfRowsAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            // 300_000 rows of a link each fill 2.3 MiB of heap, which the count checks three times.
+            final int rows = 300_000;
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024);
+                 IntHashJoinBuild build = new IntHashJoinBuild(false, 2, 16)) {
+                // The first execution counts to the end; each of the others cancels at one of its checks:
+                // before the first row, and with one and then two MiB of links already replaced.
+                for (int tripAt = 0; tripAt <= 3; tripAt++) {
+                    final CountCheckBreaker breaker = new CountCheckBreaker(tripAt);
+                    build.open(tracker, breaker);
+                    for (int row = 0; row < rows; row++) {
+                        build.append(row % 1_000, row);
+                    }
+                    final FrozenHashJoinBuild.IntKeyed frozen = build.freeze();
+                    if (tripAt == 0) {
+                        frozen.countKeyRows();
+                        Assert.assertEquals(3, breaker.countChecks);
+                        try (FrozenHashJoinBuild.IntProbe probe = frozen.newProbe()) {
+                            Assert.assertEquals(300, probe.findRowCountUnchecked(0));
+                            Assert.assertEquals(300, probe.findRowCountUnchecked(999));
+                            Assert.assertEquals(0, probe.findRowCountUnchecked(1_000));
+                        }
+                        build.close();
+                    } else {
+                        final CairoException error = Assert.assertThrows(CairoException.class, frozen::countKeyRows);
+                        Assert.assertTrue(error.isCancellation());
+                        Assert.assertEquals(tripAt, breaker.countChecks);
+                        // The heap holds counts up to the check and links beyond it, so the build goes with it.
+                        Assert.assertThrows(IllegalStateException.class, frozen::newProbe);
+                    }
+                    Assert.assertEquals("a cancelled count releases all allocations", 0, tracker.getUsed());
+                    Assert.assertEquals(0, build.getSizeInBytes());
+                }
+                build.open(tracker, NOOP);
+                build.append(7, 0);
+                build.append(7, 1);
+                build.append(8, 2);
+                final FrozenHashJoinBuild.IntKeyed frozen = build.freeze();
+                frozen.countKeyRows();
+                try (FrozenHashJoinBuild.IntProbe probe = frozen.newProbe()) {
+                    Assert.assertEquals(2, probe.findRowCountUnchecked(7));
+                    Assert.assertEquals(1, probe.findRowCountUnchecked(8));
+                }
+                build.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testKeyRowCountsLeaveNoChainToWalk() throws Exception {
+        assertMemoryLeak(() -> {
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1024 * 1024);
+                 IntHashJoinBuild build = new IntHashJoinBuild(false, 2, 16, true)) {
+                FrozenHashJoinBuild.IntProbe reusable = null;
+                try {
+                    // The first execution keeps its links: the probe walks key 7's two rows.
+                    build.open(tracker, NOOP);
+                    build.append(7, 0);
+                    build.append(7, 1);
+                    build.append(8, 2);
+                    reusable = build.freeze().newProbe();
+                    reusable.find(7);
+                    reusable.next();
+                    reusable.next();
+                    Assert.assertFalse(reusable.hasNext());
+                    reusable.close();
+                    build.close();
+
+                    // The second execution counts its key rows before the probe rebinds, as the fused
+                    // operator does. Its rows hold counts now, which a walk would follow as links, so
+                    // next() refuses to walk, whichever lookup set the walk up.
+                    build.open(tracker, NOOP);
+                    build.append(7, 0);
+                    build.append(7, 1);
+                    build.append(8, 2);
+                    final FrozenHashJoinBuild.IntKeyed counted = build.freeze();
+                    counted.countKeyRows();
+                    reusable.reopen();
+                    Assert.assertEquals(2, reusable.findRowCountUnchecked(7));
+                    Assert.assertEquals(1, reusable.findRowCountUnchecked(8));
+                    reusable.find(7);
+                    Assert.assertTrue(reusable.hasNext());
+                    Assert.assertThrows(AssertionError.class, reusable::next);
+                    reusable.findUnchecked(8);
+                    Assert.assertTrue(reusable.hasNext());
+                    Assert.assertThrows(AssertionError.class, reusable::next);
+                    try (FrozenHashJoinBuild.IntProbe probe = counted.newProbe()) {
+                        probe.findUnchecked(7);
+                        Assert.assertThrows(AssertionError.class, probe::next);
+                    }
+                } finally {
+                    Misc.free(reusable);
+                }
+                build.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testKeyRowCountsRejectASecondCountAndAnExpiredBuild() throws Exception {
+        assertMemoryLeak(() -> {
+            try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(1024 * 1024);
+                 IntHashJoinBuild build = new IntHashJoinBuild(false, 2, 16)) {
+                build.open(tracker, NOOP);
+                build.append(7, 0);
+                build.append(7, 1);
+                final FrozenHashJoinBuild.IntKeyed expired = build.freeze();
+                expired.countKeyRows();
+                // A second pass would read the counts as links, so the build refuses it and closes.
+                Assert.assertThrows(IllegalStateException.class, expired::countKeyRows);
+                Assert.assertEquals(0, tracker.getUsed());
+                Assert.assertEquals(0, build.getSizeInBytes());
+
+                build.open(tracker, NOOP);
+                build.append(7, 0);
+                build.append(7, 1);
+                build.append(7, 2);
+                final FrozenHashJoinBuild.IntKeyed current = build.freeze();
+                // The snapshot of the closed execution has no rows to count, and leaves the open one alone.
+                Assert.assertThrows(IllegalStateException.class, expired::countKeyRows);
+                Assert.assertTrue(tracker.getUsed() > 0);
+                current.countKeyRows();
+                try (FrozenHashJoinBuild.IntProbe probe = current.newProbe()) {
+                    Assert.assertEquals(3, probe.findRowCountUnchecked(7));
+                }
+                build.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testKeyRowCountsWithAndWithoutPayloadAndReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            for (boolean hasPayload : new boolean[]{false, true}) {
+                try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(32 * 1024 * 1024);
+                     IntHashJoinBuild build = new IntHashJoinBuild(hasPayload, 2, 8, true)) {
+                    final RowIdPayloadSource payloads = new RowIdPayloadSource();
+                    FrozenHashJoinBuild.IntProbe reusable = null;
+                    try {
+                        // One key for every row, a skew over seven keys with the special ones among
+                        // them, and unique keys with a few late repeats: each execution counts its own rows.
+                        for (int execution = 0; execution < 3; execution++) {
+                            build.open(tracker, NOOP);
+                            final Map<Integer, Long> expected = new HashMap<>();
+                            final int rows = 4_097;
+                            for (int r = 0; r < rows; r++) {
+                                int key = execution == 0 ? 42 : execution == 1 ? r % 7 : r < 4_000 ? r : r % 13;
+                                key = key == 1 ? Numbers.INT_NULL : key == 2 ? Integer.MAX_VALUE : key == 3 ? -1 : key;
+                                expected.merge(key, 1L, Long::sum);
+                                build.append(key, r);
+                            }
+                            final FrozenHashJoinBuild.IntKeyed frozen = hasPayload ? build.freeze(payloads) : build.freeze();
+                            Assert.assertEquals(rows, frozen.getRowCount());
+                            Assert.assertEquals(expected.size(), frozen.getKeyCount());
+                            final long used = tracker.getUsed();
+                            frozen.countKeyRows();
+                            Assert.assertEquals("the count runs in place", used, tracker.getUsed());
+                            Assert.assertEquals(rows, frozen.getRowCount());
+                            Assert.assertEquals(expected.size(), frozen.getKeyCount());
+                            if (reusable == null) {
+                                reusable = frozen.newProbe();
+                            } else {
+                                reusable.reopen();
+                            }
+                            long counted = 0;
+                            for (Map.Entry<Integer, Long> entry : expected.entrySet()) {
+                                final long keyRows = reusable.findRowCountUnchecked(entry.getKey());
+                                Assert.assertEquals("key " + entry.getKey(), entry.getValue().longValue(), keyRows);
+                                counted += keyRows;
+                            }
+                            Assert.assertEquals(rows, counted);
+                            Assert.assertEquals(0, reusable.findRowCountUnchecked(-42));
+                            // A count lookup positions nothing.
+                            Assert.assertFalse(reusable.hasNext());
+                            if (hasPayload) {
+                                // The rows keep their ids, which a payload copy reads by ordinal.
+                                Assert.assertEquals(0, frozen.getRowId(0));
+                                Assert.assertEquals(rows - 1, frozen.getRowId(rows - 1));
+                            }
+                            reusable.close();
+                            build.close();
+                            Assert.assertEquals(0, tracker.getUsed());
+                        }
+                    } finally {
+                        Misc.free(reusable);
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testKnownBuildSizeReservesTrackedRowsAndOverflowReuses() throws Exception {
         assertMemoryLeak(() -> {
             // Enough for the exact rows and two key slots, but not a doubling copy.
@@ -1307,7 +1503,7 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
                         for (int probeKey : new int[]{0, 1, 2, 3, nil}) {
                             final int buildKey = view.translate(probeKey);
                             Assert.assertEquals(probeKey == 0 ? 3 : probeKey == 1 ? 0
-                                    : probeKey == 2 ? SymbolTable.VALUE_NOT_FOUND : nil, buildKey);
+                                                                    : probeKey == 2 ? SymbolTable.VALUE_NOT_FOUND : nil, buildKey);
                             probe.find(buildKey);
                             int matches = 0;
                             while (probe.hasNext()) {
@@ -1465,6 +1661,30 @@ public class IntHashJoinBuildTest extends AbstractCairoTest {
         }
         FrozenHashJoinBuild.IntKeyed frozen = build.freeze(new RowIdPayloadSource(POPULATED_SYMBOLS, 0));
         Assert.assertEquals(12, frozen.getRowCount());
+    }
+
+    /**
+     * Counts the checks that the count of the key rows makes, and cancels on the given one, counting
+     * from one; zero never cancels.
+     */
+    private static class CountCheckBreaker extends CountingSqlExecutionCircuitBreaker {
+        private final int tripAt;
+        private final StackWalker walker = StackWalker.getInstance();
+        private int countChecks;
+
+        private CountCheckBreaker(int tripAt) {
+            super(NOOP);
+            this.tripAt = tripAt;
+        }
+
+        @Override
+        public void statefulThrowExceptionIfTrippedTimeThrottled() {
+            super.statefulThrowExceptionIfTrippedTimeThrottled();
+            if (walker.walk(frames -> frames.anyMatch(frame -> frame.getMethodName().equals("countChains")))
+                    && ++countChecks == tripAt) {
+                throw CairoException.queryCancelled(1);
+            }
+        }
     }
 
     /**

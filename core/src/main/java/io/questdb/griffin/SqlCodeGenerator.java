@@ -578,6 +578,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final RecordComparatorCompiler recordComparatorCompiler;
     private final IntList recordFunctionPositions = new IntList();
     private final PageFrameReduceTaskFactory reduceTaskFactory;
+    // Per generation depth: the caller's scratch state that a nested generate() call saves on entry
+    // and restores on exit, see generateAttempt().
+    private final ObjList<GenerationScratch> scratchSnapshots = new ObjList<>();
     // Cache of factories generated for shared models (models with shared refs).
     // Key: the delegate QueryModel; Value: the primary factory.
     // When a QueryModelWrapper is encountered, we look up its delegate here.
@@ -823,6 +826,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         if (whereClauseParsers.size() > MAX_RETAINED_WHERE_CLAUSE_PARSERS) {
             whereClauseParsers.remove(MAX_RETAINED_WHERE_CLAUSE_PARSERS, whereClauseParsers.size() - 1);
         }
+        // The per-depth scratch snapshots follow the same retention bound.
+        if (scratchSnapshots.size() > MAX_RETAINED_WHERE_CLAUSE_PARSERS) {
+            scratchSnapshots.remove(MAX_RETAINED_WHERE_CLAUSE_PARSERS, scratchSnapshots.size() - 1);
+        }
         horizonJoinSlaveModel = null;
         whereClauseParserDepth = 0;
         // drop the references to the factories of the last ASOF JOIN compiled
@@ -1031,6 +1038,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // Each generation depth uses its own parser instance, so the budget that bounds the
         // doubling compile in WhereClauseParser only survives if it is seeded from the parent.
         parser.setScalarBoundDepth(parserIndex == 0 ? 0 : whereClauseParsers.getQuick(parserIndex - 1).childScalarBoundDepth());
+        // A nested call generates a sub-query, such as a cursor function's, while the caller is in the
+        // middle of a generation step: GROUP BY, for example, clears its key and value types, parses
+        // its functions, fills the types and only then builds its map from them. The sub-query's own
+        // joins, sorts and GROUP BYs reuse the same scratch fields, so this call saves the caller's
+        // contents and restores them on exit.
+        final GenerationScratch callerScratch = parserIndex > 0 ? saveScratch(parserIndex - 1) : null;
         whereClauseParserDepth++;
         Throwable failure = null;
         boolean hasEntered = false;
@@ -1048,38 +1061,47 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         } finally {
             generationState.exitRegion(hasEntered);
             whereClauseParserDepth--;
-            // The borrowed models own scalar sub-query factories until buildIntervalModel() hands
-            // them downstream; free them here so a throw before that handoff does not leak the
-            // open factory. On the success path ownership was already transferred, so this is a
-            // no-op free. Preserve the in-flight failure by suppressing any cleanup failure onto it.
-            if (failure != null) {
-                try {
-                    freeTableNameFunctions(model, failure);
-                } catch (Throwable cleanupFailure) {
-                    if (cleanupFailure != failure) {
-                        failure.addSuppressed(cleanupFailure);
+            try {
+                // The borrowed models own scalar sub-query factories until buildIntervalModel() hands
+                // them downstream; free them here so a throw before that handoff does not leak the
+                // open factory. On the success path ownership was already transferred, so this is a
+                // no-op free. Preserve the in-flight failure by suppressing any cleanup failure onto it.
+                if (failure != null) {
+                    try {
+                        freeTableNameFunctions(model, failure);
+                    } catch (Throwable cleanupFailure) {
+                        if (cleanupFailure != failure) {
+                            failure.addSuppressed(cleanupFailure);
+                        }
                     }
-                }
-                try {
+                    try {
+                        parser.freeBorrowedModels();
+                    } catch (Throwable cleanupFailure) {
+                        if (cleanupFailure != failure) {
+                            failure.addSuppressed(cleanupFailure);
+                        }
+                    }
+                    try {
+                        parser.freeScalarBoundCompileCaches();
+                    } catch (Throwable cleanupFailure) {
+                        if (cleanupFailure != failure) {
+                            failure.addSuppressed(cleanupFailure);
+                        }
+                    }
+                } else {
                     parser.freeBorrowedModels();
-                } catch (Throwable cleanupFailure) {
-                    if (cleanupFailure != failure) {
-                        failure.addSuppressed(cleanupFailure);
-                    }
-                }
-                try {
+                    // A speculative sub-query compile parked for a declined bound is claimed by the
+                    // residual filter, which is generated inside the call above. Anything still parked
+                    // here was never claimed, so release it rather than hold an open factory.
                     parser.freeScalarBoundCompileCaches();
-                } catch (Throwable cleanupFailure) {
-                    if (cleanupFailure != failure) {
-                        failure.addSuppressed(cleanupFailure);
-                    }
                 }
-            } else {
-                parser.freeBorrowedModels();
-                // A speculative sub-query compile parked for a declined bound is claimed by the
-                // residual filter, which is generated inside the call above. Anything still parked
-                // here was never claimed, so release it rather than hold an open factory.
-                parser.freeScalarBoundCompileCaches();
+            } finally {
+                // The caller gets its scratch state back after the cleanup above, also when that
+                // cleanup throws, so a failure in one never skips the other. restoreScratch() copies
+                // into the capacity each field already had, so it does not allocate.
+                if (callerScratch != null) {
+                    restoreScratch(callerScratch);
+                }
             }
         }
     }
@@ -6397,6 +6419,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (!HashJoinGroupByCandidate.supportsFramedInput(buildInput)) {
                 return null;
             }
+            // The build keeps its rows' own SYMBOL keys, so its dictionary must hold each text once.
+            if (candidate.getKeys().hasTranslatedSymbol() && !HashJoinGroupByCandidate.supportsTranslatedSymbolBuild(buildInput)) {
+                return null;
+            }
             final int workerCount = executionContext.getSharedQueryWorkerCount();
             try (HashJoinGroupByMetadata metadata = new HashJoinGroupByMetadata(configuration, asm, candidate,
                     probeInput.getMetadata(), probeColumns, buildInput.getMetadata(), buildColumns)) {
@@ -8774,7 +8800,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 //  - if `true`, the join is a self-join for sure
                                 //  - if `false`, the join may or may not be self-join
                                 boolean isSelfJoin = isSameTable(master, slaveToFree);
-                                processJoinContext(i == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSelfJoin, slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 validateTimestampNotInJoinKeys(slaveModel, masterMetadata, slaveMetadata);
                                 master = joinType == IQueryModel.JOIN_ASOF
                                         ? generateJoinAsof(isSelfJoin, model, slaveModel, master, masterMetadata, masterAlias, slaveToFree, slaveMetadata, executionContext)
@@ -8787,7 +8813,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                 validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
                                 validateOuterJoinExpressions(slaveModel, "SPLICE");
-                                processJoinContext(i == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 if (slaveToFree.recordCursorSupportsRandomAccess() && master.recordCursorSupportsRandomAccess() && !fullFatJoins) {
                                     master = createSpliceJoin(
                                             // splice join result does not have timestamp
@@ -8860,7 +8886,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // - Intermediate window joins return metadata combining master metadata + aggregated columns from current slave model
                                 // - The last window join returns metadata mapped according to the final projection
                                 final boolean isLastWindowJoin = i + 1 == n;
-                                processJoinContext(i == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, masterMetadata.getTimestampIndex());
                                 masterAlias = null;
                                 ObjList<QueryColumn> aggregateCols = new ObjList<>();
@@ -9490,7 +9516,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     validateHorizonJoinFilter(model, index, slaveModel);
                                     validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                     validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
-                                    processJoinContext(i == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                    processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                     if (pendingHorizonSlaves == null) {
                                         pendingHorizonSlaves = new ObjList<>();
                                         pendingHorizonSlaveModels = new ObjList<>();
@@ -9523,7 +9549,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
 
                                 // Process join context for key-based matching (similar to ASOF JOIN)
-                                processJoinContext(i == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
 
                                 if (pendingHorizonSlaves != null && pendingHorizonSlaves.size() > 0) {
                                     // Multi-slave HORIZON JOIN: collect all slaves.
@@ -9579,7 +9605,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 isHorizonJoinCompleted = true;
                                 break;
                             default:
-                                processJoinContext(i == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
+                                processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
                                 joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveModel.getName(), slaveMetadata, joinType == IQueryModel.JOIN_RIGHT_OUTER || joinType == IQueryModel.JOIN_FULL_OUTER ? -1 : masterMetadata.getTimestampIndex());
                                 if (slaveModel.getOuterJoinExpressionClause() != null) {
                                     joinFilter = compileJoinFilter(slaveModel.getOuterJoinExpressionClause(), joinMetadata, executionContext);
@@ -20299,15 +20325,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return latestByColumnCount;
     }
 
-    /**
-     * Callers pass vanillaMaster = true only for the join at execution position 1. Its master is the single
-     * cursor at position 0, so the master's bare column names (bNames) resolve against it. A later master is
-     * usually a join, where a bare name can be ambiguous, so the lookup resolves the column references
-     * themselves (bNodes). The flag is conservative when a skipped HORIZON offset model takes position 1: the
-     * master at position 2 is then still the single cursor, and the bNodes lookup, which falls back to the
-     * column part of a qualified reference, resolves against it too. After reordering, the model index does
-     * not identify position 1.
-     */
     private void processJoinContext(
             boolean vanillaMaster,
             boolean isSelfJoin,
@@ -20472,6 +20489,78 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             sharedFactoryCacheUndoKeys.add(model);
             sharedFactoryCacheUndoValues.add(replaced);
             sharedFactoryCache.put(model, factory);
+        }
+    }
+
+    private void restoreScratch(GenerationScratch scratch) {
+        // Each field held the saved contents before the nested call, so its capacity fits them and
+        // the copies below do not allocate.
+        keyTypes.clear();
+        keyTypes.addAll(scratch.keyTypes);
+        valueTypes.clear();
+        valueTypes.addAll(scratch.valueTypes);
+        listColumnFilterA.clear();
+        listColumnFilterA.addAll(scratch.listColumnFilterA);
+        recordFunctionPositions.clear();
+        recordFunctionPositions.addAll(scratch.recordFunctionPositions);
+        groupByFunctionPositions.clear();
+        groupByFunctionPositions.addAll(scratch.groupByFunctionPositions);
+        tempExpressionNodeList.clear();
+        tempExpressionNodeList.addAll(scratch.tempExpressionNodeList);
+        arrayColumnTypes.clear();
+        arrayColumnTypes.addAll(scratch.arrayColumnTypes);
+        tempKeyIndex.clear();
+        tempKeyIndex.addAll(scratch.tempKeyIndex);
+        tempKeyIndexesInBase.clear();
+        tempKeyIndexesInBase.addAll(scratch.tempKeyIndexesInBase);
+        tempKeyKinds.clear();
+        tempKeyKinds.addAll(scratch.tempKeyKinds);
+        prefixes.clear();
+        prefixes.addAll(scratch.prefixes);
+        // Drop the references to pooled expression nodes.
+        scratch.tempExpressionNodeList.clear();
+    }
+
+    private GenerationScratch saveScratch(int depth) {
+        while (scratchSnapshots.size() <= depth) {
+            scratchSnapshots.add(new GenerationScratch());
+        }
+        final GenerationScratch scratch = scratchSnapshots.getQuick(depth);
+        scratch.keyTypes.clear();
+        scratch.keyTypes.addAll(keyTypes);
+        scratch.valueTypes.clear();
+        scratch.valueTypes.addAll(valueTypes);
+        scratch.listColumnFilterA.clear();
+        scratch.listColumnFilterA.addAll(listColumnFilterA);
+        scratch.recordFunctionPositions.clear();
+        scratch.recordFunctionPositions.addAll(recordFunctionPositions);
+        scratch.groupByFunctionPositions.clear();
+        scratch.groupByFunctionPositions.addAll(groupByFunctionPositions);
+        scratch.tempExpressionNodeList.clear();
+        scratch.tempExpressionNodeList.addAll(tempExpressionNodeList);
+        scratch.arrayColumnTypes.clear();
+        scratch.arrayColumnTypes.addAll(arrayColumnTypes);
+        scratch.tempKeyIndex.clear();
+        scratch.tempKeyIndex.addAll(tempKeyIndex);
+        scratch.tempKeyIndexesInBase.clear();
+        scratch.tempKeyIndexesInBase.addAll(tempKeyIndexesInBase);
+        scratch.tempKeyKinds.clear();
+        scratch.tempKeyKinds.addAll(tempKeyKinds);
+        scratch.prefixes.clear();
+        scratch.prefixes.addAll(prefixes);
+        return scratch;
+    }
+
+    private void snapshotHashJoinFilters(IQueryModel model, ObjList<IQueryModel> models,
+                                         ObjList<ExpressionNode> whereClauses, ObjList<ExpressionNode> backups) {
+        while (model != null) {
+            models.add(model);
+            whereClauses.add(deepClone(expressionNodePool, model.getWhereClause()));
+            backups.add(deepClone(expressionNodePool, model.getBackupWhereClause()));
+            for (int i = 1; i < model.getJoinModels().size(); i++) {
+                snapshotHashJoinFilters(model.getJoinModels().getQuick(i), models, whereClauses, backups);
+            }
+            model = model.getNestedModel();
         }
     }
 
@@ -21048,6 +21137,29 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             slaveRows = UNKNOWN;
             slaveTableRows = UNKNOWN;
         }
+    }
+
+    /**
+     * The scratch fields a generation step may still read after a nested generate() call in the
+     * middle of it: the map key and value types, key column filter and function positions that
+     * GroupByUtils.assembleGroupByFunctions() fills for GROUP BY, SAMPLE BY, HORIZON JOIN and WINDOW
+     * JOIN around parsing their functions, the fill values that legacy SAMPLE BY reorders before
+     * that, the vectorized GROUP BY key lists that generateSelectGroupBy() clears before it
+     * generates its base query, and the WITHIN prefixes that generateTableQuery0() extracts before
+     * WhereClauseParser compiles the scalar sub-query bounds of a LATEST ON query.
+     */
+    private static class GenerationScratch {
+        final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
+        final IntList groupByFunctionPositions = new IntList();
+        final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
+        final IntList listColumnFilterA = new IntList();
+        final LongList prefixes = new LongList();
+        final IntList recordFunctionPositions = new IntList();
+        final ObjList<ExpressionNode> tempExpressionNodeList = new ObjList<>();
+        final IntList tempKeyIndex = new IntList();
+        final IntList tempKeyIndexesInBase = new IntList();
+        final IntList tempKeyKinds = new IntList();
+        final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     }
 
     /**

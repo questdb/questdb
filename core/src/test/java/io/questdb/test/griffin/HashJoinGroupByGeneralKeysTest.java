@@ -122,7 +122,11 @@ public class HashJoinGroupByGeneralKeysTest extends AbstractCairoTest {
                     // are charged to the query's tracker, so the failure credits every byte back.
                     setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 64 * 1024);
                     try {
-                        try (RecordCursor ignored = factory.getCursor(context)) {
+                        // The limit admits the open cursor, which builds nothing, and fails the
+                        // build that the first read starts.
+                        try (RecordCursor cursor = factory.getCursor(context)) {
+                            Assert.assertNull(fusedFactory.getAtom().getFrozenBuild());
+                            cursor.hasNext();
                             Assert.fail();
                         } catch (CairoException expected) {
                             Assert.assertTrue(expected.getMessage(), expected.isOutOfMemory());
@@ -132,18 +136,21 @@ public class HashJoinGroupByGeneralKeysTest extends AbstractCairoTest {
                     }
                     Assert.assertNull(fusedFactory.getAtom().getFrozenBuild());
                     Assert.assertEquals(0, fusedFactory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
-                    // Cancelling before the reducers take their first frame unwinds the staged-key
-                    // probes, whose views own a staging buffer charged to this execution.
+                    // Cancelling once the build is frozen unwinds the staged-key probes, whose views
+                    // own a staging buffer charged to this execution. The first read builds and
+                    // binds the probes without a breaker check in between, so the breaker trips
+                    // from inside that read, at the owner's first check that finds the build.
+                    context.with(HashJoinBuildCircuitBreaker.cancellingOnceBuilt(engine, () -> fusedFactory.getAtom().getFrozenBuild() != null));
                     try (RecordCursor cursor = factory.getCursor(context)) {
-                        breaker.cancel();
                         cursor.hasNext();
                         Assert.fail();
                     } catch (CairoException expected) {
                         Assert.assertTrue(expected.getMessage(), expected.isCancellation());
                     }
+                    Assert.assertNull(fusedFactory.getAtom().getFrozenBuild());
                     Assert.assertEquals(0, fusedFactory.getAtom().getPerWorkerLocks().getAcquiredSlotCount());
                     Assert.assertNull(context.getMemoryTracker());
-                    breaker.reset();
+                    context.with(breaker);
                     // The same factory answers the query after both failures.
                     assertAgainstBaseline(sql, factory, context);
                 }

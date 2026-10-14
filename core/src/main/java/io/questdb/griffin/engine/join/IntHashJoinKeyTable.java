@@ -84,7 +84,9 @@ final class IntHashJoinKeyTable implements QuietCloseable {
         circuitBreaker = null;
     }
 
-    /** Allocated native bytes. */
+    /**
+     * Allocated native bytes.
+     */
     long getSizeInBytes() {
         return slots.capacity;
     }

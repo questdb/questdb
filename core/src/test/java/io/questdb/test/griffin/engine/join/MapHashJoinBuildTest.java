@@ -444,6 +444,67 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeyRowCountCancellationReleasesEitherMapAndReuses() throws Exception {
+        assertMemoryLeak(() -> {
+            // A LONG key takes the Unordered8Map and a STRING key the OrderedMap.
+            for (boolean isLongKey : new boolean[]{true, false}) {
+                try (LimitedMemoryTracker tracker = new LimitedMemoryTracker(64 * 1024 * 1024);
+                     MapHashJoinBuild build = new MapHashJoinBuild(configuration,
+                             new SingleColumnType(isLongKey ? ColumnType.LONG : ColumnType.STRING), false, 4, 1024, 64)) {
+                    // The first execution cancels as the count starts, the second counts to the end.
+                    for (boolean isCancelled : new boolean[]{true, false}) {
+                        final CountingSqlExecutionCircuitBreaker breaker = new CountingSqlExecutionCircuitBreaker(NOOP) {
+                            private final StackWalker walker = StackWalker.getInstance();
+
+                            @Override
+                            public void statefulThrowExceptionIfTrippedTimeThrottled() {
+                                super.statefulThrowExceptionIfTrippedTimeThrottled();
+                                if (isCancelled && walker.walk(frames -> frames.anyMatch(frame -> frame.getMethodName().equals("countChains")))) {
+                                    throw CairoException.queryCancelled(1);
+                                }
+                            }
+                        };
+                        build.open(tracker, breaker);
+                        final RecordSink sink = isLongKey ? new LongKeySink() : new StrKeySink();
+                        // Seventeen keys of 100 rows each, a NULL key among them, and 300 keys of one row.
+                        for (int r = 0; r < 2_000; r++) {
+                            final long key = r < 1_700 ? r % 17 : r;
+                            build.append(isLongKey ? source(key == 0 ? Numbers.LONG_NULL : key, r) : source(key == 0 ? null : "k" + key, r), sink);
+                        }
+                        final FrozenHashJoinBuild.RecordKeyed frozen = build.freeze();
+                        Assert.assertEquals(2_000, frozen.getRowCount());
+                        Assert.assertEquals(317, frozen.getKeyCount());
+                        if (isCancelled) {
+                            final CairoException error = Assert.assertThrows(CairoException.class, frozen::countKeyRows);
+                            Assert.assertTrue(error.isCancellation());
+                            Assert.assertEquals("a cancelled count releases the map and the rows", 0, tracker.getUsed());
+                            Assert.assertEquals(0, build.getSizeInBytes());
+                            continue;
+                        }
+                        final long used = tracker.getUsed();
+                        frozen.countKeyRows();
+                        Assert.assertEquals("the count runs in place", used, tracker.getUsed());
+                        final FrozenHashJoinBuild.RecordProbe probe = frozen.newProbe(isLongKey ? new LongKeySink() : new StrKeySink());
+                        try {
+                            for (int key = 0; key < 17; key++) {
+                                Assert.assertEquals(100, probe.findRowCountUnchecked(
+                                        isLongKey ? source(key == 0 ? Numbers.LONG_NULL : key, 0) : source(key == 0 ? null : "k" + key, 0)));
+                            }
+                            Assert.assertEquals(1, probe.findRowCountUnchecked(isLongKey ? source(1_999, 0) : source("k1999", 0)));
+                            Assert.assertEquals(0, probe.findRowCountUnchecked(isLongKey ? source(2_000, 0) : source("k2000", 0)));
+                            Assert.assertFalse(probe.hasNext());
+                        } finally {
+                            Misc.free(probe);
+                        }
+                        build.close();
+                        Assert.assertEquals(0, tracker.getUsed());
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testMapChoiceFollowsTheKey() throws Exception {
         assertMemoryLeak(() -> {
             // Unordered8Map admits exactly these three, and compares the full type int, so a
@@ -757,7 +818,9 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         return source;
     }
 
-    /** Stages a single LONG key column, as a generated sink over one LONG column would. */
+    /**
+     * Stages a single LONG key column, as a generated sink over one LONG column would.
+     */
     private static class LongKeySink implements RecordSink {
         @Override
         public void copy(Record r, RecordSinkSPI w) {
@@ -769,7 +832,9 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         }
     }
 
-    /** Column 0 carries every key flavour, column 1 the payload value, which is also the row id. */
+    /**
+     * Column 0 carries every key flavour, column 1 the payload value, which is also the row id.
+     */
     private static class Source implements Record {
         private long longKey;
         private int payload;
@@ -836,7 +901,9 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         }
     }
 
-    /** Replays rows whose LONG key is the row number and whose INT payload is ten times it. */
+    /**
+     * Replays rows whose LONG key is the row number and whose INT payload is ten times it.
+     */
     private static class SourceCursor implements RecordCursor {
         private final Source record = new Source();
         private final int rows;
@@ -901,7 +968,9 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         }
     }
 
-    /** Stages a single STRING key column. */
+    /**
+     * Stages a single STRING key column.
+     */
     private static class StrKeySink implements RecordSink {
         @Override
         public void copy(Record r, RecordSinkSPI w) {
@@ -913,7 +982,9 @@ public class MapHashJoinBuildTest extends AbstractCairoTest {
         }
     }
 
-    /** One static dictionary, handing out an independent flyweight per request. */
+    /**
+     * One static dictionary, handing out an independent flyweight per request.
+     */
     private static class Symbols implements SymbolTableSource {
         private final ObjList<String> dictionary = new ObjList<>();
         private int newSymbolTableCalls;

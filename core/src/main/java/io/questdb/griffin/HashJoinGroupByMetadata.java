@@ -86,6 +86,7 @@ public final class HashJoinGroupByMetadata implements Closeable {
     private final HashJoinGroupByKeys keys;
     private final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
     private final JoinRecordMetadata joinedMetadata;
+    private final long maxBuildTableRows;
     private final GenericRecordMetadata payloadMetadata = new GenericRecordMetadata();
     private final int probeColumnCount;
     private final RecordMetadata probeInputMetadata;
@@ -120,6 +121,7 @@ public final class HashJoinGroupByMetadata implements Closeable {
         probeColumnCount = probeMetadata.getColumnCount();
         keys = candidate.getKeys();
         isKeyCapacityPresized = candidate.isKeyCapacityPresized();
+        maxBuildTableRows = candidate.getMaxBuildTableRows();
         // Symbol keys translate through, and payload symbols resolve with, the inputs' static tables.
         boolean hasStaticSymbolTables = true;
         StringSink conditionSink = Misc.getThreadLocalSink();
@@ -255,17 +257,23 @@ public final class HashJoinGroupByMetadata implements Closeable {
         joinedMetadata.close();
     }
 
-    /** Compiled build-record indexes, in payload-field order. */
+    /**
+     * Compiled build-record indexes, in payload-field order.
+     */
     public IntList getBuildColumns() {
         return buildColumns;
     }
 
-    /** Compiled build-record index of the INT layout's only key column. */
+    /**
+     * Compiled build-record index of the INT layout's only key column.
+     */
     public int getBuildKeyColumn() {
         return buildKeyColumns.getQuick(0);
     }
 
-    /** Compiled build-record indexes of every key column, in sink order. */
+    /**
+     * Compiled build-record indexes of every key column, in sink order.
+     */
     public IntList getBuildKeyColumns() {
         return buildKeyColumns;
     }
@@ -278,7 +286,9 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return joinedMetadata;
     }
 
-    /** Reconciled equality keys, whose column indexes address the analysed base tables. */
+    /**
+     * Reconciled equality keys, whose column indexes address the analysed base tables.
+     */
     public HashJoinGroupByKeys getKeys() {
         return keys;
     }
@@ -291,31 +301,48 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return keyTypes;
     }
 
+    /**
+     * See {@link HashJoinGroupByCandidate#getMaxBuildTableRows()}.
+     */
+    public long getMaxBuildTableRows() {
+        return maxBuildTableRows;
+    }
+
     public RecordMetadata getPayloadMetadata() {
         return payloadMetadata;
     }
 
-    /** Column count of the probe input, which bounds every probe index a key sink reads. */
+    /**
+     * Column count of the probe input, which bounds every probe index a key sink reads.
+     */
     public int getProbeColumnCount() {
         return probeColumnCount;
     }
 
-    /** Compiled probe-record index of the INT layout's only key column. */
+    /**
+     * Compiled probe-record index of the INT layout's only key column.
+     */
     public int getProbeKeyColumn() {
         return probeKeyColumns.getQuick(0);
     }
 
-    /** Compiled probe-record indexes of every key column, in sink order. */
+    /**
+     * Compiled probe-record indexes of every key column, in sink order.
+     */
     public IntList getProbeKeyColumns() {
         return probeKeyColumns;
     }
 
-    /** Compiled build-record indexes of the SYMBOL key columns, in key order. */
+    /**
+     * Compiled build-record indexes of the SYMBOL key columns, in key order.
+     */
     public IntList getSymbolKeyBuildColumns() {
         return symbolKeyBuildColumns;
     }
 
-    /** Compiled probe-record indexes of the SYMBOL key columns, in key order. */
+    /**
+     * Compiled probe-record indexes of the SYMBOL key columns, in key order.
+     */
     public IntList getSymbolKeyProbeColumns() {
         return symbolKeyProbeColumns;
     }
@@ -330,7 +357,9 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return hasStaticSymbolTables;
     }
 
-    /** The INT layout's lone SYMBOL pair, whose probe keys translate into the build's domain. */
+    /**
+     * The INT layout's lone SYMBOL pair, whose probe keys translate into the build's domain.
+     */
     public boolean isSymbolKey() {
         return keys.isSymbolKey();
     }
@@ -343,7 +372,9 @@ public final class HashJoinGroupByMetadata implements Closeable {
         return isKeyCapacityPresized;
     }
 
-    /** True when the key reaches its map through the two key sinks rather than the INT layout. */
+    /**
+     * True when the key reaches its map through the two key sinks rather than the INT layout.
+     */
     public boolean isKeyStaged() {
         return !keys.isIntKeyed();
     }

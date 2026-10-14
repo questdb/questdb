@@ -70,7 +70,9 @@ final class HashJoinBuffer implements Closeable {
         this.scratch = growable ? new HashJoinBuffer(maxCapacity, false) : null;
     }
 
-    /** Allocates the initial block. Clearing checks the breaker once per MiB. */
+    /**
+     * Allocates the initial block. Clearing checks the breaker once per MiB.
+     */
     void allocate(long size, boolean clear) {
         address = Unsafe.malloc(size, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
         capacity = size;
@@ -82,7 +84,9 @@ final class HashJoinBuffer implements Closeable {
         }
     }
 
-    /** Releases the block and unbinds the execution, so a later use fails loudly. */
+    /**
+     * Releases the block and unbinds the execution, so a later use fails loudly.
+     */
     @Override
     public void close() {
         free();
@@ -114,7 +118,9 @@ final class HashJoinBuffer implements Closeable {
         }
     }
 
-    /** Binds the execution that charges and cancels this buffer's allocations. */
+    /**
+     * Binds the execution that charges and cancels this buffer's allocations.
+     */
     void of(@Nullable MemoryTracker memoryTracker, SqlExecutionCircuitBreaker circuitBreaker) {
         this.memoryTracker = memoryTracker;
         this.circuitBreaker = circuitBreaker;
@@ -130,7 +136,9 @@ final class HashJoinBuffer implements Closeable {
         return scratch;
     }
 
-    /** Frees this buffer's block and adopts the one the caller filled. */
+    /**
+     * Frees this buffer's block and adopts the one the caller filled.
+     */
     void take(HashJoinBuffer other) {
         free();
         address = other.address;
