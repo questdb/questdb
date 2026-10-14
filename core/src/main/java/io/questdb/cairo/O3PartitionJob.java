@@ -3676,7 +3676,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             .$(", duplicateCount=").$(duplicateCount)
                             .$(", srcDataNewPartitionSize=").$(srcDataNewPartitionSize)
                             .$(", srcDataOldPartitionSize=").$(srcDataOldPartitionSize)
-                            .$(", o3SplitPartitionSize=").$(srcDataOldPartitionSize)
+                            .$(", o3SplitPartitionSize=").$(o3SplitPartitionSize)
                             .$(", mergeDataLo=").$(mergeDataLo)
                             .$(", mergeDataHi=").$(mergeDataHi)
                             .$(", mergeOOOLo=").$(mergeOOOLo)
