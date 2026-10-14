@@ -682,6 +682,19 @@ public class SqlOptimiser implements Mutable {
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
     }
 
+    // rewriteSampleBy treats a literal as the sampled timestamp when it is the spelling it
+    // chose for the bucket (timestampColumn) or another spelling of the same column, bare or
+    // qualified with the FROM model's alias or table name. Without the second check,
+    // SELECT t.ts AS x, ts AS b keeps t.ts as a raw group-by key next to the bucket.
+    private static boolean isSampleByTimestampLiteral(
+            CharSequence token,
+            CharSequence timestampColumn,
+            CharSequence sourceTimestamp,
+            IQueryModel fromModel
+    ) {
+        return Chars.equalsIgnoreCase(token, timestampColumn) || isDesignatedTimestampReference(token, sourceTimestamp, fromModel);
+    }
+
     /**
      * Reports whether every bound in a timestamp predicate is known at parse time, so that
      * analyzeAndOffset() can bake the calendar offset into the interval bounds. A bind variable or a
@@ -5235,13 +5248,15 @@ public class SqlOptimiser implements Mutable {
     private void fixTimestampAndCollectMissingTokens(
             ExpressionNode node,
             CharSequence timestampColumn,
+            CharSequence sourceTimestamp,
+            IQueryModel fromModel,
             CharSequence timestampAlias,
             CharSequenceHashSet missingTokens
     ) {
         sqlNodeStack.clear();
         while (node != null) {
             if (node.type == LITERAL) {
-                if (Chars.equalsIgnoreCase(node.token, timestampColumn)) {
+                if (isSampleByTimestampLiteral(node.token, timestampColumn, sourceTimestamp, fromModel)) {
                     node.token = timestampAlias;
                 } else {
                     missingTokens.add(node.token);
@@ -10713,7 +10728,7 @@ public class SqlOptimiser implements Mutable {
                                     // also check all literals that refer timestamp column, except the one
                                     // with our chosen timestamp alias
                                     (timestampAlias != null && qc.getAst().type == LITERAL
-                                            && Chars.equalsIgnoreCase(qc.getAst().token, timestampColumn)
+                                            && isSampleByTimestampLiteral(qc.getAst().token, timestampColumn, timestamp.token, nested)
                                             && !Chars.equalsIgnoreCase(qc.getAlias(), timestampAlias))
                     ) {
                         model.removeColumn(i);
@@ -10877,7 +10892,7 @@ public class SqlOptimiser implements Mutable {
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
                     tempCharSequenceHashSet.clear();
                     for (int i = 0, n = tempColumns.size(); i < n; i++) {
-                        fixTimestampAndCollectMissingTokens(tempColumns.get(i).getAst(), timestampColumn, timestampAlias, tempCharSequenceHashSet);
+                        fixTimestampAndCollectMissingTokens(tempColumns.get(i).getAst(), timestampColumn, timestamp.token, nested, timestampAlias, tempCharSequenceHashSet);
                     }
                     for (int i = 0, size = tempCharSequenceHashSet.size(); i < size; i++) {
                         final CharSequence dependentToken = tempCharSequenceHashSet.get(i);

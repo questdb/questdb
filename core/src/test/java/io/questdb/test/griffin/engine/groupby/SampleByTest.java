@@ -17238,6 +17238,27 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampColumnJoinOtherTableTimestampStaysKey() throws Exception {
+        // Guard: u.ts is another table's timestamp, so it stays a group-by key.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            execute("CREATE TABLE u (k SYMBOL, uv DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO u VALUES ('a', 10.0, '2023-12-31T00:00:00.000000Z'), ('b', 20.0, '2023-12-31T01:00:00.000000Z')");
+            assertQuery("SELECT t.ts AS b, u.ts AS uts, avg(t.val) AS v FROM t JOIN u ON (k) SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("b")
+                    .returns("""
+                            b\tuts\tv
+                            2024-01-01T00:00:00.000000Z\t2023-12-31T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2023-12-31T01:00:00.000000Z\t2.0
+                            2024-01-01T03:00:00.000000Z\t2023-12-31T00:00:00.000000Z\t3.0
+                            2024-01-01T03:00:00.000000Z\t2023-12-31T01:00:00.000000Z\t4.0
+                            """);
+        });
+    }
+
+    @Test
     public void testTimestampColumnJoinTableAliasFirst() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -17356,6 +17377,59 @@ public class SampleByTest extends AbstractCairoTest {
                             sum\tsum1\tsum2\ttime
                             33.423793766512645\t28.964416248629917\t32.11038924761886\t1970-01-01T00:00:00.000000Z
                             20.686394200400652\t18.863001213785466\t21.027598662521456\t1970-01-01T01:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimestampColumnQualifiedBesideBare() throws Exception {
+        // The calendar path used to keep t.ts as a raw group-by key and split the 03:00
+        // bucket into 3.0 and 4.0. ALIGN TO FIRST OBSERVATION already returned 3.5.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            assertQuery("SELECT t.ts AS x, ts AS b, avg(val) AS v FROM t SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+            assertQuery("SELECT t.ts AS x, ts AS b, avg(val) AS v FROM t SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("x")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimestampColumnSelfJoinOtherSideTimestampStaysKey() throws Exception {
+        // Guard: b.ts names the same table as the sampled side but a different join
+        // model, so it stays a group-by key and is not taken for a copy of the bucket.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            assertQuery("SELECT a.ts AS x, b.ts AS y, avg(a.val) AS v FROM t a JOIN t b ON (k) SAMPLE BY 1h ORDER BY x, y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("x")
+                    .returns("""
+                            x\ty\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:15:00.000000Z\t2.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T03:30:00.000000Z\t2.0
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t3.0
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T01:15:00.000000Z\t4.0
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.0
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:30:00.000000Z\t4.0
                             """);
         });
     }
