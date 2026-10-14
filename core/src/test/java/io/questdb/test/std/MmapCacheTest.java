@@ -110,24 +110,25 @@ public class MmapCacheTest extends AbstractTest {
                         try {
                             barrier.await();
                             for (int i = 0; i < iterations && errors.isEmpty(); i++) {
-                                final long fd = openRO(rnd.nextInt(paths.length));
+                                final int index = rnd.nextInt(paths.length);
+                                final long fd = openRO(index);
                                 try {
                                     long len = Files.PAGE_SIZE * (1 + rnd.nextInt(8));
                                     long address = Files.mmap(fd, len, 0, Files.MAP_RO, TAG);
                                     Assert.assertTrue(address > 0);
-                                    assertContent(address, len, rnd);
+                                    assertContent(address, len, index, rnd);
                                     if (rnd.nextInt(4) == 0) {
                                         final long newLen = len + Files.PAGE_SIZE * (1 + rnd.nextInt(4));
                                         final long newAddress = Files.mremap(fd, address, len, newLen, 0, Files.MAP_RO, TAG);
                                         Assert.assertTrue(newAddress > 0);
                                         address = newAddress;
                                         len = newLen;
-                                        assertContent(address, len, rnd);
+                                        assertContent(address, len, index, rnd);
                                     }
                                     if (rnd.nextBoolean()) {
                                         Os.pause();
                                     }
-                                    assertContent(address, len, rnd);
+                                    assertContent(address, len, index, rnd);
                                     Files.munmap(address, len, TAG);
                                 } finally {
                                     Files.close(fd);
@@ -191,7 +192,7 @@ public class MmapCacheTest extends AbstractTest {
                 address = Files.mmap(fd, LEN, 0, Files.MAP_RO, TAG);
                 Assert.assertEquals(reuse, Files.getMmapReuseCount());
                 Assert.assertEquals(mem + LEN, mappedBytes());
-                assertContent(address, LEN);
+                assertContent(address, LEN, 0);
                 Files.munmap(address, LEN, TAG);
                 cache.asyncMunmap();
                 Assert.assertEquals(mem, mappedBytes());
@@ -208,7 +209,7 @@ public class MmapCacheTest extends AbstractTest {
             final long fd1 = openRO(1);
             try {
                 final long mem = mappedBytes();
-                final long other = recycleRecordWithPendingHint(fd0, fd1);
+                final long other = recycleRecordWithPendingHint(fd0, fd1, 1);
                 // The recycled record's mapping is released as well, which queues a hint of its own. The stale
                 // hint comes first and evicts it; the new one finds it retired.
                 Files.munmap(other, LEN, TAG);
@@ -228,11 +229,11 @@ public class MmapCacheTest extends AbstractTest {
             final long fd1 = openRO(1);
             try {
                 final long mem = mappedBytes();
-                final long other = recycleRecordWithPendingHint(fd0, fd1);
+                final long other = recycleRecordWithPendingHint(fd0, fd1, 1);
                 // The stale hint finds the recycled record in use and leaves its mapping alone.
                 cache.asyncMunmap();
                 Assert.assertEquals(mem + LEN, mappedBytes());
-                assertContent(other, LEN);
+                assertContent(other, LEN, 1);
                 Files.munmap(other, LEN, TAG);
                 cache.asyncMunmap();
                 Assert.assertEquals(mem, mappedBytes());
@@ -260,7 +261,7 @@ public class MmapCacheTest extends AbstractTest {
                 final long reuse = Files.getMmapReuseCount();
                 final long address2 = Files.mmap(fd0, LEN, 0, Files.MAP_RO, TAG);
                 Assert.assertEquals(reuse, Files.getMmapReuseCount());
-                assertContent(address2, LEN);
+                assertContent(address2, LEN, 0);
                 Files.munmap(address2, LEN, TAG);
                 cache.asyncMunmap();
                 Assert.assertEquals(mem, mappedBytes());
@@ -291,9 +292,50 @@ public class MmapCacheTest extends AbstractTest {
                 // The hint finds the mapping in use and leaves it alone.
                 cache.asyncMunmap();
                 Assert.assertEquals(mem + LEN, mappedBytes());
-                assertContent(address, LEN);
+                assertContent(address, LEN, 0);
 
                 Files.munmap(address, LEN / 2, TAG);
+                cache.asyncMunmap();
+                Assert.assertEquals(mem, mappedBytes());
+            } finally {
+                Files.close(fd);
+            }
+        });
+    }
+
+    @Test
+    public void testRemapOfSupersededMappingRevivesReleasedCurrentMapping() throws Exception {
+        TestUtils.assertMemoryLeak(() -> {
+            final long fd = openRO(0);
+            try {
+                final long mem = mappedBytes();
+                final long address = Files.mmap(fd, LEN, 0, Files.MAP_RO, TAG);
+
+                // Too short for this request: a longer mapping supersedes the held one in the file cache.
+                final long reuse = Files.getMmapReuseCount();
+                final long longLen = 2 * LEN;
+                final long longAddress = Files.mmap(fd, longLen, 0, Files.MAP_RO, TAG);
+                Assert.assertEquals(reuse, Files.getMmapReuseCount());
+                Assert.assertNotEquals(address, longAddress);
+                Assert.assertEquals(mem + LEN + longLen, mappedBytes());
+
+                // Released, not unmapped: the longer mapping stays the file's current one, with a hint queued.
+                Files.munmap(longAddress, longLen, TAG);
+                Assert.assertEquals(mem + LEN + longLen, mappedBytes());
+
+                // Growing the superseded mapping revives the released longer one. The superseded mapping loses its
+                // only user: mremap() retires it and queues its unmap.
+                Assert.assertEquals(longAddress, Files.mremap(fd, address, LEN, longLen, 0, Files.MAP_RO, TAG));
+                Assert.assertEquals(reuse + 1, Files.getMmapReuseCount());
+                Assert.assertEquals(mem + LEN + longLen, mappedBytes());
+
+                // The drain unmaps the superseded mapping. The hint finds the longer mapping in use and leaves it
+                // alone.
+                cache.asyncMunmap();
+                Assert.assertEquals(mem + longLen, mappedBytes());
+                assertContent(longAddress, longLen, 0);
+
+                Files.munmap(longAddress, longLen, TAG);
                 cache.asyncMunmap();
                 Assert.assertEquals(mem, mappedBytes());
             } finally {
@@ -318,7 +360,7 @@ public class MmapCacheTest extends AbstractTest {
                 final long newAddress = Files.mremap(fd, address, LEN, newLen, 0, Files.MAP_RO, TAG);
                 Assert.assertTrue(newAddress > 0);
                 Assert.assertEquals(mem + newLen, mappedBytes());
-                assertContent(newAddress, newLen);
+                assertContent(newAddress, newLen, 0);
                 Files.munmap(newAddress, newLen, TAG);
 
                 // The first hint, queued before the remap, evicts the mapping as it is now; the second one finds
@@ -386,29 +428,36 @@ public class MmapCacheTest extends AbstractTest {
         });
     }
 
-    private static void assertContent(long address, long len) {
+    private static void assertContent(long address, long len, int index) {
         for (long offset = 0; offset < len; offset += Files.PAGE_SIZE / 2) {
-            Assert.assertEquals(offset, Unsafe.getLong(address + offset));
+            Assert.assertEquals(taggedOffset(index, offset), Unsafe.getLong(address + offset));
         }
-        Assert.assertEquals(len - Long.BYTES, Unsafe.getLong(address + len - Long.BYTES));
+        Assert.assertEquals(taggedOffset(index, len - Long.BYTES), Unsafe.getLong(address + len - Long.BYTES));
     }
 
-    private static void assertContent(long address, long len, Rnd rnd) {
+    private static void assertContent(long address, long len, int index, Rnd rnd) {
         final long offset = rnd.nextLong(len / Long.BYTES) * Long.BYTES;
-        Assert.assertEquals(offset, Unsafe.getLong(address + offset));
+        Assert.assertEquals(taggedOffset(index, offset), Unsafe.getLong(address + offset));
     }
 
     private static long mappedBytes() {
         return Unsafe.getMemUsedByTag(TAG);
     }
 
+    /**
+     * The long at the given offset of the file at the given index: the offset, with the file's tag in the top byte.
+     * Tags start at 1, so a mapping of another file, or of zeroes, fails {@link #assertContent}.
+     */
+    private static long taggedOffset(int index, long offset) {
+        return offset ^ ((long) (index + 1) << 56);
+    }
+
     private String createFile(int index) {
         try {
             final File file = temp.newFile("mmap_cache_test_" + System.nanoTime() + "_" + index + ".dat");
-            // Every long holds its own offset.
             final ByteBuffer buffer = ByteBuffer.allocate((int) FILE_SIZE).order(ByteOrder.nativeOrder());
             for (long offset = 0; offset < FILE_SIZE; offset += Long.BYTES) {
-                buffer.putLong(offset);
+                buffer.putLong(taggedOffset(index, offset));
             }
             try (FileOutputStream out = new FileOutputStream(file)) {
                 out.write(buffer.array());
@@ -443,9 +492,9 @@ public class MmapCacheTest extends AbstractTest {
 
     /**
      * Leaves an eviction hint queued for a record that has since been retired and reused for a mapping of another
-     * file, held by the caller. Returns that mapping, {@link #LEN} long.
+     * file, held by the caller. Returns that mapping of the file at otherIndex, opened as otherFd, {@link #LEN} long.
      */
-    private long recycleRecordWithPendingHint(long fd, long otherFd) {
+    private long recycleRecordWithPendingHint(long fd, long otherFd, int otherIndex) {
         final long address = Files.mmap(fd, LEN, 0, Files.MAP_RO, TAG);
         // Queues the hint that goes stale.
         Files.munmap(address, LEN, TAG);
@@ -464,7 +513,7 @@ public class MmapCacheTest extends AbstractTest {
         // The next cached mapping takes the retired record from the pool.
         final long other = Files.mmap(otherFd, LEN, 0, Files.MAP_RO, TAG);
         Assert.assertTrue(other > 0);
-        assertContent(other, LEN);
+        assertContent(other, LEN, otherIndex);
         return other;
     }
 }
