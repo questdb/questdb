@@ -314,9 +314,10 @@ Run `git status --porcelain` first and never edit a file it lists.
    run the Java tests with `-P build-rust-library` so they load the changed
    library, and run the Rust checks CLAUDE.md requires.
 3. Run the planned tests and the existing tests of the code you changed
-   (listed in the plan). All must pass. One Maven command at a time. A test
-   that fails for a reason outside this item stays out of the commit and goes
-   on OTHER.
+   (listed in the plan) through
+   `python3 ci/incremental_compile.py -- test -Dtest=<classes>`. All must
+   pass. One Maven command at a time. A test that fails for a reason outside
+   this item stays out of the commit and goes on OTHER.
 4. Measure coverage before committing:
    python3 ci/diff_coverage.py --base HEAD --tests <the item's test classes>
      --paths <the production files you changed> --json <state>/<ID>/coverage.json
@@ -390,8 +391,9 @@ Run `git status --porcelain` first and never edit a file it lists.
 1. Write one simple test per gap, next to the item's tests and reusing their
    setup; no reflection. Each asserts the exact result of the code it
    protects. Skip a gap that can't be tested reliably and say why.
-2. Run them. If one fails, work out the correct result from the plan and how
-   similar code behaves - never copy the actual output into the expectation.
+2. Run them through `python3 ci/incremental_compile.py -- test -Dtest=<classes>`.
+   If one fails, work out the correct result from the plan and how similar
+   code behaves - never copy the actual output into the expectation.
    A wrong test: correct it. Wrong code: don't touch it; leave the test out
    and report the bug on OTHER.
 3. Measure the new tests' coverage on top of the build's run:

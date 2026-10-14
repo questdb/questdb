@@ -413,8 +413,8 @@ wall of errors that also does not name its cause.
 
 ### Running Tests
 
-Do not run multiple `mvn test` commands in parallel — each invocation triggers a
-full build and they interfere with each other. Run test commands sequentially.
+Do not run multiple `mvn test` commands in parallel — each invocation builds the
+module and they interfere with each other. Run test commands sequentially.
 
 ```bash
 # Run all tests
@@ -426,6 +426,24 @@ mvn -Dtest=ClassNameTest test
 # Run a specific test method
 mvn -Dtest=ClassNameTest#methodName test
 ```
+
+For repeated runs of core tests, compile through `ci/incremental_compile.py`:
+
+```bash
+python3 ci/incremental_compile.py -- test -Dtest=ClassNameTest
+```
+
+Maven's compiler plugin recompiles all of core's ~6,000 sources (about 40
+seconds) whenever any one of them changed. The script compiles only the changed
+sources, then reads the class files to confirm that nothing other classes
+compile against changed: signatures, supertypes, non-private members, constant
+values. If something did, or a source was deleted, it falls back to Maven's full
+rebuild. An edit to a method body or a private member compiles in about two
+seconds.
+
+Every source file must compile to a class of its own name; `SourceFileNameTest`
+checks it. A file whose only top-level type has another name, or an empty file,
+looks changed on every build and makes Maven recompile the whole module.
 
 ### Running QuestDB
 

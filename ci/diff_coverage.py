@@ -49,9 +49,10 @@ unrelated edits.
 With --append, coverage recorded for a production file that has changed since
 the previous run may be lost (JaCoCo and LLVM drop data for a class or function
 that no longer matches), and the script names those files: re-run their tests
-without --append. When no production file changed, --append compiles only the
-changed files instead of the whole module, which makes a run several times
-faster.
+without --append.
+
+The script compiles through ci/incremental_compile.py, so a run compiles only
+the changed sources unless their API changed.
 
 Prerequisites: the java-questdb-client version core/pom.xml expects, installed
 in ~/.m2 (see CLAUDE.md), and for Rust the llvm-tools component of the qdbr
@@ -72,6 +73,9 @@ import subprocess
 import sys
 import xml.etree.ElementTree as ElementTree
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import incremental_compile  # noqa: E402
 
 JAVA_SRC = 'core/src/main/java/'
 JAVA_TEST_SRC = 'core/src/test/java/'
@@ -241,11 +245,8 @@ def run_coverage(root, cov_dir, tests, java_files, rust_files, args):
         print('No Java tests: measuring Rust unit tests only (Rust code that Java calls through JNI '
               'needs Java tests in --tests)')
     rust = rust_toolchain(root) if rust_files else None
-    # Maven otherwise recompiles the whole module on every run (~35 s). Compiling only stale files is
-    # safe when no production file changed since the previous run, i.e. when only tests were added.
-    quick_compile = False
     if args.append:
-        quick_compile = not warn_changed_since_last_run(root, cov_dir, [*java_files, *rust_files], bool(java_files))
+        warn_changed_since_last_run(root, cov_dir, [*java_files, *rust_files], bool(java_files))
     else:
         remove(root / 'core/target/jacoco.exec')
         for stale in ('rust-unit', 'rust-objects.json', *[p.name for p in cov_dir.glob('jni*.profraw')]):
@@ -258,11 +259,16 @@ def run_coverage(root, cov_dir, tests, java_files, rust_files, args):
     objects = []
     jni_profile = None
     if tests:
+        try:
+            incremental_compile.compile_core(root, incremental_compile.compile_args(args.maven_arg),
+                                             log=lambda message: print(message.strip()))
+        except incremental_compile.CompileError as e:
+            raise RunFailure(f'compilation failed\n{e}')
         if rust:
             objects.append(build_instrumented_rust_lib(root, cov_dir, rust))
             install_dev_rust_lib(root, cov_dir, objects[0])
         try:
-            run_maven_tests(root, cov_dir, tests, args, quick_compile)
+            run_maven_tests(root, cov_dir, tests, args)
         finally:
             if rust:
                 restore_dev_rust_lib(root, cov_dir)
@@ -337,16 +343,15 @@ def check_client_installed(root):
                          f'never with "clean").')
 
 
-def run_maven_tests(root, cov_dir, tests, args, quick_compile):
+def run_maven_tests(root, cov_dir, tests, args):
     log = cov_dir / 'mvn-test.log'
+    # incremental_compile has compiled everything; this keeps Maven from recompiling the module
     cmd = ['mvn', '-f', 'core/pom.xml', 'test', '-P', 'jacoco', f'-Dtest={tests}',
-           '-Dsurefire.failIfNoSpecifiedTests=false']
-    if quick_compile:
-        cmd.append('-Dmaven.compiler.useIncrementalCompilation=false')
+           '-Dsurefire.failIfNoSpecifiedTests=false', incremental_compile.QUICK]
     if args.ignore_test_failures:
         cmd.append('-Dmaven.test.failure.ignore=true')
     cmd += args.maven_arg
-    print(f'Running Java tests with coverage: {tests}' + (' (compiling changed files only)' if quick_compile else ''))
+    print(f'Running Java tests with coverage: {tests}')
     print(f'  log: {log.relative_to(root)}')
     with open(log, 'w') as out:
         rc = subprocess.call(cmd, cwd=root, stdout=out, stderr=subprocess.STDOUT)
