@@ -4206,6 +4206,11 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
 
         @Override
+        public long openRWExisting(LPSZ name) {
+            return track(name, super.openRWExisting(name));
+        }
+
+        @Override
         public void syncfs(long fd) {
             ops.add("syncfs " + fdPaths.get(fd));
             super.syncfs(fd);
