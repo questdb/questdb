@@ -150,6 +150,14 @@ public interface LiveViewRefreshHooks {
     }
 
     /**
+     * Called by the refresh failure handler right after it counts a faulting turn on the
+     * view, before any of its branches swallows, recovers from or charges the fault, with
+     * the throwable the turn failed with. It must not throw.
+     */
+    default void onRefreshFault(Throwable t) {
+    }
+
+    /**
      * Called at the tail of every repair cleanup chain, after every borrowed resource is
      * back and immediately before the session release the chain ends with. A head-miss turn
      * runs two chains, its replay cleanup and its publication tail, and so does an anchor

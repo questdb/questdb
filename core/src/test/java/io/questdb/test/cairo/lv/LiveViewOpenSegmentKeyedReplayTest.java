@@ -170,8 +170,9 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         // Paths were then lost for the life of the process, whatever the view did afterwards.
         //
         // The checkpoint chain is declined, which leaves the resume holding a session and no staged
-        // capture. Without that the capture would leak on this path too - the publication tail that
-        // owns it is exactly what the throw skips - and the oracle could not tell the two apart.
+        // capture, so the oracle sees the session alone.
+        // testAnAnchorResumeWhoseReplayCleanupFaultsReleasesItsStagedCapture keeps the chain and
+        // pins the capture the throw strands.
         //
         // The throw is injected; there is no reproducible natural producer for it. What the case
         // pins is the ordering, which holds for any throwable the cleanup raises.
@@ -203,6 +204,45 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
             }
             // assertMemoryLeak is the oracle for the session itself: one nothing released leaves its
             // descriptor's Paths and its scratch overlay allocated, which no assertion above sees.
+        });
+    }
+
+    @Test
+    public void testAnAnchorResumeWhoseReplayCleanupFaultsReleasesItsStagedCapture() throws Exception {
+        // The case above with the checkpoint chain left on, so the resume stages a capture of the
+        // roots it re-versions. A completed resume keeps that capture for its publication tail,
+        // whose finally frees it, and a throw from the replay cleanup skips the tail. The release
+        // of the session used to leave the capture with nothing pointing at it: its data and
+        // metadata segments stayed open for the life of the process.
+        //
+        // The throw is injected; there is no reproducible natural producer for it.
+        // LiveViewRepairRouteFuzzTest#testFaults found it.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+
+                // The resume's own replay cleanup is the next chain this worker runs.
+                hooks(job).setSimulateRepairCleanupFault(0);
+                commit(row(4, 2, 35, "acct-1"), job);
+
+                Assert.assertFalse(
+                        "the injected cleanup fault never fired, so the resume's cleanup never ran"
+                                + " and the case pinned nothing",
+                        hooks(job).isRepairCleanupFaultArmed()
+                );
+                Assert.assertEquals(
+                        "the injected cleanup fault must cost exactly one refresh fault",
+                        1L,
+                        viewInstance().getRefreshFaultCount()
+                );
+                assertViewMatchesRecomputeIgnoringFaults();
+            }
+            // assertMemoryLeak is the oracle for the capture: one nothing freed keeps its
+            // checkpoint segments open, which the file descriptor check reports.
         });
     }
 

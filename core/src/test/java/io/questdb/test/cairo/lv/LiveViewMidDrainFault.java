@@ -28,6 +28,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
@@ -69,9 +70,14 @@ import java.util.concurrent.atomic.AtomicInteger;
  * only an apply of the view's own WAL moves the table there. So armed right before a lead
  * flush, the fault fails the first reader that reloads behind the flush's apply: the one the
  * flush checks its symbol ids with.
+ * <p>
+ * The column names above are the defaults. {@link #LiveViewMidDrainFault(String, String, String)}
+ * names the timestamp, value and key columns of another schema.
  */
 final class LiveViewMidDrainFault {
     private final AtomicBoolean appliedScanArmed = new AtomicBoolean();
+    // The file name, with its leading separator, of the base column armAppliedScan fails.
+    private final String appliedScanFileName;
     private final AtomicBoolean appliedScanFired = new AtomicBoolean();
     // -1 disarmed; otherwise the number of reads still to skip before the one to fail.
     private final AtomicInteger countdown = new AtomicInteger(-1);
@@ -83,6 +89,11 @@ final class LiveViewMidDrainFault {
     private final AtomicBoolean isViewStateOpenArmed = new AtomicBoolean();
     private final AtomicBoolean isViewSymbolKeyOpenArmed = new AtomicBoolean();
     private final AtomicBoolean timelineOpenArmed = new AtomicBoolean();
+    // The file name, with its leading separator, of the view symbol key file
+    // armViewSymbolKeyOpen fails.
+    private final String viewSymbolKeyFileName;
+    // The file name, with its leading separator, of the base WAL column arm fails.
+    private final String walReadFileName;
     // The partition the open armAppliedScan fails must be in; null fails it in any partition.
     private volatile String appliedScanPartition;
     private volatile String baseDir;
@@ -92,6 +103,22 @@ final class LiveViewMidDrainFault {
     private volatile int readErrno;
     // The directory of the view table whose symbol key file armViewSymbolKeyOpen fails.
     private volatile String viewDir;
+
+    LiveViewMidDrainFault() {
+        this("created_at", "amount", "account_id");
+    }
+
+    /**
+     * The same faults over another schema: {@link #arm} fails a WAL read of
+     * {@code timestampColumn}, {@link #armAppliedScan} an open of {@code valueColumn} outside
+     * the WAL, and {@link #armViewSymbolKeyOpen} an open of {@code keyColumn}'s key file in the
+     * view's table.
+     */
+    LiveViewMidDrainFault(String timestampColumn, String valueColumn, String keyColumn) {
+        walReadFileName = Files.SEPARATOR + timestampColumn + ".d";
+        appliedScanFileName = Files.SEPARATOR + valueColumn + ".d";
+        viewSymbolKeyFileName = Files.SEPARATOR + keyColumn + ".k";
+    }
 
     void arm(int skip) {
         breachTracker = null;
@@ -154,6 +181,19 @@ final class LiveViewMidDrainFault {
         countdown.set(-1);
     }
 
+    /**
+     * Withdraws every fault this class arms, fired or not. A fuzz test that arms one fault per
+     * pass calls it once the pass is over, so a fault no read or open reached cannot fire later,
+     * outside the pass that armed it.
+     */
+    void disarmAll() {
+        disarm();
+        appliedScanArmed.set(false);
+        isViewStateOpenArmed.set(false);
+        isViewSymbolKeyOpenArmed.set(false);
+        timelineOpenArmed.set(false);
+    }
+
     FilesFacade facade() {
         return new TestFilesFacadeImpl() {
             @Override
@@ -169,7 +209,7 @@ final class LiveViewMidDrainFault {
                         && Utf8s.containsAscii(name, dir)
                         && !Utf8s.containsAscii(name, "wal")
                         && isInAppliedScanPartition(name)
-                        && Utf8s.endsWithAscii(name, "amount.d")
+                        && Utf8s.endsWithAscii(name, appliedScanFileName)
                         && appliedScanArmed.compareAndSet(true, false)) {
                     appliedScanFired.set(true);
                     return -1;
@@ -178,7 +218,7 @@ final class LiveViewMidDrainFault {
                         && dir != null
                         && Utf8s.containsAscii(name, dir)
                         && Utf8s.containsAscii(name, "wal")
-                        && Utf8s.endsWithAscii(name, "created_at.d")) {
+                        && Utf8s.endsWithAscii(name, walReadFileName)) {
                     if (countdown.getAndDecrement() == 0) {
                         fired.set(true);
                         final MemoryTracker tracker = breachTracker;
@@ -195,7 +235,7 @@ final class LiveViewMidDrainFault {
                         && viewTableDir != null
                         && Utf8s.containsAscii(name, viewTableDir)
                         && !Utf8s.containsAscii(name, "wal")
-                        && Utf8s.endsWithAscii(name, "account_id.k")
+                        && Utf8s.endsWithAscii(name, viewSymbolKeyFileName)
                         && isViewSymbolKeyOpenArmed.compareAndSet(true, false)) {
                     hasViewSymbolKeyOpenFired.set(true);
                     return -1;

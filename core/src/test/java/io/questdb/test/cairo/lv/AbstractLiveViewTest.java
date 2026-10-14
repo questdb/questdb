@@ -25,6 +25,9 @@
 package io.questdb.test.cairo.lv;
 
 import io.questdb.cairo.MicrosTimestampDriver;
+import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointGenerationPin;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
@@ -35,11 +38,16 @@ import io.questdb.cairo.lv.LiveViewCheckpointRowPositionDeltaReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineStoreWriter;
 import io.questdb.cairo.lv.LiveViewCompiledPlan;
+import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.mp.Job;
 import io.questdb.std.LongList;
@@ -47,7 +55,9 @@ import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 
@@ -85,6 +95,10 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     // when the helper was still copy-pasted). The loop exits as soon as the view leaves the
     // SEEDING state, so a generous bound costs nothing on the tests that converge quickly.
     protected static final int SEED_COMPLETION_PASSES = 2000;
+    // What assertTierReadConsistent compared the routed read with.
+    protected static final int TIER_READ_RECOMPUTE = 1;
+    protected static final int TIER_READ_SKIPPED = 0;
+    protected static final int TIER_READ_TABLE_ONLY = 2;
 
 
     /**
@@ -187,6 +201,201 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Confirms {@code SELECT * FROM viewName} routes through the in-memory tier (Mode B), not
+     * disk-only: opens the inner {@link LiveViewRecordCursor}, drains it, and asserts the fence
+     * engaged and the tier served rows. Single-threaded, after quiescence.
+     */
+    protected static void assertModeBEngaged(String viewName) throws SqlException {
+        try (RecordCursorFactory factory = select("SELECT * FROM " + viewName)) {
+            final RecordCursorFactory lvFactory = liveViewFactoryOf(factory);
+            try (LiveViewRecordCursor cursor = (LiveViewRecordCursor) lvFactory.getCursor(sqlExecutionContext)) {
+                println(lvFactory.getMetadata(), cursor, new StringSink());
+                Assert.assertTrue("read-back must route through Mode B", cursor.isRoutingEligible());
+                Assert.assertTrue("Mode B must serve in-mem rows", cursor.inMemRowsServed() > 0);
+            }
+        }
+    }
+
+    /**
+     * Runs {@code sql} with the tier on (Mode B) and again with the fence forced off
+     * (disk-only, see {@link #printDiskOnly}), and asserts the two outputs are byte-identical.
+     * Mirrors the differential oracle in {@code LiveViewInMemReadTest}; single-threaded only.
+     */
+    protected static void assertModeBMatchesDiskOnly(String viewName, String sql) throws SqlException {
+        final StringSink modeB = new StringSink();
+        printSql(sql, modeB);
+        final StringSink diskOnly = new StringSink();
+        printDiskOnly(viewName, sql, diskOnly);
+        Assert.assertEquals("Mode B vs disk-only mismatch for: " + sql, diskOnly.toString(), modeB.toString());
+    }
+
+    /**
+     * Asserts the view's SYMBOL column {@code keyColumn} names each row by one label only. A
+     * filter on the symbol resolves a label to an id through the view's own symbol table, a
+     * filter on its text compares labels, and a grouped count keys on the id, so all three
+     * agree unless the table lists one label under two ids, or an id the rows carry under no
+     * label. Needs no recompute, so it holds at any point a reader can open the view, an
+     * un-flushed lead or a recovery's discarded ids included.
+     *
+     * @param keys every label the run's rows carry, NULL aside
+     */
+    protected static void assertSymbolLabelsConsistent(String viewName, String keyColumn, ObjList<String> keys) throws SqlException {
+        final StringSink bySymbol = new StringSink();
+        final StringSink byText = new StringSink();
+        for (int i = 0, n = keys.size(); i < n; i++) {
+            final String key = keys.getQuick(i);
+            bySymbol.clear();
+            byText.clear();
+            printSql("SELECT count() FROM " + viewName + " WHERE " + keyColumn + " = '" + key + "'", bySymbol);
+            printSql("SELECT count() FROM " + viewName + " WHERE " + keyColumn + "::varchar = '" + key + "'", byText);
+            TestUtils.assertEquals("view '" + viewName + "' filters key '" + key + "' by id unlike by label", byText, bySymbol);
+        }
+        bySymbol.clear();
+        byText.clear();
+        printSql("SELECT count() FROM " + viewName + " WHERE " + keyColumn + " IS NULL", bySymbol);
+        printSql("SELECT count() FROM " + viewName + " WHERE " + keyColumn + "::varchar IS NULL", byText);
+        TestUtils.assertEquals("view '" + viewName + "' filters the NULL key by id unlike by label", byText, bySymbol);
+        bySymbol.clear();
+        byText.clear();
+        printSql("SELECT " + keyColumn + ", count() FROM " + viewName + " ORDER BY 1", bySymbol);
+        printSql("SELECT " + keyColumn + "::varchar " + keyColumn + ", count() FROM " + viewName + " ORDER BY 1", byText);
+        TestUtils.assertEquals("view '" + viewName + "' groups its key by id unlike by label", byText, bySymbol);
+    }
+
+    /**
+     * Asserts what a read through the view's in-memory tier returns, at any point of a run: an
+     * un-flushed lead resident, a repair parked, a view WAL block committed but not applied.
+     * Returns which of the checks below ran.
+     * <ul>
+     *     <li>While the view's WAL holds a block its table has not applied, reads stay on the
+     *     table as it stands, so the routed read must equal the forced disk-only read
+     *     ({@link #TIER_READ_TABLE_ONLY}). A read that served a lead on top of the table
+     *     without the pending block's rows equals neither that nor the recompute.</li>
+     *     <li>Once the view has refreshed every commit the base applied, with no repair parked
+     *     and no retry pending, the routed read - the table plus any un-flushed lead - must
+     *     already equal the recompute ({@link #TIER_READ_RECOMPUTE}).</li>
+     *     <li>Otherwise the view stands at a base commit the test cannot recompute, and nothing
+     *     is checked ({@link #TIER_READ_SKIPPED}). So is a view with no tier, whose un-flushed
+     *     rows no reader sees.</li>
+     * </ul>
+     *
+     * @param orderBy an ORDER BY list naming every output column, so tied rows sort alike
+     */
+    protected static int assertTierReadConsistent(
+            String viewName,
+            String baseName,
+            String oracleSql,
+            String orderBy
+    ) throws SqlException {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' is not registered", instance);
+        if (instance.getInMemoryTier() == null || instance.isInvalid()) {
+            return TIER_READ_SKIPPED;
+        }
+        final String viewRead = "(" + viewName + ") ORDER BY " + orderBy;
+        final TableToken viewToken = instance.getLiveViewToken();
+        final long viewWalTxn = engine.getTableSequencerAPI().lastTxn(viewToken);
+        final long viewAppliedTxn = engine.getTableSequencerAPI().getTxnTracker(viewToken).getWriterTxn();
+        if (viewWalTxn > viewAppliedTxn) {
+            final StringSink routed = new StringSink();
+            printSql(viewRead, routed);
+            final StringSink tableOnly = new StringSink();
+            printDiskOnly(viewName, viewRead, tableOnly);
+            TestUtils.assertEquals(
+                    "view '" + viewName + "' served a read past a WAL block its table has not applied [viewWalTxn="
+                            + viewWalTxn + ", viewAppliedTxn=" + viewAppliedTxn + ']',
+                    tableOnly,
+                    routed
+            );
+            return TIER_READ_TABLE_ONLY;
+        }
+        final long baseSeqTxn;
+        try (TableReader reader = getReader(baseName)) {
+            baseSeqTxn = reader.getSeqTxn();
+        }
+        if (instance.getRefreshReachedSeqTxn() != baseSeqTxn
+                || instance.getSuspendedRepair() != null
+                || instance.getRefreshRetryNotBeforeUs() != Numbers.LONG_NULL) {
+            return TIER_READ_SKIPPED;
+        }
+        try {
+            TestUtils.assertSqlCursors(engine, sqlExecutionContext, "(" + oracleSql + ") ORDER BY " + orderBy, viewRead, LOG, true);
+        } catch (AssertionError e) {
+            throw new AssertionError("view '" + viewName + "' read through its tier at base seqTxn " + baseSeqTxn
+                    + " [leadRows=" + instance.getLeadRowCount()
+                    + ", lastProcessedSeqTxn=" + instance.getLastProcessedSeqTxn() + "]: " + e.getMessage(), e);
+        }
+        return TIER_READ_RECOMPUTE;
+    }
+
+    /**
+     * Asserts a keyed {@code WINDOW JOIN} from the view onto its base returns what the same
+     * join from a plain table copy of the view returns, on the sync and the parallel plan,
+     * each with the JIT filter on and off. The join maps each base key to the view's key for
+     * it through the view's symbol table, so a table that lists a label under an id no row
+     * carries leaves rows without a match - NULL aggregates - where the copy, with a symbol
+     * table of its own, matches them.
+     */
+    protected static void assertViewWindowJoinMatchesCopy(
+            String viewName,
+            String baseName,
+            String keyColumn,
+            String baseValueColumn,
+            String filter
+    ) throws SqlException {
+        final String copyName = viewName + "_wj_copy";
+        execute("DROP TABLE IF EXISTS " + copyName);
+        execute("CREATE TABLE " + copyName + " AS (SELECT * FROM " + viewName + ") TIMESTAMP(ts) PARTITION BY DAY");
+        final boolean wasParallel = sqlExecutionContext.isParallelWindowJoinEnabled();
+        final int jitMode = sqlExecutionContext.getJitMode();
+        try {
+            for (int mode = 0; mode < 4; mode++) {
+                sqlExecutionContext.setParallelWindowJoinEnabled((mode & 1) != 0);
+                sqlExecutionContext.setJitMode((mode & 2) != 0 ? SqlJitMode.JIT_MODE_DISABLED : SqlJitMode.JIT_MODE_ENABLED);
+                try {
+                    TestUtils.assertSqlCursors(
+                            engine,
+                            sqlExecutionContext,
+                            windowJoinSql(copyName, baseName, keyColumn, baseValueColumn, filter),
+                            windowJoinSql(viewName, baseName, keyColumn, baseValueColumn, filter),
+                            LOG,
+                            true
+                    );
+                } catch (AssertionError e) {
+                    throw new AssertionError("WINDOW JOIN from view '" + viewName + "' differs from its copy [parallel="
+                            + ((mode & 1) != 0) + ", jit=" + ((mode & 2) == 0) + "]: " + e.getMessage(), e);
+                }
+            }
+        } finally {
+            sqlExecutionContext.setParallelWindowJoinEnabled(wasParallel);
+            sqlExecutionContext.setJitMode(jitMode);
+            execute("DROP TABLE " + copyName);
+        }
+    }
+
+    /**
+     * Prints {@code sql} with the seqTxn fence forced off - both slot stamps moved to a value
+     * the disk reader never reports - so the view's reads fall back to the disk-only path and
+     * serve its table as it stands. Restores the stamps afterwards; single-threaded only.
+     */
+    protected static void printDiskOnly(String viewName, String sql, StringSink sink) throws SqlException {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance(viewName);
+        Assert.assertNotNull("live view '" + viewName + "' is not registered", instance);
+        final LiveViewInMemoryTier tier = instance.getInMemoryTier();
+        Assert.assertNotNull("live view '" + viewName + "' has no in-memory tier", tier);
+        final long s0 = tier.getSlot(0).lvSeqTxn();
+        final long s1 = tier.getSlot(1).lvSeqTxn();
+        tier.getSlot(0).setLvSeqTxn(fenceMismatch(s0));
+        tier.getSlot(1).setLvSeqTxn(fenceMismatch(s1));
+        try {
+            printSql(sql, sink);
+        } finally {
+            tier.getSlot(0).setLvSeqTxn(s0);
+            tier.getSlot(1).setLvSeqTxn(s1);
+        }
+    }
+
+    /**
      * Waits until {@code instance} has been marked dropped, then returns. This is the deterministic
      * fence a concurrent {@code engine.dropLiveView} crosses: {@code markDroppedAndAwaitCheckpoint}
      * publishes {@code dropped = true} (a volatile) BEFORE it commits to its blocking branch - the
@@ -265,6 +474,33 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                 LiveViewCheckpointRecoveryPhase.routeName(expected),
                 LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute())
         );
+    }
+
+    // The LiveViewRecordCursorFactory under any wrapper the plan put on top of it.
+    private static RecordCursorFactory liveViewFactoryOf(RecordCursorFactory factory) {
+        RecordCursorFactory f = factory;
+        while (f != null && !(f instanceof LiveViewRecordCursorFactory)) {
+            f = f.getBaseFactory();
+        }
+        Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
+        return f;
+    }
+
+    // A keyed WINDOW JOIN from `left` onto the base, sorted on every output column so the
+    // view and its copy compare row for row whatever order their tied rows scan in.
+    private static String windowJoinSql(String left, String baseName, String keyColumn, String baseValueColumn, String filter) {
+        return "SELECT * FROM (SELECT t.ts, t." + keyColumn + ", count() AS n, sum(p." + baseValueColumn + ") AS s FROM " + left + " t"
+                + " WINDOW JOIN " + baseName + " p ON t." + keyColumn + " = p." + keyColumn
+                + " RANGE BETWEEN 1 HOUR PRECEDING AND 1 HOUR FOLLOWING EXCLUDE PREVAILING"
+                + (filter != null ? " WHERE " + filter : "")
+                + ") ORDER BY 1, 2, 3, 4";
+    }
+
+    // Maps a slot stamp to a value the disk reader can never report, which forces the fence
+    // off so the read serves disk-only. An unstamped slot never passes the fence, so it stays
+    // unstamped: any number it took instead could be the disk reader's own seqTxn.
+    private static long fenceMismatch(long seqTxn) {
+        return seqTxn == Numbers.LONG_NULL ? Numbers.LONG_NULL : seqTxn + 1_000_000;
     }
 
     private static boolean isEngineMillisecondClockDerivedFromTestClock() {

@@ -8547,6 +8547,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 isCleanupCompleted = true;
             } finally {
                 if (isRepairAbandoned || !isCleanupCompleted) {
+                    if (timelineCapture != null) {
+                        // A completed replay keeps its capture for the publication tail below,
+                        // and a throw after the block above skips that tail, whose finally is
+                        // what frees it. It goes the way the block above sends it: unpublished,
+                        // with the marker written ahead of the commit still standing over the
+                        // output.
+                        final Throwable releaseFailure = Misc.freeBestEffort(null, timelineCapture);
+                        timelineCapture = null;
+                        if (releaseFailure != null) {
+                            // The turn is already unwinding with a failure of its own, which
+                            // this must not replace.
+                            LOG.critical().$("live view resume could not release its staged capture [view=")
+                                    .$(instance.getDefinition().getViewName())
+                                    .$(", error=").$(releaseFailure).I$();
+                        }
+                    }
                     endRepairSession(instance, session);
                     session = null;
                 }
@@ -10117,7 +10133,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     hooks.onRepairCleanupTail();
                     isCleanupCompleted = true;
                 } finally {
-                    if (!replayCompleted || (!yielded && !isCleanupCompleted)) {
+                    if (!replayCompleted || !isCleanupCompleted) {
                         // The turn is unwinding, so the publication tail below never runs and
                         // nothing else would end the repair. Release the session here instead,
                         // which also unblocks refresh for the view: a resumed turn that failed
@@ -10132,22 +10148,52 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // session can go back. It is also the only one: exactly one release site
                         // covers both arms, so neither can free the session twice.
                         //
-                        // The !yielded conjunct bounds the SECOND disjunct only, and that is
-                        // deliberate rather than an oversight to tidy up. A turn that parked has
-                        // handed the pinned reader, the live-view writer and the staged capture
-                        // to its session, and its caller closes the reader on the way out of a
-                        // turn that threw; freeing the session there would return the reader to
-                        // the pool twice, which is the double close suspend() orders its
-                        // handovers to avoid. A turn that did not park handed over none of the
-                        // three, so it owns nothing this release could take from anyone else.
+                        // So does a turn that parked and then threw, from the cleanup above or
+                        // from a statement between suspend() and replayCompleted = true. Such a
+                        // turn ends unwinding, not parked: it never reaches the park below, and
+                        // its caller closes the pinned reader on the way out, as it does for
+                        // every turn that threw. But suspend() has already handed that reader,
+                        // the live-view writer and the staged capture to the session, so the
+                        // session gives the reader back first and keeps the other two, which
+                        // its release rolls back and frees. Without the hand-back the reader
+                        // went back to the pool twice on a resumed turn - the caller's close,
+                        // then the session's, still attached to the instance from the turn that
+                        // parked it, when handleRefreshFailure discarded it. Without the release
+                        // a first turn's session, attached to nothing, kept the writer and the
+                        // capture for the life of the process. A turn that did not park handed
+                        // over none of the three, so the hand-back does not apply to it.
                         //
-                        // The first disjunct carries no such bound and is unchanged from before
-                        // this guard existed: !replayCompleted reaches here with yielded true if
-                        // a statement between suspend() and replayCompleted = true throws. No
-                        // producer for such a throw is known - pageCursor.close() is the only
-                        // fallible statement in that window - so the arm is left as it was
-                        // rather than narrowed on speculation. Narrowing it would need the
-                        // ownership handoff reworked, not another conjunct here.
+                        // A turn that did not park can still hold its staged capture here: a
+                        // completed replay keeps it for the publication tail, and a throw after
+                        // the block above skips that tail. It goes the way the block above sends
+                        // an unwinding turn's capture, the timeline retired with it when the
+                        // replacement committed, since no splice corrects the roots under it.
+                        if (yielded) {
+                            if (session != null) {
+                                session.takeBaseReader();
+                            }
+                        } else if (timelineCapture != null) {
+                            Throwable releaseFailure = Misc.freeBestEffort(null, timelineCapture);
+                            timelineCapture = null;
+                            try {
+                                if (session != null) {
+                                    session.discardDescriptor();
+                                }
+                                repairBoundaries.clear();
+                                if (repairPublication.hasCommittedReplacement()) {
+                                    retireCheckpointTimeline(instance);
+                                }
+                            } catch (Throwable t) {
+                                releaseFailure = Misc.foldCleanupFailure(releaseFailure, t);
+                            }
+                            if (releaseFailure != null) {
+                                // The turn is already unwinding with a failure of its own,
+                                // which this must not replace.
+                                LOG.critical().$("live view repair could not release its staged capture [view=")
+                                        .$(viewName)
+                                        .$(", error=").$(releaseFailure).I$();
+                            }
+                        }
                         endRepairSession(instance, session);
                     }
                 }
@@ -16439,6 +16485,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // retry leaves a streak the retry zeroed, so nothing else survives to tell a test that the
         // incremental path faulted at all.
         instance.recordRefreshFault();
+        hooks.onRefreshFault(t);
         // A turn that got here has a fault of its own, so whatever apply-lag wait it was in is
         // over: a view that reports a base commit it waits for must not keep reporting one while
         // it is really failing, and a target left behind would also make the next deferral on

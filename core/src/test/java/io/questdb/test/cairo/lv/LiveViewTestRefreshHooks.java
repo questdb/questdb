@@ -31,6 +31,8 @@ import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.function.Consumer;
+
 /**
  * The refresh job's fault, race and behaviour points, armed by tests. One-shot points disarm
  * as they fire; sticky ones stay until a test clears them. Each fault throws what the code it
@@ -52,6 +54,7 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
     private Runnable keyedTransplantEndObserver;
     private Runnable keyedTransplantStartObserver;
     private Runnable peerTurnBeforeRefreshLatch;
+    private Consumer<Throwable> refreshFaultObserver;
     // Repair cleanup chains to let through before the next one throws; -1 is disarmed.
     private int repairCleanupFaultCountdown = -1;
     private Runnable resumeReplayStart;
@@ -145,6 +148,26 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
         }
     }
 
+    /**
+     * Withdraws every fault this class can arm, fired or not, and leaves the behaviour
+     * toggles, the observers and the one-shot actions as they are. A fuzz test that arms
+     * one fault per pass calls it once the pass is over, so a fault no turn reached cannot
+     * fire later, outside the pass that armed it.
+     */
+    public void clearFaults() {
+        isColdKeyedTimelineFaultArmed = false;
+        isKeyedTransplantFaultArmed = false;
+        isRepairApplySkipped = false;
+        isRepairUnwindCleanupFaultArmed = false;
+        isStagingBufferCloseFaultArmed = false;
+        isStoredSuffixCountFaultArmed = false;
+        repairCleanupFaultCountdown = -1;
+    }
+
+    public boolean isColdKeyedTimelineFaultArmed() {
+        return isColdKeyedTimelineFaultArmed;
+    }
+
     @Override
     public boolean isForwardCommitDedupCollapsed() {
         return isForwardCommitDedupCollapsed;
@@ -174,6 +197,10 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
 
     public boolean isRepairUnwindCleanupFaultArmed() {
         return isRepairUnwindCleanupFaultArmed;
+    }
+
+    public boolean isStagingBufferCloseFaultArmed() {
+        return isStagingBufferCloseFaultArmed;
     }
 
     public boolean isStoredSuffixCountFaultArmed() {
@@ -210,6 +237,14 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
     }
 
     @Override
+    public void onRefreshFault(Throwable t) {
+        final Consumer<Throwable> observer = refreshFaultObserver;
+        if (observer != null) {
+            observer.accept(t);
+        }
+    }
+
+    @Override
     public void onRepairCleanupTail() {
         if (repairCleanupFaultCountdown >= 0 && repairCleanupFaultCountdown-- == 0) {
             throw new AssertionError("injected repair cleanup fault");
@@ -241,6 +276,15 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
      * and refuses, so it must catch its own throwables, and it must not reach DROP LIVE VIEW
      * or a checkpoint freeze, which wait for that latch.
      */
+    /**
+     * Sticky: {@code observer} sees every throwable a turn of this job faults with, in the
+     * order the job counts them. It runs inside the job's failure handler, so it must record
+     * and return, never throw. Null removes it.
+     */
+    public void setRefreshFaultObserver(@Nullable Consumer<Throwable> observer) {
+        refreshFaultObserver = observer;
+    }
+
     public void setSimulateBaseApplyDuringRederive(Runnable action) {
         baseApplyDuringRederive = action;
     }
