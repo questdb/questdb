@@ -22078,8 +22078,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                                 Window
                                   functions: [row_number()]
                                     DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: sym
-                                          filter: sym=1
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='a'
                                         Interval forward scan on: tab
                                           intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
                             """)
@@ -22105,8 +22105,8 @@ public class WindowFunctionTest extends AbstractCairoTest {
                             "      orderedFunctions: [[l] => [avg(l) over (rows between unbounded preceding and current row)]]\n" +
                             "      unorderedFunctions: [row_number()]\n" +
                             "        DeferredSingleSymbolFilterPageFrame\n" +
-                            "            Index forward scan on: sym\n" +
-                            "              filter: sym=1\n" +
+                            "            Index forward scan on: sym deferred: true\n" +
+                            "              filter: sym='a'\n" +
                             "            Interval forward scan on: tab\n" +
                             "              intervals: [(\"2024-01-01T00:00:00.000000Z\",\"2024-01-01T23:59:59.999999Z\")]\n")
                     .returns("""

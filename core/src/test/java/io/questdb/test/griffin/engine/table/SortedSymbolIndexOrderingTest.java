@@ -365,8 +365,8 @@ public class SortedSymbolIndexOrderingTest extends AbstractCairoTest {
             final String query = "SELECT s, ts, v FROM x WHERE s = 'k1' AND ts IN '2024-01-01' ORDER BY s, ts";
             assertQuery(query).assertsPlan("""
                     DeferredSingleSymbolFilterPageFrame
-                        Index forward scan on: s
-                          filter: s=2
+                        Index forward scan on: s deferred: true
+                          filter: s='k1'
                         Interval forward scan on: x
                           intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
                     """);
@@ -396,8 +396,8 @@ public class SortedSymbolIndexOrderingTest extends AbstractCairoTest {
                     Encode sort light
                       keys: [s, ts desc]
                         DeferredSingleSymbolFilterPageFrame
-                            Index forward scan on: s
-                              filter: s=2
+                            Index forward scan on: s deferred: true
+                              filter: s='k1'
                             Interval forward scan on: x
                               intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
                     """);
