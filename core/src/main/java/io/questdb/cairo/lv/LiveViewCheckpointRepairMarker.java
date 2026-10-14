@@ -247,7 +247,7 @@ public final class LiveViewCheckpointRepairMarker {
             LiveViewCheckpointLayout.repairingMarkerPath(finalPath, checkpointsDir);
             LiveViewCheckpointLayout.repairingMarkerPath(tmpPath, checkpointsDir);
             tmpPath.put(LiveViewCheckpointLayout.TMP_SUFFIX);
-            final MemoryMARW mem = Vm.getCMARWInstance();
+            final MemoryMARW mem = Vm.getExactCMARWInstance();
             try {
                 mem.of(ff, tmpPath.$(), SIZE, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
                 mem.putLong(MAGIC_OFFSET, MARKER_MAGIC);
@@ -318,7 +318,7 @@ public final class LiveViewCheckpointRepairMarker {
             } else {
                 return Numbers.LONG_NULL;
             }
-            final MemoryMARW mem = Vm.getCMARWInstance();
+            final MemoryMARW mem = Vm.getExactCMARWInstance();
             try {
                 mem.of(ff, path.$(), size, -1, MemoryTag.MMAP_DEFAULT, CairoConfiguration.O_NONE, -1);
                 if (mem.getLong(MAGIC_OFFSET) != MARKER_MAGIC
