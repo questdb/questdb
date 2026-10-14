@@ -212,6 +212,33 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         return inFlightSwaps.size() / IN_FLIGHT_STRIDE;
     }
 
+    /**
+     * Whether this job would find nothing to rewrite in the parquet folder at {@code partitionIndex}. The sweep, the
+     * request path and the Enterprise cold-storage upload all decide on this one predicate. An upload therefore never
+     * ships a partition this job is about to rewrite, and this job never rewrites a partition an upload took. The
+     * sweep's idle threshold, probe budget and IO budget decide WHEN the job acts, not WHETHER, so none of them is
+     * part of it.
+     * <p>
+     * A folder this job never rebuilds counts as compact: a REMOTE one, or one that is not the whole of its logical
+     * partition (see {@link #isParquetRebuildTarget}). Any other is compact unless its footer carries dead row-group
+     * bytes or a schema the table has moved on from (see {@link #isParquetSchemaStale}).
+     *
+     * @param parquetMeta the folder's {@code _pm}, its footer resolved against the folder's committed parquet file
+     *                    size in {@code txFile}
+     */
+    public static boolean isParquetPartitionCompact(
+            TxReader txFile,
+            int partitionIndex,
+            TableMetadata metadata,
+            ParquetMetaFileReader parquetMeta
+    ) {
+        if (!isParquetRebuildTarget(txFile, partitionIndex)) {
+            return true;
+        }
+        final boolean hasDeadBytes = parquetMeta.getParquetFileSize() > 0 && parquetMeta.getUnusedBytes() > 0;
+        return !hasDeadBytes && !isParquetSchemaStale(metadata, parquetMeta);
+    }
+
     @TestOnly
     public void setMaxProbesPerSweep(int maxProbesPerSweep) {
         this.maxProbesPerSweep = maxProbesPerSweep;
@@ -302,6 +329,27 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             }
         }
         return false;
+    }
+
+    /**
+     * Whether the folder at {@code partitionIndex} is a parquet folder this job rebuilds at all: not REMOTE, with a
+     * committed file size, and the whole of its logical partition.
+     * <p>
+     * {@link TableWriter#swapCompactedParquetPartition} floors the timestamp it is handed to the logical partition
+     * start, so it can only ever address a parquet folder that IS the whole logical partition. A parquet folder
+     * sharing its period with a split is left alone rather than swapped through a lookup that resolves to a
+     * different directory.
+     */
+    private static boolean isParquetRebuildTarget(TxReader txFile, int partitionIndex) {
+        if (!txFile.isPartitionParquet(partitionIndex)
+                || txFile.isPartitionRemote(partitionIndex)
+                || txFile.getPartitionParquetFileSize(partitionIndex) <= 0) {
+            return false;
+        }
+        final long partitionTimestamp = txFile.getPartitionTimestampByIndex(partitionIndex);
+        final long logicalPartitionTimestamp = txFile.getLogicalPartitionTimestamp(partitionTimestamp);
+        return partitionTimestamp == logicalPartitionTimestamp
+                && findLogicalPartitionRunEnd(txFile, partitionIndex, logicalPartitionTimestamp) == partitionIndex + 1;
     }
 
     /**
@@ -718,14 +766,64 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
-     * Folds the requested logical partition into one plain folder, whatever its age: a MERGE when it is split into
-     * several folders, a MAKE-PLAIN or REWRITE when its single folder is composite. The requester has already
-     * decided the partition is cold, so none of the sweep's idle thresholds apply; everything that makes a fold
-     * unsafe still does. A request this cannot act on - the logical partition is already one plain folder, has a
-     * swap in flight, is the active one, or holds a folder no native copy can carry - is dropped, and the requester
-     * asks again on its next cycle if it still needs the fold.
+     * Rebuilds the requested logical partition's lone parquet folder when {@link #isParquetPartitionCompact} says it
+     * is not compact, whatever its age and whatever the sweep's budgets: the sweep's own rebuild with none of its
+     * timing gates. A folder this job never rebuilds, or one whose {@code _pm} footer does not resolve, is left
+     * alone, which is also what the predicate tells the requester.
      *
-     * @return true when a fold was dispatched, false for a request that cost no more than a {@code _txn} read
+     * @return true when a rebuild was dispatched
+     */
+    private boolean compactRequestedParquetPartition(
+            TableToken tableToken,
+            TableMetadata metadata,
+            int timestampType,
+            int partitionBy,
+            int partitionIndex,
+            long logicalPartitionTimestamp
+    ) {
+        if (!isParquetRebuildTarget(txReader, partitionIndex)) {
+            return false;
+        }
+        path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+        TableUtils.setPathForParquetPartitionMetadata(
+                path,
+                timestampType,
+                partitionBy,
+                logicalPartitionTimestamp,
+                txReader.getPartitionNameTxn(partitionIndex)
+        );
+        final long addr = ParquetMetaFileReader.openAndMapRO(ff, path.$(), parquetMetaReader);
+        try {
+            if (addr == 0
+                    || !parquetMetaReader.resolveFooter(txReader.getPartitionParquetFileSize(partitionIndex))
+                    || isParquetPartitionCompact(txReader, partitionIndex, metadata, parquetMetaReader)) {
+                return false;
+            }
+        } finally {
+            // Capture before clear() zeros the fields so the mapping can be released.
+            final long mappedSize = parquetMetaReader.getFileSize();
+            parquetMetaReader.clear();
+            if (addr != 0) {
+                ff.munmap(addr, mappedSize, MemoryTag.MMAP_PARQUET_METADATA_READER);
+            }
+        }
+        openGeometry(tableToken, timestampType, partitionBy);
+        collectFolders(txReader, geometry, partitionIndex, partitionIndex + 1);
+        dispatchParquet(tableToken, logicalPartitionTimestamp, logicalPartitionTimestamp, logicalPartitionState(folders));
+        return true;
+    }
+
+    /**
+     * Folds the requested logical partition into one plain folder, whatever its age: a MERGE when it is split into
+     * several folders, a MAKE-PLAIN or REWRITE when its single folder is composite. A lone parquet folder is rebuilt
+     * instead when it is not compact - see {@link #compactRequestedParquetPartition}. The requester has already
+     * decided the partition is cold, so none of the sweep's idle thresholds apply; everything that makes a fold
+     * unsafe still does. A request this cannot act on - the logical partition is already one plain folder or a
+     * compact parquet one, has a swap in flight, is the active one, or holds a folder no native copy can carry - is
+     * dropped, and the requester asks again on its next cycle if it still needs the fold.
+     *
+     * @return true when a fold was dispatched, false for a request that cost no more than a {@code _txn} read (and,
+     * for a lone parquet folder, a {@code _pm} footer read)
      */
     private boolean compactRequestedPartition(TableToken tableToken, long logicalPartitionTimestamp, long nowMicros) {
         if (!tableToken.isWal()) {
@@ -759,15 +857,17 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 return false;
             }
             final int hi = findLogicalPartitionRunEnd(txReader, lo, logicalPartitionTimestamp);
+            if (hi - lo == 1 && txReader.isPartitionParquet(lo)) {
+                // The cold-storage upload asks for a parquet partition it found not compact.
+                return compactRequestedParquetPartition(tableToken, metadata, timestampType, partitionBy, lo, logicalPartitionTimestamp);
+            }
             if (hi - lo == 1 && !txReader.isPartitionComposite(lo)) {
                 // Already one plain folder: squashed and not composite, which is what the request asked for.
                 return false;
             }
             for (int partitionIndex = lo; partitionIndex < hi; partitionIndex++) {
-                if (txReader.isPartitionReadOnly(partitionIndex)
-                        || txReader.isPartitionRemote(partitionIndex)
-                        || txReader.isPartitionParquet(partitionIndex)) {
-                    // See scanLogicalPartition: none of these is this job's to rewrite or merge.
+                if (txReader.isPartitionRemote(partitionIndex) || txReader.isPartitionParquet(partitionIndex)) {
+                    // See scanLogicalPartition: neither is this job's to rewrite or merge.
                     return false;
                 }
             }
@@ -1269,14 +1369,15 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
 
     /**
      * Reports whether a Parquet partition is a compaction candidate: idle - not written to for {@link
-     * #idleTimeoutMicros}, the same window the composite branch applies to {@code lastWriteMicros} - and either
-     * holding ANY dead space or carrying a schema the table has moved on from (see {@link #isParquetSchemaStale}),
-     * both read from the {@code _pm} standalone (no live {@link TableWriter}, no O3 commit in flight).
+     * #idleTimeoutMicros}, the same window the composite branch applies to {@code lastWriteMicros} - and not
+     * compact by {@link #isParquetPartitionCompact}, read from the {@code _pm} standalone (no live
+     * {@link TableWriter}, no O3 commit in flight).
      */
     private boolean isParquetPartitionIdle(
             TableToken tableToken,
             int timestampType,
             int partitionBy,
+            int partitionIndex,
             long partitionTimestamp,
             long nameTxn,
             long parquetFileSize,
@@ -1312,9 +1413,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             if (addr == 0 || !parquetMetaReader.resolveFooter(parquetFileSize)) {
                 return false;
             }
-            final long unusedBytes = parquetMetaReader.getUnusedBytes();
-            final long actualParquetFileSize = parquetMetaReader.getParquetFileSize();
-            if ((actualParquetFileSize > 0 && unusedBytes > 0) || isParquetSchemaStale(metadata, parquetMetaReader)) {
+            if (!isParquetPartitionCompact(txReader, partitionIndex, metadata, parquetMetaReader)) {
                 return true;
             }
             rememberCleanParquetPartition(memoKey);
@@ -1570,8 +1669,8 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 // writer's own squash folds that one on commit. The writer re-checks this.
                 && hi < partitionCount;
         for (int partitionIndex = lo; isMergeable && partitionIndex < hi; partitionIndex++) {
-            isMergeable = !txReader.isPartitionReadOnly(partitionIndex)
-                    && !txReader.isPartitionRemote(partitionIndex)
+            // A READ ONLY folder merges like any other: the swap carries the flag over to the merged folder.
+            isMergeable = !txReader.isPartitionRemote(partitionIndex)
                     // A parquet folder is not rows this native copy can read; it is compacted on its own.
                     && !txReader.isPartitionParquet(partitionIndex)
                     && folderLastWriteMicros(tableToken, metadata, timestampType, partitionBy, partitionIndex)
@@ -1598,11 +1697,12 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
         // Some folder is still too fresh to squash, or the logical partition holds something the merge
         // cannot carry. Fall back to compacting single folders, which is a stricter, older threshold.
         for (int partitionIndex = lo; partitionIndex < hi; partitionIndex++) {
-            if (txReader.isPartitionReadOnly(partitionIndex) || txReader.isPartitionRemote(partitionIndex)) {
-                // Not this job's partition to rewrite. READ ONLY is an operator ATTACH or an
-                // Enterprise freeze ahead of the cold switch. REMOTE means a durable copy exists
-                // outside this instance, tracked by the very nameTxn and parquet file size the swap
-                // reassigns; a remotely served partition has no local data.parquet left to map at all.
+            if (txReader.isPartitionRemote(partitionIndex)) {
+                // Not this job's partition to rewrite. REMOTE means a durable copy exists outside this
+                // instance, tracked by the very nameTxn and parquet file size the swap reassigns; a remotely
+                // served partition has no local data.parquet left to map at all. READ ONLY - an operator
+                // ATTACH or an Enterprise freeze ahead of the cold switch - keeps writes out, not compaction:
+                // every swap carries the flag over to the partition it swaps in.
                 continue;
             }
             final boolean isComposite = txReader.isPartitionComposite(partitionIndex);
@@ -1644,11 +1744,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                     dispatchComposite(tableToken, logicalPartitionTimestamp, partitionTimestamp, state);
                 }
             } else {
-                if (hi - lo > 1 || partitionTimestamp != logicalPartitionTimestamp) {
-                    // TableWriter.swapCompactedParquetPartition floors the timestamp it is handed to the
-                    // logical partition start, so it can only ever address a parquet folder that IS the whole
-                    // logical partition. A parquet folder sharing its period with a split is left alone rather
-                    // than swapped through a lookup that resolves to a different directory.
+                if (!isParquetRebuildTarget(txReader, partitionIndex)) {
                     continue;
                 }
                 final long nameTxn = txReader.getPartitionNameTxn(partitionIndex);
@@ -1656,6 +1752,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                         tableToken,
                         timestampType,
                         partitionBy,
+                        partitionIndex,
                         partitionTimestamp,
                         nameTxn,
                         parquetFileSize,

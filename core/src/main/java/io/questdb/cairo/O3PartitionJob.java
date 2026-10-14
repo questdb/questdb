@@ -386,7 +386,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
         final PartitionGeometry geometry = ctx.geometry.of(
                 tableWriter.getFilesFacade(),
                 txReader,
-                pathToTable.toString(),
+                tableWriter.getTableRoot(),
                 tableWriter.getMetadata().getTimestampType(),
                 tableWriter.getPartitionBy(),
                 MemoryTag.NATIVE_O3

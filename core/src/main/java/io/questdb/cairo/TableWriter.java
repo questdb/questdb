@@ -392,6 +392,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final ObjList<MapWriter> symbolMapWriters;
     private final IntList symbolRewriteMap = new IntList();
     private final SymbolTableProviderFromWriter symbolTableProvider = new SymbolTableProviderFromWriter();
+    // The table directory as a String, built once: PartitionGeometry keeps its root as a String, and the O3
+    // workers re-bind their own geometry to it on every composite partition task.
+    private final String tableRoot;
     private final TimestampDriver timestampDriver;
     private final int timestampType;
     private final DirectUtf8StringZ tmpDirectUtf8StringZ = new DirectUtf8StringZ();
@@ -592,6 +595,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             path.of(root);
             this.pathRootSize = configuration.getDbLogName() == null ? path.size() : 0;
             path.concat(tableToken);
+            this.tableRoot = path.toString();
             this.other = new Path();
             other.of(root).concat(tableToken);
             this.pathSize = path.size();
@@ -1928,13 +1932,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // snapshot the staged copy was built from - a swap would drop or misplace them. The writer's own
         // owner commits them in its own time, and the next sweep rebuilds off a snapshot that has them.
         final boolean isInTransaction = inTransaction();
-        // Neither a freeze nor an upload moves the nameTxn, the file size or the metadata version, so
-        // the triple below cannot see one that landed while the build ran; test the two bits directly.
-        final boolean isReadOnly = isParquet && txWriter.isPartitionReadOnly(partitionIndex);
+        // An upload moves none of the nameTxn, the file size or the metadata version, so the triple below
+        // cannot see one that landed while the build ran; test the bit directly. A freeze does not make the
+        // swap stale: the swap keeps the READ ONLY flag, see below.
         final boolean isRemote = isParquet && txWriter.isPartitionRemote(partitionIndex);
         final boolean stale = isInTransaction
                 || !isParquet
-                || isReadOnly
                 || isRemote
                 || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
                 || liveParquetFileSize != expectedParquetFileSize
@@ -1951,7 +1954,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", liveParquetFileSize=").$(liveParquetFileSize)
                     .$(", expectedMetadataVersion=").$(expectedMetadataVersion)
                     .$(", liveMetadataVersion=").$(liveMetadataVersion)
-                    .$(", readOnly=").$(isReadOnly)
                     .$(", remote=").$(isRemote)
                     .$(", inTransaction=").$(isInTransaction)
                     .I$();
@@ -1987,6 +1989,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", parquetFileSize=").$size(newParquetFileSize)
                 .I$();
 
+        // Neither call touches the READ ONLY bit of the entry's masked-size word, so a frozen partition stays
+        // frozen in this same commit.
         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, partitionRowCount);
         txWriter.setPartitionParquet(partitionTimestamp, newParquetFileSize);
         if (isFullyMaterialized) {
@@ -2851,10 +2855,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public PartitionGeometry getGeometry() {
         if (partitionGeometry == null) {
-            try (Path root = new Path()) {
-                root.of(configuration.getDbRoot()).concat(tableToken.getDirName());
-                partitionGeometry = new PartitionGeometry().of(ff, txWriter, root.toString(), timestampType, partitionBy, MemoryTag.NATIVE_TABLE_WRITER);
-            }
+            partitionGeometry = new PartitionGeometry().of(ff, txWriter, tableRoot, timestampType, partitionBy, MemoryTag.NATIVE_TABLE_WRITER);
         }
         return partitionGeometry;
     }
@@ -3049,6 +3050,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     public SymbolTableProvider getSymbolTableProvider() {
         return symbolTableProvider;
+    }
+
+    public String getTableRoot() {
+        return tableRoot;
     }
 
     @Override
@@ -3291,6 +3296,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * without holding the writer, and a queued command can sit for a while before a busy writer applies it. Anything
      * that has moved on since simply ends the call - there is nothing staged to clean up, and the next sweep sees
      * whatever the partition looks like then. An open transaction on the writer ends the call the same way.
+     * <p>
+     * A READ ONLY partition is made plain like any other: MAKE-PLAIN works on its own {@code _txn} entry in place,
+     * so the flag stays where it is.
      */
     public void makePartitionPlainInPlace(
             long partitionTimestamp,
@@ -3306,7 +3314,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         final long liveWriterTxn = partitionIndex < 0 ? -1L : getGeometry().getWriterTxn(partitionIndex);
         if (isInTransaction
                 || partitionIndex < 0
-                || txWriter.isPartitionReadOnly(partitionIndex)
                 || txWriter.isPartitionRemote(partitionIndex)
                 || liveWriterTxn != expectedWriterTxn
                 || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
@@ -4250,12 +4257,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // See swapCompactedParquetPartition: an open transaction can hold uncommitted rows for this
         // partition that the build's snapshot never saw, so decline rather than swap over them.
         final boolean isInTransaction = inTransaction();
-        // See swapCompactedParquetPartition: a freeze or an upload moves none of the fields below.
-        final boolean isReadOnly = partitionIndex > -1 && txWriter.isPartitionReadOnly(partitionIndex);
+        // See swapCompactedParquetPartition: an upload moves none of the fields below, and a freeze does not
+        // make the swap stale.
         final boolean isRemote = partitionIndex > -1 && txWriter.isPartitionRemote(partitionIndex);
         final boolean stale = isInTransaction
                 || partitionIndex < 0
-                || isReadOnly
                 || isRemote
                 || !txWriter.isPartitionComposite(partitionIndex)
                 || txWriter.getPartitionNameTxn(partitionIndex) != expectedSrcNameTxn
@@ -4273,7 +4279,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     .$(", liveWriterTxn=").$(liveWriterTxn)
                     .$(", expectedMetadataVersion=").$(expectedMetadataVersion)
                     .$(", liveMetadataVersion=").$(liveMetadataVersion)
-                    .$(", readOnly=").$(isReadOnly)
                     .$(", remote=").$(isRemote)
                     .$(", inTransaction=").$(isInTransaction)
                     .I$();
@@ -4309,6 +4314,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 .$(", liveRows=").$(liveRows)
                 .I$();
 
+        // Keeps the entry's flag bits, READ ONLY included, so a frozen partition stays frozen in this same commit.
         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndex * LONGS_PER_TX_ATTACHED_PARTITION, liveRows);
         // The new directory is one piece at row 0, the ordinary shape, so it publishes no geometry record.
         setPartitionGeometryRefTracked(partitionTimestamp, NO_GEOMETRY_REF);
@@ -4360,6 +4366,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * The run may not end on the last {@code _txn} entry. That partition is the one this writer holds open, and
      * whose files carry the WAL lag rows past the live ones - rows no piece accounts for and the copy therefore
      * never saw. The writer's own squash folds the active logical partition on commit; this path stands down.
+     * <p>
+     * READ ONLY source folders are merged like any other. The merged folder is READ ONLY when any source folder
+     * is, set in the same {@code _txn} commit that swaps it in, so the freeze is never lost.
      *
      * @throws io.questdb.cairo.sql.TableReferenceOutOfDateException if the logical partition moved since the build
      *                                                               snapshot, or the writer is in a transaction -
@@ -4393,7 +4402,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             final int partitionIndex = firstIndex + i;
             stale = txWriter.getPartitionTimestampByIndex(partitionIndex) != folders.getQuick(offset)
                     || txWriter.getPartitionNameTxn(partitionIndex) != folders.getQuick(offset + 1)
-                    || txWriter.isPartitionReadOnly(partitionIndex)
                     || txWriter.isPartitionRemote(partitionIndex)
                     || txWriter.isPartitionParquet(partitionIndex)
                     || txWriter.getPartitionSize(partitionIndex) != folders.getQuick(offset + 3)
@@ -4457,8 +4465,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // Cold version of the merged partition: max of the merged sources' stamps, the same rule squashing applies.
         long mergedSeqTxn = 0;
+        boolean isMergedReadOnly = false;
         for (int i = 0; i < folderCount; i++) {
             mergedSeqTxn = Math.max(mergedSeqTxn, nativePartitionSeqTxn(firstIndex + i));
+            isMergedReadOnly |= txWriter.isPartitionReadOnly(firstIndex + i);
         }
         // Back to front, so the indexes of the folders not yet removed do not shift under the loop.
         for (int i = folderCount - 1; i >= 0; i--) {
@@ -4474,6 +4484,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // The merged directory is one piece at row 0, the ordinary shape, so it publishes no geometry record.
         setPartitionGeometryRefTracked(logicalPartitionTimestamp, NO_GEOMETRY_REF);
         txWriter.setPartitionSeqTxn(firstIndex, mergedSeqTxn);
+        if (isMergedReadOnly) {
+            txWriter.setPartitionReadOnly(firstIndex, true);
+        }
 
         ColumnTopSink sink = columnVersionWriter.asColumnTopSink(logicalPartitionTimestamp);
         columnTops.pushInto(sink);
@@ -8927,7 +8940,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     /**
      * Folds every composite partition back to the ordinary, single-piece-at-row-0 shape when merge-append is switched
      * OFF, each in its own transaction, before this writer processes a single row. A non-WAL table gets only its
-     * LAST partition folded, see below.
+     * LAST partition folded, see below. That is not a supported way to take composite partitions out of WAL: a table
+     * converted to BYPASS WAL is expected to be converted back to WAL, or squashed before the conversion. An older
+     * composite partition that a later DROP PARTITION makes last stays closed, and in-order rows cannot be appended
+     * to it - see COMPOSITE_PARTITIONS.md, "Leaving WAL".
      */
     private void foldCompositePartitionsWhenMergeAppendDisabled() {
         if (!PartitionBy.isPartitioned(partitionBy)) {

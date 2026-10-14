@@ -259,6 +259,130 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
+     * The Enterprise storage policy can freeze a lone COMPOSITE partition ahead of its parquet conversion, and asks
+     * for the fold the conversion needs. The request must fold it - here a REWRITE, with the sweep off - and the
+     * rewritten folder must stay READ ONLY, or the policy asks forever.
+     */
+    @Test
+    public void testRequestFoldsAReadOnlyCompositePartitionAndKeepsItReadOnly() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            createCompositeDayTable("ro_cr");
+            createCompositeDayTable("ro_cr_oracle");
+            final TableToken token = engine.verifyTableName("ro_cr");
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            final long nameTxnBefore;
+            final long liveRowsBefore;
+            try (TableWriter writer = engine.getWriter(token, "test-freeze")) {
+                Assert.assertTrue("2020-01-01 should be composite", writer.getTxWriter().isPartitionComposite(0));
+                Assert.assertTrue("fixture must require REWRITE, not MAKE-PLAIN", writer.getGeometry().getPieceCount(0) > 1);
+                writer.getTxWriter().setPartitionReadOnly(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+                nameTxnBefore = writer.getTxWriter().getPartitionNameTxn(0);
+                liveRowsBefore = writer.getTxWriter().getPartitionSize(0);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(token, day));
+                Assert.assertTrue("the request must dispatch the fold", job.run());
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertFalse("the request must fold a read-only composite partition", tx.isPartitionComposite(0));
+                Assert.assertNotEquals("a REWRITE lands in a new directory", nameTxnBefore, tx.getPartitionNameTxn(0));
+                Assert.assertTrue("the folded partition must stay READ ONLY", tx.isPartitionReadOnly(0));
+                Assert.assertEquals(liveRowsBefore, tx.getPartitionSize(0));
+            }
+            TestUtils.assertSqlCursors(
+                    engine, sqlExecutionContext, "SELECT * FROM ro_cr_oracle ORDER BY ts, i", "SELECT * FROM ro_cr ORDER BY ts, i", LOG
+            );
+        });
+    }
+
+    /**
+     * The cold-storage upload asks for a parquet partition only when {@link
+     * PartitionCompactionScanJob#isParquetPartitionCompact} says it is not compact, and the request path decides on
+     * that same predicate. So a compact parquet partition, and an uploaded one - which the job never rewrites, and the
+     * predicate therefore calls compact - are both left exactly as they were.
+     */
+    @Test
+    public void testRequestLeavesACompactOrUploadedParquetPartitionAlone() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken uploaded = createIdleDirtyParquetTable("rq_up_px");
+            final long uploadedNameTxnBefore;
+            try (TableWriter writer = engine.getWriter(uploaded, "test-upload")) {
+                writer.getTxWriter().setPartitionRemote(0, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+                uploadedNameTxnBefore = writer.getTxWriter().getPartitionNameTxn(0);
+            }
+
+            execute("CREATE TABLE rq_clean_px (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO rq_clean_px(a, ts) VALUES (1, '2020-01-01T00:00:00.000Z'), (2, '2020-01-01T01:00:00.000Z')");
+            // Pusher day, so 2020-01-01 is inactive by the time it is converted below.
+            execute("INSERT INTO rq_clean_px(a, ts) VALUES (90, '2020-01-02T00:00:00.000Z')");
+            drainWalQueue();
+            execute("ALTER TABLE rq_clean_px CONVERT PARTITION TO PARQUET LIST '2020-01-01'");
+            drainWalQueue();
+            final TableToken clean = engine.verifyTableName("rq_clean_px");
+            final long cleanNameTxnBefore;
+            try (TableReader reader = engine.getReader(clean)) {
+                cleanNameTxnBefore = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            Assert.assertTrue("a freshly converted partition is compact", isParquetPartitionCompact(clean, 0));
+            Assert.assertTrue("the job never rewrites an uploaded partition, so it counts as compact", isParquetPartitionCompact(uploaded, 0));
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(uploaded, day));
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(clean, day));
+                Assert.assertFalse("neither request may dispatch a rebuild", job.run());
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            assertPartitionUntouched(uploaded, uploadedNameTxnBefore, "an uploaded");
+            try (TableReader reader = engine.getReader(uploaded)) {
+                Assert.assertTrue("the UPLOADED bit must survive the request", reader.getTxFile().isPartitionRemote(0));
+            }
+            try (TableReader reader = engine.getReader(clean)) {
+                Assert.assertEquals("a compact partition must keep its directory", cleanNameTxnBefore, reader.getTxFile().getPartitionNameTxn(0));
+            }
+        });
+    }
+
+    /**
+     * See {@link #assertReadOnlySplitDayMerges}: the READ ONLY flag sits on the day's main folder.
+     */
+    @Test
+    public void testRequestMergesAReadOnlySplitDayAndKeepsItReadOnly() throws Exception {
+        assertReadOnlySplitDayMerges(0, true);
+    }
+
+    /**
+     * See {@link #assertReadOnlySplitDayMerges}: the READ ONLY flag sits only on the split, which the merge
+     * folds away - the merged folder has to take the flag over from it.
+     */
+    @Test
+    public void testRequestMergesASplitDayWhoseSplitIsReadOnlyAndKeepsItReadOnly() throws Exception {
+        assertReadOnlySplitDayMerges(1, true);
+    }
+
+    /**
      * A request skips every idle threshold - the requester decided the partition is cold - and is served with
      * the sweep itself disabled: here a split day is merged into one folder under timeouts it is nowhere near.
      */
@@ -367,6 +491,44 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             TestUtils.assertSqlCursors(
                     engine, sqlExecutionContext, "SELECT * FROM cn ORDER BY ts, i", "SELECT * FROM cw ORDER BY ts, i", LOG
             );
+        });
+    }
+
+    /**
+     * The cold-storage upload refuses a parquet partition that is not compact and asks for it here. The request
+     * rebuilds a lone parquet folder whatever its age - its file was written moments ago on the real clock, which
+     * holds the sweep's idle gate shut - and with the sweep off, so neither the idle threshold nor the sweep's
+     * budgets can keep the upload waiting.
+     */
+    @Test
+    public void testRequestRebuildsALoneParquetPartitionThatIsNotCompact() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createIdleDirtyParquetTable("rq_px");
+            final long nameTxnBefore;
+            try (TableReader reader = engine.getReader(token)) {
+                nameTxnBefore = reader.getTxFile().getPartitionNameTxn(0);
+            }
+            Assert.assertFalse("dead row groups make the partition not compact", isParquetPartitionCompact(token, 0));
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(token, day));
+                Assert.assertTrue("the request must dispatch the rebuild", job.run());
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertNotEquals("the rebuild lands in a new directory", nameTxnBefore, tx.getPartitionNameTxn(0));
+                Assert.assertTrue("the rebuilt partition must stay parquet", tx.isPartitionParquet(0));
+            }
+            assertUnusedBytes(token, 0, false);
+            Assert.assertTrue("the rebuilt partition must be compact", isParquetPartitionCompact(token, 0));
+            assertQuery("SELECT count() c FROM rq_px").noRandomAccess().expectSize().returns("c\n16\n");
         });
     }
 
@@ -1091,12 +1253,11 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
     }
 
     /**
-     * A frozen partition must survive the sweep untouched, however idle and however full of dead row groups.
-     * {@link TableWriter}'s own {@code compactPhysicalPartition} already declines a read-only partition; the
-     * swap must not reach the same partition through the other door.
+     * A frozen partition is compacted like any other - the freeze keeps writes out, not the sweep - and the swap
+     * carries the READ ONLY flag over to the rebuilt directory's {@code _txn} entry, in the commit that swaps it in.
      */
     @Test
-    public void testScanLeavesAReadOnlyParquetPartitionAlone() throws Exception {
+    public void testScanCompactsAReadOnlyParquetPartitionAndKeepsItReadOnly() throws Exception {
         assertMemoryLeak(() -> {
             final TableToken token = createIdleDirtyParquetTable("ro_px");
             final long nameTxnBefore;
@@ -1110,18 +1271,24 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
 
             sweepPastTheIdleTimeout();
 
-            assertPartitionUntouched(token, nameTxnBefore, "a read-only");
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertNotEquals("the sweep must rebuild a read-only partition", nameTxnBefore, tx.getPartitionNameTxn(0));
+                Assert.assertTrue("the rebuilt partition must be parquet", tx.isPartitionParquet(0));
+                Assert.assertTrue("the rebuilt partition must stay READ ONLY", tx.isPartitionReadOnly(0));
+                Assert.assertFalse("the next day must not take the flag", tx.isPartitionReadOnly(1));
+            }
+            assertUnusedBytes(token, 0, false);
             assertQuery("SELECT count() c FROM ro_px").noRandomAccess().expectSize().returns("c\n16\n");
         });
     }
 
     /**
-     * Composite twin of {@link #testScanLeavesAReadOnlyParquetPartitionAlone}: the REWRITE branch lands through
-     * {@link TableWriter#swapCompactedCompositePartition}, which bypasses {@code compactPhysicalPartition}'s
-     * read-only guard entirely, so it needs its own gate.
+     * Composite twin of {@link #testScanCompactsAReadOnlyParquetPartitionAndKeepsItReadOnly}: the REWRITE lands
+     * through {@link TableWriter#swapCompactedCompositePartition}, which must carry the flag over the same way.
      */
     @Test
-    public void testScanLeavesAReadOnlyCompositePartitionAlone() throws Exception {
+    public void testScanCompactsAReadOnlyCompositePartitionAndKeepsItReadOnly() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "true");
         node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
         node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_AVG_ROWS_PIECE_LIM, 8);
@@ -1144,6 +1311,7 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
             final long nameTxnBefore;
             try (TableWriter writer = engine.getWriter(token, "test-freeze")) {
                 Assert.assertTrue("2020-01-01 should be composite", writer.getTxWriter().isPartitionComposite(0));
+                Assert.assertTrue("fixture must require REWRITE, not MAKE-PLAIN", writer.getGeometry().getPieceCount(0) > 1);
                 writer.getTxWriter().setPartitionReadOnly(0, true);
                 writer.bumpPartitionTableVersion();
                 writer.commit();
@@ -1162,9 +1330,10 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
 
             try (TableReader reader = engine.getReader(token)) {
                 final TxReader tx = reader.getTxFile();
-                Assert.assertTrue("a read-only partition must stay composite", tx.isPartitionComposite(0));
-                Assert.assertTrue(reader.getGeometry().getPieceCount(0) > 1);
-                Assert.assertEquals("a read-only partition must keep its directory", nameTxnBefore, tx.getPartitionNameTxn(0));
+                Assert.assertFalse("the sweep must REWRITE a read-only composite partition", tx.isPartitionComposite(0));
+                Assert.assertNotEquals("a REWRITE lands in a new directory", nameTxnBefore, tx.getPartitionNameTxn(0));
+                Assert.assertTrue("the rewritten partition must stay READ ONLY", tx.isPartitionReadOnly(0));
+                Assert.assertFalse("the next day must not take the flag", tx.isPartitionReadOnly(1));
                 Assert.assertEquals(liveRowsBefore, tx.getPartitionSize(0));
             }
             assertQuery("SELECT count() c FROM ro_cx").noRandomAccess().expectSize().returns("c\n6010\n");
@@ -1198,6 +1367,80 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A logical partition holding an uploaded (REMOTE) folder is never folded, frozen or not, by the sweep or on
+     * request: rewriting it would leave the bucket copy describing a directory that no longer exists.
+     */
+    @Test
+    public void testScanAndRequestLeaveASplitDayWithAnUploadedFolderAlone() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            createSplitDayTable("up_cx");
+            final TableToken token = engine.verifyTableName("up_cx");
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+            final long mainNameTxnBefore;
+            final long splitNameTxnBefore;
+            try (TableWriter writer = engine.getWriter(token, "test-upload")) {
+                Assert.assertEquals("the O3 insert must have split 2020-01-01", 3, writer.getTxWriter().getPartitionCount());
+                writer.getTxWriter().setPartitionReadOnly(0, true);
+                writer.getTxWriter().setPartitionRemote(1, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+                mainNameTxnBefore = writer.getTxWriter().getPartitionNameTxn(0);
+                splitNameTxnBefore = writer.getTxWriter().getPartitionNameTxn(1);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT, "30m");
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:00:00.000000Z"));
+            final Clock pastTheSquashTimeout = () -> MicrosecondClockImpl.INSTANCE.getTicks() + 2 * Micros.HOUR_MICROS;
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(
+                    engine,
+                    configuration.getFilesFacade(),
+                    pastTheSquashTimeout
+            )) {
+                job.run();
+                engine.releaseAllReaders();
+                Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(token, day));
+                Assert.assertFalse("the request must not dispatch a fold", job.run());
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertEquals("the day must stay split", 3, tx.getPartitionCount());
+                Assert.assertEquals(mainNameTxnBefore, tx.getPartitionNameTxn(0));
+                Assert.assertEquals(splitNameTxnBefore, tx.getPartitionNameTxn(1));
+                Assert.assertTrue("the main folder must stay READ ONLY", tx.isPartitionReadOnly(0));
+                Assert.assertTrue("the UPLOADED bit must survive", tx.isPartitionRemote(1));
+            }
+            assertQuery("SELECT count() c FROM up_cx").noRandomAccess().expectSize().returns("c\n6010\n");
+        });
+    }
+
+    /**
+     * See {@link #assertReadOnlySplitDayMerges}: the READ ONLY flag sits on the day's main folder.
+     */
+    @Test
+    public void testScanMergesAReadOnlySplitDayAndKeepsItReadOnly() throws Exception {
+        assertReadOnlySplitDayMerges(0, false);
+    }
+
+    /**
+     * See {@link #assertReadOnlySplitDayMerges}: the READ ONLY flag sits only on the split.
+     */
+    @Test
+    public void testScanMergesASplitDayWhoseSplitIsReadOnlyAndKeepsItReadOnly() throws Exception {
+        assertReadOnlySplitDayMerges(1, false);
+    }
+
     private void assertPartitionUntouched(TableToken tableToken, long nameTxnBefore, String why) throws Exception {
         try (TableReader reader = engine.getReader(tableToken)) {
             Assert.assertEquals(
@@ -1207,6 +1450,83 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         }
         // Still there: the sweep declined, rather than reclaiming them by some other route.
         assertUnusedBytes(tableToken, 0, true);
+    }
+
+    /**
+     * A logical partition holding a READ ONLY folder is merged like any other - by the sweep past its idle
+     * thresholds, or on an explicit request with the sweep off and the thresholds unmet, which is how the
+     * Enterprise storage policy folds a frozen partition ahead of its parquet conversion - and the merged folder
+     * stays READ ONLY.
+     *
+     * @param readOnlyIndex the {@code _txn} index of the one source folder to freeze: 0 the main folder, 1 the split
+     * @param isRequested   true to merge through a request, false through the sweep
+     */
+    private void assertReadOnlySplitDayMerges(int readOnlyIndex, boolean isRequested) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_MERGE_APPEND_ENABLED, "false");
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, "1K");
+        node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z"));
+            createSplitDayTable("ro_cx");
+            final TableToken token = engine.verifyTableName("ro_cx");
+            final long day = MicrosFormatUtils.parseTimestamp("2020-01-01T00:00:00.000000Z");
+
+            final long liveRowsBefore;
+            try (TableWriter writer = engine.getWriter(token, "test-freeze")) {
+                Assert.assertEquals("the O3 insert must have split 2020-01-01", 3, writer.getTxWriter().getPartitionCount());
+                writer.getTxWriter().setPartitionReadOnly(readOnlyIndex, true);
+                writer.bumpPartitionTableVersion();
+                writer.commit();
+                liveRowsBefore = writer.getTxWriter().getPartitionSize(0) + writer.getTxWriter().getPartitionSize(1);
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            if (isRequested) {
+                // The same setup testRequestMergesASplitDayWithTheSweepOffAndTheTimeoutsUnmet merges this day under.
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_CHECK_INTERVAL, -1);
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1000h");
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT, "1000h");
+                try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                    Assert.assertTrue(engine.getPartitionCompactionRequestQueue().tryRequest(token, day));
+                    Assert.assertTrue("the request must dispatch the merge", job.run());
+                }
+            } else {
+                // The same thresholds testScanMergesAnIdleLogicalPartitionOfPlainSplits merges this day under.
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+                node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_SQUASH_IDLE_TIMEOUT, "30m");
+                setCurrentMicros(MicrosFormatUtils.parseTimestamp("2020-01-10T00:00:00.000000Z"));
+                final Clock pastTheSquashTimeout = () -> MicrosecondClockImpl.INSTANCE.getTicks() + 2 * Micros.HOUR_MICROS;
+                try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(
+                        engine,
+                        configuration.getFilesFacade(),
+                        pastTheSquashTimeout
+                )) {
+                    job.run();
+                }
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertEquals("the day's two folders must have become one", 2, tx.getPartitionCount());
+                Assert.assertEquals(day, tx.getPartitionTimestampByIndex(0));
+                Assert.assertFalse("the merged folder must be plain", tx.isPartitionComposite(0));
+                Assert.assertTrue("the merged folder must stay READ ONLY", tx.isPartitionReadOnly(0));
+                Assert.assertFalse("the next day must not take the flag", tx.isPartitionReadOnly(1));
+                Assert.assertEquals("the merge must not change the row count", liveRowsBefore, tx.getPartitionSize(0));
+            }
+            execute("CREATE TABLE ro_cx_oracle AS (SELECT i, ts FROM (" +
+                    "SELECT x::INT i, timestamp_sequence('2020-01-01', 15*1000000L) ts FROM long_sequence(5760)" +
+                    " UNION ALL SELECT x::INT + 90000 i, timestamp_sequence('2020-01-03', 60*1000000L) ts FROM long_sequence(50)" +
+                    " UNION ALL SELECT x::INT + 70000 i, timestamp_sequence('2020-01-01T22:00:07', 5*1000000L) ts FROM long_sequence(200)" +
+                    ")) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            TestUtils.assertSqlCursors(
+                    engine, sqlExecutionContext, "SELECT * FROM ro_cx_oracle ORDER BY ts, i", "SELECT * FROM ro_cx ORDER BY ts, i", LOG
+            );
+        });
     }
 
     private void assertUnusedBytes(TableToken tableToken, int partitionIndex, boolean expectPositive) throws Exception {
@@ -1271,6 +1591,21 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         }
         assertUnusedBytes(tableToken, 0, true);
         return tableToken;
+    }
+
+    /**
+     * {@link PartitionCompactionScanJob#isParquetPartitionCompact} on the reader's own view of the partition.
+     */
+    private boolean isParquetPartitionCompact(TableToken tableToken, int partitionIndex) {
+        try (TableReader reader = engine.getReader(tableToken)) {
+            reader.openPartition(partitionIndex);
+            return PartitionCompactionScanJob.isParquetPartitionCompact(
+                    reader.getTxFile(),
+                    partitionIndex,
+                    reader.getMetadata(),
+                    reader.getAndInitParquetPartitionDecoder(partitionIndex).metadata()
+            );
+        }
     }
 
     /**

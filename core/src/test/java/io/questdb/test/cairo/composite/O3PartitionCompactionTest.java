@@ -1323,66 +1323,17 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
      */
     @Test
     public void testTheCompactionSweepMakesAnIdlePartitionPlainInPlace() throws Exception {
-        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
-            enableMergeAppend();
-            enableCompaction();
-            letPreSplitCut();
-            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
-            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
-            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
-            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+        assertSweepMakesIdlePartitionPlainInPlace(false);
+    }
 
-            createDayTable("x", "2024-01-01", 20_000);
-            buildMoveTailWaste("x");
-            pinPieceCap(2);
-
-            // A pinned reader gets the day to MAKE-PLAIN's shape - MOVE-TAIL runs, MAKE-PLAIN declines.
-            try (TableReader pinned = engine.getReader(engine.verifyTableName("x"))) {
-                Assert.assertNotNull(pinned);
-                runCompactionPasses("x");
-                Assert.assertTrue("fixture did not reach MOVE-TAIL", isComposite("x", "2024-01-01"));
-                Assert.assertEquals(1, pieceCountOfDay("x", "2024-01-01"));
-                Assert.assertTrue("MOVE-TAIL left no dead space to protect", deadRowsOfDay("x", "2024-01-01") > 0);
-            }
-            engine.releaseInactive();
-
-            final String before = fingerprintOfDay("x", "2024-01-01");
-            final long diskBefore = diskSizeOfDay("x", "2024-01-01");
-            final long deadBefore = deadRowsOfDay("x", "2024-01-01");
-            final long nameTxnBefore = frontNameTxnOfDay("x", "2024-01-01");
-
-            // Nothing writes to the table from here on, so the writer's own per-commit retry never runs
-            // again - only the sweep can finish this off.
-            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
-            setCurrentMicros(parseMicros("2024-06-01T00:00:00.000000Z"));
-            Assert.assertTrue("the writer already reclaimed it, the sweep has nothing to do",
-                    deadRowsOfDay("x", "2024-01-01") == deadBefore);
-
-            engine.releaseAllReaders();
-            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
-                job.run();
-            }
-            engine.releaseAllReaders();
-            engine.releaseAllWriters();
-
-            Assert.assertFalse(
-                    "the sweep left the idle partition composite; dead rows: " + deadRowsOfDay("x", "2024-01-01"),
-                    isComposite("x", "2024-01-01")
-            );
-            Assert.assertEquals(0, deadRowsOfDay("x", "2024-01-01"));
-            Assert.assertTrue(
-                    "the sweep did not reclaim the dead bytes [before=" + diskBefore
-                            + ", after=" + diskSizeOfDay("x", "2024-01-01") + ']',
-                    diskSizeOfDay("x", "2024-01-01") < diskBefore
-            );
-            Assert.assertEquals(
-                    "the sweep REWROTE the partition into a new directory instead of making it plain in place",
-                    nameTxnBefore,
-                    frontNameTxnOfDay("x", "2024-01-01")
-            );
-            Assert.assertEquals("the sweep changed the data", before, fingerprintOfDay("x", "2024-01-01"));
-        });
+    /**
+     * {@link #testTheCompactionSweepMakesAnIdlePartitionPlainInPlace} on a frozen partition: the freeze keeps
+     * writes out, not the sweep, and MAKE-PLAIN works on the partition's own {@code _txn} entry in place, so the
+     * READ ONLY flag stays where it was.
+     */
+    @Test
+    public void testTheCompactionSweepMakesAReadOnlyIdlePartitionPlainInPlaceAndKeepsItReadOnly() throws Exception {
+        assertSweepMakesIdlePartitionPlainInPlace(true);
     }
 
     /**
@@ -1864,6 +1815,79 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
         );
     }
 
+    private static void assertSweepMakesIdlePartitionPlainInPlace(boolean isReadOnly) throws Exception {
+        assertMemoryLeak(new WindowsMappedTruncateFacade(), () -> {
+            enableMergeAppend();
+            enableCompaction();
+            letPreSplitCut();
+            setCurrentMicros(parseMicros("2024-01-10T00:00:00.000000Z"));
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_DEAD_MIN_SIZE, "1T");
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 512);
+            node1.setProperty(PropertyKey.CAIRO_O3_MID_PARTITION_MAX_SPLITS, 50);
+            node1.setProperty(PropertyKey.CAIRO_O3_LAST_PARTITION_MAX_SPLITS, 50);
+
+            createDayTable("x", "2024-01-01", 20_000);
+            buildMoveTailWaste("x");
+            pinPieceCap(2);
+
+            // A pinned reader gets the day to MAKE-PLAIN's shape - MOVE-TAIL runs, MAKE-PLAIN declines.
+            try (TableReader pinned = engine.getReader(engine.verifyTableName("x"))) {
+                Assert.assertNotNull(pinned);
+                runCompactionPasses("x");
+                Assert.assertTrue("fixture did not reach MOVE-TAIL", isComposite("x", "2024-01-01"));
+                Assert.assertEquals(1, pieceCountOfDay("x", "2024-01-01"));
+                Assert.assertTrue("MOVE-TAIL left no dead space to protect", deadRowsOfDay("x", "2024-01-01") > 0);
+            }
+            engine.releaseInactive();
+            if (isReadOnly) {
+                try (TableWriter writer = engine.getWriter(engine.verifyTableName("x"), "test-freeze")) {
+                    final int frontIndex = writer.getTxWriter().getPartitionIndex(parseMicros("2024-01-01T00:00:00.000000Z"));
+                    writer.getTxWriter().setPartitionReadOnly(frontIndex, true);
+                    writer.bumpPartitionTableVersion();
+                    writer.commit();
+                }
+                engine.releaseAllWriters();
+            }
+
+            final String before = fingerprintOfDay("x", "2024-01-01");
+            final long diskBefore = diskSizeOfDay("x", "2024-01-01");
+            final long deadBefore = deadRowsOfDay("x", "2024-01-01");
+            final long nameTxnBefore = frontNameTxnOfDay("x", "2024-01-01");
+
+            // Nothing writes to the table from here on, so the writer's own per-commit retry never runs
+            // again - only the sweep can finish this off.
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_COMPACTION_IDLE_TIMEOUT, "1h");
+            setCurrentMicros(parseMicros("2024-06-01T00:00:00.000000Z"));
+            Assert.assertTrue("the writer already reclaimed it, the sweep has nothing to do",
+                    deadRowsOfDay("x", "2024-01-01") == deadBefore);
+
+            engine.releaseAllReaders();
+            try (PartitionCompactionScanJob job = new PartitionCompactionScanJob(engine)) {
+                job.run();
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            Assert.assertFalse(
+                    "the sweep left the idle partition composite; dead rows: " + deadRowsOfDay("x", "2024-01-01"),
+                    isComposite("x", "2024-01-01")
+            );
+            Assert.assertEquals(0, deadRowsOfDay("x", "2024-01-01"));
+            Assert.assertTrue(
+                    "the sweep did not reclaim the dead bytes [before=" + diskBefore
+                            + ", after=" + diskSizeOfDay("x", "2024-01-01") + ']',
+                    diskSizeOfDay("x", "2024-01-01") < diskBefore
+            );
+            Assert.assertEquals(
+                    "the sweep REWROTE the partition into a new directory instead of making it plain in place",
+                    nameTxnBefore,
+                    frontNameTxnOfDay("x", "2024-01-01")
+            );
+            Assert.assertEquals("the sweep changed the data", before, fingerprintOfDay("x", "2024-01-01"));
+            Assert.assertEquals("the front's READ ONLY flag must survive MAKE-PLAIN", isReadOnly, isReadOnly("x", "2024-01-01"));
+        });
+    }
+
     private static void backdate(String table, String ts, int rows) throws Exception {
         execute("insert into " + table + " select cast(x as int) + 500000 i," +
                 " timestamp_sequence('" + ts + "', 1000000L) ts from long_sequence(" + rows + ")");
@@ -2118,6 +2142,16 @@ public class O3PartitionCompactionTest extends AbstractCairoTest {
             final TxReader txReader = reader.getTxFile();
             final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
             return partitionIndex > -1 && txReader.isPartitionComposite(partitionIndex);
+        }
+    }
+
+    private static boolean isReadOnly(String table, String day) throws Exception {
+        final TableToken tt = engine.verifyTableName(table);
+        try (TableReader reader = engine.getReader(tt)) {
+            final TxReader txReader = reader.getTxFile();
+            final int partitionIndex = txReader.getPartitionIndex(parseMicros(day + "T00:00:00.000000Z"));
+            Assert.assertTrue("day has no partition", partitionIndex > -1);
+            return txReader.isPartitionReadOnly(partitionIndex);
         }
     }
 

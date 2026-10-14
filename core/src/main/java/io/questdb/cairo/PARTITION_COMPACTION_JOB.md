@@ -29,7 +29,7 @@ command for it per sweep:
 
 | state | action |
 |---|---|
-| two or more folders, every one idle >= `squash.idle.timeout`, not the active period, no Parquet/READ ONLY/REMOTE folder | **merge** the whole logical partition into one folder |
+| two or more folders, every one idle >= `squash.idle.timeout`, not the active period, no Parquet/REMOTE folder | **merge** the whole logical partition into one folder |
 | otherwise | compact alone each COMPOSITE folder idle >= `idle.timeout`; plain folders are left alone |
 
 The active logical partition is never merged: the writer holds it open and its files carry WAL lag rows no
@@ -40,7 +40,7 @@ partition is skipped outright.
 
 Per partition, in `scanTable`:
 
-1. Skip READ ONLY and REMOTE partitions.
+1. Skip REMOTE partitions. READ ONLY ones are compacted like any other, and every swap carries the flag over.
 2. Read `_txn` standalone (short-lived mmap, no lock). A plain single-piece native partition is skipped
    without opening `_geometry` or `_pm`.
 3. **Recency filter** - skip a partition whose upper time bound (the next logical partition's start, or the
@@ -96,17 +96,24 @@ Other jobs can ask for a logical partition to be folded into one plain folder th
 `PartitionCompactionRequestQueue`: bounded (256), any thread may offer, the job is the only consumer, and a
 full queue refuses rather than blocks. The enterprise storage policy is the requester: a WAL table's split or
 composite partition must be one plain folder before it converts to parquet, so the conversion offers a request,
-gives up its cycle and finds the partition again on the next one, asking again until the fold has landed.
+gives up its cycle and finds the partition again on the next one, asking again until the fold has landed. The
+enterprise cold-storage upload asks the same way for a parquet partition `isParquetPartitionCompact` calls not
+compact. That is the predicate the sweep's parquet branch decides on too, so the upload never takes a partition
+the job is about to rewrite.
 
 - Served at the start of every `runSerially()`, ahead of the sweep and outside its budgets, even with the sweep
   disabled. Requests that need no fold - mostly repeats - are drained in one go; the call stops after the first
   request that dispatches a fold and returns `true`, so the worker comes back without idling and a backlog of
   copies cannot hold the sweep off.
 - No idle threshold applies: the requester decided the partition is cold. Everything else does - WAL tables
-  only, no READ ONLY / REMOTE / Parquet folder, never a MERGE of the active logical partition - and the request
-  goes through the same `dispatchMerge` / `dispatchMakePlain` / `dispatchComposite` and in-flight record as
-  the sweep, so a request for a logical partition whose swap is still queued never rebuilds its staged copy.
-- A request for a logical partition that is already one plain folder is dropped.
+  only, no REMOTE folder, no Parquet folder in a fold, never a MERGE of the active logical partition - and the
+  request goes through the same `dispatchMerge` / `dispatchMakePlain` / `dispatchComposite` / `dispatchParquet`
+  and in-flight record as the sweep, so a request for a logical partition whose swap is still queued never
+  rebuilds its staged copy.
+- A logical partition that is one lone Parquet folder is rebuilt when `isParquetPartitionCompact` says it is
+  not compact.
+- A request for a logical partition that is already one plain folder, or one compact Parquet folder, is
+  dropped.
 
 ## Config
 

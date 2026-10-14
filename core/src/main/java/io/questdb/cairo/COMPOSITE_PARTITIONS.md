@@ -183,7 +183,7 @@ written fresh (REWRITE, `assembleFreshPartitionVersion`) instead goes through th
 | `FrameAlgebra.merge` | Fixed and var-size columns, plus column-top-aware kernels |
 | Dedup | Deduplicating merge index; an all-duplicate commit with identical values writes nothing |
 | Active partition | Left closed like parquet; when mapped, positioned at physical rows so a close trims nothing live |
-| Non-WAL | Never founds one, but still handles a partition that is already composite |
+| Non-WAL | Never founds one, but still handles a partition that is already composite. See "Leaving WAL" below |
 | WAL lag | None, and no fast append through it either (`tryFastAppendInOrderBlock`): every commit is a merge-append |
 | Replace commits | Fully implemented, including the table's own last partition: a piece fully inside the declared range is dropped (KEEP) or superseded (MERGE, rewritten to NEW_PIECE) |
 
@@ -294,6 +294,21 @@ file rows   0                                        1070
 - Piece-wise parquet conversion. A composite partition is folded to plain first
   (`TableWriter.compactPartitionToPlain`), as DETACH and SQUASH also do
 
+## Leaving WAL
+
+A table converted to non-WAL (`ALTER TABLE ... SET TYPE BYPASS WAL`) is expected to be either
+converted back to WAL or squashed (`ALTER TABLE ... SQUASH PARTITIONS`) before the conversion, so that it
+holds no composite partition while it is non-WAL. Converting a table that still holds composite partitions
+and writing to it as non-WAL is not supported.
+
+The reason: a non-WAL writer appends in-order rows in place through `columns[]`, which a composite last
+partition keeps closed. `TableWriter.foldCompositePartitionsWhenMergeAppendDisabled` folds only the
+partition that is last when the non-WAL writer opens. An older composite partition stays composite, and
+any operation that makes it the last partition later on - DROP PARTITION of every newer partition, for
+one - leaves the writer with a composite last partition that an in-order INSERT cannot write. That INSERT
+fails, and the writer keeps rejecting writes until it is released. A SQUASH followed by a retry on the same
+writer can then overwrite the partition's last committed row.
+
 ## Downgrade caveat
 
 Bit 61 of the `_txn` slot-3 word carries the composite flag, with no `META_FORMAT_MINOR_VERSION`
@@ -320,4 +335,5 @@ unchanged.
 
 Turning the flag back OFF on a current binary is safe: a fresh writer folds every composite partition
 back to plain at open, in its own transaction, before it processes a row
-(`TableWriter.foldCompositePartitionsWhenMergeAppendDisabled`).
+(`TableWriter.foldCompositePartitionsWhenMergeAppendDisabled`). This does not cover a table converted to
+non-WAL with the flag still ON - see "Leaving WAL" above.
