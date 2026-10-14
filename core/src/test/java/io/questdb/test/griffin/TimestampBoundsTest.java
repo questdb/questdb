@@ -34,6 +34,7 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.microtime.Micros;
@@ -144,6 +145,47 @@ public class TimestampBoundsTest extends AbstractCairoTest {
                     .fails(26, NANOS_OUT_OF_BOUNDS);
             assertQuery("INSERT INTO tango VALUES (" + Long.MAX_VALUE + ")")
                     .fails(26, NANOS_OUT_OF_BOUNDS);
+        });
+    }
+
+    @Test
+    public void testDesignatedNanosTimestampTextRangeErrors() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tango (ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY "
+                    + (walEnabled ? "" : "BYPASS ") + "WAL");
+            final ObjList<String> outOfBounds = new ObjList<>(
+                    "1500-01-01T00:00:00.000000001Z",
+                    "2300-01-03T00:00:00.000001123Z",
+                    "2262-04-11T23:47:16.854775808Z",
+                    "2261-12-31T23:30:00.000000001-01:00"
+            );
+            for (int i = 0; i < outOfBounds.size(); i++) {
+                assertQuery("INSERT INTO tango VALUES ('" + outOfBounds.getQuick(i) + "')")
+                        .noLeakCheck()
+                        .fails(26, NANOS_OUT_OF_BOUNDS);
+            }
+            final ObjList<String> invalid = new ObjList<>(
+                    "2300-13-03T00:00:00.000001123Z",
+                    "2300-01-03T00:00:00.0000011234Z",
+                    "2300-01-03T00:00:00.000001123+25:00"
+            );
+            for (int i = 0; i < invalid.size(); i++) {
+                final String value = invalid.getQuick(i);
+                assertQuery("INSERT INTO tango VALUES ('" + value + "')")
+                        .noLeakCheck()
+                        .fails(26, "inconvertible value: `" + value + "` [STRING -> TIMESTAMP_NS] tuple: 0");
+            }
+            execute("INSERT INTO tango VALUES ('2262-01-01T00:30:00.000000001+01:00'), ('2261-12-31T23:59:59.999999999Z')");
+            drainWalQueue();
+            assertQuery("tango")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts
+                            2261-12-31T23:30:00.000000001Z
+                            2261-12-31T23:59:59.999999999Z
+                            """);
         });
     }
 

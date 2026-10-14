@@ -88,6 +88,7 @@ import io.questdb.std.Mutable;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjObjHashMap;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.TestOnly;
 
@@ -124,6 +125,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private final FunctionResolver resolver;
     private final PostOrderTreeTraversalAlgo traverseAlgo;
     private final ObjList<BoundExpression> unconstructed = new ObjList<>();
+    private final ObjObjHashMap<BoundExpression, BoundExpression> unconstructedIndex = new ObjObjHashMap<>();
     private SqlExecutionContext sqlExecutionContext;
 
     /**
@@ -361,7 +363,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         argumentLeafMarks.clear();
         argumentPositions.clear();
         argumentTypes.clear();
-        unconstructed.clear();
+        clearUnconstructed(0);
         sqlExecutionContext = null;
     }
 
@@ -628,6 +630,12 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         }
     }
 
+    private void addUnconstructed(BoundExpression expression) {
+        if (unconstructedIndex.putIfAbsent(expression, expression)) {
+            unconstructed.add(expression);
+        }
+    }
+
     /**
      * Binds the expression tree of the node in its role: the role, the replacement lists and the native timestamp
      * ids hold for this binding only.
@@ -752,7 +760,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             argumentPositions.clear();
             expressionStack.setPos(expressionMark);
             expressionLeafMarks.setPos(expressionMark);
-            unconstructed.setPos(unconstructedMark);
+            clearUnconstructed(unconstructedMark);
             ctx.planNodes.staticTypes.rewind(staticTypeMark);
         }
     }
@@ -931,6 +939,10 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 if (value == Numbers.LONG_NULL || driver.isExactFrom(value, type)) {
                     replaceTemporalConstant(args, i, driver.ceilFrom(value, type), operandType, true);
                     isMatchable = true;
+                } else if (ColumnType.isTimestamp(operandType) && args.size() == 3
+                        && ColumnType.isVarcharOrString(args.getQuick(3 - i).getType())
+                        && textConstantType(args, 3 - i, driver) == ColumnType.UNDEFINED) {
+                    replaceTemporalConstant(args, i, value, type, true);
                 } else {
                     Misc.free(args.getQuick(i));
                     args.remove(i);
@@ -984,8 +996,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                     final FunctionExpression conversion = ctx.planNodes.functions.next().of(overload, ctx.tmpArguments,
                             ctx.tmpPositions, function.getType(),
                             BoundExpression.functionFlags(function), position);
-                    if (unconstructed.indexOf(arguments.getQuick(index)) >= 0) {
-                        unconstructed.add(conversion);
+                    if (!unconstructedIndex.excludes(arguments.getQuick(index))) {
+                        addUnconstructed(conversion);
                     }
                     arguments.setQuick(index, conversion);
                     return function;
@@ -1022,6 +1034,12 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         }
     }
 
+    private void clearUnconstructed(int mark) {
+        while (unconstructed.size() > mark) {
+            unconstructedIndex.remove(unconstructed.popLast());
+        }
+    }
+
     /**
      * Closes the column leaves at {@code [from, to)} of the preparation: a fold evaluated the operand they belong
      * to, so the bound description no longer reads them.
@@ -1044,7 +1062,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private void constructArguments(ObjList<Function> args, int count, SqlExecutionContext executionContext) throws SqlException {
         for (int i = 0; i < count; i++) {
             final BoundExpression argument = arguments.getQuick(i);
-            if (unconstructed.indexOf(argument) >= 0) {
+            if (!unconstructedIndex.excludes(argument)) {
                 final BindScope scope = ctx.scope();
                 final Function placeholder = args.getQuick(i);
                 args.setQuick(i, ctx.functionInstantiator.realize(argument, scope.expressionInput, scope.currentPreparation, executionContext));
@@ -1173,7 +1191,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             for (int i = 0, n = arguments.size(); i < n; i++) {
                 flags |= arguments.getQuick(i).getFunctionFlags() & BoundExpression.NO_PARALLELISM;
             }
-            unconstructed.add(pushCall(name, role, isSetOperation, ctx.planNodes.functions.next().of(overload, arguments, argumentPositions,
+            addUnconstructed(pushCall(name, role, isSetOperation, ctx.planNodes.functions.next().of(overload, arguments, argumentPositions,
                     staticType, flags, position)));
             return ctx.planNodes.staticTypes.next().of(staticType, (flags & BoundExpression.NO_PARALLELISM) == 0);
         }
@@ -1648,8 +1666,8 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 case FunctionExpression call -> ctx.planNodes.functions.next().of(call, position);
                 default -> constant(function, position);
             };
-            if (unconstructed.indexOf(argument) >= 0) {
-                unconstructed.add(repositioned);
+            if (!unconstructedIndex.excludes(argument)) {
+                addUnconstructed(repositioned);
             }
             push(repositioned, callLeafMark());
             args.clear();
@@ -1715,7 +1733,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             final int type = argument.getDataType();
             if (!(argument instanceof TypeExpression) && !(argument instanceof ConstantExpression)) {
                 if (ColumnType.isArray(type) || (argument.getFunctionFlags() & ~BoundExpression.NO_PARALLELISM) != BoundExpression.STABLE_WITHIN_EXECUTION
-                        || !(argument instanceof ColumnExpression && BindableColumn.isBindableType(type) || unconstructed.indexOf(argument) >= 0)) {
+                        || !(argument instanceof ColumnExpression && BindableColumn.isBindableType(type) || !unconstructedIndex.excludes(argument))) {
                     return ColumnType.UNDEFINED;
                 }
                 hasVariableArgument = true;
@@ -1762,6 +1780,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
      * The precision of a text IN element that spells a timestamp; UNDEFINED for anything else.
      */
     private int textConstantType(ObjList<Function> args, int index, TimestampDriver driver) {
+        if (ColumnType.isVarcharOrString(args.getQuick(index).getType()) && args.getQuick(index).isNullConstant()) {
+            return driver.getTimestampType();
+        }
         final CharSequence text = args.getQuick(index).isConstant() ? literalText(arguments.getQuick(index)) : null;
         return text != null ? IntervalUtils.literalTimestampType(driver, text) : ColumnType.UNDEFINED;
     }

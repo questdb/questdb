@@ -518,7 +518,7 @@ public interface TimestampDriver {
     int getTimestampType();
 
     /**
-     * Creates converted from a given type to the type supported by the driver implementation.
+     * Creates a converter for designated timestamp writes from a given type to this driver's type.
      *
      * @param srcTimestampType type of the timestamp to convert from.
      * @return either converter or null. When the value is null, the long should be taken verbatim. The driver decided

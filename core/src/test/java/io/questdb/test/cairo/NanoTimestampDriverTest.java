@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TimestampDriver;
@@ -90,6 +91,21 @@ public class NanoTimestampDriverTest extends AbstractCairoTest {
             Assert.fail("Expected ArithmeticException");
         } catch (ArithmeticException e) {
             TestUtils.assertContains(e.getMessage(), "long overflow");
+        }
+    }
+
+    @Test
+    public void testGetTimestampUnitConverter() {
+        final CommonUtils.TimestampUnitConverter converter = driver.getTimestampUnitConverter(ColumnType.TIMESTAMP_MICRO);
+        Assert.assertEquals(Numbers.LONG_NULL, converter.convert(Numbers.LONG_NULL));
+        Assert.assertEquals(0, converter.convert(0));
+        Assert.assertEquals(1_000, converter.convert(1));
+        Assert.assertEquals(9_214_646_399_999_999_000L, converter.convert(9_214_646_399_999_999L));
+        for (long micros : new long[]{-1, Long.MIN_VALUE + 1, 9_214_646_400_000_000L, Long.MAX_VALUE}) {
+            final CairoException exception = Assert.assertThrows(CairoException.class,
+                    () -> converter.convert(micros));
+            TestUtils.assertContains(exception.getFlyweightMessage(),
+                    "designated timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
         }
     }
 

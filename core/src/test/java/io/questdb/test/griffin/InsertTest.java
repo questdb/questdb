@@ -1765,7 +1765,7 @@ public class InsertTest extends AbstractCairoTest {
             execute("create table tab (t1 timestamp_ns) timestamp(t1) partition by day;");
             assertQuery("insert into tab values ('2300-01-03T00:00:00.000001123')")
                     .noLeakCheck()
-                    .fails(24, "inconvertible value: `2300-01-03T00:00:00.000001123` [STRING -> TIMESTAMP_NS] tuple: 0");
+                    .fails(24, "timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
             assertQuery("insert into tab values ('2262-01-01T00:00:00.000000000')")
                     .noLeakCheck()
                     .fails(24, "timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
@@ -1798,20 +1798,20 @@ public class InsertTest extends AbstractCairoTest {
                         + " VALUES (1, '2020-01-01'), (2, '2300-01-03T00:00:00.000001123')";
                 assertQuery(stringSql)
                         .noLeakCheck()
-                        .fails(stringSql.indexOf("'2300"), "inconvertible value: `2300-01-03T00:00:00.000001123` [STRING -> TIMESTAMP_NS] tuple: 1");
+                        .fails(stringSql.indexOf("'2300"), "timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
 
                 final String bindSql = "INSERT INTO " + table + " (ts, id) VALUES ('2020-01-01', 1), ($1, 2)";
                 bindVariableService.clear();
                 bindVariableService.setVarchar(0, new Utf8String("2300-01-03T00:00:00.000001123"));
                 assertQuery(bindSql)
                         .noLeakCheck()
-                        .fails(bindSql.indexOf("$1"), "inconvertible value: `2300-01-03T00:00:00.000001123` [VARCHAR -> TIMESTAMP_NS] tuple: 1");
+                        .fails(bindSql.indexOf("$1"), "timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
 
                 bindVariableService.clear();
                 bindVariableService.setTimestamp(0, Long.MAX_VALUE);
                 assertQuery(bindSql)
                         .noLeakCheck()
-                        .fails(bindSql.indexOf("$1"), "inconvertible value: 9223372036854775807 [TIMESTAMP -> TIMESTAMP_NS]");
+                        .fails(bindSql.indexOf("$1"), "timestamp_ns before 1970-01-01 and beyond 2261-12-31 23:59:59.999999999 is not allowed");
                 drainWalQueue();
                 assertQuery("SELECT count() FROM " + table)
                         .noLeakCheck()

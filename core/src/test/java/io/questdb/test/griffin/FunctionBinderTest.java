@@ -36,6 +36,7 @@ import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.FunctionResolver;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
@@ -695,6 +696,28 @@ public class FunctionBinderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDeferredBalancedExpressionAndCompilerReuse() throws Exception {
+        assertMemoryLeak(() -> {
+            String expression = "x";
+            for (int i = 0; i < 12; i++) {
+                expression = '(' + expression + '+' + expression + ')';
+            }
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                assertQuery("SELECT " + expression + " total FROM long_sequence(2)")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("total\n4096\n8192\n");
+                assertQuery("SELECT x + 1 total FROM long_sequence(2)")
+                        .withCompiler(compiler)
+                        .noLeakCheck()
+                        .expectSize()
+                        .returns("total\n2\n3\n");
+            }
+        });
+    }
+
+    @Test
     public void testDeferredCallAdoptsBindTimeConstantOnceAndClosesItOnEveryPath() throws Exception {
         assertMemoryLeak(() -> {
             final int[] constructions = {0};
@@ -797,6 +820,32 @@ public class FunctionBinderTest extends AbstractCairoTest {
                     Assert.assertEquals(16, e.getPosition());
                     TestUtils.assertEquals("invalid unit '0d'", e.getFlyweightMessage());
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testDeferredCallsSurviveNestedBindingAndFailure() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE deferred_calls (id INT, n LONG, ip STRING)");
+            execute("INSERT INTO deferred_calls VALUES (1, 2, '1.2.3.4'), (2, NULL, NULL), (3, 3, '255.255.255.255'), (4, 0, '0.0.0.0')");
+            final String query = """
+                    SELECT id, (SELECT min(n + 1) FROM deferred_calls) < (n * n)::LONG
+                        AND length(ip::IPv4) > 5 flag
+                    FROM deferred_calls ORDER BY id
+                    """;
+            final String expected = """
+                    id\tflag
+                    1\ttrue
+                    2\tfalse
+                    3\ttrue
+                    4\tfalse
+                    """;
+            final String invalid = query.replace("min(n + 1)", "min(missing + 1)");
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                assertQuery(query).withCompiler(compiler).noLeakCheck().expectSize().returns(expected);
+                assertQuery(invalid).withCompiler(compiler).noLeakCheck().fails(invalid.indexOf("missing"), "Invalid column: missing");
+                assertQuery(query).withCompiler(compiler).noLeakCheck().expectSize().returns(expected);
             }
         });
     }
