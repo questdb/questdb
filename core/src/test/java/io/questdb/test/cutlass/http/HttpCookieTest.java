@@ -47,7 +47,7 @@ public class HttpCookieTest extends BaseHttpCookieTest {
 
     @Test
     public void testRefusedRequestDoesNotExtendSession() throws Exception {
-        final AtomicLong currentMicros = new AtomicLong(1760743438000000L);
+        final AtomicLong currentMicros = new AtomicLong(1_760_743_438_000_000L);
         final Bootstrap bootstrap = getBootstrapWithMockClock(currentMicros);
         testRefusedRequestDoesNotExtendSession(() -> new ServerMain(bootstrap), HttpClientFactory::newPlainTextInstance, currentMicros);
     }
