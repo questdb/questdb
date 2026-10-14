@@ -251,7 +251,8 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
         // TableConverter), promotion (EntCairoEngine), local WAL/view/REBASE truth, lifecycle anchors
         // (TableWriter, WalPurgeJob, WalEvents) and primary-only upload. U: configuration definitions,
         // one-shot structural/checkpoint writers, lazy column/index seeds, cold storage's existing grade,
-        // COPY (no replica ingress) and UDP refusal. CairoEngine and V1/V2 own the live resolution.
+        // COPY (no replica ingress) and UDP refusal. CairoEngine and V1/V2 own the live resolution; the WAL table scan
+        // (TableSequencerAPI) applies the V1/V2 open's own rule through the same resolution.
         // A new file reading the configured mode needs classification here before it can bypass the policy.
         Assert.assertEquals(
                 "[BitmapIndexWriter.java, CairoConfiguration.java, CairoConfigurationWrapper.java, CairoEngine.java, "
@@ -262,12 +263,12 @@ public class DataSyncFailureModePolicyTest extends AbstractCairoTest {
                         + "LiveViewCheckpointRepairState.java, LiveViewCheckpointSuperblock.java, LiveViewRefreshJob.java, "
                         + "MemoryPMARImpl.java, ParallelCsvFileImporter.java, PostingIndexWriter.java, PropServerConfiguration.java, "
                         + "RecoveryCoordinator.java, SequencerMetadata.java, SettingsStore.java, SqlCompilerImpl.java, "
-                        + "TableConverter.java, TableSequencerImpl.java, TableSnapshotRestore.java, TableTransactionLog.java, "
+                        + "TableConverter.java, TableSequencerAPI.java, TableSequencerImpl.java, TableSnapshotRestore.java, TableTransactionLog.java, "
                         + "TableTransactionLogV1.java, TableTransactionLogV2.java, TableWriter.java, TxWriter.java, ViewWalWriter.java, "
                         + "WalEventWriter.java, WalPurgeJob.java, WalUtils.java, WalWriter.java, WalWriterBase.java]"
                         + (hasEnterpriseSources() ?
                         "+[ColdStorageTaskJob.java, EntCairoEngine.java, EntPropServerConfiguration.java, PrimaryRoleState.java, "
-                        + "StoragePolicyJob.java, StoragePolicyWriterCommand.java, WalEvents.java]"
+                        + "StoragePolicyJob.java, StoragePolicyWriterCommand.java, StoragePolicyWriterImpl.java, WalEvents.java]"
                         : ""),
                 filesUsing(Pattern.compile("getCommitMode\\(\\)"), null)
         );

@@ -26,8 +26,10 @@ package io.questdb.test.griffin.engine.functions.catalogue;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.mig.EngineMigration;
 import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.sql.RecordCursor;
@@ -242,6 +244,9 @@ public class WalTableListFunctionFactoryTest extends AbstractCairoTest {
             execute("insert into B values (3, 'A', '2022-12-05T02', 'B')");
             drainWalQueue();
             engine.clear();
+            // A restart of an upgraded database runs no migration. The test root starts without the upgrade marker, so
+            // record it while _txn still reads, or the restart would migrate B and stop at its torn _txn.
+            EngineMigration.migrateEngineTo(engine, ColumnType.VERSION, ColumnType.MIGRATION_VERSION, false);
             // Neither A/B area of B's _txn verifies.
             TxnCorruptionUtils.tearChecksumSlots(engine, "B");
             try (CairoEngine restarted = new CairoEngine(configuration)) {
