@@ -16922,6 +16922,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private static final long ASOF_LOOKUP_MAX_SLAVE_ROWS = 65_536;
+    // an ASOF input whose key selects at most this share of its table keeps the covering plan
+    private static final double ASOF_INPUT_COVERING_MAX_SELECTIVITY = 0.01;
 
     private static IntList identityCrossIndex(int columnCount) {
         final IntList crossIndex = new IntList(columnCount);
@@ -20588,7 +20590,13 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 return coveringPlan;
             }
             if (isAsOfInput(model)) {
-                coveringEstimate[0] = coveringEstimate[1] = -1;
+                // An ASOF input takes the scan, which its fast and parallel plans read, unless its key
+                // selects few rows (ASOF_INPUT_COVERING_MAX_SELECTIVITY): those the covering index reads
+                // directly, faster than any plan over a scan of the whole table.
+                if (covering.estimateSelection(executionContext, COVERING_CHOICE_MIN_SCANNED_ROWS, coveringEstimate)
+                        && coveringEstimate[0] <= ASOF_INPUT_COVERING_MAX_SELECTIVITY * coveringEstimate[1]) {
+                    return coveringPlan;
+                }
             } else if (!covering.estimateSelection(executionContext, COVERING_CHOICE_MIN_SCANNED_ROWS, coveringEstimate)
                     || coveringEstimate[0] <= maxSelectivity * coveringEstimate[1]) {
                 return coveringPlan;

@@ -31,10 +31,39 @@ import org.junit.Test;
 /**
  * The tables an ASOF, LT or SPLICE JOIN reads take the scan, not the covering-index plan: the
  * joins read their slave by time frames and their parallel plans a master's filter over a scan.
+ * A key that selects few rows keeps the covering plan, which reads just those.
  * The same query outside a join keeps the covering plan. Each join is compared with the linear
  * ASOF JOIN of the same inputs.
  */
 public class CoveringIndexAsOfInputsTest extends AbstractCoveringIndexQueryTest {
+
+    @Test
+    public void testSelectiveAsOfInputsKeepTheCoveringPlan() throws Exception {
+        // R is 1 row in 2000 of each, well under ASOF_INPUT_COVERING_MAX_SELECTIVITY: the covering index reads
+        // its few rows, faster than a plan over a scan of the whole table; F, 1 in 5, takes the scan
+        assertMemoryLeak(() -> {
+            execute("create table tr (ts timestamp, sym symbol, px double, sz long) timestamp(ts) partition by day bypass wal");
+            execute("create table qu (ts timestamp, sym symbol, bid double, ask double) timestamp(ts) partition by day bypass wal");
+            execute("insert into tr select (x * 70_000L)::timestamp, case when x % 2000 = 0 then 'R' when x % 5 = 1 then 'F' else 'k' || (x % 40) end, "
+                    + "x / 3.0, x from long_sequence(1_200_000)");
+            execute("insert into qu select (x * 20_000L)::timestamp, case when x % 2000 = 0 then 'R' when x % 5 = 1 then 'F' else 'k' || (x % 40) end, "
+                    + "x / 7.0, x / 5.0 from long_sequence(4_200_000)");
+            execute("alter table tr alter column sym add index type posting include (px, sz)");
+            execute("alter table qu alter column sym add index type posting include (bid, ask)");
+            for (String key : new String[]{"R", "F"}) {
+                final String join = "select t.ts, t.px, t.sz, q.bid, q.ask from (select ts, px, sz from tr where sym = '" + key + "') t "
+                        + "asof join (select ts, bid, ask from qu where sym = '" + key + "') q";
+                final StringSink plan = new StringSink();
+                printSql("explain " + join, plan);
+                if (key.equals("R")) {
+                    TestUtils.assertContains(join, plan, "CoveringIndex");
+                } else {
+                    TestUtils.assertNotContains(plan, "CoveringIndex");
+                }
+                assertSameResult(join, join.replace("select t.ts", "select /*+ asof_linear(t q) */ t.ts"));
+            }
+        });
+    }
 
     @Test
     public void testAsOfInputsTakeTheScan() throws Exception {
