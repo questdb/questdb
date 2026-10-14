@@ -787,8 +787,9 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 final byte[] fingerprint = sessionInfo != null ? getCredentialFingerprint(authorization) : null;
                 boolean credentialVerified = false;
                 if (sessionInfo != null && fingerprint != null && sessionStore.isCredentialVerified(sessionInfo, fingerprint)) {
-                    // the session has verified this very credential recently,
-                    // it does not need verifying again until the revalidation interval passes
+                    // the session has verified this very credential recently, it does not need verifying again
+                    // until the revalidation interval passes; the session vouches only for a credential of its
+                    // own auth type, see updateSession(), so the request gets the auth type the credential has
                     principalContext = sessionInfo;
                 } else if (authenticator.authenticate(headerParser)) {
                     principalContext = authenticator;
@@ -1500,13 +1501,17 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             sessionStore.destroySession(sessionInfo.getSessionId(), this);
         } else if (sessionInfo != null) {
             if (requestCredentialVerified) {
-                // the credential has just authenticated the principal of the session (again),
-                // the session does not need to verify it until the revalidation interval passes,
-                // and ends when it is revoked
+                // The credential has just authenticated the principal of the session (again), and the session ends
+                // when it is revoked. The session vouches for it until the revalidation interval passes only if it
+                // authenticates with the auth type of the session: a request the session vouches for is served
+                // with the session's auth type. A password sent with a session opened with a REST token, for
+                // example, is verified on every request, so each of them is authenticated as a password.
                 sessionStore.setVerifiedCredential(
                         sessionInfo,
                         authenticator.getSessionCredential(),
-                        getCredentialFingerprint(headerParser.getHeader(HEADER_AUTHORIZATION))
+                        authenticator.getAuthType() == sessionInfo.getAuthType()
+                                ? getCredentialFingerprint(headerParser.getHeader(HEADER_AUTHORIZATION))
+                                : null
                 );
             }
             sessionStore.extendSession(sessionInfo, this);

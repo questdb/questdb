@@ -107,7 +107,9 @@ public interface HttpSessionStore {
      * @param session               session sent with the request
      * @param credential            the credential, or null if it cannot be revoked by this server
      * @param credentialFingerprint fingerprint of the Authorization header that carried the credential,
-     *                              null if the store does not reuse verified credentials
+     *                              null if the store does not reuse verified credentials, or the session must
+     *                              not vouch for the credential, such as one that authenticated the principal
+     *                              with an auth type other than the session's
      */
     void setVerifiedCredential(
             @NotNull SessionInfo session,
