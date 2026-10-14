@@ -1118,6 +1118,11 @@ public final class IntervalUtils {
                 applyExchangeFilterAndDuration(timestampDriver, exchangeSchedule, out, outSize, effectiveSeq,
                         semicolonPos >= 0 ? semicolonPos + 1 : -1, effectiveSeqLim, position);
             }
+            // Both passes above can reorder intervals or make them overlap, e.g. a DST gap shift
+            // or a duration longer than a lunch break. Interval scans need a sorted, disjoint list.
+            if (applyEncoded && (tzMarkerPos >= 0 || exchangeSchedule != null)) {
+                sortAndUnionInPlace(out, outSize);
+            }
             return;
         }
 

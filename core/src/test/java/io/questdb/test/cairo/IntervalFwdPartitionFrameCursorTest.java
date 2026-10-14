@@ -41,6 +41,7 @@ import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.PartitionFrame;
 import io.questdb.cairo.sql.PartitionFrameCursor;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RowCursor;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -472,6 +473,59 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOverlappingIntervals() throws Exception {
+        // Each row must stay in one frame when the interval list is unsorted or overlaps. On
+        // 2020-01-01 two unsorted intervals share 02:00, which three rows hold across a row group
+        // boundary. On 2020-01-02 the later interval starts inside the earlier one.
+        assertMemoryLeak(() -> {
+            node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 3);
+            AbstractCairoTest.create(new TableModel(configuration, "x", PartitionBy.DAY)
+                    .timestamp(timestampType.getTimestampType()));
+            final long start = timestampType.getDriver().parseFloorLiteral("2020-01-01T00:00");
+            final long hour = timestampType.getDriver().fromHours(1);
+            final long day = timestampType.getDriver().fromDays(1);
+            try (TableWriter writer = newOffPoolWriter(configuration, "x")) {
+                for (int h : new int[]{0, 1, 2, 2, 2, 3, 4, 5}) {
+                    writer.newRow(start + h * hour).append();
+                }
+                for (int h = 0; h < 6; h++) {
+                    writer.newRow(start + day + h * hour).append();
+                }
+                writer.newRow(start + 2 * day).append();
+                writer.commit();
+            }
+            if (convertToParquet) {
+                execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE timestamp >= 0");
+            }
+            intervals.add(start + 2 * hour, start + 4 * hour + hour / 2);
+            intervals.add(start + hour, start + 2 * hour);
+            intervals.add(start + day + hour, start + day + 4 * hour + hour / 2);
+            intervals.add(start + day + 3 * hour, start + day + 6 * hour);
+
+            try (
+                    TableReader reader = newOffPoolReader(configuration, "x");
+                    IntervalFwdPartitionFrameCursor cursor = new IntervalFwdPartitionFrameCursor(
+                            configuration,
+                            new RuntimeIntervalModel(timestampType.getDriver(), reader.getPartitionedBy(), intervals),
+                            reader.getMetadata().getTimestampIndex()
+                    )
+            ) {
+                cursor.of(reader, null);
+                for (int pass = 0; pass < 2; pass++) {
+                    // 2020-01-01 01:00..04:00 and 2020-01-02 01:00..05:00, each row once
+                    final RecordCursor.Counter counter = new RecordCursor.Counter();
+                    cursor.calculateSize(counter);
+                    Assert.assertEquals(11, counter.get());
+                    assertFrameRows(cursor.next(), 1, 7);
+                    assertFrameRows(cursor.next(), 1, 6);
+                    Assert.assertNull(cursor.next());
+                    cursor.toTop();
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPartitionCull() throws Exception {
         // day partition
         // two hour interval between timestamps
@@ -733,6 +787,12 @@ public class IntervalFwdPartitionFrameCursorTest extends AbstractCairoTest {
                 """, timestampType.getTypeName());
 
         testIntervals(PartitionBy.DAY, increment, N, expected, 72);
+    }
+
+    private static void assertFrameRows(PartitionFrame frame, long lo, long hi) {
+        Assert.assertNotNull(frame);
+        Assert.assertEquals(lo, frame.getRowLo());
+        Assert.assertEquals(hi, frame.getRowHi());
     }
 
     private static void assertIndexRowsMatchSymbol(PartitionFrameCursor cursor, TestTableReaderRecord record, int columnIndex, long expectedCount) {

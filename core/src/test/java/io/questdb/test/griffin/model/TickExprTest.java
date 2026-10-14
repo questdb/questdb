@@ -5608,6 +5608,17 @@ public class TickExprTest {
     }
 
     @Test
+    public void testTimezoneDstGapOverlappingIntervals() throws SqlException {
+        // On March 31, 2024 Europe/London clocks spring forward from 1:00 to 2:00 AM. The gap
+        // shift makes the first three UTC intervals overlap, so they must merge into one
+        assertBracketInterval(
+                "[{lo=2024-03-31T00:30:00.000000Z, hi=2024-03-31T02:19:59.999999Z}," +
+                        "{lo=2024-03-31T02:30:00.000000Z, hi=2024-03-31T03:19:59.999999Z}]",
+                "2024-03-31T00:30@Europe/London;50m;1h;4"
+        );
+    }
+
+    @Test
     public void testTimezoneDstOverlapFallBack() throws SqlException {
         // Test DST overlap (fall back) - Nov 3, 2024 in America/New_York
         // At 2:00 AM EDT, clocks fall back to 1:00 AM EST

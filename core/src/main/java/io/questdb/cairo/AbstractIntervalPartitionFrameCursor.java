@@ -33,6 +33,7 @@ import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.parquet.ParquetPartitionDecoder;
+import io.questdb.griffin.model.IntervalUtils;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTracker;
@@ -67,6 +68,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     private int initialPartitionLo;
     private boolean isFrameCountUpperBoundComputed;
     private @Nullable MemoryTracker memoryTracker;
+    private LongList normalizedIntervals;
 
     public AbstractIntervalPartitionFrameCursor(CairoConfiguration configuration, RuntimeIntrinsicIntervalModel intervalModel, int timestampIndex) {
         assert timestampIndex > -1;
@@ -151,7 +153,7 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         if (timestampFinder != null) {
             timestampFinder.clear();
         }
-        this.intervals = intervalModel.calculateIntervals(sqlExecutionContext);
+        this.intervals = normalizeIntervals(intervalModel.calculateIntervals(sqlExecutionContext));
         calculateRanges(reader, intervals);
         this.reader = reader;
         return this;
@@ -329,6 +331,41 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
             }
         }
         return lo;
+    }
+
+    private static boolean isSortedAndDisjoint(LongList intervals) {
+        long prevHi = Long.MIN_VALUE;
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            final long lo = intervals.getQuick(i);
+            final long hi = intervals.getQuick(i + 1);
+            if (lo > hi || (i > 0 && lo <= prevHi)) {
+                return false;
+            }
+            prevHi = hi;
+        }
+        return true;
+    }
+
+    // Culling, frame searches and the delta finder need sorted, disjoint, non-empty intervals,
+    // e.g. [1, 5], [3, 8] would return rows 3..5 twice. The copy leaves the model's list as it is.
+    private LongList normalizeIntervals(LongList intervals) {
+        if (isSortedAndDisjoint(intervals)) {
+            return intervals;
+        }
+        if (normalizedIntervals == null) {
+            normalizedIntervals = new LongList(intervals.size());
+        }
+        normalizedIntervals.clear();
+        for (int i = 0, n = intervals.size(); i < n; i += 2) {
+            final long lo = intervals.getQuick(i);
+            final long hi = intervals.getQuick(i + 1);
+            // An inverted interval matches no timestamp.
+            if (lo <= hi) {
+                normalizedIntervals.add(lo, hi);
+            }
+        }
+        IntervalUtils.sortAndUnionInPlace(normalizedIntervals, 0);
+        return normalizedIntervals;
     }
 
     protected long getCurrentLogicalRowCount() {
