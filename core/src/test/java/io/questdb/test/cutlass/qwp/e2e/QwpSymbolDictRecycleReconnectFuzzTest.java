@@ -52,12 +52,12 @@ import java.util.concurrent.atomic.AtomicReference;
  * restarted server must replay the current dictionary without changing that epoch.
  *
  * <p>Each round has a randomly timed blind bounce, a wait for a new dictionary epoch, and
- * a targeted bounce of a live connection. The producer runs throughout, so blind bounces
- * can interrupt recycling or reconnecting. Progress waits leave the server up and reset
+ * a targeted bounce of a live connection. Blind bounces run concurrently with the producer
+ * and can interrupt recycling or reconnecting. Progress waits leave the server up and reset
  * requests enabled: a slow host gets time to recycle instead of exhausting a restart count.
  * Every round must make progress before its targeted bounce, so post-test recovery cannot
- * satisfy the recycle floor. Targeted drops and DISCONNECTED events prove the ordinary
- * reconnect path also ran.
+ * satisfy the recycle floor. For targeted bounces the producer drains and pauses until a
+ * DISCONNECTED event arrives, preventing a planned recycle from hiding the connection loss.
  *
  * <p>Replay can duplicate rows, so the table deduplicates by timestamp and id. The final
  * queries check the exact id range and every row's symbol, catching dictionary corruption
@@ -111,7 +111,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
             try (RestartableQwpServer server = new RestartableQwpServer(engine, configuration, port, recvChunk, sendChunk)) {
                 server.start();
                 AtomicBoolean isProducerStopped = new AtomicBoolean();
-                AtomicBoolean isResetHeld = new AtomicBoolean();
+                AtomicReference<ProducerPause> producerPause = new AtomicReference<>();
                 AtomicReference<Throwable> producerError = new AtomicReference<>();
                 AtomicReference<QwpWebSocketSender> senderRef = new AtomicReference<>();
                 AtomicLong rowsProduced = new AtomicLong();
@@ -144,7 +144,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                             } else {
                                 sender.flush();
                             }
-                            if (batchesSinceReset >= RESET_EVERY_N_BATCHES && !isResetHeld.get()) {
+                            if (batchesSinceReset >= RESET_EVERY_N_BATCHES) {
                                 sender.resetSymbolDictionary();
                                 batchesSinceReset = 0;
                             }
@@ -155,6 +155,13 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                                 Assert.assertTrue("first batch must drain before the first bounce",
                                         sender.drain(30_000));
                                 firstBatchAcked.countDown();
+                            }
+                            ProducerPause pause = producerPause.get();
+                            if (pause != null) {
+                                Assert.assertTrue("producer must drain before a targeted bounce",
+                                        sender.drain(30_000));
+                                pause.ready.countDown();
+                                pause.resume.await();
                             }
                             Os.sleep(2);
                         }
@@ -204,24 +211,36 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                             Os.sleep(1);
                         }
 
-                        // Target a live connection with new reset requests paused. A reset
-                        // already armed can still run; the 20ms stability window lets it settle.
+                        // Pause at a drained batch boundary so even an already-armed recycle
+                        // cannot close the connection before the I/O loop observes its loss.
                         Os.sleep(40 + rnd.nextInt(160));
-                        isResetHeld.set(true);
-                        Assert.assertTrue("client did not hold a live connection for 20ms within 10s in round " + round,
-                                server.awaitStableLiveConnection(10_000, 20));
-                        int killed = bounce(server);
-                        liveDrops += killed;
-                        targetedLiveDrops += killed;
-                        restarts++;
-                        isResetHeld.set(false);
+                        ProducerPause pause = new ProducerPause();
+                        producerPause.set(pause);
+                        try {
+                            Assert.assertTrue("producer did not pause within 30s in round " + round,
+                                    pause.ready.await(30, TimeUnit.SECONDS));
+                            assertProducerHealthy(producerError, rowsProduced);
+                            int disconnectsBeforeBounce = unplannedDisconnects.get();
+                            int killed = bounce(server);
+                            liveDrops += killed;
+                            targetedLiveDrops += killed;
+                            restarts++;
+                            Assert.assertTrue("targeted bounce must kill a live connection in round " + round,
+                                    killed > 0);
+                            TestUtils.assertEventually(() -> Assert.assertTrue(
+                                    "targeted bounce must surface as DISCONNECTED",
+                                    unplannedDisconnects.get() > disconnectsBeforeBounce
+                            ), 30);
+                        } finally {
+                            producerPause.set(null);
+                            pause.resume.countDown();
+                        }
                     }
                     epochAtBounceEnd = sender.getSymbolDictEpoch();
                     Os.sleep(200);
                 } catch (Throwable t) {
                     scheduleError = t;
                 } finally {
-                    isResetHeld.set(false);
                     isProducerStopped.set(true);
                     // Keep the server alive until the sender has drained and closed, including
                     // on schedule failure. The test thread owns all server restarts.
@@ -250,14 +269,9 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                                 + " recycles during the bounce schedule [startEpoch=" + epochAtStart
                                 + ", endEpoch=" + epochAtBounceEnd + ']',
                         epochAtBounceEnd - epochAtStart >= MIN_RECYCLES_DURING_BOUNCES);
-                // Allow an already-armed recycle to race the targeted stop, but require
-                // at least half the targeted bounces to actually kill a live connection.
-                Assert.assertTrue("targeted bounces must land on live connections [targetedBounces=" + rounds
-                                + ", targetedLiveDrops=" + targetedLiveDrops + ']',
-                        targetedLiveDrops >= (rounds + 1) / 2);
-                Assert.assertTrue("at least half of the " + liveDrops + " live drops must surface as DISCONNECTED"
+                Assert.assertTrue("expected at least " + rounds + " DISCONNECTED events"
                                 + " [unplannedDisconnects=" + unplanned + ']',
-                        unplanned >= liveDrops / 2);
+                        unplanned >= rounds);
 
                 drainWalQueue();
                 engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
@@ -338,5 +352,10 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                 .symbol("sym", "s" + (id % SYMBOL_CARDINALITY))
                 .longColumn("id", id)
                 .at(tsBaseNanos + id * tsStepNanos, ChronoUnit.NANOS);
+    }
+
+    private static class ProducerPause {
+        private final CountDownLatch ready = new CountDownLatch(1);
+        private final CountDownLatch resume = new CountDownLatch(1);
     }
 }
