@@ -12758,6 +12758,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * nothing, and that every way the restore cannot run or does not finish ends
      * in the applied-base rebuild.
      * <p>
+     * Two failures propagate instead. A cancellation ends the attempt. A
+     * {@link TableReferenceOutOfDateException} says the base metadata moved past the
+     * plan the caller compiled, so the rebuild could only fail the same way; it goes
+     * to {@link #handleRefreshFailure}, whose drift recovery recompiles and finishes
+     * the recovery (see {@link #rebuildTimelineRecoveryFromAppliedBase}).
+     * <p>
      * A view carried over from an older checkpoint format decides first, because its
      * timeline is one this build never restores from: it takes the upgrade rebuild,
      * and a never-materialized one only retires the older directory.
@@ -12848,6 +12854,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // DROP, invalidation or engine shutdown, and possibly out of the rebuild one
                 // of the branches above ran: none of them is a failed restore to rebuild over.
                 throw ce;
+            }
+            if (t instanceof TableReferenceOutOfDateException drift) {
+                // The base metadata moved past the plan this restart compiled, and the rebuild
+                // would run the same plan into the same refusal. See
+                // rebuildTimelineRecoveryFromAppliedBase for where the drift goes instead.
+                throw drift;
             }
             LOG.error().$("could not restore live view from checkpoint timeline, rebuilding derived state [view=")
                     .$(instance.getDefinition().getViewName())
@@ -13165,6 +13177,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * guard armed: the view's rows then equal a recompute, so the guard passes unless the base
      * lost rows in between, and in that case the view stops as any view restarting without a
      * timeline would.
+     * <p>
+     * A failed rebuild invalidates the view, with two exceptions that propagate: a cancellation,
+     * and a {@link TableReferenceOutOfDateException} from a base schema change that landed after
+     * the caller compiled {@code windowFactory}. The drift recovery that takes the latter records
+     * no restart route, so the route stays unset; the rebuild attempt counter still counts the
+     * rebuild this attempt started.
      */
     private void rebuildTimelineRecoveryFromAppliedBase(
             LiveViewInstance instance,
@@ -13198,6 +13216,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // the next restart asks the same question again.
             blockRefusedRebuild(instance, cause);
             instance.recordCheckpointRestoreRebuildBlocked();
+        } catch (TableReferenceOutOfDateException drift) {
+            // Not a failure either: a base schema change landed after this restart compiled its
+            // plan, and LiveViewRefreshSqlExecutionContext.getReader refused to serve the newer
+            // base reader through it. A change that broke a referenced column invalidates the view
+            // on the apply side; any other change leaves it valid, and only a recompile can run the
+            // rebuild. handleRefreshFailure takes the drift to recoverFromBaseMetadataDrift, which
+            // recompiles and puts the window state back the way a running view's drift does.
+            // Should that recovery fail, the window-state debt it leaves keeps the drain from
+            // running over the half-built runtime until a later turn recovers it.
+            throw drift;
         } catch (Throwable t) {
             if (t instanceof CairoException ce && ce.isCancellation()) {
                 // DROP, invalidation or engine shutdown tripped the breaker mid-scan, and the
@@ -14222,6 +14250,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
         if (instance.getPendingReplacementLvSeqTxn() != Numbers.LONG_NULL || !isLiveViewWalFullyApplied(instance)) {
             logRuntimeRestoreDeclined(viewName, cause, "the view's table trails its WAL");
+            return false;
+        }
+        if (instance.isCheckpointUpgradeRebuildPending()) {
+            // The timeline on disk is in an older format this build never restores from. A
+            // restart whose upgrade rebuild met a base schema change hands the rebuild to the
+            // drift recovery, which reaches here; the rebuild it falls back to keys the upgrade's
+            // guard and retire off the same flag.
+            logRuntimeRestoreDeclined(viewName, cause, "timeline predates the supported checkpoint format");
             return false;
         }
         try (
@@ -15769,7 +15805,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     /**
      * Recovery for a refresh cycle that failed with
      * {@link TableReferenceOutOfDateException}: the base table's metadata version
-     * drifted from the cached compiled factory. Frees the compiled artifacts so
+     * drifted from the cached compiled factory. The cycle may be the restart's own
+     * recovery attempt ({@link #tryRestoreFromTimeline}), which hands its drift here
+     * rather than invalidating the view. Frees the compiled artifacts so
      * the next factory use recompiles against current metadata, then rebuilds the
      * window state that was lost with the old factory's function instances:
      * <ul>
@@ -16167,7 +16205,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // absent/unusable. The drain below must never start over durable
                 // output with cold accumulators.
                 // Single-shot per LV lifetime - the flag flips true whether the
-                // restore succeeded, missed, or failed.
+                // restore succeeded, missed, or failed. A base schema change that
+                // lands after the restart compiled its plan does not end the attempt
+                // as a failure: tryRestoreFromTimeline throws the drift to the catch
+                // below, and handleRefreshFailure's drift recovery recompiles and
+                // finishes the recovery, or leaves the window-state debt that keeps
+                // the drain off the runtime until a later turn does.
                 if (!instance.isCheckpointRestoreAttempted()) {
                     // Reconcile a durable floor left behind by a crash between the
                     // inline apply and the trailing _lv.s persist, before timeline
@@ -16206,13 +16249,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     if (isSeedActive) {
                         // Baseline observability: time bounded generation selection,
                         // root restore, and the (B,F] replay. Recorded once
-                        // per LV lifetime regardless of outcome. Surfaced via
-                        // live_views().checkpoint_last_restore_micros.
+                        // per LV lifetime regardless of outcome, including an attempt
+                        // a cancellation or a base metadata drift ends by throwing.
+                        // Surfaced via live_views().checkpoint_last_restore_micros.
                         final long restoreStartUs = engine.getConfiguration().getMicrosecondClock().getTicks();
-                        tryRestoreFromTimeline(instance, getWindowFactory(instance));
-                        instance.recordCheckpointRestoreMicros(
-                                engine.getConfiguration().getMicrosecondClock().getTicks() - restoreStartUs
-                        );
+                        try {
+                            tryRestoreFromTimeline(instance, getWindowFactory(instance));
+                        } finally {
+                            instance.recordCheckpointRestoreMicros(
+                                    engine.getConfiguration().getMicrosecondClock().getTicks() - restoreStartUs
+                            );
+                        }
                         if (instance.hasPendingInvalidationReason()) {
                             // The restore could not rebuild a consistent window
                             // state (replay-to-applied failed mid-gap leaving the

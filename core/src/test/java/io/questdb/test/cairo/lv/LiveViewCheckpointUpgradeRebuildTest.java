@@ -26,6 +26,7 @@ package io.questdb.test.cairo.lv;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
 import io.questdb.cairo.lv.LiveViewCheckpointRecoveryPhase;
 import io.questdb.cairo.lv.LiveViewCheckpointSuperblock;
@@ -33,6 +34,7 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
@@ -214,6 +216,47 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             restart();
             assertRestoredFromTimeline("lv");
             assertViewRows(ALL_ROWS);
+        });
+    }
+
+    @Test
+    public void testABaseSchemaChangeDuringTheUpgradeRebuildStillCompletesTheUpgrade() throws Exception {
+        assertMemoryLeak(fault, () -> {
+            seedSixRows();
+            carryOverToOlderFormat();
+
+            // ADD COLUMN touches no column the view references, but it lands after the restart
+            // compiled its plan and before the upgrade rebuild opens the base, so the rebuild meets
+            // a stale plan. The drift recovery that takes it over must not restore from the older
+            // timeline, and its rebuild must still be the upgrade's: guard stood down, older
+            // directory retired.
+            fault.armSchemaChange(engine.verifyTableName("lv").getDirName());
+            final LiveViewRebuildRestatementGuard guard = drive();
+            Assert.assertTrue("the schema change never landed inside the restart", fault.hasSchemaChangeFired());
+            capture.drain();
+            capture.assertLogged("live view cannot restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "[view=lv, cause=base table metadata change, reason=timeline predates the supported checkpoint format]");
+            capture.assertNotLogged("live view restart applied-base rebuild failed");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE, guard.getAbstention());
+
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(
+                    "the drift recovery's rebuild must retire the older timeline as the upgrade's would",
+                    instance.isCheckpointUpgradeRebuildPending()
+            );
+            Assert.assertEquals(1, instance.getRefreshFaultCount());
+            assertViewRows(ALL_ROWS);
+            assertRecoveryReport("active\t\t\t\n");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-03T10:00:00.000000Z', 'acct-1', 64.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            assertViewRows(ALL_ROWS + "2026-01-03T10:00:00.000000Z\tacct-1\t80.0\t2\n");
+            Assert.assertFalse(instance("lv").isInvalid());
         });
     }
 
@@ -805,18 +848,45 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
      * Fails, once each and only when armed: the unlink of a view's {@code _timeline}, the removal of
      * its checkpoint {@code meta} directory, and the open of the base's {@code amount} column that
      * the whole-view rebuild's scan of the applied base makes and the raw-WAL drain never does.
+     * <p>
+     * Also lands, once and only when armed, an {@code ADD COLUMN} on the base between the restart's
+     * plan compile and the upgrade rebuild's base reader open. The restart opens a reader of the
+     * view's table in between, so the hook rides the open of that table's {@code _meta}, gated on
+     * the compiled plan so the catalogue load's own open cannot fire it.
      */
     private static final class UpgradeFault extends TestFilesFacadeImpl {
         private final AtomicBoolean isAppliedScanArmed = new AtomicBoolean();
         private final AtomicBoolean isAppliedScanFired = new AtomicBoolean();
         private final AtomicBoolean isMetaDirRemoveArmed = new AtomicBoolean();
         private final AtomicBoolean isMetaDirRemoveFired = new AtomicBoolean();
+        private final AtomicBoolean isSchemaChangeArmed = new AtomicBoolean();
+        private final AtomicBoolean isSchemaChangeFired = new AtomicBoolean();
         private final AtomicBoolean isTimelineRemoveArmed = new AtomicBoolean();
         private final AtomicBoolean isTimelineRemoveFired = new AtomicBoolean();
         private volatile String baseDir;
+        private volatile String viewDir;
+
+        private static boolean isRestartPlanCompiled() {
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            return instance != null && instance.isCheckpointRestoreAttempted() && instance.getCompiledPlan() != null;
+        }
 
         @Override
         public long openRO(LPSZ name) {
+            final String lvDir = viewDir;
+            if (lvDir != null
+                    && isSchemaChangeArmed.get()
+                    && Utf8s.endsWithAscii(name, lvDir + File.separator + TableUtils.META_FILE_NAME)
+                    && isRestartPlanCompiled()
+                    && isSchemaChangeArmed.compareAndSet(true, false)) {
+                try {
+                    execute("ALTER TABLE tx ADD COLUMN unrelated TIMESTAMP_NS");
+                    drainWalQueue();
+                } catch (SqlException e) {
+                    throw new RuntimeException(e);
+                }
+                isSchemaChangeFired.set(true);
+            }
             final String dir = baseDir;
             if (dir != null
                     && isAppliedScanArmed.get()
@@ -857,6 +927,12 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             isAppliedScanArmed.set(true);
         }
 
+        void armSchemaChange(String viewDir) {
+            this.viewDir = viewDir;
+            isSchemaChangeFired.set(false);
+            isSchemaChangeArmed.set(true);
+        }
+
         void armMetaDirRemove() {
             isMetaDirRemoveFired.set(false);
             isMetaDirRemoveArmed.set(true);
@@ -873,6 +949,10 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
 
         boolean hasMetaDirRemoveFired() {
             return isMetaDirRemoveFired.get();
+        }
+
+        boolean hasSchemaChangeFired() {
+            return isSchemaChangeFired.get();
         }
 
         boolean hasTimelineRemoveFired() {

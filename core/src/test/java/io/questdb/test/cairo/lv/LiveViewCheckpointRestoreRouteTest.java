@@ -33,6 +33,7 @@ import io.questdb.cairo.lv.LiveViewCheckpointTimelineEntry;
 import io.questdb.cairo.lv.LiveViewCheckpointTimelineReader;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Numbers;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -131,6 +132,85 @@ public class LiveViewCheckpointRestoreRouteTest extends AbstractLiveViewTest {
                     Numbers.LONG_NULL,
                     instance.getCheckpointRestoreCheckpointId()
             );
+        });
+    }
+
+    @Test
+    public void testABaseSchemaChangeDuringTheRestartRebuildKeepsTheViewActive() throws Exception {
+        // ADD COLUMN touches no column the view references, so it leaves the view valid, but it
+        // moves the base metadata version past the plan the restart compiled. Landing it between
+        // that compile and the rebuild's base reader open makes the rebuild meet a stale plan,
+        // which only a recompile can answer. The restart must hand the drift to the recovery
+        // that recompiles rather than take the view out of service.
+        final AtomicBoolean isSchemaChangeArmed = new AtomicBoolean();
+        assertMemoryLeak(new TestFilesFacadeImpl() {
+            @Override
+            public boolean exists(LPSZ path) {
+                // The restart checks for the timeline after it compiled the plan and before the
+                // rebuild opens the base. Gate on the compile too, so an earlier look at the
+                // timeline - the catalogue load's - cannot land the change before it.
+                if (isSchemaChangeArmed.get()
+                        && Utf8s.endsWithAscii(path, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
+                        && isRestartPlanCompiled()) {
+                    isSchemaChangeArmed.set(false);
+                    try {
+                        execute("ALTER TABLE tx ADD COLUMN unrelated TIMESTAMP_NS");
+                        drainWalQueue();
+                    } catch (SqlException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return super.exists(path);
+            }
+        }, () -> {
+            createTargetView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveSeedToCompletion(job, "lv");
+                for (int second = 0; second <= 30; second += 10) {
+                    insertAccount(job, timestamp(second), second % 20 == 0 ? "acct-1" : "acct-2", second + 1.0);
+                }
+                assertViewMatchesRecompute();
+            }
+
+            // The missing timeline sends the restart down the applied-base rebuild, the route
+            // whose failure used to invalidate the view.
+            removeTimeline();
+            isSchemaChangeArmed.set(true);
+            restartCycle();
+            Assert.assertFalse("the schema change never landed inside the restart", isSchemaChangeArmed.get());
+
+            final LiveViewInstance instance = instance();
+            Assert.assertFalse(
+                    "a base schema change to a column the view does not reference must not invalidate it"
+                            + " [reason=" + instance.getInvalidationReason() + ']',
+                    instance.isInvalid()
+            );
+            Assert.assertEquals(
+                    "the restart must start the rebuild the schema change interrupts, and must not fall"
+                            + " back to a second one over the same stale plan",
+                    1L,
+                    instance.getCheckpointRebuildAttempts()
+            );
+            Assert.assertEquals(
+                    "the drift must reach the refresh failure handler once, whose recovery recompiles",
+                    1L,
+                    instance.getRefreshFaultCount()
+            );
+            assertQuery("SELECT view_status FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("view_status\nactive\n");
+            assertViewMatchesRecompute();
+
+            // The recovered runtime must keep the running totals: a cold one would answer this
+            // row's own amount.
+            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('" + timestamp(40) + "', 'acct-1', 100.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(resumed);
+                assertViewMatchesRecompute();
+            }
+            Assert.assertFalse(instance().isInvalid());
         });
     }
 
@@ -273,6 +353,11 @@ public class LiveViewCheckpointRestoreRouteTest extends AbstractLiveViewTest {
         final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
         Assert.assertNotNull("live view 'lv' must be registered", instance);
         return instance;
+    }
+
+    private boolean isRestartPlanCompiled() {
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        return instance != null && instance.isCheckpointRestoreAttempted() && instance.getCompiledPlan() != null;
     }
 
     private long newestCheckpointId() {
