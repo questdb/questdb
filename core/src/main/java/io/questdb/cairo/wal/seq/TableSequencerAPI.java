@@ -486,7 +486,9 @@ public class TableSequencerAPI implements QuietCloseable {
     public void resetForReboot(TableToken tableToken) {
         final String dirName = tableToken.getDirName();
         final TableSequencerImpl sequencer = seqRegistry.get(dirName);
-        if (sequencer != null && sequencer.checkClose()) {
+        // An entry closed earlier stays registered otherwise, and getTableSequencerEntry() would spin on it: it
+        // retries a closed entry without counting the attempt.
+        if (sequencer != null && (sequencer.checkClose() || sequencer.isClosed())) {
             seqRegistry.remove(dirName, sequencer);
         }
         purgeTxnTracker(dirName);
