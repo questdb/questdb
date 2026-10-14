@@ -1047,6 +1047,44 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
+     * The V2 part flush on a file system that reports no entry types (XFS without ftype, some FUSE and network file
+     * systems) lists every part as unknown, and must flush it still: a part skipped for its type is silently left
+     * unflushed.
+     */
+    @Test
+    public void testTxnLogPartFlushFlushesPartsListedAsUnknown() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 2);
+
+        final UnknownEntryTypeFacade ff = new UnknownEntryTypeFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            for (int day = 1; day <= 5; day++) {
+                execute("insert into x values ('2024-01-0" + day + "T00:00:00.000000Z', " + day + ")");
+            }
+            drainWalQueue();
+
+            ff.isEntryTypeUnknown = true;
+            try {
+                // From txn 0: the parts below the open one, 0 and 1, go through the listing.
+                engine.getTableSequencerAPI().fdatasyncTxnLog(tt, 0);
+            } finally {
+                ff.isEntryTypeUnknown = false;
+            }
+            final String partsDir = java.io.File.separator + WalUtils.TXNLOG_PARTS_DIR + java.io.File.separator;
+            for (int part = 0; part <= 1; part++) {
+                final String suffix = partsDir + part;
+                Assert.assertTrue(
+                        "part " + part + " must be flushed: " + ff.fdatasyncedPaths(),
+                        ff.fdatasyncedPaths().stream().anyMatch(path -> path.endsWith(suffix))
+                );
+            }
+        });
+    }
+
+    /**
      * A V2 log flushes the older parts it keeps by listing {@code _txn_parts} and opening each part to flush it. A
      * part the WAL purge removes between the listing and the open has nothing left to flush: the flush skips it. A
      * creating open would bring it back as an empty file.
@@ -2397,6 +2435,49 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                 return true;
             }
             return false;
+        }
+    }
+
+    /**
+     * A file system that reports no entry types while armed: every listed entry is {@code DT_UNKNOWN}, as on XFS
+     * formatted without ftype and on some FUSE and network file systems. Records the files it flushes meanwhile.
+     */
+    static class UnknownEntryTypeFacade extends TestFilesFacadeImpl {
+        private final List<String> fdatasyncedPaths = new java.util.concurrent.CopyOnWriteArrayList<>();
+        private final Map<Long, String> fdToPath = new java.util.concurrent.ConcurrentHashMap<>();
+        volatile boolean isEntryTypeUnknown;
+
+        @Override
+        public boolean close(long fd) {
+            fdToPath.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public void fdatasync(long fd) {
+            final String path = fdToPath.get(fd);
+            if (isEntryTypeUnknown && path != null) {
+                fdatasyncedPaths.add(path);
+            }
+            super.fdatasync(fd);
+        }
+
+        public List<String> fdatasyncedPaths() {
+            return fdatasyncedPaths;
+        }
+
+        @Override
+        public int findType(long findPtr) {
+            return isEntryTypeUnknown ? Files.DT_UNKNOWN : super.findType(findPtr);
+        }
+
+        @Override
+        public long openRWExisting(LPSZ name) {
+            final long fd = super.openRWExisting(name);
+            if (fd != -1) {
+                fdToPath.put(fd, Utf8String.newInstance(name).toString());
+            }
+            return fd;
         }
     }
 

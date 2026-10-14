@@ -36,6 +36,7 @@ import org.junit.Test;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
@@ -231,6 +232,52 @@ public class RebaseWalPublishDurabilityCrashTest extends AbstractCrashConsistenc
             );
             // The bar: recovery accepts the adopted clone instead of aborting startup.
             new RecoveryCoordinator(engine).recover();
+        });
+    }
+
+    /**
+     * The staging flush on a file system that reports no entry types (XFS without ftype, some FUSE and network file
+     * systems): it has to ask which listed entries are directories and go into them. Opening a partition directory
+     * as a file fails the REBASE WAL; skipping it leaves the column files the rename publishes unflushed.
+     */
+    @Test
+    public void testStagingFlushGoesIntoDirectoriesWhenEntryTypesAreUnknown() throws Exception {
+        assumeCrashHarnessSupported();
+        configureRebase();
+        final List<String> stagingFileSyncs = new ArrayList<>();
+        crashFf = new CrashFaultFilesFacade() {
+            @Override
+            public void fdatasync(long fd) {
+                final String path = pathOf(fd);
+                if (path != null && path.contains(TableUtils.REBASE_TMP_DIR)) {
+                    stagingFileSyncs.add(path);
+                }
+                super.fdatasync(fd);
+            }
+
+            @Override
+            public int findType(long findPtr) {
+                // The staging flush is the listing under test. The clone's own listing, unchanged from the base
+                // release, takes every unknown entry for a directory, so it keeps its types here.
+                final boolean isStagingFlush = StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                        frame -> frame.getClassName().endsWith(".WalUtils") && frame.getMethodName().equals("syncStagingTreeDurable")));
+                return isStagingFlush ? io.questdb.std.Files.DT_UNKNOWN : super.findType(findPtr);
+            }
+        };
+        crashFf.setDbRoot(root);
+        assertMemoryLeak(crashFf, () -> {
+            seedSuspendedTable();
+            execute("alter table t rebase wal");
+            final String partitionDir = java.io.File.separator + "2024-01-01" + java.io.File.separator;
+            Assert.assertTrue(
+                    "the staging flush must flush the column files of a partition listed as unknown: " + stagingFileSyncs,
+                    stagingFileSyncs.stream().anyMatch(path -> path.contains(partitionDir))
+            );
+
+            crashAndReopen();
+            releaseCrashOrphans();
+            new RecoveryCoordinator(engine).recover();
+            assertQuery("select count(), sum(v) from t").noRandomAccess().expectSize().returns("count\tsum\n2\t3\n");
         });
     }
 

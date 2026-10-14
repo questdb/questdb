@@ -526,7 +526,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             partsToFlush.clear();
             try {
                 do {
-                    if (ff.findType(findPtr) == Files.DT_FILE && isPartFileName(partName.of(ff.findName(findPtr)))) {
+                    // A file system that reports no entry type (DT_UNKNOWN) lists the parts as unknown. Only part
+                    // files bear a part number, so the name alone tells.
+                    final int type = ff.findType(findPtr);
+                    if ((type == Files.DT_FILE || type == Files.DT_UNKNOWN) && isPartFileName(partName.of(ff.findName(findPtr)))) {
                         try {
                             final long part = Numbers.parseLong(partName);
                             if (part >= fromPart && part <= toPart) {

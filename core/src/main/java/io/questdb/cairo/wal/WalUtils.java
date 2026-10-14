@@ -297,10 +297,9 @@ public class WalUtils {
                     }
                     dir.trimTo(len).concat(pName);
                     final int type = ff.findType(pFind);
-                    // DT_UNKNOWN counts as a file, as in TableWriter.fsyncAttachedPartitionFiles: some file
-                    // systems report it for regular files, and recursing into a file fails the enumeration
-                    // and with it the whole REBASE WAL.
-                    if (type == Files.DT_FILE || type == Files.DT_UNKNOWN) {
+                    // A file system that reports no entry type (DT_UNKNOWN) is asked whether the entry is a
+                    // directory: opening a directory as a file, or recursing into a file, fails the REBASE WAL.
+                    if (type == Files.DT_FILE || (type == Files.DT_UNKNOWN && !ff.isDirOrSoftLinkDir(dir.$()))) {
                         fsyncMappedFile(ff, dir);
                     } else {
                         syncStagingTreeDurable(ff, dir);
