@@ -763,6 +763,29 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
      * one of eleven.
      */
     @Test
+    public void testNonPartitionedWalTableOnNonWideSyncfsPlatform() throws Exception {
+        // A non-partitioned table names its default partition before the first row creates its directory: the
+        // initial save point on a file-by-file flush platform must not walk a baseline that holds no rows.
+        final BaselineBarrierFacade ff = new BaselineBarrierFacade(false);
+        assertMemoryLeak(ff, () -> {
+            setCommitMode("adaptive");
+            TestUtils.createTable(engine, new TableModel(configuration, "none_wal", PartitionBy.NONE)
+                    .col("v", ColumnType.LONG)
+                    .timestamp("ts")
+                    .wal());
+            execute("INSERT INTO none_wal VALUES (1, '2024-09-01T00:00:00.000000Z')");
+            drainWalQueue();
+            assertQuery("SELECT * FROM none_wal")
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts
+                            1\t2024-09-01T00:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testNosyncBootCostsAtMostTwoExistenceChecksPerWalTable() throws Exception {
         assertMemoryLeak(() -> {
             setCommitMode("nosync");
