@@ -32,12 +32,19 @@ import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.table.ShowPartitionsRecordCursorFactory;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 public class TablePartitionsFunctionFactory implements FunctionFactory {
+    @Override
+    public int getExecutionRequirements() {
+        // resolves the table against the caller or its enclosing view, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
+
     @Override
     public String getSignature() {
         return "table_partitions(s)";
@@ -49,17 +56,34 @@ public class TablePartitionsFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public boolean isTableNameFunction() {
+        return true;
+    }
+
+    @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPos, CairoConfiguration config, SqlExecutionContext context) throws SqlException {
         final TableToken tt;
+        final SqlExecutionContext.TableFunctionView view = context.getTableFunctionView();
         int timestampType;
         try {
-            tt = context.getTableToken(args.getQuick(0).getStrA(null));
+            final CharSequence tableName = args.getQuick(0).getStrA(null);
+            tt = context.getTableToken(tableName);
+            // Outside a view, or when the view's definition does not name the table, an invisible
+            // table fails like a missing one, echoing its SQL spelling.
+            if (!context.isTableFunctionVisibleAtCompile(tt, view)) {
+                throw CairoException.tableDoesNotExist(tableName);
+            }
             try (TableMetadata metadata = context.getCairoEngine().getTableMetadata(tt)) {
                 timestampType = metadata.getTimestampType();
             }
         } catch (CairoException e) {
+            if (e.isAuthorizationError()) {
+                // e.g. a reader of the enclosing view without SELECT on it, see
+                // SqlExecutionContext.isTableFunctionVisible(): it stays an authorization error
+                throw e;
+            }
             throw SqlException.$(argPos.getQuick(0), e.getFlyweightMessage());
         }
-        return new CursorFunction(new ShowPartitionsRecordCursorFactory(tt, timestampType));
+        return new CursorFunction(new ShowPartitionsRecordCursorFactory(tt, timestampType, argPos.getQuick(0), view));
     }
 }
