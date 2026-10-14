@@ -79,6 +79,9 @@ the Docker image above.
 For the full walkthrough, start with the
 [quick start guide](https://questdb.com/docs/getting-started/quick-start/).
 
+For high availability, tiered storage and enterprise security,
+[start a free QuestDB Enterprise trial](https://questdb.com/enterprise/trial/).
+
 <p>&nbsp;</p>
 
 <div align="center">
@@ -323,8 +326,6 @@ Run it on-prem, as a managed service, or inside your own AWS or Azure account
 with [Bring Your Own Cloud](https://questdb.com/byoc/). See the
 [feature comparison](https://questdb.com/enterprise/#compare-features) and the
 [Enterprise page](https://questdb.com/enterprise/).
-
-**[Start a free Enterprise trial](https://questdb.com/enterprise/trial/)**
 
 ## Additional resources
 
