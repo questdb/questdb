@@ -132,6 +132,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private NetworkSqlExecutionCircuitBreaker httpCircuitBreaker;
     private SqlExecutionContextImpl httpSqlExecutionContext;
     private boolean isProtocolSwitched = false;  // WebSocket protocol switch flag
+    // true when the authenticator has just verified the Authorization header of the request
+    private boolean isRequestCredentialVerified;
+    // true when the session of the request is to be opened, closed or extended once the request is authorized
+    private boolean isRequestSessionPending;
     private int nCompletedRequests;
     private boolean pendingRetry = false;
     private String processorName;
@@ -140,14 +144,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     private int recvBufferReadSize;
     private int recvBufferSize;
     private long recvPos;
-    // true when the authenticator has just verified the Authorization header of the request
-    private boolean requestCredentialVerified;
     // the session sent with the request, null if there was none, or it expired or has been revoked
     private HttpSessionStore.SessionInfo requestSession;
     // the id of the session sent with the request, null if the request had no session cookie
     private CharSequence requestSessionId;
-    // true when the session of the request is to be opened, closed or extended once the request is authorized
-    private boolean requestSessionPending;
     private int resumeHandlerId = NO_RESUME_PROCESSOR;
     private SecurityContext securityContext;
     private long totalBytesSent;
@@ -731,10 +731,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
     }
 
     private void clearRequestSession() {
-        requestSessionPending = false;
+        isRequestSessionPending = false;
         requestSession = null;
         requestSessionId = null;
-        requestCredentialVerified = false;
+        isRequestCredentialVerified = false;
         credentialFingerprint.clear();
     }
 
@@ -785,7 +785,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 final HttpSessionStore.SessionInfo sessionInfo = sessionId != null ? sessionStore.verifySessionId(sessionId, this) : null;
                 final DirectUtf8Sequence authorization = headerParser.getHeader(HEADER_AUTHORIZATION);
                 final byte[] fingerprint = sessionInfo != null ? getCredentialFingerprint(authorization) : null;
-                boolean credentialVerified = false;
+                boolean isAuthorizationVerified = false;
                 if (sessionInfo != null && fingerprint != null && sessionStore.isCredentialVerified(sessionInfo, fingerprint)) {
                     // the session has verified this very credential recently, it does not need verifying again
                     // until the revalidation interval passes; the session vouches only for a credential of its
@@ -793,7 +793,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     principalContext = sessionInfo;
                 } else if (authenticator.authenticate(headerParser)) {
                     principalContext = authenticator;
-                    credentialVerified = authorization != null;
+                    isAuthorizationVerified = authorization != null;
                 } else if (authorization == null && sessionInfo != null) {
                     principalContext = sessionInfo;
                 } else {
@@ -811,10 +811,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     // The session is opened, extended or rotated only after the request has been authorized,
                     // see updateSession(). A refused request must not keep the session alive, but it still
                     // closes the session if it asks for that, see handleClientRecv().
-                    requestSessionPending = true;
+                    isRequestSessionPending = true;
                     requestSessionId = sessionId;
                     requestSession = sessionInfo;
-                    requestCredentialVerified = credentialVerified;
+                    isRequestCredentialVerified = isAuthorizationVerified;
                 }
             }
 
@@ -1274,10 +1274,10 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     processor = checkConnectionLimit(processor);
                 }
 
-                if (requestSessionPending) {
+                if (isRequestSessionPending) {
                     // once per request: a request receiving its content in more than one call
                     // gets here again, with newRequest false
-                    requestSessionPending = false;
+                    isRequestSessionPending = false;
                     if (processor != rejectProcessor) {
                         try {
                             updateSession();
@@ -1500,7 +1500,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
             // note that this request is still going to be processed
             sessionStore.destroySession(sessionInfo.getSessionId(), this);
         } else if (sessionInfo != null) {
-            if (requestCredentialVerified) {
+            if (isRequestCredentialVerified) {
                 // The credential has just authenticated the principal of the session (again), and the session ends
                 // when it is revoked. The session vouches for it until the revalidation interval passes only if it
                 // authenticates with the auth type of the session: a request the session vouches for is served

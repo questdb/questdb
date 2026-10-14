@@ -51,7 +51,7 @@ final class HttpCredentialFingerprint implements Mutable {
     private final byte[] chunk = new byte[CHUNK_SIZE];
     private final MessageDigest digest;
     private final byte[] fingerprint = new byte[FINGERPRINT_SIZE];
-    private boolean computed;
+    private boolean isComputed;
 
     HttpCredentialFingerprint() {
         try {
@@ -64,7 +64,7 @@ final class HttpCredentialFingerprint implements Mutable {
 
     @Override
     public void clear() {
-        computed = false;
+        isComputed = false;
     }
 
     private static byte[] newKey() {
@@ -81,7 +81,7 @@ final class HttpCredentialFingerprint implements Mutable {
      * @return fingerprint of the header value
      */
     byte[] of(@NotNull Utf8Sequence authorization) {
-        if (!computed) {
+        if (!isComputed) {
             digest.reset();
             digest.update(KEY);
             final int size = authorization.size();
@@ -100,7 +100,7 @@ final class HttpCredentialFingerprint implements Mutable {
                 // the array always has room for the hash
                 throw new IllegalStateException(e);
             }
-            computed = true;
+            isComputed = true;
         }
         return fingerprint;
     }
