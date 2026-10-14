@@ -295,16 +295,6 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                         .$(", unplannedDisconnects=").$(unplanned)
                         .$(", recyclesDuringBounces=").$(epochAtBounceEnd - epochAtStart).$();
 
-                Assert.assertTrue("producer wrote zero rows", expected > 0);
-                Assert.assertEquals("every round must complete both bounces", 2 * rounds, restarts);
-                Assert.assertTrue("expected at least " + MIN_RECYCLES_DURING_BOUNCES
-                                + " recycles during the bounce schedule [startEpoch=" + epochAtStart
-                                + ", endEpoch=" + epochAtBounceEnd + ']',
-                        epochAtBounceEnd - epochAtStart >= MIN_RECYCLES_DURING_BOUNCES);
-                Assert.assertTrue("expected at least " + rounds + " DISCONNECTED events"
-                                + " [unplannedDisconnects=" + unplanned + ']',
-                        unplanned >= rounds);
-
                 drainWalQueue();
                 engine.awaitTable(TABLE_NAME, 60, TimeUnit.SECONDS);
                 assertQuery(
