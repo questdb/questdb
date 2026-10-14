@@ -8230,12 +8230,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             SelectedRecord
                                 Encode sort light
                                   keys: [column desc, a0, berlin_ts desc]
-                                    Async Group By workers: 1
-                                      keys: [ts,berlin_ts,a0,column]
-                                      keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris'),to_utc(ts),10*a0]
-                                      values: [sum(b)]
-                                      filter: null
-                                        SelectedRecord
+                                    VirtualRecord
+                                      functions: [ts,to_utc(ts),a0,sum,10*a0]
+                                        Async Group By workers: 1
+                                          keys: [ts,a0]
+                                          keyFunctions: [timestamp_floor_utc('2m',ts,null,'00:00','Europe/Paris')]
+                                          values: [sum(b)]
+                                          filter: null
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: x
@@ -8844,17 +8845,19 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             SelectedRecord
                                 Encode sort light
                                   keys: [column desc, a0, berlin_ts desc]
-                                    GroupBy vectorized: false
-                                      keys: [ts,berlin_ts,a0,column]
-                                      values: [sum(b)]
-                                        SelectedRecord
-                                            AsOf Join Fast
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: x
+                                    VirtualRecord
+                                      functions: [ts,to_utc(ts),a0,sum,10*a0]
+                                        GroupBy vectorized: false
+                                          keys: [ts,a0]
+                                          values: [sum(b)]
+                                            SelectedRecord
+                                                AsOf Join Fast
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: x
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: x
                             """);
         });
     }

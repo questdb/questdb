@@ -17411,6 +17411,26 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampColumnQualifiedInFunctionWithTableAlias() throws Exception {
+        // to_utc(a.ts, ...) used to stay a group-by key on the raw timestamp, one row per
+        // input timestamp. rewriteSampleBy now evaluates it over the bucket, as it does for
+        // the bare to_utc(ts, ...).
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            assertQuery("SELECT a.ts, to_utc(a.ts, 'Europe/Berlin') AS u, avg(a.val) AS v FROM t a SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tu\tv
+                            2024-01-01T00:00:00.000000Z\t2023-12-31T23:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t2.0
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
     public void testTimestampColumnSelfJoinOtherSideTimestampStaysKey() throws Exception {
         // Guard: b.ts names the same table as the sampled side but a different join
         // model, so it stays a group-by key and is not taken for a copy of the bucket.

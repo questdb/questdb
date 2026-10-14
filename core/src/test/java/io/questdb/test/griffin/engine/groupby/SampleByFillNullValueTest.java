@@ -94,9 +94,32 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullBucketBeforeQualifiedBucketShapedFloorKeyAcrossDays() throws Exception {
+        // A user timestamp_floor_utc over t.ts with the bucket's own argument list is a
+        // function of the bucket, so rewriteSampleBy evaluates it above the fill; it used
+        // to stay a second key and the fill cross-joined both days with every bucket.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            execute("INSERT INTO t VALUES ('a', 5.0, '2024-01-02T05:00:00.000000Z', '2024-01-02T00:00:00.000000Z')");
+            assertQuery("SELECT timestamp_floor_utc('1d', t.ts, null, '00:00', null) AS d, ts, avg(val) AS v FROM t SAMPLE BY 6h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            d\tts\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t2.5
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T06:00:00.000000Z\tnull
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T12:00:00.000000Z\tnull
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T18:00:00.000000Z\tnull
+                            2024-01-02T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z\t5.0
+                            """);
+        });
+    }
+
+    @Test
     public void testFillNullBucketBeforeQualifiedFloorKey() throws Exception {
-        // The table-qualified user floor stays a second TIMESTAMP group-by key after the
-        // bucket; the fill must key on the bucket and keep the 02:00 gap row.
+        // rewriteSampleBy evaluates the table-qualified user floor over the bucket, after
+        // the fill; the fill must keep the 02:00 gap row.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT ts, timestamp_floor('1d', t.ts) AS d, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
@@ -109,6 +132,28 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t2.0
                             2024-01-01T02:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tnull
                             2024-01-01T03:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketBeforeQualifiedFloorKeyAcrossDays() throws Exception {
+        // timestamp_floor('1d', t.ts) is a function of the bucket; on data spanning two
+        // days it used to stay a second key, and the fill emitted every d for every bucket.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            execute("INSERT INTO t VALUES ('a', 5.0, '2024-01-02T05:00:00.000000Z', '2024-01-02T00:00:00.000000Z')");
+            assertQuery("SELECT ts, timestamp_floor('1d', t.ts) AS d, avg(val) AS v FROM t SAMPLE BY 6h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\td\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t2.5
+                            2024-01-01T06:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-01T12:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-01T18:00:00.000000Z\t2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-02T00:00:00.000000Z\t2024-01-02T00:00:00.000000Z\t5.0
                             """);
         });
     }
@@ -194,19 +239,42 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketWhenQualifiedFloorAliasedAsTimestamp() throws Exception {
-        // The table-qualified user floor stays a second group-by key named ts; generateFill
-        // used to take it for the bucket and drop the 02:00 gap row (#7838).
+        // generateFill used to take the table-qualified user floor named ts for the bucket and
+        // drop the 02:00 gap row (#7838). rewriteSampleBy now evaluates the floor over the
+        // bucket above the fill, as for the bare spelling, so the result is sorted by ts.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT timestamp_floor('1d', t.ts) AS ts, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
                     .noLeakCheck()
-                    .noRandomAccess()
+                    .timestamp("ts")
                     .returns("""
                             ts\tv
                             2024-01-01T00:00:00.000000Z\t1.0
                             2024-01-01T00:00:00.000000Z\t2.0
                             2024-01-01T00:00:00.000000Z\tnull
                             2024-01-01T00:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketWhenQualifiedFloorAliasedAsTimestampAcrossDays() throws Exception {
+        // The #7838 shape on two days of data: the qualified floor must be evaluated over
+        // the bucket, as SELECT timestamp_floor('1d', ts) AS ts is, instead of keying the
+        // fill a second time.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            execute("INSERT INTO t VALUES ('a', 5.0, '2024-01-02T05:00:00.000000Z', '2024-01-02T00:00:00.000000Z')");
+            assertQuery("SELECT timestamp_floor('1d', t.ts) AS ts, avg(val) AS v FROM t SAMPLE BY 6h FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            2024-01-01T00:00:00.000000Z\t2.5
+                            2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-02T00:00:00.000000Z\t5.0
                             """);
         });
     }

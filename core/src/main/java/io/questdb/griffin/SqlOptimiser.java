@@ -7099,7 +7099,9 @@ public class SqlOptimiser implements Mutable {
         return nextLiteral(token, 0);
     }
 
-    private boolean nonAggregateFunctionDependsOn(ExpressionNode node, ExpressionNode timestampNode) {
+    // A non-null fromModel also matches the timestamp qualified with that model's alias or
+    // table name (t.ts); a null fromModel matches the bare timestamp name only.
+    private boolean nonAggregateFunctionDependsOn(ExpressionNode node, ExpressionNode timestampNode, @Nullable IQueryModel fromModel) {
         if (timestampNode == null) {
             return false;
         }
@@ -7107,7 +7109,7 @@ public class SqlOptimiser implements Mutable {
         final CharSequence timestamp = timestampNode.token;
         sqlNodeStack.clear();
         while (node != null) {
-            if (node.type == LITERAL && Chars.equalsIgnoreCase(node.token, timestamp)) {
+            if (node.type == LITERAL && isDesignatedTimestampReference(node.token, timestamp, fromModel)) {
                 return true;
             }
 
@@ -10722,7 +10724,7 @@ public class SqlOptimiser implements Mutable {
                 for (int i = 0, k = 0, n = model.getBottomUpColumns().size(); i < n; k++) {
                     final QueryColumn qc = model.getBottomUpColumns().getQuick(i);
                     final boolean isFunctionWithTsColumn = (qc.getAst().type == FUNCTION || qc.getAst().type == OPERATION)
-                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp());
+                            && nonAggregateFunctionDependsOn(qc.getAst(), nested.getTimestamp(), nested);
                     if (
                             isFunctionWithTsColumn ||
                                     // also check all literals that refer timestamp column, except the one
@@ -12383,7 +12385,7 @@ public class SqlOptimiser implements Mutable {
 
         IQueryModel aggModel = isWindowJoin ? windowJoinModel : (isHorizonJoin ? horizonJoinModel : groupByModel);
         final int beforeSplit = aggModel.getBottomUpColumns().size();
-        if (checkForChildAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp()))) {
+        if (checkForChildAggregates(qc.getAst()) || (sampleBy != null && nonAggregateFunctionDependsOn(qc.getAst(), baseModel.getTimestamp(), null))) {
             // push aggregates and literals outside aggregate functions
             emitAggregatesAndLiterals(
                     qc.getAst(),
