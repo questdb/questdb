@@ -252,6 +252,13 @@ one case and removes an endless apply loop and stray rows in another, but it doe
   FROM TXN <n>` is refused unconditionally; plain `RESUME WAL` only retries the already-failed transaction, and
   `wal_tables()` does not expose the first transaction whose WAL still exists, so there is no `<n>` to compute
   either. The lost records cannot be recovered; the table stays suspended until this is addressed in a follow-up.
+  Replicas keep `nosync` grade even when configured `adaptive`: taking save points on a replica needs the
+  downloader to flush every WAL file it downloads, which can slow replication down, so it is deferred.
+- **macOS and Windows: a partition directory missing from disk stops the save points.** There the save point
+  flushes partition files one by one. A partition that the transaction file lists but the disk lacks (for example,
+  removed by hand) makes every save point of that table fail until the partition is dropped. No data is lost, but
+  the table reports errors, and a FORCE DROP of another partition takes effect yet still reports the failure.
+  Linux's filesystem-wide flush does not notice the missing directory.
 - **QuestDB Enterprise: an incremental backup can ship records past the local durable frontier.** The backup
   checkpoint does not consult `localDurableSeqTxn`, so with a group window large enough (or a stalled flush) to
   outlast the backup, the backup can capture a transaction before it is durable. A power loss that then makes the
@@ -383,6 +390,13 @@ Found while this mode was built, not yet filed:
   for every workload, filesystem or final integrated revision (section 9).
 
 ## 9. What it costs
+
+Current measurement (2026-10-14, Linux, ext4 on NVMe, production configuration, paired runs): one writer that
+waits for each 100-row commit takes 0.33 ms per commit in `nosync` and 4.06 ms in `adaptive`, about 12 times slower
+(302,000 against 25,000 rows per second). `adaptive` flushes every WAL file of a commit before it is sequenced, about
+11 flushes for a nine-column table, and a lone writer that waits for each commit cannot spread that cost; concurrent
+writers and larger commits do. On Windows each flush is much slower (about 200 ms per commit was seen in CI). In
+`nosync` a commit makes the same file-system calls as the release before this change.
 
 Historical measurements: OSS `d3b877ccc9` against `8a71ef801f`, and Enterprise `c10e48336` against `d8e549cdb`.
 These predate the final repair commits and upstream integration. They used one Linux machine (AMD Ryzen 9 7900,
