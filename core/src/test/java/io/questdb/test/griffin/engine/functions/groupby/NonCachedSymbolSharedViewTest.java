@@ -39,7 +39,12 @@ public class NonCachedSymbolSharedViewTest extends AbstractCairoTest {
 
             assertQuery("""
                     SELECT k, first(a) f, last(a) l
-                    FROM (SELECT k, a FROM x UNION ALL SELECT k, a FROM y)
+                    FROM (
+                      SELECT k, a, 0 AS branch_order FROM x
+                      UNION ALL
+                      SELECT k, a, 1 AS branch_order FROM y
+                      ORDER BY branch_order
+                    )
                     ORDER BY k
                     """)
                     .expectSize()
@@ -53,7 +58,12 @@ public class NonCachedSymbolSharedViewTest extends AbstractCairoTest {
             assertQuery("""
                     SELECT k, f, l FROM (
                       SELECT k, first(a) f, last(a) l
-                      FROM (SELECT k, a FROM x UNION ALL SELECT k, a FROM y)
+                      FROM (
+                        SELECT k, a, 0 AS branch_order FROM x
+                        UNION ALL
+                        SELECT k, a, 1 AS branch_order FROM y
+                        ORDER BY branch_order
+                      )
                     ) WHERE f = l
                     ORDER BY k
                     """)
@@ -70,7 +80,12 @@ public class NonCachedSymbolSharedViewTest extends AbstractCairoTest {
             assertQuery("""
                     SELECT k FROM (
                       SELECT k, first(a) f, last(a) l
-                      FROM (SELECT k, a FROM xn UNION ALL SELECT k, a FROM yn)
+                      FROM (
+                        SELECT k, a, 0 AS branch_order FROM xn
+                        UNION ALL
+                        SELECT k, a, 1 AS branch_order FROM yn
+                        ORDER BY branch_order
+                      )
                     ) WHERE f = trim(l)
                     ORDER BY k
                     """)
@@ -82,7 +97,12 @@ public class NonCachedSymbolSharedViewTest extends AbstractCairoTest {
             assertQuery("""
                     SELECT k FROM (
                       SELECT k, first(a) f, last(a) l
-                      FROM (SELECT k, a FROM xn UNION ALL SELECT k, a FROM yn)
+                      FROM (
+                        SELECT k, a, 0 AS branch_order FROM xn
+                        UNION ALL
+                        SELECT k, a, 1 AS branch_order FROM yn
+                        ORDER BY branch_order
+                      )
                     ) WHERE f = l::string
                     ORDER BY k
                     """)
@@ -94,7 +114,12 @@ public class NonCachedSymbolSharedViewTest extends AbstractCairoTest {
             assertQuery("""
                     SELECT k FROM (
                       SELECT k, first(a) f, last(a) l
-                      FROM (SELECT k, a FROM xn UNION ALL SELECT k, a FROM yn)
+                      FROM (
+                        SELECT k, a, 0 AS branch_order FROM xn
+                        UNION ALL
+                        SELECT k, a, 1 AS branch_order FROM yn
+                        ORDER BY branch_order
+                      )
                     ) WHERE f = lower(l)
                     ORDER BY k
                     """)
@@ -106,7 +131,12 @@ public class NonCachedSymbolSharedViewTest extends AbstractCairoTest {
             assertQuery("""
                     SELECT k FROM (
                       SELECT k, first(a) f, last(a) l
-                      FROM (SELECT k, a FROM xn UNION ALL SELECT k, a FROM yn)
+                      FROM (
+                        SELECT k, a, 0 AS branch_order FROM xn
+                        UNION ALL
+                        SELECT k, a, 1 AS branch_order FROM yn
+                        ORDER BY branch_order
+                      )
                     ) WHERE f = upper(l)
                     ORDER BY k
                     """)
@@ -117,7 +147,12 @@ public class NonCachedSymbolSharedViewTest extends AbstractCairoTest {
             assertQuery("""
                     SELECT k FROM (
                       SELECT k, first(a) f, last(a) l
-                      FROM (SELECT k, a FROM xn UNION ALL SELECT k, a FROM yn)
+                      FROM (
+                        SELECT k, a, 0 AS branch_order FROM xn
+                        UNION ALL
+                        SELECT k, a, 1 AS branch_order FROM yn
+                        ORDER BY branch_order
+                      )
                     ) WHERE starts_with(f, l)
                     ORDER BY k
                     """)
