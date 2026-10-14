@@ -261,14 +261,12 @@ public final class DurableEpochManifest {
                         syncfsTable(configuration, tablePath, rootLen);
                     }
                 }
-                // A conversion to WAL or a REBASE clone created the table's sequencer just before, unflushed. Its few
-                // files are flushed one by one on every platform, so a table without rows pays no filesystem-wide
-                // flush; a new table's baseline comes before its sequencer, which then does not exist yet.
-                final int seqLen = tablePath.trimTo(rootLen).concat(WalUtils.SEQ_DIR).size();
-                if (ff.exists(tablePath.$())) {
-                    fsyncDirectoryFiles(configuration, tablePath, seqLen, false);
-                    fsyncDirectory(configuration, tablePath, seqLen);
-                    fsyncDirectory(configuration, tablePath, rootLen);
+                // A conversion to WAL or a REBASE clone created the table's sequencer just before, and an Enterprise
+                // replica materialising the table downloaded it. Its few files are flushed one by one on every
+                // platform, so a table without rows pays no filesystem-wide flush; a new table's baseline comes before
+                // its sequencer, which then does not exist yet.
+                if (ff.exists(tablePath.trimTo(rootLen).concat(WalUtils.SEQ_DIR).$())) {
+                    fsyncSequencer(configuration, tablePath, rootLen);
                 }
                 tablePath.trimTo(rootLen);
                 seqTxn = txReader.getSeqTxn();
@@ -549,21 +547,23 @@ public final class DurableEpochManifest {
                 if (Files.notDots(namePtr) && (type == Files.DT_FILE || type == Files.DT_UNKNOWN || isLink)) {
                     dirPath.trimTo(dirLen).concat(namePtr);
                     final long fd = openForFsync(configuration, dirPath, readOnly || isLink);
-                    if (fd == -1) {
+                    if (fd != -1) {
+                        try {
+                            // A link's target may be on another filesystem, out of reach of the caller's closing
+                            // barrier, so it gets its own: syncfs is filesystem-wide on Linux, a durable flush of
+                            // the file elsewhere.
+                            if (isLink) {
+                                ff.syncfs(fd);
+                            } else {
+                                ff.fsync(fd);
+                            }
+                        } finally {
+                            ff.close(fd);
+                        }
+                    } else if (!Files.isErrnoFileDoesNotExist(ff.errno())) {
                         throw CairoException.critical(ff.errno()).put("could not open adaptive file for fsync [path=").put(dirPath).put(']');
                     }
-                    try {
-                        // A link's target may be on another filesystem, out of reach of the caller's closing
-                        // barrier, so it gets its own: syncfs is filesystem-wide on Linux, a durable flush of
-                        // the file elsewhere.
-                        if (isLink) {
-                            ff.syncfs(fd);
-                        } else {
-                            ff.fsync(fd);
-                        }
-                    } finally {
-                        ff.close(fd);
-                    }
+                    // Otherwise the file was removed after the listing, by a column purge for one: nothing to flush.
                 }
                 findResult = ff.findNext(findPtr);
             } while (findResult > 0);
@@ -637,12 +637,50 @@ public final class DurableEpochManifest {
     }
 
     /**
+     * Makes a WAL table's sequencer durable, from the table root at {@code rootLen}: every file of {@code txn_seq} and
+     * of each directory in it ({@code _txn_parts}, the Enterprise {@code .pending}), each of those directories, then
+     * {@code txn_seq} and the table directory, which hold their entries. The caller issues the device barrier. The
+     * files come from the listing, so a file removed meanwhile, a purged log part for one, is skipped.
+     */
+    public static void fsyncSequencer(CairoConfiguration configuration, Path tablePath, int rootLen) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try {
+            final int seqLen = tablePath.trimTo(rootLen).concat(WalUtils.SEQ_DIR).size();
+            final long findPtr = ff.findFirst(tablePath.$());
+            if (findPtr <= 0) {
+                throw CairoException.critical(ff.errno()).put("could not enumerate sequencer directory for fsync [path=").put(tablePath).put(']');
+            }
+            try {
+                int findResult;
+                do {
+                    final long namePtr = ff.findName(findPtr);
+                    if (ff.findType(findPtr) == Files.DT_DIR && Files.notDots(namePtr)) {
+                        final int subDirLen = tablePath.trimTo(seqLen).concat(namePtr).size();
+                        fsyncDirectoryFiles(configuration, tablePath, subDirLen, false);
+                    }
+                    findResult = ff.findNext(findPtr);
+                } while (findResult > 0);
+                if (findResult < 0) {
+                    throw CairoException.critical(ff.errno()).put("could not finish enumerating sequencer directory for fsync [path=")
+                            .put(tablePath.trimTo(seqLen)).put(']');
+                }
+            } finally {
+                ff.findClose(findPtr);
+            }
+            fsyncDirectoryFiles(configuration, tablePath, seqLen, false);
+            fsyncDirectory(configuration, tablePath, rootLen);
+        } finally {
+            tablePath.trimTo(rootLen);
+        }
+    }
+
+    /**
      * Flushes a table's materialized state. Where {@link FilesFacade#syncfs(long)} flushes a single file, that is
-     * file by file: every file of every attached partition and the partition directory, then every file in the table
-     * root and the root itself, then one device barrier, the same write set as the writer's first epoch there. The
-     * table's entry in the database root closes the flush: nothing else makes a table created since the last
-     * filesystem-wide sync durable. Where syncfs is filesystem-wide, the caller's sync of the database root covers
-     * all that, and this flushes only the partitions linked to another filesystem.
+     * file by file: every file of every attached partition and the partition directory, then for a WAL table its
+     * sequencer, then every file in the table root and the root itself, then one device barrier, the same write set as
+     * the writer's first epoch there. The table's entry in the database root closes the flush: nothing else makes a
+     * table created since the last filesystem-wide sync durable. Where syncfs is filesystem-wide, the caller's sync of
+     * the database root covers all that, and this flushes only the partitions linked to another filesystem.
      *
      * <p>The per-file fsync moves each file's bytes to the drive, and the closing {@code syncfs} flushes the drive
      * cache once for all of them: F_FULLFSYNC on macOS acts as a barrier for data fsync'd on the same device before
@@ -661,6 +699,10 @@ public final class DurableEpochManifest {
             }
             fsyncPartitions(configuration, path, rootLen, txReader, timestampType, partitionBy, null, null, isFileByFile);
             if (isFileByFile) {
+                // A replica's downloaded sequencer, or one created under a mode that did not flush it.
+                if (tableToken.isWal()) {
+                    fsyncSequencer(configuration, path, rootLen);
+                }
                 fsyncTableRoot(configuration, path, rootLen);
                 fsyncDirectory(configuration, path, dbRootLen);
             }
@@ -703,21 +745,22 @@ public final class DurableEpochManifest {
     }
 
     /**
-     * Opens a file for a per-file flush. FlushFileBuffers needs a writable handle, so this is a write open, except
-     * for a read-only partition on POSIX: it may be a link to storage that refuses write opens, and POSIX fsyncs a
-     * readable handle.
+     * Opens a file for a per-file flush, or returns -1 with the facade's errno set. FlushFileBuffers needs a writable
+     * handle, so this is a write open, except for a read-only partition on POSIX: it may be a link to storage that
+     * refuses write opens, and POSIX fsyncs a readable handle. Neither open creates the file: a flush never changes
+     * which files exist, and a file removed since its listing has nothing to flush.
      */
     public static long openForFsync(CairoConfiguration configuration, Path path, boolean readOnly) {
         final FilesFacade ff = configuration.getFilesFacade();
         return readOnly && !Os.isWindows()
-                ? TableUtils.openRO(ff, path.$(), LOG)
-                : TableUtils.openRW(ff, path.$(), LOG, configuration.getWriterFileOpenOpts());
+                ? ff.openRO(path.$())
+                : ff.openRWExisting(path.$());
     }
 
     private static void fsyncFile(CairoConfiguration configuration, Path tablePath, int rootLen, String name) {
         final FilesFacade ff = configuration.getFilesFacade();
         tablePath.trimTo(rootLen).concat(name);
-        final long fd = TableUtils.openRW(ff, tablePath.$(), LOG, configuration.getWriterFileOpenOpts());
+        final long fd = ff.openRWExisting(tablePath.$());
         if (fd == -1) {
             throw CairoException.critical(ff.errno()).put("could not open initial adaptive file for fsync [path=").put(tablePath).put(']');
         }
@@ -867,7 +910,7 @@ public final class DurableEpochManifest {
     private static void syncfsTable(CairoConfiguration configuration, Path tablePath, int rootLen) {
         final FilesFacade ff = configuration.getFilesFacade();
         tablePath.trimTo(rootLen).concat(TableUtils.TXN_FILE_NAME);
-        final long fd = TableUtils.openRW(ff, tablePath.$(), LOG, configuration.getWriterFileOpenOpts());
+        final long fd = ff.openRWExisting(tablePath.$());
         if (fd == -1) {
             throw CairoException.critical(ff.errno()).put("could not open adaptive _txn for the device flush [path=").put(tablePath).put(']');
         }

@@ -930,6 +930,48 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         assertLinkedPartitionFlushedThroughItsTarget(false, false);
     }
 
+    /**
+     * On the per-file flush path the save point lists each partition directory and opens every file it lists to flush
+     * it. A superseded column version that the purge removes between the listing and the open has nothing left to
+     * flush: the walk skips it. A creating open would bring it back as an empty file that outlives every restart, and
+     * that ATTACH can later take as the column's data.
+     */
+    @Test
+    public void testSavePointWalkSkipsFileRemovedAfterListingOnNonWideSyncfsPlatform() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
+
+        final RemoveBeforeOpenFacade ff = new RemoveBeforeOpenFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-01T01:00:00.000000Z', 2)");
+            drainWalQueue();
+            try (TableWriter tableWriter = getWriter(tt)) {
+                tableWriter.advanceDurableEpoch(1L);
+            }
+            // The update writes a new version of v. The save point names the old one, so its pin keeps it listed until
+            // a later save point.
+            execute("update x set v = v + 10");
+            drainWalQueue();
+
+            final java.io.File superseded = new java.io.File(
+                    root + java.io.File.separator + tt.getDirName() + java.io.File.separator + "2024-01-01", "v.d"
+            );
+            Assert.assertTrue("the superseded column version must still be listed", superseded.exists());
+            final long appliedSeqTxn = tracker.getWriterTxn();
+            try (TableWriter tableWriter = getWriter(tt)) {
+                ff.removeBeforeOpen(java.io.File.separator + "2024-01-01" + java.io.File.separator + "v.d");
+                tableWriter.advanceDurableEpoch(2L);
+            }
+            Assert.assertTrue("the hook must have removed the file between the listing and the open", ff.isRemoved());
+            Assert.assertFalse("the walk must not re-create a removed file", superseded.exists());
+            Assert.assertEquals("the save point must publish", appliedSeqTxn, tracker.getDurableEpochSeqTxn());
+            assertQuery("select v from x").expectSize().returns("v\n11\n12\n");
+        });
+    }
+
     static ColumnVersionWriter columnVersionWriter(TableWriter writer) {
         return (ColumnVersionWriter) writer.columnVersionReader();
     }
@@ -2080,6 +2122,12 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             return super.openRW(name, opts);
         }
 
+        @Override
+        public long openRWExisting(LPSZ name) {
+            trackPartition(name);
+            return super.openRWExisting(name);
+        }
+
         private void trackPartition(LPSZ name) {
             for (int day = 1; day <= 3; day++) {
                 final String dir = "1970-01-0" + day;
@@ -2142,8 +2190,58 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             return super.openRW(name, opts);
         }
 
+        @Override
+        public long openRWExisting(LPSZ name) {
+            final String denied = deniedDir;
+            if (denied != null && Utf8s.containsAscii(name, denied)) {
+                partitionOpenAttempts.incrementAndGet();
+                if (!Os.isWindows()) {
+                    deniedOpenAttempts.incrementAndGet();
+                    return -1;
+                }
+            }
+            return super.openRWExisting(name);
+        }
+
         public int partitionOpenAttempts() {
             return partitionOpenAttempts.get();
+        }
+    }
+
+    /**
+     * Per-file flush path. Removes one file right before the next open of it, as a purge that unlinks a file between
+     * the save point walk's listing and its open does.
+     */
+    static class RemoveBeforeOpenFacade extends NonWideSyncfsWalFdatasyncFacade {
+        private volatile boolean isRemoved;
+        private volatile String pathSuffix;
+
+        public boolean isRemoved() {
+            return isRemoved;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            removeIfArmed(name);
+            return super.openRW(name, opts);
+        }
+
+        @Override
+        public long openRWExisting(LPSZ name) {
+            removeIfArmed(name);
+            return super.openRWExisting(name);
+        }
+
+        public void removeBeforeOpen(String pathSuffix) {
+            this.pathSuffix = pathSuffix;
+        }
+
+        private void removeIfArmed(LPSZ name) {
+            final String suffix = pathSuffix;
+            if (suffix != null && Utf8s.endsWithAscii(name, suffix)) {
+                pathSuffix = null;
+                isRemoved = super.removeQuiet(name);
+            }
         }
     }
 

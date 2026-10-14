@@ -181,6 +181,12 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWOpts
     return open((const char *) lpszName, O_CREAT | O_RDWR | opts, 0644);
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWExisting0
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+    // No O_CREAT: a missing file fails with ENOENT instead of coming back empty.
+    return open((const char *) lpszName, O_RDWR);
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
     umask(2);

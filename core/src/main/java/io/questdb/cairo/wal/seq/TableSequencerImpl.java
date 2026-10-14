@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.IDGenerator;
 import io.questdb.cairo.IDGeneratorFactory;
 import io.questdb.cairo.TableStructure;
@@ -91,7 +92,6 @@ public class TableSequencerImpl implements TableSequencer {
         this.seqTxnTracker = txnTracker;
         final CairoConfiguration configuration = engine.getConfiguration();
         this.walDirectoryPolicy = engine.getWalDirectoryPolicy();
-        final FilesFacade ff = configuration.getFilesFacade();
         try {
             path = new Path();
             path.of(configuration.getDbRoot());
@@ -116,7 +116,7 @@ public class TableSequencerImpl implements TableSequencer {
                 writeLock();
                 try {
                     final long timestamp = microClock.getTicks();
-                    createSequencerFiles(ff, configuration.getMkDirMode(), walDirectoryPolicy, metadata, tableTransactionLog, path, rootLen, tableStruct, tableToken, tableId, timestamp);
+                    createSequencerFiles(configuration, walDirectoryPolicy, metadata, tableTransactionLog, path, rootLen, tableStruct, tableToken, tableId, timestamp);
                     engine.getWalListener().tableCreated(tableToken, timestamp);
                 } finally {
                     unlockWrite();
@@ -189,8 +189,7 @@ public class TableSequencerImpl implements TableSequencer {
                 TableTransactionLog tableTransactionLog = new TableTransactionLog(configuration, walDirectoryPolicy, LocalDurabilityPolicy.ALWAYS_ON)
         ) {
             createSequencerFiles(
-                    configuration.getFilesFacade(),
-                    configuration.getMkDirMode(),
+                    configuration,
                     walDirectoryPolicy,
                     metadata,
                     tableTransactionLog,
@@ -566,8 +565,7 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     private static void createSequencerFiles(
-            FilesFacade ff,
-            int mkDirMode,
+            CairoConfiguration configuration,
             WalDirectoryPolicy walDirectoryPolicy,
             SequencerMetadata metadata,
             TableTransactionLog tableTransactionLog,
@@ -578,13 +576,36 @@ public class TableSequencerImpl implements TableSequencer {
             int tableId,
             long timestamp
     ) {
-        if (ff.mkdirs(path.slash(), mkDirMode) != 0) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        if (ff.mkdirs(path.slash(), configuration.getMkDirMode()) != 0) {
             throw CairoException.critical(ff.errno()).put("Cannot create sequencer directory: ").put(path);
         }
         walDirectoryPolicy.initDirectory(path, tableToken);
         path.trimTo(rootLen);
         metadata.create(tableStruct, tableToken, path, rootLen, tableId);
         tableTransactionLog.create(path, timestamp);
+        // SYNC and ADAPTIVE acknowledge a commit once its record is flushed, which presumes the log's files and
+        // their directory entries outlive a power loss. Flushing content never makes a new entry durable.
+        if (CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
+            final int tableDirLen = path.trimTo(rootLen).parent().size();
+            try {
+                DurableEpochManifest.fsyncSequencer(configuration, path, tableDirLen);
+                // The device barrier for the flushes above, as syncfs through _txn is for a table.
+                path.trimTo(tableDirLen).concat(SEQ_DIR).concat(WalUtils.TXNLOG_FILE_NAME);
+                final long fd = ff.openRWExisting(path.$());
+                if (fd == -1) {
+                    throw CairoException.critical(ff.errno()).put("could not open sequencer log for the device flush [path=").put(path).put(']');
+                }
+                try {
+                    ff.fsyncDurable(fd);
+                } finally {
+                    ff.close(fd);
+                }
+            } finally {
+                // The flushes wrote over the path past the table directory: rebuild it rather than trim back to it.
+                path.trimTo(tableDirLen).concat(SEQ_DIR);
+            }
+        }
     }
 
     private void applyToMetadata(TableMetadataChange change) {

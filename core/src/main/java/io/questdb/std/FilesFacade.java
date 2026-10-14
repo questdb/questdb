@@ -217,6 +217,11 @@ public interface FilesFacade {
 
     long openRW(LPSZ name, int opts);
 
+    /**
+     * Opens an existing file for reading and writing without creating it; see {@link Files#openRWExisting}.
+     */
+    long openRWExisting(LPSZ name);
+
     long openRWNoCache(LPSZ name, int opts);
 
     long read(long fd, long buf, long size, long offset);

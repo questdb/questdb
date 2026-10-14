@@ -184,6 +184,13 @@ public class WindowsBarrierContractFilesFacade extends TestFilesFacadeImpl {
     }
 
     @Override
+    public long openRWExisting(LPSZ name) {
+        final long fd = super.openRWExisting(name);
+        remember(fd, name, true);
+        return fd;
+    }
+
+    @Override
     public long openRWNoCache(LPSZ name, int opts) {
         final long fd = super.openRWNoCache(name, opts);
         remember(fd, name, true);

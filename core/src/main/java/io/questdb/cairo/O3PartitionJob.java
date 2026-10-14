@@ -628,7 +628,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     final long parquetNameTxn = isRewrite ? txn : srcNameTxn;
                     path.of(pathToTable);
                     setPathForParquetPartition(path, timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
-                    TableUtils.fsyncFileDurable(ff, path.$(), tableWriter.getConfiguration().getWriterFileOpenOpts());
+                    TableUtils.fsyncFileDurable(ff, path.$());
                 }
 
                 // Publish the new _pm last. In sync modes an incremental update

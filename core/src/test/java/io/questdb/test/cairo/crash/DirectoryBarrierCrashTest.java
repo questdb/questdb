@@ -33,6 +33,7 @@ import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.mp.RingQueue;
@@ -137,6 +138,26 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testAdaptiveLazyPartitionsSurviveCrash() throws Exception {
         assertAdaptiveWalPartitionsSurviveCrash(false, false, new CrashFaultFilesFacade());
+    }
+
+    @Test
+    public void testAdaptiveNewSequencerPartSurvivesCrash() throws Exception {
+        assertNewSequencerPartSurvivesCrash("adaptive", new CrashFaultFilesFacade());
+    }
+
+    @Test
+    public void testAdaptiveNewSequencerPartSurvivesCrashWithoutFsWideSyncfs() throws Exception {
+        assertNewSequencerPartSurvivesCrash("adaptive", new SingleFileSyncfsFacade());
+    }
+
+    @Test
+    public void testAdaptiveNewTableSequencerSurvivesCrash() throws Exception {
+        assertNewTableSequencerSurvivesCrash("adaptive", new CrashFaultFilesFacade());
+    }
+
+    @Test
+    public void testAdaptiveNewTableSequencerSurvivesCrashWithoutFsWideSyncfs() throws Exception {
+        assertNewTableSequencerSurvivesCrash("adaptive", new SingleFileSyncfsFacade());
     }
 
     @Test
@@ -452,6 +473,16 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncConvertToParquetWalSurvivesCrash() throws Exception {
         assertSyncSchemaChangeSurvivesCrash(true, false, "ALTER TABLE x CONVERT PARTITION TO PARQUET LIST '2024-01-01'", this::assertParquetPartitionNames);
+    }
+
+    @Test
+    public void testSyncNewSequencerPartSurvivesCrash() throws Exception {
+        assertNewSequencerPartSurvivesCrash("sync", new CrashFaultFilesFacade());
+    }
+
+    @Test
+    public void testSyncNewTableSequencerSurvivesCrash() throws Exception {
+        assertNewTableSequencerSurvivesCrash("sync", new CrashFaultFilesFacade());
     }
 
     @Test
@@ -786,6 +817,82 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
                 2024-01-01T00:00:00.000000Z
                 2024-01-03T00:00:00.000000Z
                 """);
+    }
+
+    /**
+     * A V2 sequencer log with two records per part: three commits after the baseline open a new part file, and the
+     * power fails before any of them is applied. Every commit was acknowledged (ADAPTIVE) or returned (SYNC), so all
+     * of them must survive, and the log must hold their records, not zeros: the new part's entry in
+     * {@code _txn_parts} has to be durable by the time a record in it is.
+     */
+    private void assertNewSequencerPartSurvivesCrash(String commitMode, CrashFaultFilesFacade facade) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 2);
+        runWithFacade(facade, () -> {
+            crashFf.modelSharedJournal = false;
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("x");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            markDurableBaseline();
+
+            execute("INSERT INTO x VALUES ('2024-01-02T00:00:00.000000Z', 2)");
+            execute("INSERT INTO x VALUES ('2024-01-03T00:00:00.000000Z', 3)");
+            execute("INSERT INTO x VALUES ('2024-01-04T00:00:00.000000Z', 4)");
+            Assert.assertEquals(4, engine.getTableSequencerAPI().getTxnTracker(token).getSeqTxn());
+            final File secondPart = new File(
+                    root + File.separator + token.getDirName() + File.separator + WalUtils.SEQ_DIR
+                            + File.separator + WalUtils.TXNLOG_PARTS_DIR, "1"
+            );
+            Assert.assertTrue("the commits must open a second log part", secondPart.exists());
+
+            recoverAfterCrash(new TableToken[]{token});
+            assertNotSuspended(token);
+            assertQuery("SELECT sequencerTxn, walId, segmentTxn FROM wal_transactions('x')").noRandomAccess().returns("""
+                    sequencerTxn\twalId\tsegmentTxn
+                    1\t1\t0
+                    2\t1\t1
+                    3\t1\t2
+                    4\t1\t3
+                    """);
+            assertQuery("SELECT count(), sum(v) FROM x").noRandomAccess().expectSize().returns("""
+                    count\tsum
+                    4\t10
+                    """);
+            releaseEngineHandles();
+        });
+    }
+
+    /**
+     * A WAL table created after the baseline takes one commit, and the power fails before any save point. The commit
+     * was acknowledged (ADAPTIVE) or returned (SYNC), so it must survive. Flushing the log's content does not make its
+     * files' entries durable: the CREATE has to make {@code txn_seq}, its files and the table's entry in the database
+     * root durable itself.
+     */
+    private void assertNewTableSequencerSurvivesCrash(String commitMode, CrashFaultFilesFacade facade) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        runWithFacade(facade, () -> {
+            crashFf.modelSharedJournal = false;
+            markDurableBaseline();
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("x");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            Assert.assertEquals(1, tracker.getSeqTxn());
+            Assert.assertTrue("no save point may cover the commit", tracker.getDurableEpochSeqTxn() < 1);
+
+            recoverAfterCrash(new TableToken[]{token});
+            assertNotSuspended(token);
+            assertQuery("SELECT count(), sum(v) FROM x").noRandomAccess().expectSize().returns("""
+                    count\tsum
+                    1\t1
+                    """);
+            releaseEngineHandles();
+        });
     }
 
     private void assertNotSuspended(TableToken token) {

@@ -15265,7 +15265,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     if (index > 0) {
                         path.put('.').put(index);
                     }
-                    TableUtils.fsyncFileDurable(ff, path.$(), configuration.getWriterFileOpenOpts());
+                    TableUtils.fsyncFileDurable(ff, path.$());
                 } finally {
                     // Always restore path to the table root. If the open above faults, the
                     // rollback-DDL catch calls openMetaFile(ff, path, ...), which assumes path is at
@@ -16708,6 +16708,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         fsyncMaterializedState();
 
+        // Linux syncfs already covers the sequencer. Elsewhere the first save point after the writer opens, which
+        // walks every partition, also flushes the sequencer's files and entries: a table created under a mode that
+        // did not flush them is acknowledged durably from here on.
+        if (epochWriteSetIncomplete && tableToken.isWal() && !ff.isSyncfsFileSystemWide()) {
+            DurableEpochManifest.fsyncSequencer(configuration, path.trimTo(pathSize), pathSize);
+        }
         if (epochSeqTxn > 0) {
             // Linux syncfs already covers the sequencer; elsewhere flush its prefix before publishing the cut.
             // This also covers older NOSYNC sequencer records at enrolment.
@@ -17444,7 +17450,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             if (targetEffectiveCommitMode != CommitMode.NOSYNC) {
                 try {
                     path.concat(TODO_FILE_NAME);
-                    TableUtils.fsyncFileDurable(ff, path.$(), configuration.getWriterFileOpenOpts());
+                    TableUtils.fsyncFileDurable(ff, path.$());
                 } finally {
                     // Restore path even if the open faults, so the RECOVER_FROM_TODO_WRITE_FAILURE
                     // handler below (and any later use) sees path at the table root rather than a stale

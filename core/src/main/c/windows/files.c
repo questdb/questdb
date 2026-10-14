@@ -657,6 +657,17 @@ JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWOpts
     ));
 }
 
+JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openRWExisting0
+        (JNIEnv *e, jclass cl, jlong lpszName) {
+    // OPEN_EXISTING: a missing file fails with ERROR_FILE_NOT_FOUND instead of coming back empty.
+    return HANDLE_TO_FD(openUtf8(
+            lpszName,
+            GENERIC_WRITE | GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            OPEN_EXISTING
+    ));
+}
+
 JNIEXPORT jint JNICALL Java_io_questdb_std_Files_openAppend
         (JNIEnv *e, jclass cl, jlong lpszName) {
     HANDLE handle = openUtf8(

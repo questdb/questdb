@@ -269,7 +269,7 @@ public class WalUtils {
         // REBASE staging is local truth, not downloaded state: keep the configured grade.
         if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
             dstDir.trimTo(dstLen);
-            syncStagingTreeDurable(ff, dstDir, configuration.getWriterFileOpenOpts());
+            syncStagingTreeDurable(ff, dstDir);
             dstDir.trimTo(dstLen);
         }
         return baselineTxn;
@@ -281,7 +281,7 @@ public class WalUtils {
     // be lost even though it shares a durable inode. fdatasync of a new file does not make its directory entry
     // durable, only an fsync of the parent does. Children are synced before {@code dir}, so a child directory's
     // entries are durable before its own entry in this parent. {@code dir} is restored to its entry length.
-    private static void syncStagingTreeDurable(FilesFacade ff, Path dir, int fileOpts) {
+    private static void syncStagingTreeDurable(FilesFacade ff, Path dir) {
         final int len = dir.size();
         final long pFind = ff.findFirst(dir.$());
         if (pFind < 0) {
@@ -301,9 +301,9 @@ public class WalUtils {
                     // systems report it for regular files, and recursing into a file fails the enumeration
                     // and with it the whole REBASE WAL.
                     if (type == Files.DT_FILE || type == Files.DT_UNKNOWN) {
-                        fsyncMappedFile(ff, dir, fileOpts);
+                        fsyncMappedFile(ff, dir);
                     } else {
-                        syncStagingTreeDurable(ff, dir, fileOpts);
+                        syncStagingTreeDurable(ff, dir);
                     }
                     dir.trimTo(len);
                 } while (ff.findNext(pFind) > 0);
@@ -337,8 +337,8 @@ public class WalUtils {
     // extent) then fdatasync for the on-device size. A no-op for a 0-length file.
     // Fail-stop for the same reason as fsyncDirDurable: an unopenable or unmappable staging file leaves
     // content that the publishing rename would expose as durable when it is not.
-    private static void fsyncMappedFile(FilesFacade ff, Path filePath, int fileOpts) {
-        final long fd = ff.openRW(filePath.$(), fileOpts);
+    private static void fsyncMappedFile(FilesFacade ff, Path filePath) {
+        final long fd = ff.openRWExisting(filePath.$());
         if (fd < 0) {
             throw CairoException.critical(ff.errno())
                     .put("could not open rebase staging file for durability [path=").put(filePath).put(']');

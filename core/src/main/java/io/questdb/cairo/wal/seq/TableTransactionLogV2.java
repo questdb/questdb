@@ -610,6 +610,13 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 rootPath.trimTo(size);
                 walDirectoryPolicy.initSequencerPart(rootPath, part);
                 partId = part;
+                // A part past the published records may have just been created, and the flushes of its records reach
+                // its content, never its entry in the parts directory. The header, not maxTxn, counts the records: an
+                // open reads parts before it loads maxTxn.
+                if (part * partTransactionCount >= txnMem.getLong(MAX_TXN_OFFSET_64)
+                        && CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
+                    TableUtils.fsyncDirDurable(ff, rootPath.concat(TXNLOG_PARTS_DIR).$());
+                }
             } finally {
                 rootPath.trimTo(size);
             }

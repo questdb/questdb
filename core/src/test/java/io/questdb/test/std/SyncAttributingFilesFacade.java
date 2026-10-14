@@ -195,6 +195,13 @@ public class SyncAttributingFilesFacade extends TestFilesFacadeImpl {
         return fd;
     }
 
+    @Override
+    public long openRWExisting(LPSZ name) {
+        long fd = super.openRWExisting(name);
+        remember(fd, name);
+        return fd;
+    }
+
     /**
      * Number of filesystem-wide {@code syncfs} calls. Not charged to any file: one syncfs makes the whole
      * filesystem durable, so a test asserting "the epoch forced everything durable" checks this instead of

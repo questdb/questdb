@@ -587,6 +587,15 @@ public final class Files {
         return fdCache.createUniqueFdNonCached(openRWOpts(lpsz.ptr(), opts));
     }
 
+    /**
+     * Opens an existing file for reading and writing, never creating it: a missing file fails with
+     * {@link #isErrnoFileDoesNotExist does-not-exist}. For a caller that opens a file only to flush it, where
+     * {@link #openRW} would bring back a removed file as an empty one.
+     */
+    public static long openRWExisting(LPSZ lpsz) {
+        return fdCache.createUniqueFdNonCached(openRWExisting0(lpsz.ptr()));
+    }
+
     public static long read(long fd, long address, long len, long offset) {
         return read(fdCache.toOsFd(fd), address, len, offset);
     }
@@ -828,6 +837,8 @@ public final class Files {
     private native static int openAppend(long lpszName);
 
     private native static int openRW(long lpszName);
+
+    private native static int openRWExisting0(long lpszName);
 
     private native static int openRWOpts(long lpszName, int opts);
 

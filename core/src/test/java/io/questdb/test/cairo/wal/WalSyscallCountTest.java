@@ -865,6 +865,12 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         }
 
         @Override
+        public long openRWExisting(LPSZ name) {
+            countOpen("openRWExisting", name);
+            return named(super.openRWExisting(name), name);
+        }
+
+        @Override
         public long openRWNoCache(LPSZ name, int opts) {
             countOpen("openRWNoCache", name);
             return named(super.openRWNoCache(name, opts), name);

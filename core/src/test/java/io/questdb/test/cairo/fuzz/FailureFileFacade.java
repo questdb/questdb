@@ -476,6 +476,14 @@ public class FailureFileFacade implements FilesFacade {
     }
 
     @Override
+    public long openRWExisting(LPSZ name) {
+        if (checkForFailure()) {
+            return -1;
+        }
+        return ff.openRWExisting(name);
+    }
+
+    @Override
     public long openRWNoCache(LPSZ name, int opts) {
         if (checkForFailure()) {
             return -1;

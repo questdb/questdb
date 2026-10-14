@@ -4511,6 +4511,11 @@ public class CairoEngine implements Closeable, WriterSource {
                             createTableOrViewOrMatViewUnsafe(mem, blockFileWriter, path, struct, tableToken);
                         }
                         filesystemCreated = true;
+                        // The new table's entry in the database root: the modes that promise power-loss durability
+                        // acknowledge its commits, and nothing else flushes the root.
+                        if (CommitMode.isPowerLossDurable(configuration.getCommitMode())) {
+                            TableUtils.fsyncDirDurable(configuration.getFilesFacade(), path.of(configuration.getDbRoot()).$());
+                        }
 
                         if (struct.isWalEnabled() && !struct.isView()) {
                             // A replica keeps no save point: it would go stale behind WAL its purge does not keep.

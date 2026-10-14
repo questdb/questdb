@@ -227,6 +227,11 @@ public final class GroupCommitTestUtils {
             return track(super.openRW(name, opts), name);
         }
 
+        @Override
+        public long openRWExisting(LPSZ name) {
+            return track(super.openRWExisting(name), name);
+        }
+
         public int privateWalFdatasyncs() {
             return count(p -> (p.contains("/wal") || p.contains("\\wal")) && !isSequencerFile(p));
         }

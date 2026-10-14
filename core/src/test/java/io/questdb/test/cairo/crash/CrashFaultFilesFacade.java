@@ -303,6 +303,18 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     @Override
+    public long openRWExisting(LPSZ name) {
+        long fd = super.openRWExisting(name);
+        if (fd > -1) {
+            noCacheOpenFds.add(fd);
+            fdToPath.put(fd, toAbsPath(name));
+            forceClosedFds.remove(fd); // fd numbers recycle; a fresh open clears the marker
+            staleFds.remove(fd);
+        }
+        return fd;
+    }
+
+    @Override
     public long openRWNoCache(LPSZ name, int opts) {
         long fd = super.openRWNoCache(name, opts);
         if (fd > -1) {

@@ -1052,6 +1052,33 @@ public class FilesTest {
     }
 
     @Test
+    public void testOpenRWExistingNeverCreates() throws Exception {
+        assertMemoryLeak(() -> {
+            try (Path path = new Path().of(new File(temporaryFolder.getRoot(), "missing").getAbsolutePath())) {
+                Assert.assertEquals(-1, Files.openRWExisting(path.$()));
+                Assert.assertTrue(Files.isErrnoFileDoesNotExist(Os.errno()));
+                Assert.assertFalse("a failed open must not create the file", Files.exists(path.$()));
+
+                final File existing = temporaryFolder.newFile();
+                TestUtils.writeStringToFile(existing, "abcde");
+                path.of(existing.getAbsolutePath());
+                final long fd = Files.openRWExisting(path.$());
+                Assert.assertTrue(fd > -1);
+                final long buf = Unsafe.malloc(1, MemoryTag.NATIVE_DEFAULT);
+                try {
+                    Unsafe.getUnsafe().putByte(buf, (byte) 'f');
+                    Assert.assertEquals("the handle must be writable", 1, Files.write(fd, buf, 1, 5));
+                    Assert.assertEquals(0, Files.fsync(fd));
+                } finally {
+                    Unsafe.free(buf, 1, MemoryTag.NATIVE_DEFAULT);
+                    Files.close(fd);
+                }
+                Assert.assertEquals(6, Files.length(path.$()));
+            }
+        });
+    }
+
+    @Test
     public void testOpenRWFailsWhenCalledOnDir() throws Exception {
         assertMemoryLeak(() -> {
             long fd = -1;

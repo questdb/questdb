@@ -513,6 +513,11 @@ public class FilesFacadeImpl implements FilesFacade {
     }
 
     @Override
+    public long openRWExisting(LPSZ name) {
+        return Files.openRWExisting(name);
+    }
+
+    @Override
     public long openRWNoCache(LPSZ name, int opts) {
         return openRW(name, opts);
     }

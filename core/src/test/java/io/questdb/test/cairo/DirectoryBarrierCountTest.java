@@ -714,6 +714,20 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
         }
 
         @Override
+        public long openRWExisting(LPSZ name) {
+            final long fd = super.openRWExisting(name);
+            if (fd > -1) {
+                final String path = toPathString(name);
+                if (path.endsWith("/_meta.swp") || path.endsWith("/_todo_")) {
+                    synchronized (this) {
+                        fileFds.put(fd, path);
+                    }
+                }
+            }
+            return fd;
+        }
+
+        @Override
         public long openRWNoCache(LPSZ name, int opts) {
             final long fd = super.openRWNoCache(name, opts);
             if (fd > -1) {

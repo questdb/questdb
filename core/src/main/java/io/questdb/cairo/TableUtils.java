@@ -2030,17 +2030,17 @@ public final class TableUtils {
      * impossible on Windows, a file barrier is not.
      * <p>
      * Fail-stop: a missing file, an unopenable one, or a failed fsync throws, because a silently skipped
-     * barrier cannot be told apart from a missing one.
+     * barrier cannot be told apart from a missing one. The open never creates the file, so a vanished data file
+     * fails here instead of coming back empty.
      */
-    public static void fsyncFileDurable(FilesFacade ff, LPSZ path, int fileOpenOpts) {
-        // Check before the open: openRW creates an absent file (O_CREAT on POSIX, OPEN_ALWAYS on Windows), so
-        // a vanished data file would be replaced by an empty one and the barrier would report success.
-        if (!ff.exists(path)) {
-            throw CairoException.critical(ff.errno()).put("could not open, file does not exist: ").put(path).put(']');
-        }
-        final long fd = ff.openRWNoCache(path, fileOpenOpts);
+    public static void fsyncFileDurable(FilesFacade ff, LPSZ path) {
+        final long fd = ff.openRWExisting(path);
         if (fd < 0) {
-            throw CairoException.critical(ff.errno()).put("could not open read-write for fsync [file=").put(path).put(']');
+            final int errno = ff.errno();
+            if (Files.isErrnoFileDoesNotExist(errno)) {
+                throw CairoException.critical(errno).put("could not open, file does not exist: ").put(path).put(']');
+            }
+            throw CairoException.critical(errno).put("could not open read-write for fsync [file=").put(path).put(']');
         }
         ff.fsyncAndClose(fd);
     }
@@ -2426,7 +2426,7 @@ public final class TableUtils {
                     if (CommitMode.isPowerLossDurable(commitMode)) {
                         // fsync data.parquet before _pm (data before metadata, mirrors syncColumns0 ordering)
                         setPathForParquetPartition(other.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, parquetNameTxn);
-                        fsyncFileDurable(ff, other.$(), configuration.getWriterFileOpenOpts());
+                        fsyncFileDurable(ff, other.$());
                     }
                     ff.fsync(parquetMetaFd);
                     if (!Os.isWindows()) {
