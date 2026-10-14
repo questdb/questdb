@@ -89,6 +89,10 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     // A pass that skips its repair's inline apply rather than injecting a fault.
     private static final int APPLY_SKIP = 11;
     private static final long DAY_MICROS = 86_400_000_000L;
+    // The variants before rank (see VARIANT_COUNT): their functions hold their state in the
+    // fused anchor root. rank() and dense_rank() keep a partition map of their own, which the
+    // keyed open-segment routes decline (LiveViewRefreshJob.isEveryFunctionDurablyGrouped).
+    private static final int GROUPED_VARIANT_COUNT = 5;
     private static final long HOUR_MICROS = 3_600_000_000L;
     // How a pass decides whether to hold its flush off.
     private static final int PIN_NO = 0;
@@ -106,12 +110,11 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     // The key of the rows the episodes add beside the generated dataset. No generated row
     // carries it, so the episodes keep (ts, key) unique by tracking only their own timestamps.
     private static final String SYNTHETIC_KEY = "ZZ";
+    // The key of the second row of the tie tieInClosedSegmentEpisode builds. Only that episode
+    // inserts it, at a timestamp it claims for SYNTHETIC_KEY, so its (ts, key) stays unique too.
+    private static final String SYNTHETIC_TIE_KEY = "YY";
     // sum, count, max, row_number, avg, rank, dense_rank
     private static final int VARIANT_COUNT = 7;
-    // The variants before rank: their functions hold their state in the fused anchor root.
-    // rank() and dense_rank() keep a partition map of their own, which the keyed open-segment
-    // routes decline (LiveViewRefreshJob.isEveryFunctionDurablyGrouped).
-    private static final int GROUPED_VARIANT_COUNT = 5;
     private final LiveViewRouteCoverage coverage = new LiveViewRouteCoverage();
     private final FaultLedger ledger = new FaultLedger();
     private final ObjList<String> runKeys = new ObjList<>();
@@ -638,6 +641,11 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     // One base row on the synthetic key, at the first timestamp at or below {@code ts} the key
     // has not used.
     private void insertSynthetic(long ts) throws SqlException {
+        insertSynthetic(ts, false);
+    }
+
+    // With isTie, a second row on SYNTHETIC_TIE_KEY at the same timestamp, in the same commit.
+    private void insertSynthetic(long ts, boolean isTie) throws SqlException {
         long t = ts;
         while (!syntheticTs.add(t)) {
             t--;
@@ -646,6 +654,10 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         syntheticSink.clear();
         syntheticSink.put("INSERT INTO base (ts, sym, i, x) VALUES (").put(t).put("::timestamp, '")
                 .put(SYNTHETIC_KEY).put("', ").put(1 + (t & 511)).put(", 1.0)");
+        if (isTie) {
+            syntheticSink.put(", (").put(t).put("::timestamp, '")
+                    .put(SYNTHETIC_TIE_KEY).put("', ").put(1 + (t & 511)).put(", 1.0)");
+        }
         execute(syntheticSink);
     }
 
@@ -672,6 +684,36 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         insertSynthetic(Math.max(dataStartMicros, maxInsertedTs - 1 - rnd.nextLong(HOUR_MICROS)));
         drainWalQueue();
         pass(rnd, shape, -1, PIN_YES, false);
+    }
+
+    /**
+     * A timestamp tie inside a closed anchor segment, after every generated commit. An in-order
+     * row two days above the frontier closes the segment the newest generated rows sit in, and
+     * one late commit then puts a row on each synthetic key at the newest generated row's
+     * timestamp the view reads. That segment's repair is bounded, so the output uniqueness check
+     * measures it, and it re-emits at least the two synthetic rows of the group: a keyed one
+     * replays the keys its correction carries, and an unkeyed one every row from the correction
+     * up. A run's own ties reach only the repairs its draws happen to route there.
+     */
+    private void tieInClosedSegmentEpisode(Rnd rnd, PassShape shape, LiveViewFuzzRows rows, boolean isFiltered) throws Exception {
+        long tieTs = Numbers.LONG_NULL;
+        for (int k = rows.tsv.length - 1; k >= 0; k--) {
+            // The view's filter is i > 0, which a null i fails as well.
+            if (!isFiltered || (rows.iv[k] != Numbers.LONG_NULL && rows.iv[k] > 0)) {
+                tieTs = rows.tsv[k];
+                break;
+            }
+        }
+        if (tieTs == Numbers.LONG_NULL) {
+            return;
+        }
+        LOG.info().$("LV route fuzz: tie in closed segment [tieTs=").$ts(tieTs).I$();
+        insertSynthetic(maxInsertedTs + 2 * DAY_MICROS);
+        drainWalQueue();
+        pass(rnd, shape, -1, PIN_NO, false);
+        insertSynthetic(tieTs, true);
+        drainWalQueue();
+        pass(rnd, shape, -1, PIN_NO, false);
     }
 
     // A crash-like restart: the registry drops every instance, a lead and a parked repair
@@ -809,9 +851,14 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             knobs.isSegmentYield = true;
             knobs.replayMaxRows = 1;
         }
-        if ((steer == STEER_MIXED || steer == STEER_ANCHORS) && run % 3 == 1 && tiePct == 0) {
-            // And runs whose repairs meet ties.
-            tiePct = 30 + rnd.nextInt(20);
+        // And runs whose repairs meet ties: their own, and the one tieInClosedSegmentEpisode
+        // builds in a closed segment, whose repair only the per-segment loop runs.
+        final boolean isTieRun = (steer == STEER_MIXED || steer == STEER_ANCHORS) && run % 3 == 1;
+        if (isTieRun) {
+            knobs.isPerSegment = true;
+            if (tiePct == 0) {
+                tiePct = 30 + rnd.nextInt(20);
+            }
         }
         if ((steer == STEER_MIXED || steer == STEER_ANCHORS) && run % 3 == 2) {
             // And runs where one turn walks an ALTER and the late rows behind it: a turn budget
@@ -827,7 +874,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         int dayJumpEvery = isKeyedShape ? 60 : stepMode == 0 ? 20 : 12;
         knobs.apply(AbstractLiveViewTest::setProperty);
 
-        final LiveViewFuzzAnchor anchor = LiveViewFuzzAnchor.draw(rnd, anchorMode, true);
+        // A tie run's episode needs the closed-segment route, which declines the segments of
+        // Berlin's repeated hour. Without the run oracle, the draw anchors where no hour repeats.
+        final LiveViewFuzzAnchor anchor = LiveViewFuzzAnchor.draw(rnd, anchorMode, !isTieRun);
         if (anchor.denseStepMaxMicros > 0) {
             // The shape's own data: dense, with no day jumps, so it covers its night.
             stepMax = anchor.denseStepMaxMicros;
@@ -843,6 +892,7 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             runKeys.add(SYMBOLS[s]);
         }
         runKeys.add(SYNTHETIC_KEY);
+        runKeys.add(SYNTHETIC_TIE_KEY);
         syntheticTs.clear();
         maxInsertedTs = Long.MIN_VALUE;
         setCurrentMicros(anchor.clockMicros);
@@ -927,6 +977,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                     driveRefreshToQuiescence(job);
                     assertView(oracleSql, orderBy, "intermediate, commit " + c + "/" + commits);
                 }
+            }
+            if (isTieRun) {
+                tieInClosedSegmentEpisode(rnd, shape, rows, isFiltered);
             }
             if (faultPct > 0 && firedThisRun == 0) {
                 // No drawn fault fired. One in-order row above every other one, whose forward
