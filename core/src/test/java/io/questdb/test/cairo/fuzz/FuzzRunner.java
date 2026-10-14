@@ -39,6 +39,8 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.vm.api.MemoryR;
@@ -249,6 +251,7 @@ public class FuzzRunner {
     }
 
     public void applyNonWal(ObjList<FuzzTransaction> transactions, String tableName, Rnd reloadRnd) {
+        removeRowsReplacedByTransactions(transactions, tableName);
         TableWriter writer = TestUtils.getWriter(engine, tableName);
         TableReader rdr1 = getReader(tableName);
         TableReader rdr2 = getReader(tableName);
@@ -842,6 +845,41 @@ public class FuzzRunner {
         }
     }
 
+    private void applyFollowUpList(
+            FollowUpList followUp,
+            String tableNameNoWal,
+            String tableNameWal,
+            String tableNameWal2,
+            String timestampColumnName,
+            Rnd rnd
+    ) throws Exception {
+        final ObjList<FuzzTransaction> transactions = followUp.prepare(tableNameNoWal, tableNameWal, tableNameWal2);
+        try {
+            // applyNonWal removes the rows the list's replace commits delete from what the three
+            // tables already hold, see removeRowsReplacedByTransactions.
+            applyNonWal(transactions, tableNameNoWal, rnd);
+            assertMinMaxTimestamp(sqlExecutionContext, tableNameNoWal);
+            applyWal(transactions, tableNameWal, 1, rnd);
+            applyWalParallel(transactions, tableNameWal2, rnd);
+
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                assertMinMaxTimestamp(sqlExecutionContext, tableNameWal);
+                assertMinMaxTimestamp(sqlExecutionContext, tableNameWal2);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal, rnd);
+                TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, tableNameWal2, LOG);
+                assertRandomIndexes(tableNameNoWal, tableNameWal2, rnd);
+            }
+
+            assertCounts(tableNameWal, timestampColumnName);
+            assertCounts(tableNameNoWal, timestampColumnName);
+            assertStringColDensity(tableNameWal);
+            Assert.assertEquals("expected 0 errors in partition mutation control", 0, engine.getPartitionOverwriteControl().getErrorCount());
+        } finally {
+            Misc.freeObjListAndClear(transactions);
+        }
+    }
+
     private void applyWalParallel(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd) {
         ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
         tablesTransactions.add(transactions);
@@ -893,7 +931,9 @@ public class FuzzRunner {
                 transaction.setNoCommitIntervals(excludedIntervals);
                 if (transaction.hasReplaceRange()) {
                     var before = excludedIntervals;
-                    excludedIntervals = unionIntervals(excludedIntervals, transaction.getReplaceLoTs(), transaction.getReplaceHiTs());
+                    // WAL's replace hi is exclusive (TableWriter.processWalCommitDedupReplace), while
+                    // these intervals are closed, so the last replaced timestamp is hi - 1.
+                    excludedIntervals = unionIntervals(excludedIntervals, transaction.getReplaceLoTs(), transaction.getReplaceHiTs() - 1);
                     // We must create new copy of excluded intervals otherwise
                     // all transactions will point to the same object
                     assert before != excludedIntervals;
@@ -1467,6 +1507,92 @@ public class FuzzRunner {
         return "TYPE POSTING EF";
     }
 
+    /**
+     * Removes from a non-WAL table the rows it already holds that a replace commit in
+     * {@code transactions} deletes on a WAL table.
+     * <p>
+     * A WAL replace commit with range [lo, hi), the bounds passed to commitWithParams, deletes
+     * every existing row with lo &lt;= ts &lt; hi, in every partition the range spans, and then
+     * inserts its own rows. Non-WAL tables have no such commit, so the oracle models it in two
+     * parts. Rows the same list writes before the replace are never inserted:
+     * {@link #calculateReplaceRanges} gives each transaction the ranges that later transactions
+     * replace. The rows the table already held before the list started are removed here. They
+     * are either the initial rows or rows written by a list applied in an earlier round. Removing
+     * them before the list runs, rather than at the replace transaction, leaves the same final
+     * table, because nothing in the list can bring those rows back. That assumes the round has no
+     * TTL: pre-deleting the newest rows lowers the max timestamp, which can change what a TTL
+     * commit earlier in the list evicts. The current multi-list callers run with TTL off.
+     * <p>
+     * The removal copies the surviving rows to a side table, truncates the table and inserts
+     * them back. It runs only when a range holds an existing row. A table built by
+     * {@link #createInitialTableNonWal(String, ObjList)} over the same list holds none, so a
+     * single-list caller pays one count query and its table is not touched.
+     */
+    private void removeRowsReplacedByTransactions(ObjList<FuzzTransaction> transactions, String tableName) {
+        final LongList ranges = new LongList();
+        for (int i = 0, n = transactions.size(); i < n; i++) {
+            final FuzzTransaction transaction = transactions.getQuick(i);
+            // Same selection as calculateReplaceRanges and applyToWal: a rolled back transaction
+            // never reaches commitWithParams.
+            if (!transaction.rollback && transaction.hasReplaceRange()) {
+                ranges.add(transaction.getReplaceLoTs(), transaction.getReplaceHiTs());
+            }
+        }
+        if (ranges.size() == 0) {
+            return;
+        }
+
+        final String tsColumnName;
+        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName(tableName))) {
+            tsColumnName = metadata.getColumnName(metadata.getTimestampIndex());
+        }
+        // The raw long compares in the table's own timestamp unit, the unit of the replace bounds.
+        final StringSink inRanges = new StringSink();
+        for (int i = 0, n = ranges.size(); i < n; i += 2) {
+            if (i > 0) {
+                inRanges.put(" OR ");
+            }
+            inRanges.put("(\"").put(tsColumnName).put("\"::LONG >= ").put(ranges.getQuick(i))
+                    .put(" AND \"").put(tsColumnName).put("\"::LONG < ").put(ranges.getQuick(i + 1))
+                    .put(')');
+        }
+
+        try {
+            final long replacedRowCount;
+            try (
+                    RecordCursorFactory factory = engine.select(
+                            "SELECT count() FROM \"" + tableName + "\" WHERE " + inRanges,
+                            sqlExecutionContext
+                    );
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                Assert.assertTrue(cursor.hasNext());
+                replacedRowCount = cursor.getRecord().getLong(0);
+            }
+            if (replacedRowCount == 0) {
+                return;
+            }
+
+            LOG.info().$("oracle removes rows replaced by a later list [table=").$safe(tableName)
+                    .$(", rows=").$(replacedRowCount)
+                    .$(", ranges=").$(ranges.size() / 2)
+                    .I$();
+            final String survivors = tableName + "_replace_survivors";
+            engine.execute(
+                    "CREATE TABLE \"" + survivors + "\" AS (SELECT * FROM \"" + tableName + "\" WHERE NOT (" + inRanges + "))",
+                    sqlExecutionContext
+            );
+            try {
+                engine.execute("TRUNCATE TABLE \"" + tableName + '"', sqlExecutionContext);
+                engine.execute("INSERT INTO \"" + tableName + "\" SELECT * FROM \"" + survivors + '"', sqlExecutionContext);
+            } finally {
+                engine.execute("DROP TABLE \"" + survivors + '"', sqlExecutionContext);
+            }
+        } catch (SqlException e) {
+            throw new RuntimeException(e);
+        }
+    }
+
     private void runApplyThread(AtomicInteger done, ConcurrentLinkedQueue<Throwable> errors, Rnd applyRnd) {
         try {
             ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
@@ -1691,6 +1817,14 @@ public class FuzzRunner {
     }
 
     protected void runFuzz(String tableName, Rnd rnd) throws Exception {
+        runFuzz(tableName, rnd, null);
+    }
+
+    /**
+     * Same as {@link #runFuzz(String, Rnd)}, then, when {@code followUp} is not null, applies a
+     * second transaction list to the same three tables and verifies them again.
+     */
+    protected void runFuzz(String tableName, Rnd rnd, @Nullable FollowUpList followUp) throws Exception {
         String tableNameWal = tableName + "_wal";
         String tableNameWal2 = tableName + "_wal_parallel";
         String tableNameNoWal = tableName + "_nonwal";
@@ -1742,6 +1876,9 @@ public class FuzzRunner {
             assertStringColDensity(tableNameWal);
             Assert.assertEquals("expected 0 errors in partition mutation control", 0, engine.getPartitionOverwriteControl().getErrorCount());
 
+            if (followUp != null) {
+                applyFollowUpList(followUp, tableNameNoWal, tableNameWal, tableNameWal2, timestampColumnName, rnd);
+            }
         } finally {
             Misc.freeObjListAndClear(transactions);
         }
@@ -1815,5 +1952,16 @@ public class FuzzRunner {
                 Misc.freeObjListAndClear(fuzzTransactions.get(i));
             }
         }
+    }
+
+    /**
+     * A second transaction list for {@link #runFuzz(String, Rnd, FollowUpList)}, applied to the
+     * non-WAL, WAL and parallel-WAL tables after the first list has been applied and verified.
+     * {@code prepare} may change the three tables first, identically, for example to convert
+     * partitions the second list is meant to hit.
+     */
+    @FunctionalInterface
+    public interface FollowUpList {
+        ObjList<FuzzTransaction> prepare(String tableNameNoWal, String tableNameWal, String tableNameWalParallel) throws Exception;
     }
 }

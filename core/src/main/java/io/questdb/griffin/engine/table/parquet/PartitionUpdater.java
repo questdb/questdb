@@ -167,6 +167,18 @@ public class PartitionUpdater implements QuietCloseable {
     }
 
     /**
+     * Update mode only: removes original row group {@code rowGroupIndex} (the
+     * pre-update index space, same as {@link #updateRowGroup}). The next footer
+     * omits it and its bytes become unused space; nothing below the committed
+     * file size is written. Throws CairoException in rewrite mode, on an invalid
+     * index, or if the same group is also replaced or removed in this pass.
+     */
+    public void removeRowGroup(int rowGroupIndex) {
+        assert ptr != 0;
+        removeRowGroup(ptr, rowGroupIndex);
+    }
+
+    /**
      * Rewrites the columns in {@code descriptor} and raw-copies every other
      * target-schema column chunk from the source row group. Call
      * {@link #setTargetSchema(PartitionDescriptor)} before this method.
@@ -305,6 +317,11 @@ public class PartitionUpdater implements QuietCloseable {
             long columnDataSize,
             int timestampIndex,
             long rowCount
+    ) throws CairoException;
+
+    private static native void removeRowGroup(
+            long impl,
+            int rowGroupIndex
     ) throws CairoException;
 
     private static native void rewriteRowGroupColumns(

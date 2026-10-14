@@ -44,6 +44,7 @@ import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.BeforeClass;
@@ -215,6 +216,10 @@ public class AbstractFuzzTest extends AbstractCairoTest {
     }
 
     protected void runFuzz(Rnd rnd) throws Exception {
+        runFuzz(rnd, (FuzzRunner.FollowUpList) null);
+    }
+
+    protected void runFuzz(Rnd rnd, @Nullable FuzzRunner.FollowUpList followUp) throws Exception {
         assertMemoryLeak(fuzzer.getFileFacade(), () -> {
             try {
                 WorkerPoolUtils.setupWriterJobs(sharedWorkerPool, engine);
@@ -224,7 +229,7 @@ public class AbstractFuzzTest extends AbstractCairoTest {
                 int size = rnd.nextInt(8 * 1024 * 1024);
                 node1.setProperty(PropertyKey.DEBUG_CAIRO_O3_COLUMN_MEMORY_SIZE, size);
                 setZeroWalPurgeInterval();
-                fuzzer.runFuzz(getTestName(), rnd);
+                fuzzer.runFuzz(getTestName(), rnd, followUp);
             } finally {
                 sharedWorkerPool.halt();
             }

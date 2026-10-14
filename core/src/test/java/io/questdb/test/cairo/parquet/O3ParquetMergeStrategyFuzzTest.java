@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.parquet;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -51,6 +52,12 @@ import static io.questdb.std.datetime.microtime.Micros.DAY_MICROS;
  * Creates a WAL table with a Parquet partition and a non-WAL oracle table,
  * then replays multiple rounds of random O3 transactions into both and
  * verifies they remain identical.
+ * <p>
+ * The rounds include replace-range commits. On the Parquet partition, a replace
+ * commit rewrites or drops the row groups it overlaps. Its range can also cover
+ * the initial rows and rows from earlier rounds. The non-WAL oracle models this
+ * in {@code FuzzRunner.applyNonWal}: it removes those rows before it applies the
+ * round.
  */
 public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
@@ -74,7 +81,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 0,      // truncate
                 0,      // tableDrop
                 0,      // setTtl
-                0,      // replace
+                0.3,    // replace: may delete initial and earlier-round rows (see class javadoc)
                 0       // symbolAccess
         );
 
@@ -232,7 +239,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 0,      // truncate
                 0,      // tableDrop
                 0,      // setTtl
-                0,      // replace
+                0.3,    // replace: may delete initial and earlier-round rows (see class javadoc)
                 0       // symbolAccess
         );
 
@@ -281,10 +288,14 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             String oracleTable = walTable + "_oracle";
             fuzzer.createInitialTableNonWal(oracleTable, null);
 
-            // Insert rows into the next day so that 2022-02-24 is no longer
+            // Insert rows into a later day so that 2022-02-24 is no longer
             // the active (last) partition and can be converted to Parquet.
-            execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
-            execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
+            // 2022-02-26, not 2022-02-25: a replace range reaches exp(24) us
+            // (about 7.4 h) past its rows, so from 2022-02-24 it can reach
+            // 2022-02-25T07:22 and would delete a sentinel there, leaving
+            // the Parquet partition as the last one for the later rounds.
+            execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
+            execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
             drainWalQueue();
 
             // Convert the first partition (2022-02-24) to Parquet.
@@ -385,6 +396,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             }
 
             // Verify WAL+Parquet table matches the non-WAL oracle.
+            assertSentinelPartitionSurvives(walTable);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
             }
@@ -413,7 +425,17 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 0,      // truncate
                 0,      // tableDrop
                 0,      // setTtl
-                0,      // replace
+                // Replace does not invalidate the at-most-one-small-row-group assertion below.
+                // FuzzTransactionGenerator widens a replace range by exp(24) us (about 7.4 h) on
+                // each side of the block's rows. Here a block starts no earlier than one window
+                // (at most 2.4 h) before 12:00, so a range starts after about 02:14. The initial
+                // rows, one per second and at most 7000 of them, end before 02:00. A range ends
+                // before about 2022-02-25T07:22, short of the 2022-02-26 sentinel partition. So,
+                // within the Parquet partition, a replace deletes only rows that earlier rounds
+                // appended and inserts its own rows in the same span. All of that is the
+                // partition's tail after the initial rows: at most rounds * rowGroupSize / 8
+                // (1.25 x rowGroupSize) rows, which the append path already coalesces.
+                0.5,    // replace
                 0       // symbolAccess
         );
 
@@ -430,7 +452,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
         int initialRowCount = 2000 + rnd.nextInt(5000);
         // Small in-order transactions: low row count per round, no O3 within each batch.
-        // A single transaction per round avoids intra-round timestamp overlap.
+        // transactionCount 1 is raised to the generator's floor of 3 per round.
         fuzzer.setFuzzCounts(
                 false,          // isO3
                 rowGroupSize / 8, // fuzzRowCount — small relative to RG size
@@ -452,10 +474,14 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             String oracleTable = walTable + "_oracle";
             fuzzer.createInitialTableNonWal(oracleTable, null);
 
-            // Insert rows into the next day so that 2022-02-24 is no longer
+            // Insert rows into a later day so that 2022-02-24 is no longer
             // the active (last) partition and can be converted to Parquet.
-            execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
-            execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
+            // 2022-02-26, not 2022-02-25: a replace range reaches exp(24) us
+            // (about 7.4 h) past its rows, so from 2022-02-24 it can reach
+            // 2022-02-25T07:22 and would delete a sentinel there, leaving
+            // the Parquet partition as the last one for the later rounds.
+            execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
+            execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
             drainWalQueue();
 
             final long partitionTs;
@@ -475,8 +501,9 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
 
             // Generate in-order transactions with timestamps after existing data.
             // Initial data covers roughly [00:00, 00:00 + initialRowCount seconds].
-            // Each round uses a non-overlapping window advancing through the second
-            // half of the day, so every batch appends after the previous one.
+            // Each round uses a window advancing through the second half of the day.
+            // An in-order block may start up to one generator step before the previous
+            // block's last timestamp, so a batch mostly, not strictly, appends.
             long dayEnd = partitionTs + DAY_MICROS;
             // fewer rounds on slow CI runners (Mac, Windows)
             int rounds = Os.isLinux() ? 5 + rnd.nextInt(6) : 5 + rnd.nextInt(2);
@@ -512,6 +539,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 drainWalQueue();
             }
 
+            assertSentinelPartitionSurvives(walTable);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
             }
@@ -541,7 +569,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 0,      // truncate
                 0,      // tableDrop
                 0,      // setTtl
-                0,      // replace
+                0.3,    // replace: may delete initial and earlier-round rows (see class javadoc)
                 0       // symbolAccess
         );
 
@@ -583,8 +611,9 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             String oracleTable = walTable + "_oracle";
             fuzzer.createInitialTableNonWal(oracleTable, null);
 
-            execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
-            execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
+            // Sentinel day 2022-02-26 stays beyond every replace range, see testMultiRoundO3OnParquetPartition.
+            execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
+            execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
             drainWalQueue();
 
             final long partitionTs;
@@ -670,6 +699,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 drainWalQueue();
             }
 
+            assertSentinelPartitionSurvives(walTable);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
             }
@@ -701,7 +731,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 0,      // truncate
                 0,      // tableDrop
                 0,      // setTtl
-                0,      // replace
+                0.3,    // replace: may delete initial and earlier-round rows (see class javadoc)
                 0       // symbolAccess
         );
 
@@ -743,8 +773,9 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
             String oracleTable = walTable + "_oracle";
             fuzzer.createInitialTableNonWal(oracleTable, null);
 
-            execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
-            execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-25T00:00:00.000000Z'), ('2022-02-25T00:00:01.000000Z')");
+            // Sentinel day 2022-02-26 stays beyond every replace range, see testMultiRoundO3OnParquetPartition.
+            execute("INSERT INTO " + walTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
+            execute("INSERT INTO " + oracleTable + "(ts) VALUES ('2022-02-26T00:00:00.000000Z'), ('2022-02-26T00:00:01.000000Z')");
             drainWalQueue();
 
             final long partitionTs;
@@ -830,6 +861,7 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                 drainWalQueue();
             }
 
+            assertSentinelPartitionSurvives(walTable);
             try (SqlCompiler compiler = engine.getSqlCompiler()) {
                 TestUtils.assertSqlCursors(compiler, sqlExecutionContext, oracleTable, walTable, LOG);
             }
@@ -943,6 +975,31 @@ public class O3ParquetMergeStrategyFuzzTest extends AbstractFuzzTest {
                     );
                 }
             }
+        }
+    }
+
+    // The 2022-02-26 sentinel partition must outlive every replace, so that the Parquet
+    // partition is never the last partition in any round.
+    private void assertSentinelPartitionSurvives(String tableName) throws Exception {
+        try (TableReader reader = engine.getReader(tableName)) {
+            final int partitionCount = reader.getPartitionCount();
+            final long lastPartitionTs = reader.getPartitionTimestampByIndex(partitionCount - 1);
+            LOG.info().$("sentinel partition check [table=").$(tableName)
+                    .$(", partitionCount=").$(partitionCount)
+                    .$(", lastPartitionTs=").$(lastPartitionTs)
+                    .$(", firstPartitionParquet=").$(reader.getPartitionFormatFromMetadata(0) == PartitionFormat.PARQUET)
+                    .I$();
+            Assert.assertEquals(
+                    "sentinel partition 2022-02-26 was removed",
+                    MicrosTimestampDriver.floor("2022-02-26"),
+                    lastPartitionTs
+            );
+            // A full-day replace may legitimately empty and remove the Parquet partition, so its
+            // format is logged, not asserted.
+            final String tsColumnName = reader.getMetadata().getColumnName(reader.getMetadata().getTimestampIndex());
+            final StringSink sink = new StringSink();
+            TestUtils.printSql(engine, sqlExecutionContext, "SELECT count() FROM " + tableName + " WHERE \"" + tsColumnName + "\" >= '2022-02-26'", sink);
+            TestUtils.assertEquals("count\n2\n", sink);
         }
     }
 }

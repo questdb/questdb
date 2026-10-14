@@ -25,7 +25,19 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
+import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableToken;
+import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.StringSink;
+import io.questdb.test.fuzz.FuzzTransaction;
+import org.junit.Assert;
 import org.junit.Test;
 
 /**
@@ -124,16 +136,10 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
                 0.1,
                 0.0,
                 0.8,
-                0.0,   // replaceProb -- DISABLED: replace-range commits are a mat-view-only
-                //   operation in production (WalWriter.commitMatView via
-                //   MatViewRefreshJob); they are never issued against a regular WAL
-                //   table. With partitionToParquetProb>0 above, enabling replace here
-                //   makes the fuzz apply a replace commit onto a Parquet partition --
-                //   an unsupported, production-unreachable state that suspends the
-                //   table ("commit replace mode is not supported for Parquet
-                //   partitions"). Replace and Parquet must stay mutually exclusive;
-                //   native-partition replace coverage lives in
-                //   testCoveringPostingO3NativeSpillFuzz and testCoveringPostingSquashSpillFuzz.
+                0.1,   // replaceProb -- mat-view refresh, live-view refresh, the ENT
+                //   ACL compactor and direct WalWriter API users issue replace-range
+                //   commits. In this first list a replace rarely reaches a Parquet
+                //   partition; the follow-up list below is what lands replace on Parquet.
                 0.0,
                 0.01,
                 0.1,   // setParquetEncodingProb
@@ -142,7 +148,9 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
         );
         setFuzzCounts(true, 300_000, 300, 20, 10, 1000, 50_000, 12);
         setFuzzProperties(1, getRndO3PartitionSplit(rnd), getRndO3PartitionSplitMaxCount(rnd));
-        runFuzz(rnd);
+        runFuzz(rnd, (tableNameNoWal, tableNameWal, tableNameWalParallel) ->
+                prepareReplaceOnParquetList(rnd, tableNameNoWal, tableNameWal, tableNameWalParallel)
+        );
     }
 
     @Test
@@ -181,6 +189,115 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
         runFuzz(rnd);
     }
 
+    private static void convertAllButLastPartitionToParquet(String tableName) throws Exception {
+        final StringSink partitionList = new StringSink();
+        try (TableReader reader = engine.getReader(tableName)) {
+            // The last partition is the active one and cannot be converted.
+            for (int i = 0, n = reader.getPartitionCount() - 1; i < n; i++) {
+                if (reader.getPartitionFormatFromMetadata(i) == PartitionFormat.PARQUET) {
+                    continue;
+                }
+                if (!partitionList.isEmpty()) {
+                    partitionList.put(',');
+                }
+                partitionList.put('\'');
+                PartitionBy.setSinkForPartition(
+                        partitionList,
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy(),
+                        reader.getPartitionTimestampByIndex(i)
+                );
+                partitionList.put('\'');
+            }
+        }
+        if (!partitionList.isEmpty()) {
+            execute("ALTER TABLE \"" + tableName + "\" CONVERT PARTITION TO PARQUET LIST " + partitionList);
+        }
+    }
+
+    private static int countParquetPartitions(String tableName) {
+        int count = 0;
+        try (TableReader reader = engine.getReader(tableName)) {
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionFormatFromMetadata(i) == PartitionFormat.PARQUET) {
+                    count++;
+                }
+            }
+        }
+        return count;
+    }
+
+    /**
+     * Gives the table a covering POSTING index, unless a column already has one. The first list
+     * adds covering indexes at random (addCoveringIndexProb), so a run can end without any.
+     * Returns the key column's name.
+     */
+    private static String ensureCoveringPostingIndex(Rnd rnd, ObjList<String> tableNames, String tableNameWal) throws Exception {
+        int keyIndex = -1;
+        final StringSink includeList = new StringSink();
+        String keyName;
+        try (TableReader reader = engine.getReader(tableNameWal)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (ColumnType.isSymbol(metadata.getColumnType(i))
+                        && IndexType.isPosting(metadata.getColumnIndexType(i))
+                        && metadata.getCoveringColumnIndices(i) != null
+                        && metadata.getCoveringColumnIndices(i).size() > 0) {
+                    return metadata.getColumnName(i);
+                }
+                if (keyIndex < 0 && ColumnType.isSymbol(metadata.getColumnType(i))) {
+                    keyIndex = i;
+                }
+            }
+            Assert.assertTrue("no SYMBOL column left to index", keyIndex > -1);
+            keyName = metadata.getColumnName(keyIndex);
+            final IntList candidates = new IntList();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                if (i != keyIndex && i != metadata.getTimestampIndex()
+                        && ColumnType.tagOf(metadata.getColumnType(i)) != ColumnType.LONG128) {
+                    candidates.add(i);
+                }
+            }
+            Assert.assertTrue("no column left to cover", candidates.size() > 0);
+            for (int k = 0, includeCount = Math.min(1 + rnd.nextInt(3), candidates.size()); k < includeCount; k++) {
+                final int pick = rnd.nextInt(candidates.size());
+                if (k > 0) {
+                    includeList.put(", ");
+                }
+                includeList.put('"').put(metadata.getColumnName(candidates.getQuick(pick))).put('"');
+                candidates.removeIndex(pick);
+            }
+        }
+        final double kindPick = rnd.nextDouble();
+        final String indexType = kindPick < 0.6 ? "POSTING" : (kindPick < 0.8 ? "POSTING DELTA" : "POSTING EF");
+        for (int t = 0, tn = tableNames.size(); t < tn; t++) {
+            final String tableName = tableNames.getQuick(t);
+            try (TableReader reader = engine.getReader(tableName)) {
+                final TableReaderMetadata metadata = reader.getMetadata();
+                if (metadata.isColumnIndexed(metadata.getColumnIndex(keyName))) {
+                    execute("ALTER TABLE \"" + tableName + "\" ALTER COLUMN \"" + keyName + "\" DROP INDEX");
+                }
+            }
+            drainWalQueue();
+            execute("ALTER TABLE \"" + tableName + "\" ALTER COLUMN \"" + keyName + "\" ADD INDEX TYPE " + indexType + " INCLUDE (" + includeList + ")");
+        }
+        drainWalQueue();
+        LOG.info().$("follow-up list added covering index [column=").$safe(keyName)
+                .$(", type=").$(indexType)
+                .$(", include=").$(includeList)
+                .I$();
+        return keyName;
+    }
+
+    private static void insertSameRows(ObjList<String> tableNames, String tsColumnName) throws Exception {
+        for (int t = 0, tn = tableNames.size(); t < tn; t++) {
+            final String tableName = tableNames.getQuick(t);
+            execute("INSERT INTO \"" + tableName + "\"(\"" + tsColumnName + "\") VALUES "
+                    + "('2022-03-10T00:00:00.000000Z'), ('2022-03-11T00:00:00.000000Z')");
+        }
+        drainWalQueue();
+    }
+
     // A tiny posting indexer spill budget forces compactIfOverBudget ->
     // flushAllPending mid-build, so a full index() rebuild over an O3-merged or
     // squashed partition trips the spill budget and commitDense must consolidate
@@ -189,5 +306,113 @@ public class PostingIndexO3ConcurrencyFuzzTest extends AbstractFuzzTest {
     // the result-set comparison stays apples-to-apples.
     private void forcePostingSpill(Rnd rnd) {
         node1.setProperty(PropertyKey.CAIRO_POSTING_INDEX_INDEXER_SPILL_BYTES_MAX, 256L + rnd.nextInt(64 * 1024));
+    }
+
+    /**
+     * The follow-up list is where replace reaches Parquet partitions with posting indexes. The
+     * first list does not get there. It is capped at 5 transactions
+     * (1_500_000 / fuzzRowCount), only about a third of its iterations write data, the SET TTL
+     * it usually generates stops replace for every later data block, and a replace lands on
+     * Parquet only when a conversion of that partition precedes it.
+     * <p>
+     * So once the first list is verified, the three tables get the same preparation: TTL off,
+     * a covering POSTING index if the first list left none, every partition but the active one
+     * converted to Parquet on the WAL tables. Then a replace-heavy list is generated over the
+     * day of one of those Parquet partitions. The spill budget from {@link #forcePostingSpill}
+     * still applies, so each replace rewrites Parquet row groups and re-seals the posting index
+     * (O3PartitionJob.updateParquetIndexes, deferParquetPostingSealPurges) under spill pressure.
+     */
+    private ObjList<FuzzTransaction> prepareReplaceOnParquetList(
+            Rnd rnd,
+            String tableNameNoWal,
+            String tableNameWal,
+            String tableNameWalParallel
+    ) throws Exception {
+        final ObjList<String> tableNames = new ObjList<>();
+        tableNames.add(tableNameNoWal);
+        tableNames.add(tableNameWal);
+        tableNames.add(tableNameWalParallel);
+        // Replace with TTL can drop partitions on the WAL tables that the oracle keeps: see the
+        // setTtlIteration guard in FuzzTransactionGenerator.
+        for (int t = 0, tn = tableNames.size(); t < tn; t++) {
+            final String tableName = tableNames.getQuick(t);
+            execute("ALTER TABLE \"" + tableName + "\" SET TTL 0 DAYS");
+        }
+        drainWalQueue();
+
+        final String keyName = ensureCoveringPostingIndex(rnd, tableNames, tableNameWal);
+
+        String tsColumnName;
+        int partitionCount;
+        try (TableReader reader = engine.getReader(tableNameWal)) {
+            tsColumnName = reader.getMetadata().getColumnName(reader.getMetadata().getTimestampIndex());
+            partitionCount = reader.getPartitionCount();
+        }
+        if (partitionCount < 2) {
+            // A truncate or TTL near the end of the first list can leave at most the active
+            // partition, which cannot be converted.
+            insertSameRows(tableNames, tsColumnName);
+        }
+
+        convertAllButLastPartitionToParquet(tableNameWal);
+        convertAllButLastPartitionToParquet(tableNameWalParallel);
+        drainWalQueue();
+        for (int i = 1, n = tableNames.size(); i < n; i++) {
+            final TableToken tableToken = engine.verifyTableName(tableNames.getQuick(i));
+            Assert.assertFalse("table suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertTrue("no parquet partition in " + tableNames.getQuick(i), countParquetPartitions(tableNames.getQuick(i)) > 0);
+        }
+
+        // The list's rows go into one Parquet partition's day. The table's partitions need not
+        // be contiguous (TTL, drops, truncate), so a list spread over [min, max] can miss them
+        // all. A replace range reaches about 7.4 h past its rows, so neighbours are hit too.
+        final long startTimestamp;
+        final long endTimestamp;
+        try (TableReader reader = engine.getReader(tableNameWal)) {
+            final IntList parquetPartitions = new IntList();
+            for (int i = 0, n = reader.getPartitionCount(); i < n; i++) {
+                if (reader.getPartitionFormatFromMetadata(i) == PartitionFormat.PARQUET) {
+                    parquetPartitions.add(i);
+                }
+            }
+            final int partitionIndex = parquetPartitions.getQuick(rnd.nextInt(parquetPartitions.size()));
+            startTimestamp = reader.getPartitionTimestampByIndex(partitionIndex);
+            endTimestamp = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()).addDays(startTimestamp, 1);
+            LOG.info().$("follow-up list targets parquet [table=").$(tableNameWal)
+                    .$(", partitions=").$(reader.getPartitionCount())
+                    .$(", parquetPartitions=").$(parquetPartitions.size())
+                    .$(", targetPartitionIndex=").$(partitionIndex)
+                    .$(", targetPartitionRows=").$(reader.getPartitionRowCountFromMetadata(partitionIndex))
+                    .$(", coveringKey=").$safe(keyName)
+                    .I$();
+        }
+
+        setFuzzProbabilities(
+                0.01,  // cancelRowsProb
+                0.01,  // notSetProb
+                0.1,   // nullSetProb
+                0.05,  // rollbackProb
+                0.02,  // colAddProb
+                0.02,  // colRemoveProb
+                0.02,  // colRenameProb
+                0.02,  // colTypeChangeProb
+                1.0,   // dataAddProb
+                0.01,  // equalTsRowsProb
+                0.0,   // partitionDropProb
+                0.0,   // partitionToParquetProb -- already converted above
+                0.0,   // partitionToNativeProb -- keep the targets Parquet
+                0.0,   // truncateProb
+                0.0,   // tableDropProb
+                0.0,   // setTtlProb
+                0.5,   // replaceProb
+                0.0,   // symbolAccessProb
+                0.01,  // queryProb
+                0.0,   // setParquetEncodingProb
+                0.2,   // addCoveringIndexProb
+                0.0    // setTableFormatProb
+        );
+        // 20 transactions stay under the 1_500_000 / fuzzRowCount cap.
+        setFuzzCounts(true, 20_000, 20, 20, 10, 1000, 50_000, 12);
+        return fuzzer.generateTransactions(tableNameWal, rnd, startTimestamp, endTimestamp);
     }
 }

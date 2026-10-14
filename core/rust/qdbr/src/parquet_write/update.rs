@@ -580,7 +580,6 @@ impl ParquetUpdater {
                     format!("Failed to write row group {row_group_id} in rewrite mode")
                 })
         } else {
-            // Track the old row group's bytes that will become dead space.
             if row_group_id < 0 {
                 return Err(fmt_err!(
                     InvalidLayout,
@@ -588,36 +587,67 @@ impl ParquetUpdater {
                     row_group_id
                 ));
             }
-            let rg_idx = row_group_id as usize;
-            if rg_idx < self.file_metadata.row_groups.len() {
-                let old_rg = &self.file_metadata.row_groups[rg_idx];
-
-                let (rg_start, rg_end) =
-                    old_rg.data_byte_range(&mut self.reader).with_context(|_| {
-                        format!(
-                            "replace_row_group: failed to compute byte range for rg {}",
-                            rg_idx,
-                        )
-                    })?;
-                if rg_start < rg_end {
-                    self.accumulated_unused_bytes += rg_end - rg_start;
-                }
-
-                // Column/offset indexes are stored separately from row group data.
-                for col in old_rg.columns() {
-                    if let Some(len) = col.column_index_length() {
-                        self.accumulated_unused_bytes += len as u64;
-                    }
-                    if let Some(len) = col.offset_index_length() {
-                        self.accumulated_unused_bytes += len as u64;
-                    }
-                }
-            }
-
             self.parquet_file
                 .replace(row_group, Some(row_group_id), &bloom_hashes)
-                .with_context(|_| format!("Failed to replace row group {row_group_id}"))
+                .with_context(|_| format!("Failed to replace row group {row_group_id}"))?;
+            // Track the old row group's bytes that became dead space. Only
+            // after parquet2 accepted the replacement, so a rejected call
+            // (e.g. of a removed group) leaves the accounting untouched.
+            self.account_displaced_row_group(row_group_id as usize)
         }
+    }
+
+    /// Update mode only: removes original row group `rg_index` (pre-update
+    /// index space, same as [`Self::replace_row_group`]) from the footer that
+    /// [`Self::end`] writes. Its data, bloom filter and page-index bytes are
+    /// accounted as unused, exactly as a replacement accounts the group it
+    /// displaces.
+    ///
+    /// Errors in rewrite mode (the caller removes a group there by not copying
+    /// it) and on a negative, out-of-range, already removed or already
+    /// replaced index. Must not panic: `rg_index` comes from Java and the byte
+    /// range from file contents.
+    pub fn remove_row_group(&mut self, rg_index: i32) -> ParquetResult<()> {
+        if self.is_rewrite {
+            return Err(fmt_err!(
+                InvalidLayout,
+                "remove_row_group: not supported in rewrite mode (rg {})",
+                rg_index
+            ));
+        }
+        // parquet2 validates the index and the double-remove/replace
+        // conflicts first, so a rejected call leaves the accounting untouched.
+        self.parquet_file.remove(rg_index).map_err(|e| {
+            ParquetError::with_descr(ParquetErrorReason::Parquet2(e), "invalid row group removal")
+        })?;
+        self.account_displaced_row_group(rg_index as usize)
+    }
+
+    /// Adds original row group `rg_idx`'s bytes, which the next footer no
+    /// longer references, to the unused-bytes counter: its contiguous data
+    /// range (including the last column's bloom filter) plus every column's
+    /// ColumnIndex and OffsetIndex. An out-of-range index adds nothing.
+    fn account_displaced_row_group(&mut self, rg_idx: usize) -> ParquetResult<()> {
+        // Callers pass an index parquet2 has already validated.
+        if let Some(old_rg) = self.file_metadata.row_groups.get(rg_idx) {
+            let (rg_start, rg_end) = old_rg
+                .data_byte_range(&mut self.reader)
+                .with_context(|_| format!("failed to compute byte range for rg {rg_idx}"))?;
+            let mut displaced = rg_end.saturating_sub(rg_start);
+            // Column/offset indexes are stored separately from row group data.
+            // Lengths come from the file: a negative one counts as zero, and
+            // the sums saturate rather than overflow.
+            for col in old_rg.columns() {
+                for len in [col.column_index_length(), col.offset_index_length()]
+                    .into_iter()
+                    .flatten()
+                {
+                    displaced = displaced.saturating_add(u64::try_from(len).unwrap_or(0));
+                }
+            }
+            self.accumulated_unused_bytes = self.accumulated_unused_bytes.saturating_add(displaced);
+        }
+        Ok(())
     }
 
     pub fn insert_row_group(&mut self, partition: &Partition, position: i32) -> ParquetResult<()> {
@@ -1477,6 +1507,7 @@ impl ParquetUpdater {
             if self.is_rewrite || self.existing_parquet_file_size <= 0 {
                 let thrift_row_groups = self.parquet_file.row_groups();
                 let bloom_bitsets = self.parquet_file.bloom_bitsets();
+                let origins = self.parquet_file.row_group_origins();
 
                 // Full create: rewrite or first-time generation.
                 let (parquet_meta_bytes, _) = crate::parquet_metadata::generate_parquet_metadata(
@@ -1487,6 +1518,7 @@ impl ParquetUpdater {
                     footer_offset,
                     footer_length,
                     bloom_bitsets,
+                    Some(origins),
                     self.result_unused_bytes,
                     qdb_meta.squash_tracker,
                     self.seq_txn,
@@ -1499,6 +1531,7 @@ impl ParquetUpdater {
             } else {
                 let thrift_row_groups = self.parquet_file.row_groups();
                 let bloom_bitsets = self.parquet_file.bloom_bitsets();
+                let origins = self.parquet_file.row_group_origins();
 
                 // Incremental update: read the committed _pm and append the new
                 // snapshot. Two distinct offsets drive this, both threaded in
@@ -1530,6 +1563,7 @@ impl ParquetUpdater {
                     parse_anchor,
                     append_base,
                     thrift_row_groups,
+                    origins,
                     footer_offset,
                     footer_length,
                     bloom_bitsets,
@@ -5813,6 +5847,777 @@ mod tests {
             bloom_b,
             "target col 1 must not carry b's bloom"
         );
+        Ok(())
+    }
+
+    /// One in-place update op against a bloom fixture: replace or remove the
+    /// original group at an ordinal, or insert a new group at a final position.
+    #[derive(Debug)]
+    enum ShiftOp {
+        Replace(i32, i32),
+        Insert(i32, i32),
+        Remove(i32),
+    }
+
+    fn bloom_partition(values: &[i32]) -> Partition {
+        Partition {
+            table: "bloom_shift".to_string(),
+            columns: vec![make_column("v", ColumnTypeTag::Int.into_type(), values)],
+        }
+    }
+
+    /// Four values per group, `base..base + 4`.
+    fn bloom_values(base: i32) -> Vec<i32> {
+        (base..base + 4).collect()
+    }
+
+    /// Builds a 3-row-group parquet file (bloom filter on INT `v`, values
+    /// 1000s/2000s/3000s) plus its `_pm`, applies `ops` in update mode, commits
+    /// the `_pm`, and asserts every final row group's `_pm` bloom bitset equals
+    /// the parquet file's own bloom bitset for that group and contains the
+    /// group's values. `expected_bases` lists each final group's value base.
+    struct BloomFixture {
+        source: NamedTempFile,
+        source_bytes: Vec<u8>,
+        pm: NamedTempFile,
+        pm_size: u64,
+    }
+
+    impl BloomFixture {
+        fn source_len(&self) -> u64 {
+            self.source_bytes.len() as u64
+        }
+
+        /// Update-mode updater over the fixture's file and `_pm`.
+        fn updater(
+            &self,
+            allocator: &crate::allocator::TestAllocatorState,
+        ) -> Result<super::ParquetUpdater, Box<dyn Error>> {
+            self.updater_at(allocator, self.source_len(), self.pm_size)
+        }
+
+        /// Update-mode updater over the fixture's file and `_pm` as committed
+        /// at parquet size `pq_size` and `_pm` size `pm_size`.
+        fn updater_at(
+            &self,
+            allocator: &crate::allocator::TestAllocatorState,
+            pq_size: u64,
+            pm_size: u64,
+        ) -> Result<super::ParquetUpdater, Box<dyn Error>> {
+            Ok(super::ParquetUpdater::new(
+                allocator.allocator(),
+                self.source.reopen()?,
+                pq_size,
+                self.source.reopen()?,
+                pq_size,
+                None,
+                true,
+                false,
+                CompressionOptions::Uncompressed,
+                None,
+                None,
+                DEFAULT_BLOOM_FILTER_FPP,
+                0.0,
+                Some(self.pm.reopen()?),
+                pm_size,
+                pm_size,
+                pq_size as i64,
+                SeqTxn::UNSET,
+            )?)
+        }
+    }
+
+    /// A 3-row-group parquet file (bloom filter on INT `v`, values
+    /// 1000s/2000s/3000s, 4 rows each) plus its `_pm`.
+    fn bloom_fixture() -> Result<BloomFixture, Box<dyn Error>> {
+        bloom_fixture_with_bases(&[1000, 2000, 3000])
+    }
+
+    /// A parquet file with one 4-row group per `bases` entry (bloom filter on
+    /// INT `v`, values `base..base + 4`) plus its `_pm`.
+    fn bloom_fixture_with_bases(bases: &[i32]) -> Result<BloomFixture, Box<dyn Error>> {
+        use qdb_parquet_meta::convert::{convert_from_parquet, SliceBloomFilterSource};
+
+        let initial: Vec<i32> = bases.iter().flat_map(|&b| bloom_values(b)).collect();
+        let source = NamedTempFile::new()?;
+        ParquetWriter::new(source.reopen()?)
+            .with_statistics(true)
+            .with_compression(CompressionOptions::Uncompressed)
+            .with_bloom_filter_columns([0usize].into_iter().collect())
+            .with_row_group_size(Some(4))
+            .finish(bloom_partition(&initial))?;
+
+        let mut source_bytes = Vec::new();
+        source.reopen()?.read_to_end(&mut source_bytes)?;
+        let source_len = source_bytes.len() as u64;
+        let source_meta = read_metadata_with_size(&mut Cursor::new(&source_bytes), source_len)?;
+        assert_eq!(source_meta.row_groups.len(), bases.len());
+        assert!(source_meta.row_groups[0].columns()[0]
+            .metadata()
+            .bloom_filter_offset
+            .is_some());
+        let footer_len = u32::from_le_bytes(
+            source_bytes[source_bytes.len() - 8..source_bytes.len() - 4].try_into()?,
+        );
+        let footer_offset = source_len - 8 - footer_len as u64;
+        let (pm_bytes, pm_size) = convert_from_parquet(
+            &source_meta,
+            None,
+            footer_offset,
+            footer_len,
+            &SliceBloomFilterSource::new(&source_bytes),
+            None,
+        )?;
+        let pm = NamedTempFile::new()?;
+        pm.reopen()?.write_all(&pm_bytes)?;
+        Ok(BloomFixture { source, source_bytes, pm, pm_size })
+    }
+
+    /// Asserts that `_pm` snapshot `pm_size` lists one row group per
+    /// `expected_bases` entry and that each one's `_pm` bloom bitset equals
+    /// the parquet bloom bitset of the same group in `parquet_bytes` and
+    /// contains the group's values.
+    fn assert_pm_bloom_snapshot(
+        pm_bytes: &[u8],
+        pm_size: u64,
+        parquet_bytes: &[u8],
+        expected_bases: &[i32],
+    ) -> Result<(), Box<dyn Error>> {
+        use qdb_parquet_meta::reader::ParquetMetaReader;
+
+        let meta =
+            read_metadata_with_size(&mut Cursor::new(parquet_bytes), parquet_bytes.len() as u64)?;
+        assert_eq!(meta.row_groups.len(), expected_bases.len());
+        assert_eq!(meta.num_rows, 4 * expected_bases.len());
+        let reader = ParquetMetaReader::from_file_size(pm_bytes, pm_size)?;
+        assert_eq!(reader.row_group_count() as usize, expected_bases.len());
+        let pos = reader
+            .bloom_filter_position(0)
+            .ok_or("bloom column missing from _pm")?;
+
+        for (rg, &base) in expected_bases.iter().enumerate() {
+            let pq_offset = meta.row_groups[rg].columns()[0]
+                .metadata()
+                .bloom_filter_offset
+                .ok_or("parquet bloom filter missing")?;
+            let pq_bitset =
+                parquet2::bloom_filter::read_from_slice_at_offset(pq_offset as u64, parquet_bytes)?;
+
+            let pm_offset = reader.bloom_filter_offset_in_pm(rg, pos)? as usize;
+            assert_ne!(
+                pm_offset, 0,
+                "rg {rg} (base {base}) lost its _pm bloom filter"
+            );
+            let pm_len =
+                i32::from_le_bytes(pm_bytes[pm_offset..pm_offset + 4].try_into()?) as usize;
+            let pm_bitset = &pm_bytes[pm_offset + 4..pm_offset + 4 + pm_len];
+
+            for v in bloom_values(base) {
+                assert!(
+                    parquet2::bloom_filter::is_in_set(
+                        pm_bitset,
+                        parquet2::bloom_filter::hash_native(v)
+                    ),
+                    "rg {rg}: _pm bloom must contain its own value {v}"
+                );
+            }
+            assert_eq!(
+                pm_bitset, pq_bitset,
+                "rg {rg} (base {base}): _pm bloom differs from the parquet bloom"
+            );
+        }
+        Ok(())
+    }
+
+    /// Reads column 0 (`v`) of every row through an independent reader.
+    fn read_v_column(bytes: &[u8]) -> Vec<Option<i32>> {
+        use parquet::arrow::arrow_reader::ParquetRecordBatchReaderBuilder;
+        let reader = ParquetRecordBatchReaderBuilder::try_new(Bytes::from(bytes.to_vec()))
+            .unwrap()
+            .build()
+            .unwrap();
+        let mut out = Vec::new();
+        for batch in reader {
+            let batch = batch.unwrap();
+            let arr = batch
+                .column(0)
+                .as_any()
+                .downcast_ref::<arrow::array::Int32Array>()
+                .unwrap();
+            out.extend(arr.iter());
+        }
+        out
+    }
+
+    /// Builds the 3-row-group fixture, applies `ops` in update mode, commits
+    /// the `_pm`, and asserts that:
+    /// - every final row group's `_pm` bloom bitset equals the parquet file's
+    ///   own bloom bitset for that group and contains the group's values;
+    /// - the rows read back in `expected_bases` order;
+    /// - the committed parquet and `_pm` bytes are untouched, and the old
+    ///   `_pm` snapshot still resolves the original 3 groups with their own
+    ///   blooms (MVCC for a reader pinned at the old sizes).
+    ///
+    /// `expected_bases` lists each final group's value base.
+    fn assert_pm_bloom_follows_row_group(
+        ops: &[ShiftOp],
+        expected_bases: &[i32],
+    ) -> Result<(), Box<dyn Error>> {
+        let fixture = bloom_fixture()?;
+        let old_pm_bytes = {
+            let mut bytes = Vec::new();
+            fixture.pm.reopen()?.read_to_end(&mut bytes)?;
+            bytes
+        };
+
+        let allocator = crate::allocator::TestAllocatorState::new();
+        let mut updater = fixture.updater(&allocator)?;
+        // Keep every op's values alive until end(): Column borrows them.
+        let op_values: Vec<Vec<i32>> = ops
+            .iter()
+            .map(|op| match op {
+                ShiftOp::Replace(_, base) | ShiftOp::Insert(_, base) => bloom_values(*base),
+                ShiftOp::Remove(_) => vec![],
+            })
+            .collect();
+        for (op, values) in ops.iter().zip(&op_values) {
+            match op {
+                ShiftOp::Replace(ordinal, _) => {
+                    updater.replace_row_group(&bloom_partition(values), *ordinal)?
+                }
+                ShiftOp::Insert(position, _) => {
+                    updater.insert_row_group(&bloom_partition(values), *position)?
+                }
+                ShiftOp::Remove(ordinal) => updater.remove_row_group(*ordinal)?,
+            }
+        }
+        updater.end(None)?;
+        updater.commit_parquet_meta(false)?;
+        drop(updater);
+
+        let mut final_bytes = Vec::new();
+        fixture.source.reopen()?.read_to_end(&mut final_bytes)?;
+        let pm_size = read_pm_header(&fixture.pm)?;
+        let mut pm_bytes = Vec::new();
+        fixture.pm.reopen()?.read_to_end(&mut pm_bytes)?;
+        assert_pm_bloom_snapshot(&pm_bytes, pm_size, &final_bytes, expected_bases)?;
+
+        let expected_values: Vec<Option<i32>> = expected_bases
+            .iter()
+            .flat_map(|&b| bloom_values(b))
+            .map(Some)
+            .collect();
+        assert_eq!(read_v_column(&final_bytes), expected_values);
+
+        // Append-only: committed bytes are untouched (the `_pm` header at
+        // offset 0 is the only patched word), and the old snapshot resolves.
+        let source_len = fixture.source_bytes.len();
+        assert!(final_bytes.len() > source_len);
+        assert_eq!(&final_bytes[..source_len], &fixture.source_bytes[..]);
+        let old_pm_len = fixture.pm_size as usize;
+        assert_eq!(&pm_bytes[8..old_pm_len], &old_pm_bytes[8..old_pm_len]);
+        assert_pm_bloom_snapshot(
+            &pm_bytes,
+            fixture.pm_size,
+            &fixture.source_bytes,
+            &[1000, 2000, 3000],
+        )?;
+        Ok(())
+    }
+
+    #[test]
+    fn pm_bloom_follows_split_merge() -> Result<(), Box<dyn Error>> {
+        // MERGE into rg1 splits into two outputs: chunk0 replaces rg1, chunk1
+        // is inserted at final position 2. Final: [rg0, c0, c1, rg2].
+        assert_pm_bloom_follows_row_group(
+            &[ShiftOp::Replace(1, 5000), ShiftOp::Insert(2, 6000)],
+            &[1000, 5000, 6000, 3000],
+        )
+    }
+
+    #[test]
+    fn pm_bloom_follows_two_mid_file_inserts() -> Result<(), Box<dyn Error>> {
+        // Final: [rg0, n1, rg1, n2, rg2].
+        assert_pm_bloom_follows_row_group(
+            &[ShiftOp::Insert(1, 7000), ShiftOp::Insert(3, 8000)],
+            &[1000, 7000, 2000, 8000, 3000],
+        )
+    }
+
+    #[test]
+    fn pm_bloom_follows_shifted_existing_group() -> Result<(), Box<dyn Error>> {
+        // Final: [a, n, rg1, b]. The untouched rg1 shifts to position 2.
+        assert_pm_bloom_follows_row_group(
+            &[
+                ShiftOp::Replace(0, 5000),
+                ShiftOp::Insert(1, 7000),
+                ShiftOp::Replace(2, 6000),
+            ],
+            &[5000, 7000, 2000, 6000],
+        )
+    }
+
+    #[test]
+    fn pm_bloom_follows_one_gap_two_new_groups() -> Result<(), Box<dyn Error>> {
+        // One gap split into two groups. Final: [rg0, n1, n2, rg1, rg2].
+        assert_pm_bloom_follows_row_group(
+            &[ShiftOp::Insert(1, 7000), ShiftOp::Insert(2, 8000)],
+            &[1000, 7000, 8000, 2000, 3000],
+        )
+    }
+
+    #[test]
+    fn pm_bloom_follows_split_rg0_plus_late_insert() -> Result<(), Box<dyn Error>> {
+        // rg0 splits into two, then a group lands after rg2.
+        // Final: [c0, c1, rg1, rg2, n].
+        assert_pm_bloom_follows_row_group(
+            &[
+                ShiftOp::Replace(0, 5000),
+                ShiftOp::Insert(1, 6000),
+                ShiftOp::Insert(4, 7000),
+            ],
+            &[5000, 6000, 2000, 3000, 7000],
+        )
+    }
+
+    #[test]
+    fn pm_bloom_follows_single_mid_file_insert() -> Result<(), Box<dyn Error>> {
+        // Control: Final: [rg0, n, rg1, rg2].
+        assert_pm_bloom_follows_row_group(&[ShiftOp::Insert(1, 7000)], &[1000, 7000, 2000, 3000])
+    }
+
+    #[test]
+    fn pm_bloom_follows_append_and_replace() -> Result<(), Box<dyn Error>> {
+        // Control: no shift. Final: [rg0, a, rg2, n].
+        assert_pm_bloom_follows_row_group(
+            &[ShiftOp::Replace(1, 5000), ShiftOp::Insert(3, 7000)],
+            &[1000, 5000, 3000, 7000],
+        )
+    }
+
+    #[test]
+    fn pm_bloom_follows_remove_middle() -> Result<(), Box<dyn Error>> {
+        // DROP(rg1). Final: [rg0, rg2]; rg2 shifts down to position 1.
+        assert_pm_bloom_follows_row_group(&[ShiftOp::Remove(1)], &[1000, 3000])
+    }
+
+    #[test]
+    fn pm_bloom_follows_remove_first() -> Result<(), Box<dyn Error>> {
+        // DROP(rg0). Every survivor shifts down.
+        assert_pm_bloom_follows_row_group(&[ShiftOp::Remove(0)], &[2000, 3000])
+    }
+
+    #[test]
+    fn pm_bloom_follows_remove_last() -> Result<(), Box<dyn Error>> {
+        assert_pm_bloom_follows_row_group(&[ShiftOp::Remove(2)], &[1000, 2000])
+    }
+
+    #[test]
+    fn pm_bloom_follows_remove_first_and_last() -> Result<(), Box<dyn Error>> {
+        assert_pm_bloom_follows_row_group(&[ShiftOp::Remove(0), ShiftOp::Remove(2)], &[2000])
+    }
+
+    #[test]
+    fn pm_bloom_follows_remove_then_insert_in_its_place() -> Result<(), Box<dyn Error>> {
+        // DROP(rg1) then COPY_O3 at final position 1. Final: [rg0, n, rg2].
+        assert_pm_bloom_follows_row_group(
+            &[ShiftOp::Remove(1), ShiftOp::Insert(1, 7000)],
+            &[1000, 7000, 3000],
+        )
+    }
+
+    #[test]
+    fn pm_bloom_follows_split_merge_remove_insert_replace() -> Result<(), Box<dyn Error>> {
+        // Design 3.2 worked example: MERGE(rg0) splits into two, DROP(rg1),
+        // COPY_O3 N, MERGE(rg2). Final: [a1, a2, n, c].
+        assert_pm_bloom_follows_row_group(
+            &[
+                ShiftOp::Replace(0, 5000),
+                ShiftOp::Insert(1, 6000),
+                ShiftOp::Remove(1),
+                ShiftOp::Insert(2, 7000),
+                ShiftOp::Replace(2, 8000),
+            ],
+            &[5000, 6000, 7000, 8000],
+        )
+    }
+
+    #[test]
+    fn pm_bloom_follows_remove_first_and_split_merge() -> Result<(), Box<dyn Error>> {
+        // DROP(rg0), MERGE(rg1) split in two, COPY(rg2). Final: [b1, b2, rg2].
+        assert_pm_bloom_follows_row_group(
+            &[
+                ShiftOp::Remove(0),
+                ShiftOp::Replace(1, 5000),
+                ShiftOp::Insert(1, 6000),
+            ],
+            &[5000, 6000, 3000],
+        )
+    }
+
+    #[test]
+    fn pm_bloom_follows_remove_with_tail_append() -> Result<(), Box<dyn Error>> {
+        // DROP(rg0), COPY(rg1), COPY(rg2), COPY_O3 after the last group.
+        assert_pm_bloom_follows_row_group(
+            &[ShiftOp::Remove(0), ShiftOp::Insert(2, 7000)],
+            &[2000, 3000, 7000],
+        )
+    }
+
+    #[test]
+    fn pm_bloom_follows_remove_all_but_insert() -> Result<(), Box<dyn Error>> {
+        assert_pm_bloom_follows_row_group(
+            &[
+                ShiftOp::Remove(0),
+                ShiftOp::Remove(1),
+                ShiftOp::Remove(2),
+                ShiftOp::Insert(0, 7000),
+            ],
+            &[7000],
+        )
+    }
+
+    /// Runs `op` on a fresh fixture updater and returns
+    /// (result_unused_bytes, new parquet size, old parquet size).
+    fn unused_after(
+        op: impl FnOnce(&mut super::ParquetUpdater) -> Result<(), Box<dyn Error>>,
+    ) -> Result<(u64, u64, u64), Box<dyn Error>> {
+        let fixture = bloom_fixture()?;
+        let allocator = crate::allocator::TestAllocatorState::new();
+        let mut updater = fixture.updater(&allocator)?;
+        op(&mut updater)?;
+        let new_size = updater.end(None)?;
+        updater.commit_parquet_meta(false)?;
+        Ok((
+            updater.result_unused_bytes(),
+            new_size,
+            fixture.source_len(),
+        ))
+    }
+
+    #[test]
+    fn remove_row_group_accounts_unused_bytes_like_replace() -> Result<(), Box<dyn Error>> {
+        let values = bloom_values(5000);
+        let (replaced, _, _) =
+            unused_after(|u| Ok(u.replace_row_group(&bloom_partition(&values), 1)?))?;
+        let (removed, new_size, old_size) = unused_after(|u| Ok(u.remove_row_group(1)?))?;
+        let (nothing, _, _) = unused_after(|_| Ok(()))?;
+        // Both displace exactly rg1's bytes; `nothing` is the old footer alone.
+        assert_eq!(removed, replaced);
+        assert!(removed > nothing, "{removed} <= {nothing}");
+
+        // Expected: rg1's data range (incl. bloom) + its page-index lengths
+        // + the superseded footer.
+        let fixture = bloom_fixture()?;
+        let mut reader = fixture.source.reopen()?;
+        let meta = read_metadata_with_size(&mut reader, fixture.source_len())?;
+        let rg = &meta.row_groups[1];
+        let (lo, hi) = super::RowGroupByteRange::data_byte_range(rg, &mut reader)?;
+        let index_bytes: u64 = rg
+            .columns()
+            .iter()
+            .map(|c| {
+                c.column_index_length().unwrap_or(0) as u64
+                    + c.offset_index_length().unwrap_or(0) as u64
+            })
+            .sum();
+        assert_eq!(removed - nothing, hi - lo + index_bytes);
+
+        // A removal-only update appends only a new footer, right at the old
+        // EOF: the growth is the footer plus its 8-byte trailer.
+        let footer_len = new_size - old_size - 8;
+        let fixture = bloom_fixture()?;
+        let allocator = crate::allocator::TestAllocatorState::new();
+        let mut updater = fixture.updater(&allocator)?;
+        updater.remove_row_group(1)?;
+        updater.end(None)?;
+        let mut bytes = Vec::new();
+        fixture.source.reopen()?.read_to_end(&mut bytes)?;
+        let written_footer_len =
+            u32::from_le_bytes(bytes[bytes.len() - 8..bytes.len() - 4].try_into()?) as u64;
+        assert_eq!(written_footer_len, footer_len);
+        Ok(())
+    }
+
+    #[test]
+    fn remove_row_group_rejects_invalid_calls() -> Result<(), Box<dyn Error>> {
+        let (single, _, _) = unused_after(|u| Ok(u.remove_row_group(1)?))?;
+        let values = bloom_values(5000);
+        let (rejected, _, _) = unused_after(|u| {
+            u.remove_row_group(1)?;
+            assert!(u.remove_row_group(-1).is_err(), "negative");
+            assert!(u.remove_row_group(3).is_err(), "out of range");
+            assert!(u.remove_row_group(1).is_err(), "double remove");
+            assert!(
+                u.replace_row_group(&bloom_partition(&values), 1).is_err(),
+                "replace after remove"
+            );
+            Ok(())
+        })?;
+        // Rejected calls leave the accounting untouched.
+        assert_eq!(rejected, single);
+
+        let (_, _, _) = unused_after(|u| {
+            u.replace_row_group(&bloom_partition(&values), 0)?;
+            let err = u.remove_row_group(0).unwrap_err();
+            assert!(format!("{err}").contains("replaced"), "{err}");
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    #[test]
+    fn remove_row_group_errors_in_rewrite_mode() -> Result<(), Box<dyn Error>> {
+        let fixture = bloom_fixture()?;
+        let output = NamedTempFile::new()?;
+        let allocator = crate::allocator::TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            allocator.allocator(),
+            fixture.source.reopen()?,
+            fixture.source_len(),
+            output.reopen()?,
+            0,
+            None,
+            true,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            None,
+            0,
+            0,
+            0,
+            SeqTxn::UNSET,
+        )?;
+        let err = updater.remove_row_group(0).unwrap_err();
+        assert!(format!("{err}").contains("rewrite mode"), "{err}");
+        Ok(())
+    }
+
+    /// Checks the snapshot a reader pinned at parquet size `pq_size` and `_pm`
+    /// size `pm_size` sees, given the latest file bytes `pq_all` and `pm_all`:
+    /// - `_pm` resolution by parquet size (the chain walk from the latest
+    ///   footer) lands on the footer at `pm_size`, and that footer points at
+    ///   the parquet footer ending at `pq_size`;
+    /// - per row group: row count, `byte_range_start` against the parquet
+    ///   chunk start, min/max stats, and the bloom (via
+    ///   `assert_pm_bloom_snapshot`);
+    /// - the values read back through arrow-rs, in `bases` order.
+    fn assert_random_update_snapshot(
+        pq_all: &[u8],
+        pm_all: &[u8],
+        pq_size: u64,
+        pm_size: u64,
+        bases: &[i32],
+    ) -> Result<(), Box<dyn Error>> {
+        use qdb_parquet_meta::reader::ParquetMetaReader;
+
+        let pq = &pq_all[..usize::try_from(pq_size)?];
+        let latest_pm_size = u64::from_le_bytes(pm_all[..8].try_into()?);
+        let latest_pm = &pm_all[..usize::try_from(latest_pm_size)?];
+        let (resolved_offset, _) =
+            ParquetMetaReader::find_footer_for_parquet_size(latest_pm, latest_pm_size, pq_size)?;
+        let reader = ParquetMetaReader::from_file_size(pm_all, pm_size)?;
+        assert_eq!(
+            reader.footer_offset(),
+            resolved_offset,
+            "parquet size {pq_size} resolves to another footer"
+        );
+        assert_eq!(
+            reader.parquet_footer_offset() + reader.parquet_footer_length() as u64 + 8,
+            pq_size
+        );
+
+        assert_pm_bloom_snapshot(pm_all, pm_size, pq, bases)?;
+        let meta = read_metadata_with_size(&mut Cursor::new(pq), pq_size)?;
+        for (rg, &base) in bases.iter().enumerate() {
+            let pq_group = &meta.row_groups[rg];
+            let pm_group = reader.row_group(rg)?;
+            assert_eq!(
+                pm_group.num_rows(),
+                pq_group.num_rows() as u64,
+                "rg {rg} rows"
+            );
+            let chunk = pm_group.column_chunk(0)?;
+            let pq_chunk = pq_group.columns()[0].metadata();
+            let chunk_start = pq_chunk
+                .dictionary_page_offset
+                .unwrap_or(pq_chunk.data_page_offset) as u64;
+            assert_eq!(
+                chunk.byte_range_start, chunk_start,
+                "rg {rg} byte_range_start"
+            );
+            assert_eq!(chunk.min_stat as i32, base, "rg {rg} min_stat");
+            assert_eq!(chunk.max_stat as i32, base + 3, "rg {rg} max_stat");
+        }
+
+        let expected: Vec<Option<i32>> = bases
+            .iter()
+            .flat_map(|&b| bloom_values(b))
+            .map(Some)
+            .collect();
+        assert_eq!(read_v_column(pq), expected, "values");
+        Ok(())
+    }
+
+    /// Generates one commit's updater calls over `current` (one base per
+    /// row group) the way the O3 job issues them, and returns them with the
+    /// resulting group bases. Per original group, in order: optionally 1-2
+    /// COPY_O3 gap inserts, then COPY (kept), DROP (`remove`), or a MERGE
+    /// split into 1-3 chunks (`replace` of chunk 0, `insert` at the chunk's
+    /// final position for the rest); then optionally a tail insert. Every
+    /// commit changes at least one group and keeps at least one.
+    fn random_update_calls(
+        rng: &mut rand::rngs::StdRng,
+        current: &[i32],
+        next_base: &mut i32,
+    ) -> (Vec<ShiftOp>, Vec<i32>) {
+        use rand::RngExt;
+        loop {
+            let mut calls = Vec::new();
+            let mut bases = Vec::new();
+            let mut position = 0i32;
+            for (ordinal, &base) in current.iter().enumerate() {
+                let ordinal = ordinal as i32;
+                if rng.random_range(0..5) == 0 {
+                    for _ in 0..rng.random_range(1..3) {
+                        *next_base += 10;
+                        calls.push(ShiftOp::Insert(position, *next_base));
+                        bases.push(*next_base);
+                        position += 1;
+                    }
+                }
+                match rng.random_range(0..10) {
+                    0..=3 => {
+                        bases.push(base);
+                        position += 1;
+                    }
+                    4..=6 => calls.push(ShiftOp::Remove(ordinal)),
+                    _ => {
+                        let chunks = rng.random_range(1..4);
+                        for chunk in 0..chunks {
+                            *next_base += 10;
+                            if chunk == 0 {
+                                calls.push(ShiftOp::Replace(ordinal, *next_base));
+                            } else {
+                                calls.push(ShiftOp::Insert(position + chunk, *next_base));
+                            }
+                            bases.push(*next_base);
+                        }
+                        position += chunks;
+                    }
+                }
+            }
+            if rng.random_range(0..4) == 0 {
+                *next_base += 10;
+                calls.push(ShiftOp::Insert(position, *next_base));
+                bases.push(*next_base);
+            }
+            if !calls.is_empty() && !bases.is_empty() {
+                if rng.random_bool(0.5) {
+                    // the final layout must not depend on the call order
+                    for i in (1..calls.len()).rev() {
+                        calls.swap(i, rng.random_range(0..=i));
+                    }
+                }
+                return (calls, bases);
+            }
+        }
+    }
+
+    /// Runs 1-3 random in-place commits over a random 2-6 group file and,
+    /// after each, checks every snapshot committed so far. Returns the
+    /// number of `remove_row_group` calls made.
+    fn random_update_iteration(seed: u64) -> Result<usize, Box<dyn Error>> {
+        use rand::{RngExt, SeedableRng};
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(seed);
+        let group_count = rng.random_range(2..7);
+        let mut current: Vec<i32> = (1..=group_count).map(|i| i * 1000).collect();
+        let fixture = bloom_fixture_with_bases(&current)?;
+        let mut snapshots = vec![(fixture.source_len(), fixture.pm_size, current.clone())];
+        let mut next_base = 100_000;
+        let mut removes = 0;
+        for commit in 0..rng.random_range(1..4) {
+            let (calls, bases) = random_update_calls(&mut rng, &current, &mut next_base);
+            removes += calls
+                .iter()
+                .filter(|c| matches!(c, ShiftOp::Remove(_)))
+                .count();
+            // Keep every call's values alive until end(): Column borrows them.
+            let values: Vec<Vec<i32>> = calls
+                .iter()
+                .map(|c| match c {
+                    ShiftOp::Replace(_, base) | ShiftOp::Insert(_, base) => bloom_values(*base),
+                    ShiftOp::Remove(_) => vec![],
+                })
+                .collect();
+            let (pq_size, pm_size, _) = snapshots[snapshots.len() - 1];
+            let mut old_pq = Vec::new();
+            fixture.source.reopen()?.read_to_end(&mut old_pq)?;
+            let mut old_pm = Vec::new();
+            fixture.pm.reopen()?.read_to_end(&mut old_pm)?;
+
+            let allocator = crate::allocator::TestAllocatorState::new();
+            let mut updater = fixture.updater_at(&allocator, pq_size, pm_size)?;
+            for (call, v) in calls.iter().zip(&values) {
+                match call {
+                    ShiftOp::Replace(ordinal, _) => {
+                        updater.replace_row_group(&bloom_partition(v), *ordinal)?
+                    }
+                    ShiftOp::Insert(position, _) => {
+                        updater.insert_row_group(&bloom_partition(v), *position)?
+                    }
+                    ShiftOp::Remove(ordinal) => updater.remove_row_group(*ordinal)?,
+                }
+            }
+            let new_pq_size = updater.end(None)?;
+            updater.commit_parquet_meta(false)?;
+            drop(updater);
+
+            let mut pq = Vec::new();
+            fixture.source.reopen()?.read_to_end(&mut pq)?;
+            let mut pm = Vec::new();
+            fixture.pm.reopen()?.read_to_end(&mut pm)?;
+            let new_pm_size = read_pm_header(&fixture.pm)?;
+            let ctx = format!("seed {seed} commit {commit} calls {calls:?} over {current:?}");
+            assert_eq!(pq.len() as u64, new_pq_size, "{ctx}");
+            assert!(new_pq_size > pq_size, "{ctx}: parquet size must grow");
+            assert!(new_pm_size > pm_size, "{ctx}: _pm size must grow");
+            // append-only: no committed byte changes, bar the `_pm` header word
+            let pq_len = usize::try_from(pq_size)?;
+            assert_eq!(&pq[..pq_len], &old_pq[..pq_len], "{ctx}: parquet rewritten");
+            let pm_len = usize::try_from(pm_size)?;
+            assert_eq!(&pm[8..pm_len], &old_pm[8..pm_len], "{ctx}: _pm rewritten");
+
+            snapshots.push((new_pq_size, new_pm_size, bases.clone()));
+            for (k, (snap_pq, snap_pm, snap_bases)) in snapshots.iter().enumerate() {
+                if let Err(e) =
+                    assert_random_update_snapshot(&pq, &pm, *snap_pq, *snap_pm, snap_bases)
+                {
+                    return Err(format!("{ctx}, snapshot {k}: {e}").into());
+                }
+            }
+            current = bases;
+        }
+        Ok(removes)
+    }
+
+    /// Randomized cross-check of in-place updates that mix remove, replace
+    /// (including MERGE splits) and insert over successive commits, through
+    /// the production `ParquetUpdater` and `commit_parquet_meta`. Seeds are
+    /// fixed (one per iteration), so a failure names a reproducible seed.
+    #[test]
+    fn random_remove_replace_insert_keeps_every_snapshot() -> Result<(), Box<dyn Error>> {
+        const ITERATIONS: u64 = 300;
+        let mut removes = 0;
+        for seed in 0..ITERATIONS {
+            removes += random_update_iteration(seed)?;
+        }
+        // guard against a generator that stops exercising remove
+        assert!(removes > ITERATIONS as usize, "only {removes} removes");
         Ok(())
     }
 }
