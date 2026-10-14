@@ -37,8 +37,10 @@ import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.ops.AlterOperation;
+import io.questdb.std.Files;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -48,6 +50,7 @@ import org.junit.Test;
 
 import static io.questdb.PropertyKey.CAIRO_WAL_APPLY_LOOK_AHEAD_TXN_COUNT;
 import static io.questdb.PropertyKey.CAIRO_WAL_MAX_LAG_SIZE;
+import static io.questdb.cairo.TableUtils.DETACHED_DIR_MARKER;
 import static io.questdb.cairo.wal.WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE;
 
 public class WalWriterReplaceRangeTest extends AbstractCairoTest {
@@ -997,6 +1000,469 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     .returns("""
                             isParquet
                             true
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeRemovesSplitParentThenAddColumnAndConvert() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createDayWithSplitButNoParent();
+            // The split takes the new column, so _cv has no record of it at the day's floor, where
+            // CONVERT re-creates the parent.
+            execute("ALTER TABLE rg ADD COLUMN extra INT");
+            execute("INSERT INTO rg VALUES (203, '2022-02-24T19:00', 0, 7)");
+            drainWalQueue();
+
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2022-02-24'");
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2022-02-24\t3\ttrue
+                            """);
+            final String expected = """
+                    id\tts\tv\textra
+                    201\t2022-02-24T18:00:00.000000Z\t0\tnull
+                    202\t2022-02-24T18:30:00.000000Z\t0\tnull
+                    203\t2022-02-24T19:00:00.000000Z\t0\t7
+                    """;
+            assertQuery("SELECT * FROM rg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+
+            execute("ALTER TABLE rg CONVERT PARTITION TO NATIVE LIST '2022-02-24'");
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2022-02-24\t3\tfalse
+                            """);
+            assertQuery("SELECT * FROM rg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeRemovesSplitParentThenConvertToNative() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createDayWithSplitButNoParent();
+            execute("ALTER TABLE rg CONVERT PARTITION TO NATIVE WHERE ts > '2022-02-23T23:00' AND ts < '2022-02-24T23:00'");
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            // Only native partitions split, so the day is native already and stays as it is.
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2022-02-24T170000-000001\t2\tfalse
+                            """);
+            assertQuery("SELECT * FROM rg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\tv
+                            201\t2022-02-24T18:00:00.000000Z\t0
+                            202\t2022-02-24T18:30:00.000000Z\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeRemovesSplitParentThenConvertToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createDayWithSplitButNoParent();
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET WHERE ts > '2022-02-23T23:00' AND ts < '2022-02-24T23:00'");
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            // CONVERT re-creates the parent at the floor and squashes the split into it.
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2022-02-24\t2\ttrue
+                            """);
+            assertQuery("SELECT * FROM rg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\tv
+                            201\t2022-02-24T18:00:00.000000Z\t0
+                            202\t2022-02-24T18:30:00.000000Z\t0
+                            """);
+
+            // The day is the active partition and keeps taking rows.
+            execute("INSERT INTO rg VALUES (203, '2022-02-24T19:00', 0)");
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            assertQuery("SELECT * FROM rg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\tv
+                            201\t2022-02-24T18:00:00.000000Z\t0
+                            202\t2022-02-24T18:30:00.000000Z\t0
+                            203\t2022-02-24T19:00:00.000000Z\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeRemovesSplitParentThenConvertToParquetBeforeLastPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createDayWithSplitButNoParent();
+            execute("INSERT INTO rg VALUES (301, '2022-02-25T10:00', 0)");
+            drainWalQueue();
+            assertQuery("SELECT name, numRows FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows
+                            2022-02-24T170000-000001\t2
+                            2022-02-25\t1
+                            """);
+
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2022-02-24'");
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2022-02-24\t2\ttrue
+                            2022-02-25\t1\tfalse
+                            """);
+            assertQuery("SELECT * FROM rg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\tv
+                            201\t2022-02-24T18:00:00.000000Z\t0
+                            202\t2022-02-24T18:30:00.000000Z\t0
+                            301\t2022-02-25T10:00:00.000000Z\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeRemovesSplitParentThenConvertToParquetWithOpenReader() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createDayWithSplitButNoParent();
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2022-02-24'");
+            // The reader pins the latest txn, the one the re-created parent takes as its name txn.
+            try (TableReader reader = getReader(tableToken)) {
+                drainWalQueue();
+                assertNotSuspended(tableToken);
+                // The reader keeps reading its own version of the day: the split.
+                TestUtils.assertReader(
+                        """
+                                id\tts\tv
+                                201\t2022-02-24T18:00:00.000000Z\t0
+                                202\t2022-02-24T18:30:00.000000Z\t0
+                                """,
+                        reader,
+                        new StringSink()
+                );
+            }
+            // The next commit purges the partition versions that CONVERT replaced.
+            execute("INSERT INTO rg VALUES (203, '2022-02-24T19:00', 0)");
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            assertQuery("SELECT * FROM rg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\tv
+                            201\t2022-02-24T18:00:00.000000Z\t0
+                            202\t2022-02-24T18:30:00.000000Z\t0
+                            203\t2022-02-24T19:00:00.000000Z\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeRemovesSplitParentThenConvertWithCoveringIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            // Drop the absolute split threshold, so the prefix-to-tail ratio alone decides the split.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            execute("CREATE TABLE rg (id LONG, ts TIMESTAMP, v LONG, sym SYMBOL INDEX TYPE POSTING INCLUDE (v)) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+            execute("INSERT INTO rg SELECT x, timestamp_sequence('2022-02-24T08:00', 600_000_000), x * 10, CASE WHEN x % 2 = 0 THEN 'a' ELSE 'b' END FROM long_sequence(60)");
+            drainWalQueue();
+            execute("INSERT INTO rg SELECT 100 + x, timestamp_sequence('2022-02-24T17:05', 600_000_000), 0, 'a' FROM long_sequence(5)");
+            drainWalQueue();
+            assertQuery("SELECT name, numRows FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows
+                            2022-02-24\t55
+                            2022-02-24T170000-000001\t10
+                            """);
+
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                TableWriter.Row row = ww.newRow(MicrosTimestampDriver.floor("2022-02-24T18:00"));
+                row.putLong(0, 201);
+                row.putLong(2, 2_010);
+                row.putSym(3, "a");
+                row.append();
+                row = ww.newRow(MicrosTimestampDriver.floor("2022-02-24T18:30"));
+                row.putLong(0, 202);
+                row.putLong(2, 2_020);
+                row.putSym(3, "b");
+                row.append();
+                ww.commitWithParams(
+                        MicrosTimestampDriver.floor("2022-02-24T06:00"),
+                        MicrosTimestampDriver.floor("2022-02-24T23:00"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            assertQuery("SELECT name, numRows FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows
+                            2022-02-24T170000-000001\t2
+                            """);
+
+            // The squash into the re-created parent rebuilds the index, and the parquet partition
+            // carries it over. The covering index answers the first query on its own.
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2022-02-24'");
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2022-02-24\t2\ttrue
+                            """);
+            assertQuery("SELECT v FROM rg WHERE sym = 'a'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            v
+                            2010
+                            """);
+            assertQuery("SELECT id, ts FROM rg WHERE sym = 'b'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts
+                            202\t2022-02-24T18:30:00.000000Z
+                            """);
+
+            execute("ALTER TABLE rg CONVERT PARTITION TO NATIVE LIST '2022-02-24'");
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            assertQuery("SELECT v FROM rg WHERE sym = 'a'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            v
+                            2010
+                            """);
+            assertQuery("SELECT id, ts FROM rg WHERE sym = 'b'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts
+                            202\t2022-02-24T18:30:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeRemovesSplitParentThenDetachAndAttach() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createDayWithSplitButNoParent();
+            // DETACH refuses the active partition.
+            execute("INSERT INTO rg VALUES (301, '2022-02-25T10:00', 0)");
+            drainWalQueue();
+
+            execute("ALTER TABLE rg DETACH PARTITION LIST '2022-02-24'");
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            assertQuery("SELECT * FROM rg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\tv
+                            301\t2022-02-25T10:00:00.000000Z\t0
+                            """);
+
+            // DETACH re-creates the parent at the floor first, so the detached directory carries the
+            // day's name.
+            try (Path path = new Path(); Path other = new Path()) {
+                path.of(configuration.getDbRoot()).concat(tableToken).concat("2022-02-24").put(DETACHED_DIR_MARKER).$();
+                other.of(configuration.getDbRoot()).concat(tableToken).concat("2022-02-24").put(configuration.getAttachPartitionSuffix()).$();
+                Assert.assertTrue(Files.rename(path.$(), other.$()) > -1);
+            }
+            execute("ALTER TABLE rg ATTACH PARTITION LIST '2022-02-24'");
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            assertQuery("SELECT * FROM rg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\tv
+                            201\t2022-02-24T18:00:00.000000Z\t0
+                            202\t2022-02-24T18:30:00.000000Z\t0
+                            301\t2022-02-25T10:00:00.000000Z\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeRemovesSplitParentThenPrepareParquetWithOpenReader() throws Exception {
+        assertMemoryLeak(() -> {
+            TableToken tableToken = createDayWithSplitButNoParent();
+            // preparePartitionForParquetConversion() skips the active partition.
+            execute("INSERT INTO rg VALUES (301, '2022-02-25T10:00', 0)");
+            drainWalQueue();
+
+            final long dayTimestamp = MicrosTimestampDriver.floor("2022-02-24");
+            try (TableWriter writer = getWriter(tableToken)) {
+                try (TableReader ignore = getReader(tableToken)) {
+                    // The day stays native, so the parent that the squash re-creates stays live. A
+                    // reader on the latest txn must not make the squash copy the new parent: the copy
+                    // would reuse the parent's directory name and queue that live directory for removal.
+                    Assert.assertEquals(dayTimestamp, writer.preparePartitionForParquetConversion(dayTimestamp));
+                }
+                // The next commit runs housekeeping, which removes queued partition versions that no
+                // reader uses.
+                TableWriter.Row row = writer.newRow(MicrosTimestampDriver.floor("2022-02-25T11:00"));
+                row.putLong(0, 302);
+                row.putLong(2, 0);
+                row.append();
+                writer.commit();
+            }
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2022-02-24\t2\tfalse
+                            2022-02-25\t2\tfalse
+                            """);
+            assertQuery("SELECT * FROM rg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            id\tts\tv
+                            201\t2022-02-24T18:00:00.000000Z\t0
+                            202\t2022-02-24T18:30:00.000000Z\t0
+                            301\t2022-02-25T10:00:00.000000Z\t0
+                            302\t2022-02-25T11:00:00.000000Z\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testReplaceRangeRemovesSplitParentWithTwoSplitsThenConvertToParquet() throws Exception {
+        assertMemoryLeak(() -> {
+            // Drop the absolute split threshold, so the prefix-to-tail ratio alone decides the split.
+            node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            execute("CREATE TABLE rg (id LONG, ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            TableToken tableToken = engine.verifyTableName("rg");
+            execute("INSERT INTO rg SELECT x, timestamp_sequence('2022-02-24T08:00', 600_000_000), 0 FROM long_sequence(60)");
+            drainWalQueue();
+            // Split the day after 17:00, grow the split up to 23:50, then split the split after 23:00.
+            execute("INSERT INTO rg SELECT 100 + x, timestamp_sequence('2022-02-24T17:05', 600_000_000), 0 FROM long_sequence(5)");
+            drainWalQueue();
+            execute("INSERT INTO rg SELECT 1_000 + x, timestamp_sequence('2022-02-24T18:00', 600_000_000), 0 FROM long_sequence(36)");
+            drainWalQueue();
+            execute("INSERT INTO rg SELECT 2_000 + x, timestamp_sequence('2022-02-24T23:05', 600_000_000), 0 FROM long_sequence(5)");
+            drainWalQueue();
+            assertQuery("SELECT name, numRows FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows
+                            2022-02-24\t55
+                            2022-02-24T170000-000001\t41
+                            2022-02-24T230000-000001\t10
+                            """);
+
+            // The replace range covers the parent and the head of the first split.
+            try (WalWriter ww = engine.getWalWriter(tableToken)) {
+                appendRow(ww, MicrosTimestampDriver.floor("2022-02-24T17:12"), 3_001, 0);
+                appendRow(ww, MicrosTimestampDriver.floor("2022-02-24T17:22"), 3_002, 0);
+                ww.commitWithParams(
+                        MicrosTimestampDriver.floor("2022-02-24T06:00"),
+                        MicrosTimestampDriver.floor("2022-02-24T17:30"),
+                        WAL_DEDUP_MODE_REPLACE_RANGE
+                );
+            }
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            assertQuery("SELECT name, numRows FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows
+                            2022-02-24T170000-000001\t38
+                            2022-02-24T230000-000001\t10
+                            """);
+
+            execute("ALTER TABLE rg CONVERT PARTITION TO PARQUET LIST '2022-02-24'");
+            drainWalQueue();
+            assertNotSuspended(tableToken);
+            // CONVERT re-creates the parent and squashes both splits into it.
+            assertQuery("SELECT name, numRows, isParquet FROM table_partitions('rg')")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            name\tnumRows\tisParquet
+                            2022-02-24\t48\ttrue
+                            """);
+            // Kept: ids 58..60, 104, 105, 1_001..1_036, 2_001..2_005 and the replacement rows 3_001, 3_002.
+            assertQuery("SELECT count(), min(ts), max(ts), sum(id) FROM rg")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            count\tmin\tmax\tsum
+                            48\t2022-02-24T17:12:00.000000Z\t2022-02-24T23:50:00.000000Z\t53070
                             """);
         });
     }
@@ -2070,6 +2536,13 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
         }
     }
 
+    private static void assertNotSuspended(TableToken tableToken) {
+        Assert.assertFalse(
+                "table is suspended: " + engine.getTableSequencerAPI().getTxnTracker(tableToken).getErrorMessage(),
+                engine.getTableSequencerAPI().isSuspended(tableToken)
+        );
+    }
+
     private static void commitNoRowsWithRangeReplace(
             TableToken tableToken,
             String rangeStartStr,
@@ -2186,6 +2659,61 @@ public class WalWriterReplaceRangeTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("count\n0\n");
         });
+    }
+
+    // Creates WAL table rg whose day 2022-02-24 has a split but no parent partition. An O3 batch
+    // splits the day into the parent '2022-02-24' (08:00 .. 17:00) and the split
+    // '2022-02-24T170000-000001' (17:05 .. 17:50). A replace-range commit over [06:00, 23:00) then
+    // removes the parent outright and leaves the split with two rows, at 18:00 and 18:30.
+    // CONVERT PARTITION and DETACH PARTITION used to look the day up by its floor timestamp only, so
+    // they missed it and ApplyWal2TableJob suspended the table.
+    // WalWriterFuzzTest.testConvertPartitionToParquetWithCoveringIndex hit this in CI.
+    private TableToken createDayWithSplitButNoParent() throws Exception {
+        // Drop the absolute split threshold, so the prefix-to-tail ratio alone decides the split.
+        node1.setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+        execute("CREATE TABLE rg (id LONG, ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        TableToken tableToken = engine.verifyTableName("rg");
+
+        // 60 rows, one every 10 minutes: 08:00 .. 17:50.
+        execute("INSERT INTO rg SELECT x, timestamp_sequence('2022-02-24T08:00', 600_000_000), x * 10 FROM long_sequence(60)");
+        drainWalQueue();
+        // The O3 rows at 17:05 .. 17:45 split the day: the 55-row prefix (08:00 .. 17:00) stays in the
+        // parent, and the merged tail moves to a split starting 1us after 17:00.
+        execute("INSERT INTO rg SELECT 100 + x, timestamp_sequence('2022-02-24T17:05', 600_000_000), 0 FROM long_sequence(5)");
+        drainWalQueue();
+        assertQuery("SELECT name, numRows FROM table_partitions('rg')")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        name\tnumRows
+                        2022-02-24\t55
+                        2022-02-24T170000-000001\t10
+                        """);
+
+        // The replace range starts before the parent's first row and ends after the split's last row.
+        // Both replacement rows land in the split.
+        try (WalWriter ww = engine.getWalWriter(tableToken)) {
+            appendRow(ww, MicrosTimestampDriver.floor("2022-02-24T18:00"), 201, 0);
+            appendRow(ww, MicrosTimestampDriver.floor("2022-02-24T18:30"), 202, 0);
+            ww.commitWithParams(
+                    MicrosTimestampDriver.floor("2022-02-24T06:00"),
+                    MicrosTimestampDriver.floor("2022-02-24T23:00"),
+                    WAL_DEDUP_MODE_REPLACE_RANGE
+            );
+        }
+        drainWalQueue();
+        assertNotSuspended(tableToken);
+        // The parent is gone: the split is the only partition of the day.
+        assertQuery("SELECT name, numRows FROM table_partitions('rg')")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("""
+                        name\tnumRows
+                        2022-02-24T170000-000001\t2
+                        """);
+        return tableToken;
     }
 
     private void insertRowWithReplaceRange(

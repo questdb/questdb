@@ -1762,7 +1762,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        final int partitionIndex = txWriter.getLogicalPartitionFirstIndex(partitionTimestamp);
         if (partitionIndex < 0) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
             throw CairoException.nonCritical().put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
@@ -1776,6 +1776,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         lastPartitionTimestamp = txWriter.getLastPartitionTimestamp();
         boolean lastPartitionConverted = lastPartitionTimestamp == partitionTimestamp;
         squashPartitionForce(partitionIndex);
+        assert txWriter.getPartitionTimestampByIndex(partitionIndex) == partitionTimestamp;
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         int newPartitionDirLen = 0;
         try {
@@ -1885,7 +1886,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        final int partitionIndex = txWriter.getLogicalPartitionFirstIndex(partitionTimestamp);
         if (partitionIndex < 0) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
             throw CairoException.nonCritical().put("cannot convert parquet partition to native, partition does not exist [table=").put(tableToken.getTableName())
@@ -1896,6 +1897,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         if (!txWriter.isPartitionParquet(partitionIndex)) {
             return true; // Partition already has a Native format
         }
+        // Only native partitions split, so a parquet partition is the only partition of its
+        // logical partition and sits at the floor.
+        assert txWriter.getPartitionTimestampByIndex(partitionIndex) == partitionTimestamp;
 
         if (txWriter.isPartitionReadOnly(partitionIndex)) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
@@ -2030,7 +2034,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return AttachDetachStatus.DETACH_ERR_ACTIVE;
         }
 
-        int partitionIndex = txWriter.getPartitionIndex(timestamp);
+        int partitionIndex = txWriter.getLogicalPartitionFirstIndex(timestamp);
         if (partitionIndex < 0) {
             assert !txWriter.attachedPartitionsContains(timestamp);
             return AttachDetachStatus.DETACH_ERR_MISSING_PARTITION;
@@ -2045,6 +2049,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         // To detach the partition, squash it into a single folder if required
         squashPartitionForce(partitionIndex);
+        assert txWriter.getPartitionTimestampByIndex(partitionIndex) == timestamp;
 
         // To check that partition is squashed, get the next partition and
         // verify that it's not the same timestamp as the one we are trying to detach.
@@ -2940,7 +2945,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         partitionTimestamp = txWriter.getLogicalPartitionTimestamp(partitionTimestamp);
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        final int partitionIndex = txWriter.getLogicalPartitionFirstIndex(partitionTimestamp);
         if (partitionIndex < 0) {
             return false;
         }
@@ -2952,7 +2957,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         try {
             final long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
-            setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, partitionTimestamp, partitionNameTxn);
+            // Nothing squashes the logical partition here, so its first partition can be a split
+            // whose parent a replace-range commit removed. Its directory carries its own timestamp.
+            setPathForNativePartition(
+                    path.trimTo(pathSize),
+                    timestampType,
+                    partitionBy,
+                    txWriter.getPartitionTimestampByIndex(partitionIndex),
+                    partitionNameTxn
+            );
             path.concat(PARQUET_PARTITION_NAME);
             if (!ff.exists(path.$())) {
                 return false;
@@ -3084,7 +3097,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return -1L;
         }
 
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        final int partitionIndex = txWriter.getLogicalPartitionFirstIndex(partitionTimestamp);
         if (partitionIndex < 0) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
             throw CairoException.nonCritical()
@@ -3098,6 +3111,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
 
         squashPartitionForce(partitionIndex);
+        assert txWriter.getPartitionTimestampByIndex(partitionIndex) == partitionTimestamp;
 
         // Remove any stale parquet file from a prior conversion that may not
         // reflect the current native data (e.g. after an in-place squash or O3
@@ -3322,22 +3336,19 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // One logical partition may be split into multiple physical partitions.
         // For example, partition daily '2024-02-24' can be stored as 2 pieces '2024-02-24' and '2024-02-24T12'
         long logicalPartitionTimestampToDelete = txWriter.getLogicalPartitionTimestamp(timestamp);
-        int partitionIndex = txWriter.findAttachedPartitionRawIndexByLoTimestamp(logicalPartitionTimestampToDelete);
-        if (partitionIndex < 0) {
-            // A partition slit can exist without the partition itself.
-            // For example, it is allowed to have partition '2024-02-24T12' without partition '2024-02-24'
-            // To delete all the splits, start from the index that is next or equal to the timestamp parameter.
-            partitionIndex = -partitionIndex - 1;
-        }
-        partitionIndex /= LONGS_PER_TX_ATTACHED_PARTITION;
+        // The first piece can be '2024-02-24T12' when a replace-range commit removed '2024-02-24'.
+        final int partitionIndex = txWriter.getLogicalPartitionFirstIndex(logicalPartitionTimestampToDelete);
 
         boolean dropped = false;
-        long partitionTimestamp;
-        while (partitionIndex < txWriter.getPartitionCount() &&
-                txWriter.getLogicalPartitionTimestamp(
-                        partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex)
-                ) == logicalPartitionTimestampToDelete) {
-            dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
+        if (partitionIndex > -1) {
+            long partitionTimestamp;
+            // Dropping a piece shifts the next one into partitionIndex.
+            while (partitionIndex < txWriter.getPartitionCount() &&
+                    txWriter.getLogicalPartitionTimestamp(
+                            partitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex)
+                    ) == logicalPartitionTimestampToDelete) {
+                dropped |= dropPartitionByExactTimestamp(partitionTimestamp);
+            }
         }
 
         if (dropped) {
@@ -3718,7 +3729,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             return SWITCH_SKIPPED;
         }
 
-        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        final int partitionIndex = txWriter.getLogicalPartitionFirstIndex(partitionTimestamp);
         if (partitionIndex < 0) {
             formatPartitionForTimestamp(partitionTimestamp, -1);
             throw CairoException.nonCritical().put("cannot convert partition to parquet, partition does not exist [table=").put(tableToken.getTableName())
@@ -3736,6 +3747,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
         int partitionCount = txWriter.getPartitionCount();
         squashPartitionForce(partitionIndex);
+        assert txWriter.getPartitionTimestampByIndex(partitionIndex) == partitionTimestamp;
         int newPartitionCount = txWriter.getPartitionCount();
         if (partitionCount != newPartitionCount) {
             // The force-squash merged one or more split sub-partitions into this logical partition.
@@ -5360,10 +5372,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     private boolean canSquashOverwritePartitionTail(int partitionIndex) {
         long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
+        long toTxn = txWriter.getTxn();
+        if (fromTxn >= toTxn) {
+            // Only partition versions that the uncommitted transaction created carry the current
+            // txn as their name txn, such as the parent squashPartitionForce() re-creates. No
+            // committed _txn references them, so no reader or checkpoint can have their files open.
+            return true;
+        }
         if (fromTxn < 0) {
             fromTxn = 0;
         }
-        long toTxn = txWriter.getTxn();
         if (partitionIndex + 1 < txWriter.getPartitionCount()) {
             // If the next partition is a split partition part of same logical partition
             // for example if the partition is '2020-01-01' and the next partition is '2020-01-01T12.3'
@@ -14430,13 +14448,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long lastLogicalPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex);
         if (lastLogicalPartitionTimestamp != txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp)) {
             lastLogicalPartitionTimestamp = txWriter.getLogicalPartitionTimestamp(lastLogicalPartitionTimestamp);
-            // We can have a split partition without the parent logical partition
-            // after some replace commits
-            // We need to create a logical partition to squash into
+            // A replace-range commit can remove the parent of a split and keep the split. Re-create
+            // the parent, empty, at the floor timestamp and squash the splits into it below, so the
+            // caller gets a single partition at the floor. The parent's name txn is the current txn,
+            // so canSquashOverwritePartitionTail() lets the squash append into it in place.
             txWriter.insertPartition(partitionIndex, lastLogicalPartitionTimestamp, 0, txWriter.txn);
-            setStateForTimestamp(other, lastLogicalPartitionTimestamp);
-            if (ff.mkdir(other.$(), configuration.getMkDirMode()) != 0) {
-                throw CairoException.critical(ff.errno()).put("could not create directory [path='").put(other).put("']");
+            try {
+                setStateForTimestamp(other.trimTo(pathSize), lastLogicalPartitionTimestamp);
+                // A failed attempt at this txn can leave the directory behind. No _txn references it,
+                // and squashing into an empty partition re-creates every column file.
+                createDirsOrFail(ff, other, configuration.getMkDirMode());
+            } finally {
+                other.trimTo(pathSize);
             }
             partitionIndex++;
         }

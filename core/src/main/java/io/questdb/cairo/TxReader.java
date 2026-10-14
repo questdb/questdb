@@ -298,6 +298,33 @@ public class TxReader implements Closeable, Mutable {
         return DEFAULT_PARTITION_TIMESTAMP;
     }
 
+    /**
+     * Returns the index of the first attached partition of the logical partition that contains
+     * {@code timestamp}, or -1 when no attached partition belongs to that logical partition.
+     * <p>
+     * A logical partition is stored as one or more attached partitions: the parent, whose
+     * timestamp is the logical partition floor, and optional splits above it. A replace-range
+     * commit can remove the parent and keep the splits, for example '2024-02-24T12' without
+     * '2024-02-24', so the first attached partition of a logical partition does not always sit
+     * at the floor. {@link #getPartitionIndex(long)} misses such a logical partition, because it
+     * looks the floor up exactly. Resolve a partition that a statement names by its logical
+     * timestamp with this method instead.
+     */
+    public int getLogicalPartitionFirstIndex(long timestamp) {
+        final long logicalTimestamp = getPartitionFloor(timestamp);
+        int index = findAttachedPartitionIndexByLoTimestamp(logicalTimestamp);
+        if (index > -1) {
+            return index;
+        }
+        // The insertion point is the first partition above the floor. It belongs to this
+        // logical partition only when it is a split whose parent is gone.
+        index = -index - 1;
+        if (index < getPartitionCount() && getPartitionFloor(getPartitionTimestampByIndex(index)) == logicalTimestamp) {
+            return index;
+        }
+        return -1;
+    }
+
     public long getLogicalPartitionTimestamp(long timestamp) {
         return getPartitionFloor(timestamp);
     }
