@@ -1265,6 +1265,10 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         } catch (Throwable th) {
             return "recovery refused: " + th.getMessage();
         }
+        // The sequencer certifies its unsynced tail when it is first opened. A restored table first opens it at
+        // its first replay, a table at its save point already during recovery, so open it here as the first
+        // apply would: the second recovery is compared with the state the first process reaches.
+        engine.getTableSequencerAPI().lastTxn(s.token);
         final Map<String, byte[]> afterFirst = tableFiles(s);
         engine.releaseAllReaders();
         engine.releaseAllWriters();
