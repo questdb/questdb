@@ -2400,6 +2400,14 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 }
                 return super.openRW(name, opts);
             }
+
+            @Override
+            public long openRWExisting(LPSZ name) {
+                if (failSeq.get() && Utf8s.containsAscii(name, WalUtils.SEQ_DIR)) {
+                    return -1;
+                }
+                return super.openRWExisting(name);
+            }
         };
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, "false");

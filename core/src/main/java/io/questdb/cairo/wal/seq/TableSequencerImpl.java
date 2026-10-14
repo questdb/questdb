@@ -34,12 +34,14 @@ import io.questdb.cairo.IDGenerator;
 import io.questdb.cairo.IDGeneratorFactory;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.engine.ops.AlterOperation;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
@@ -584,6 +586,18 @@ public class TableSequencerImpl implements TableSequencer {
         path.trimTo(rootLen);
         metadata.create(tableStruct, tableToken, path, rootLen, tableId);
         tableTransactionLog.create(path, timestamp);
+        // The WAL id counter, created and sized as its generator's first open would, so the flush below covers its
+        // entry: a counter lost to a power loss starts again from 0 and hands out WAL ids the log already names.
+        try {
+            final long fd = TableUtils.openFileRWOrFail(ff, path.trimTo(rootLen).concat(WAL_INDEX_FILE_NAME).$(), configuration.getWriterFileOpenOpts());
+            try {
+                TableUtils.allocateDiskSpaceAligned(ff, fd, Files.PAGE_SIZE);
+            } finally {
+                ff.close(fd);
+            }
+        } finally {
+            path.trimTo(rootLen);
+        }
         // SYNC and ADAPTIVE acknowledge a commit once its record is flushed, which presumes the log's files and
         // their directory entries outlive a power loss. Flushing content never makes a new entry durable.
         if (CommitMode.isPowerLossDurable(configuration.getCommitMode())) {

@@ -474,6 +474,38 @@ public class TableSequencerImplTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A sequencer whose transaction log is gone cannot open, and neither the open nor the structure version read
+     * brings the log back as an empty file: a read never changes which files exist.
+     */
+    @Test
+    public void testOpenWithoutTxnLogNeverCreatesIt() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken tableToken = createWalTable(testName.getMethodName());
+            engine.clear();
+            final FilesFacade ff = configuration.getFilesFacade();
+            try (Path path = new Path()) {
+                pathToSequencerFile(path, tableToken, WalUtils.TXNLOG_FILE_NAME);
+                Assert.assertTrue(ff.removeQuiet(path.$()));
+
+                CairoException ex = Assert.assertThrows(
+                        CairoException.class,
+                        () -> engine.getTableSequencerAPI().getNextWalId(tableToken)
+                );
+                TestUtils.assertContains(ex.getFlyweightMessage(), "does not exist");
+                Assert.assertFalse("the sequencer open must not create the log", ff.exists(path.$()));
+
+                ex = Assert.assertThrows(
+                        CairoException.class,
+                        () -> TableTransactionLog.readMaxStructureVersion(ff, pathToSequencerPath(path, tableToken))
+                );
+                TestUtils.assertContains(ex.getFlyweightMessage(), "does not exist");
+                pathToSequencerFile(path, tableToken, WalUtils.TXNLOG_FILE_NAME);
+                Assert.assertFalse("the structure version read must not create the log", ff.exists(path.$()));
+            }
+        });
+    }
+
     @Test
     public void testReloadRebuildsSequencerMetaAheadOfTxnLogV1() throws Exception {
         testReloadRebuildsSequencerMetaAheadOfTxnLog();

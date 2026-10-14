@@ -510,7 +510,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
      * Flushes with fdatasync every part file from {@code fromPart} to {@code toPart} the log still keeps, highest
      * first. The parts are listed, not counted down: the WAL purge keeps a backup-locked or in-use part while it
      * deletes later ones, so a gap does not end the kept parts. Only part files are flushed; another entry in the
-     * directory is ignored.
+     * directory is ignored. The open never creates a part: one the purge removed since the listing is skipped.
      */
     private void fdatasyncParts(long fromPart, long toPart) {
         if (fromPart > toPart) {
@@ -544,7 +544,15 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             final int partsDirLen = rootPath.size();
             for (int i = partsToFlush.size() - 1; i >= 0; i--) {
                 rootPath.trimTo(partsDirLen).slash().put(partsToFlush.getQuick(i));
-                final long fd = TableUtils.openRW(ff, rootPath.$(), LOG, CairoConfiguration.O_NONE);
+                final long fd = ff.openRWExisting(rootPath.$());
+                if (fd < 0) {
+                    final int errno = ff.errno();
+                    // The WAL purge removed the part since the listing: there is nothing left to flush.
+                    if (Files.isErrnoFileDoesNotExist(errno)) {
+                        continue;
+                    }
+                    throw CairoException.critical(errno).put("could not open read-write [file=").put(rootPath).put(']');
+                }
                 try {
                     ff.fdatasync(fd);
                 } finally {

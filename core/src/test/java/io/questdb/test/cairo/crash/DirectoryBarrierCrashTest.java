@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTaskJob;
 import io.questdb.cairo.O3PartitionPurgeJob;
+import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -158,6 +159,21 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testAdaptiveNewTableSequencerSurvivesCrashWithoutFsWideSyncfs() throws Exception {
         assertNewTableSequencerSurvivesCrash("adaptive", new SingleFileSyncfsFacade());
+    }
+
+    @Test
+    public void testAdaptiveNewTableWalIdSurvivesCrash() throws Exception {
+        assertNewTableWalIdSurvivesCrash("adaptive", new CrashFaultFilesFacade());
+    }
+
+    @Test
+    public void testAdaptiveNewTableWalIdSurvivesCrashWithoutFsWideSyncfs() throws Exception {
+        assertNewTableWalIdSurvivesCrash("adaptive", new SingleFileSyncfsFacade());
+    }
+
+    @Test
+    public void testAdaptiveTableConvertedToWalKeepsWalIdCounterWithoutFsWideSyncfs() throws Exception {
+        assertTableConvertedToWalKeepsWalIdCounter("adaptive", new SingleFileSyncfsFacade());
     }
 
     @Test
@@ -486,6 +502,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testSyncNewTableWalIdSurvivesCrash() throws Exception {
+        assertNewTableWalIdSurvivesCrash("sync", new CrashFaultFilesFacade());
+    }
+
+    @Test
     public void testSyncSwitchToParquetNonWalFailedBarrierIsFailStop() throws Exception {
         assertSyncSchemaChangeBarrierFailureIsFailStop(false, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, "fsyncConvertedPartitionDir");
     }
@@ -523,6 +544,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncSwitchToParquetWalSurvivesCrash() throws Exception {
         assertSyncSchemaChangeSurvivesCrash(true, this::stageParquetForSwitch, this::switchFirstPartitionToParquet, this::assertParquetPartitionNames);
+    }
+
+    @Test
+    public void testSyncTableConvertedToWalKeepsWalIdCounter() throws Exception {
+        assertTableConvertedToWalKeepsWalIdCounter("sync", new CrashFaultFilesFacade());
     }
 
     @Test
@@ -895,6 +921,45 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
+    /**
+     * A WAL table created after the baseline takes one commit, and the power fails before it is applied. After the
+     * restart a second commit comes in before the apply. Its WAL id must be new: the sequencer's WAL id counter has to
+     * be as durable as the log that names the ids it handed out. A counter lost to the power loss starts again from
+     * 0, the next writer takes walId 1 again and writes over the segment the first commit names, and the first commit
+     * then applies the second one's rows.
+     */
+    private void assertNewTableWalIdSurvivesCrash(String commitMode, CrashFaultFilesFacade facade) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        runWithFacade(facade, () -> {
+            crashFf.modelSharedJournal = false;
+            markDurableBaseline();
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("x");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            Assert.assertEquals(1, engine.getTableSequencerAPI().getTxnTracker(token).getSeqTxn());
+
+            simulateRestart(new TableToken[]{token});
+            new RecoveryCoordinator(engine).recover();
+            // The second commit comes before the first one is applied.
+            execute("INSERT INTO x VALUES ('2024-01-02T00:00:00.000000Z', 2)");
+            engine.notifyWalTxnRepublisher(token);
+            drainWalQueue();
+            assertNotSuspended(token);
+            assertQuery("SELECT sequencerTxn, walId > 1 isNewWal FROM wal_transactions('x')").noRandomAccess().returns("""
+                    sequencerTxn\tisNewWal
+                    1\tfalse
+                    2\ttrue
+                    """);
+            assertQuery("SELECT count(), sum(v) FROM x").noRandomAccess().expectSize().returns("""
+                    count\tsum
+                    2\t3
+                    """);
+            releaseEngineHandles();
+        });
+    }
+
     private void assertNotSuspended(TableToken token) {
         Assert.assertFalse(
                 "table must not be suspended: " + engine.getTableSequencerAPI().getTxnTracker(token).getErrorMessage(),
@@ -1240,6 +1305,36 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
                 crashAndReopen();
             }
             assertAfterCrash.run();
+            releaseEngineHandles();
+        });
+    }
+
+    /**
+     * A non-WAL table is converted to WAL, and the power fails. The conversion created the table's sequencer, and the
+     * sequencer's WAL id counter has to outlive the power loss with the log: a counter lost to it starts again from 0,
+     * and a writer then takes a WAL id that a commit in the log may already name.
+     */
+    private void assertTableConvertedToWalKeepsWalIdCounter(String commitMode, CrashFaultFilesFacade facade) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        runWithFacade(facade, () -> {
+            crashFf.modelSharedJournal = false;
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            execute("ALTER TABLE x SET TYPE WAL");
+            markDurableBaseline();
+            engine.releaseInactive();
+            engine.load();
+            final TableToken token = engine.verifyTableName("x");
+            Assert.assertTrue("the table must be converted", token.isWal());
+            final File counter = new File(
+                    root + File.separator + token.getDirName() + File.separator + WalUtils.SEQ_DIR,
+                    WalUtils.WAL_INDEX_FILE_NAME
+            );
+            Assert.assertTrue("the conversion must create the WAL id counter", counter.exists());
+
+            simulateRestart(new TableToken[]{token});
+            Assert.assertTrue("the WAL id counter must outlive the power loss", counter.exists());
             releaseEngineHandles();
         });
     }

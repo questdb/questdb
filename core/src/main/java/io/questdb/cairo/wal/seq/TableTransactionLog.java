@@ -126,7 +126,7 @@ public class TableTransactionLog implements Closeable {
 
     public static long readMaxStructureVersion(FilesFacade ff, Path path) {
         int pathLen = path.size();
-        long logFileFd = TableUtils.openRW(ff, path.concat(TXNLOG_FILE_NAME).$(), LOG, CairoConfiguration.O_NONE);
+        long logFileFd = openExistingTxnLog(ff, path);
         try {
             int formatVersion = ff.readNonNegativeInt(logFileFd, 0);
             if (formatVersion < 0) {
@@ -200,7 +200,7 @@ public class TableTransactionLog implements Closeable {
 
     private static int getFormatVersion(Path path, FilesFacade ff) {
         int pathLen = path.size();
-        long logFileFd = TableUtils.openRW(ff, path.concat(TXNLOG_FILE_NAME).$(), LOG, CairoConfiguration.O_NONE);
+        long logFileFd = openExistingTxnLog(ff, path);
         int formatVersion;
         try {
             formatVersion = ff.readNonNegativeInt(logFileFd, 0);
@@ -212,6 +212,22 @@ public class TableTransactionLog implements Closeable {
             ff.close(logFileFd);
         }
         return formatVersion;
+    }
+
+    /**
+     * Opens the log to read it. The open never creates the file: a missing log reports so, rather than coming back
+     * as an empty file that then reads as a broken one.
+     */
+    private static long openExistingTxnLog(FilesFacade ff, Path path) {
+        final long fd = ff.openRWExisting(path.concat(TXNLOG_FILE_NAME).$());
+        if (fd < 0) {
+            final int errno = ff.errno();
+            if (Files.isErrnoFileDoesNotExist(errno)) {
+                throw CairoException.critical(errno).put("could not open, file does not exist [file=").put(path).put(']');
+            }
+            throw CairoException.critical(errno).put("could not open read-write [file=").put(path).put(']');
+        }
+        return fd;
     }
 
     private static long openFileRO(final FilesFacade ff, final Path path, final String fileName, boolean bypassFdCache) {

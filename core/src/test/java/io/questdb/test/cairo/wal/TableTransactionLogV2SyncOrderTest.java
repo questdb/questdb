@@ -365,6 +365,13 @@ public class TableTransactionLogV2SyncOrderTest extends AbstractCairoTest {
             return fd;
         }
 
+        @Override
+        public long openRWExisting(LPSZ name) {
+            long fd = super.openRWExisting(name);
+            trackFd(fd, name);
+            return fd;
+        }
+
         private void trackFd(long fd, LPSZ name) {
             if (fd > -1) {
                 fdToPath.put(fd, Utf8String.newInstance(name).toString());

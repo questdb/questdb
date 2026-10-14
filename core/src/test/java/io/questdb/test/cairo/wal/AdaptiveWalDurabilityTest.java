@@ -972,6 +972,40 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A V2 log flushes the older parts it keeps by listing {@code _txn_parts} and opening each part to flush it. A
+     * part the WAL purge removes between the listing and the open has nothing left to flush: the flush skips it. A
+     * creating open would bring it back as an empty file.
+     */
+    @Test
+    public void testTxnLogPartFlushSkipsPartRemovedAfterListing() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 2);
+
+        final RemoveBeforeOpenFacade ff = new RemoveBeforeOpenFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            for (int day = 1; day <= 5; day++) {
+                execute("insert into x values ('2024-01-0" + day + "T00:00:00.000000Z', " + day + ")");
+            }
+            drainWalQueue();
+
+            final String partsDir = java.io.File.separator + WalUtils.TXNLOG_PARTS_DIR + java.io.File.separator;
+            final java.io.File firstPart = new java.io.File(
+                    root + java.io.File.separator + tt.getDirName() + java.io.File.separator + WalUtils.SEQ_DIR + partsDir, "0"
+            );
+            Assert.assertTrue("the commits must fill the first log part", firstPart.exists());
+            ff.removeBeforeOpen(partsDir + "0");
+            // From txn 0: every part the log keeps, as the Enterprise primary flushes them.
+            engine.getTableSequencerAPI().fdatasyncTxnLog(tt, 0);
+            Assert.assertTrue("the hook must have removed the part between the listing and the open", ff.isRemoved());
+            Assert.assertFalse("the flush must not re-create a removed part", firstPart.exists());
+            assertQuery("select count(), sum(v) from x").noRandomAccess().expectSize().returns("count\tsum\n5\t15\n");
+        });
+    }
+
     static ColumnVersionWriter columnVersionWriter(TableWriter writer) {
         return (ColumnVersionWriter) writer.columnVersionReader();
     }
