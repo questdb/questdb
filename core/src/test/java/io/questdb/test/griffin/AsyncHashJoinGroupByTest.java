@@ -2450,7 +2450,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
         try (SqlCompiler compiler = engine.getSqlCompiler();
              SqlCodeGenerator generator = new SqlCodeGenerator(configuration,
                      new FunctionParser(configuration, engine.getFunctionFactoryCache()), new PostOrderTreeTraversalAlgo(),
-                     new ObjectPool<>(QueryColumn.FACTORY, 16), new ObjectPool<>(ExpressionNode.FACTORY, 16))) {
+                     new ObjectPool<>(QueryColumn.FACTORY, 16), new ObjectPool<>(ExpressionNode.FACTORY, 16), null, null)) {
             return generator.generate((IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext), sqlExecutionContext);
         }
     }
@@ -2982,7 +2982,7 @@ public class AsyncHashJoinGroupByTest extends AbstractCairoTest {
                 };
                 try (SqlCompiler compiler = engine.getSqlCompiler();
                      SqlCodeGenerator generator = new SqlCodeGenerator(configuration, parser, new PostOrderTreeTraversalAlgo(),
-                             new ObjectPool<>(QueryColumn.FACTORY, 16), new ObjectPool<>(ExpressionNode.FACTORY, 16))) {
+                             new ObjectPool<>(QueryColumn.FACTORY, 16), new ObjectPool<>(ExpressionNode.FACTORY, 16), null, null)) {
                     IQueryModel model = (IQueryModel) compiler.generateExecutionModel(sql, sqlExecutionContext);
                     while (model.getSelectModelType() != IQueryModel.SELECT_MODEL_GROUP_BY) {
                         model = model.getNestedModel();

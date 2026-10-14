@@ -82,7 +82,9 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                     parser,
                     new PostOrderTreeTraversalAlgo(),
                     queryColumnPool,
-                    expressionNodePool
+                    expressionNodePool,
+                    null,
+                    null
             )) {
                 final ObjList<QueryColumn> queryColumns = new ObjList<>();
                 queryColumns.add(null);
@@ -134,7 +136,9 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                         parser,
                         new PostOrderTreeTraversalAlgo(),
                         queryColumnPool,
-                        expressionNodePool
+                        expressionNodePool,
+                        null,
+                        null
                 )) {
                     // Warm up class loading and the allocation counter so the measured call
                     // sees steady-state allocation behavior.
@@ -176,7 +180,9 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                     parser,
                     new PostOrderTreeTraversalAlgo(),
                     queryColumnPool,
-                    expressionNodePool
+                    expressionNodePool,
+                    null,
+                    null
             )) {
                 final ObjList<QueryColumn> queryColumns = new ObjList<>();
                 queryColumns.add(new QueryColumn().of("safe", expressionNodePool.next().of(ExpressionNode.LITERAL, "safe", 0, 0)));
@@ -221,7 +227,9 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                     parser,
                     new PostOrderTreeTraversalAlgo(),
                     queryColumnPool,
-                    expressionNodePool
+                    expressionNodePool,
+                    null,
+                    null
             )) {
                 final ObjList<QueryColumn> queryColumns = new ObjList<>();
                 queryColumns.add(new QueryColumn().of("unsafe", expressionNodePool.next().of(ExpressionNode.LITERAL, "unsafe", 0, 0)));
@@ -260,7 +268,9 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                     parser,
                     new PostOrderTreeTraversalAlgo(),
                     queryColumnPool,
-                    expressionNodePool
+                    expressionNodePool,
+                    null,
+                    null
             )) {
                 final ObjList<QueryColumn> queryColumns = new ObjList<>();
                 queryColumns.add(new QueryColumn().of("safe", expressionNodePool.next().of(ExpressionNode.LITERAL, "safe", 0, 0)));
@@ -339,7 +349,9 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                     parser,
                     new PostOrderTreeTraversalAlgo(),
                     queryColumnPool,
-                    expressionNodePool
+                    expressionNodePool,
+                    null,
+                    null
             )) {
                 queryColumns.setQuick(1, new QueryColumn().of("agg", expressionNodePool.next().of(ExpressionNode.LITERAL, "agg", 0, 0)));
                 queryColumns.setQuick(columnCount - 2, new QueryColumn().of("safe", expressionNodePool.next().of(ExpressionNode.LITERAL, "safe", 0, 0)));
@@ -415,7 +427,9 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                     parser,
                     new PostOrderTreeTraversalAlgo(),
                     queryColumnPool,
-                    expressionNodePool
+                    expressionNodePool,
+                    null,
+                    null
             )) {
                 final ObjList<QueryColumn> queryColumns = new ObjList<>();
                 queryColumns.add(null);
@@ -512,7 +526,9 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                     parser,
                     new PostOrderTreeTraversalAlgo(),
                     queryColumnPool,
-                    expressionNodePool
+                    expressionNodePool,
+                    null,
+                    null
             )) {
                 final ObjList<ObjList<GroupByFunction>> workerFunctions = codeGenerator.compileWorkerGroupByFunctionsConditionallyForTesting(
                         null,
@@ -591,7 +607,9 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                     parser,
                     new PostOrderTreeTraversalAlgo(),
                     queryColumnPool,
-                    expressionNodePool
+                    expressionNodePool,
+                    null,
+                    null
             )) {
                 final ObjList<QueryColumn> queryColumns = new ObjList<>();
                 queryColumns.add(null);
@@ -682,7 +700,9 @@ public class SqlCodeGeneratorWorkerFunctionExtractionTest extends AbstractCairoT
                     parser,
                     new PostOrderTreeTraversalAlgo(),
                     queryColumnPool,
-                    expressionNodePool
+                    expressionNodePool,
+                    null,
+                    null
             )) {
                 final ObjList<QueryColumn> queryColumns = new ObjList<>();
                 queryColumns.add(null);

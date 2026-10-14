@@ -48,6 +48,7 @@ public class FunctionFactoryCache {
     private final LowerCaseCharSequenceObjHashMap<ObjList<FunctionFactoryDescriptor>> factories = new LowerCaseCharSequenceObjHashMap<>();
     private final LowerCaseCharSequenceHashSet groupByFunctionNames = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceHashSet runtimeConstantFunctionNames = new LowerCaseCharSequenceHashSet();
+    private final LowerCaseCharSequenceHashSet tableNameFunctionNames = new LowerCaseCharSequenceHashSet();
     private final LowerCaseCharSequenceHashSet windowFunctionNames = new LowerCaseCharSequenceHashSet();
 
     public FunctionFactoryCache(CairoConfiguration configuration, Iterable<FunctionFactory> functionFactories) {
@@ -59,6 +60,9 @@ public class FunctionFactoryCache {
                     final FunctionFactoryDescriptor descriptor = new FunctionFactoryDescriptor(factory);
                     final String name = descriptor.getName();
                     addFactoryToList(factories, descriptor);
+                    if (factory.isTableNameFunction()) {
+                        tableNameFunctionNames.add(name);
+                    }
 
                     // Outside the if/else chain below: this is orthogonal to what kind of function it is.
                     if (factory.requiresAscendingDesignatedTimestamp()) {
@@ -166,6 +170,14 @@ public class FunctionFactoryCache {
 
     public boolean isRuntimeConstant(CharSequence name) {
         return name != null && runtimeConstantFunctionNames.contains(name);
+    }
+
+    /**
+     * Returns true if the first argument of the function names a table, see
+     * {@link FunctionFactory#isTableNameFunction()}.
+     */
+    public boolean isTableNameFunction(CharSequence name) {
+        return name != null && tableNameFunctionNames.contains(name);
     }
 
     public boolean isValidNoArgFunction(ExpressionNode node) {

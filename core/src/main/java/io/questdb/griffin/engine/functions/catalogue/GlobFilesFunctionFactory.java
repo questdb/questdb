@@ -36,6 +36,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionRequirements;
 import io.questdb.griffin.engine.functions.CursorFunction;
 import io.questdb.griffin.engine.functions.str.SizePrettyFunctionFactory;
 import io.questdb.std.Chars;
@@ -45,6 +46,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.Os;
 import io.questdb.std.str.DirectUtf8StringList;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -269,6 +271,12 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
     }
 
     @Override
+    public int getExecutionRequirements() {
+        // authorizes the caller, see SqlExecutionRequirements
+        return SqlExecutionRequirements.DISCLOSES_OBJECTS;
+    }
+
+    @Override
     public String getSignature() {
         return "glob(s)";
     }
@@ -301,7 +309,12 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
         if (crawlCount > 1) {
             throw SqlException.$(argPositions.getQuick(0), "cannot use multiple '**' in one path");
         }
-        return new CursorFunction(new GlobFilesCursorFactory(configuration, glob, globOffsets));
+        return new CursorFunction(new GlobFilesCursorFactory(
+                configuration,
+                glob,
+                globOffsets,
+                isOutsideCopyInputRoot(glob, configuration.getSqlCopyInputRoot())
+        ));
     }
 
     private static void appendSeparatorIfNeeded(Utf8StringSink sink) {
@@ -543,6 +556,33 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
 
     private static boolean isGlobStar(Utf8Sequence segment, int low, int high) {
         return high - low == 2 && segment.byteAt(low) == '*' && segment.byteAt(low + 1) == '*';
+    }
+
+    // Whether the pattern may match files outside sql.copy.input.root, the way read_parquet() confines
+    // its paths: relative patterns resolve under the root, absolute ones must start with it. The
+    // pattern cannot climb out of the root, since validateNoPathTraversal() rejects '..' segments.
+    private static boolean isOutsideCopyInputRoot(Utf8Sequence glob, CharSequence copyInputRoot) {
+        if (!isAbsolutePathQuick(glob)) {
+            return false;
+        }
+        if (Chars.isBlank(copyInputRoot)) {
+            return true;
+        }
+        final String pattern = Utf8s.toString(glob);
+        final int rootLen = copyInputRoot.length();
+        if (pattern.length() <= rootLen) {
+            return true;
+        }
+        final boolean hasRootPrefix = Chars.startsWith(pattern, copyInputRoot)
+                // Path is not case-sensitive on Windows and OSX
+                || ((Os.isWindows() || Os.isOSX()) && Chars.startsWithIgnoreCase(pattern, copyInputRoot));
+        if (!hasRootPrefix) {
+            return true;
+        }
+        final char separatorAfterRoot = pattern.charAt(rootLen);
+        return copyInputRoot.charAt(rootLen - 1) != Files.SEPARATOR
+                && separatorAfterRoot != Files.SEPARATOR
+                && separatorAfterRoot != '/';
     }
 
     private static boolean isWindowsDriveLetter(Utf8Sequence glob, int start, int end) {
@@ -826,15 +866,23 @@ public class GlobFilesFunctionFactory implements FunctionFactory {
     static class GlobFilesCursorFactory extends AbstractRecordCursorFactory {
         private final GlobFilesRecordCursor cursor;
         private final Utf8Sequence glob;
+        private final boolean isOutsideCopyInputRoot;
 
-        public GlobFilesCursorFactory(CairoConfiguration configuration, Utf8Sequence glob, IntList globOffsets) {
+        public GlobFilesCursorFactory(CairoConfiguration configuration, Utf8Sequence glob, IntList globOffsets, boolean isOutsideCopyInputRoot) {
             super(ImportFilesFunctionFactory.METADATA);
             this.glob = glob;
+            this.isOutsideCopyInputRoot = isOutsideCopyInputRoot;
             cursor = new GlobFilesRecordCursor(configuration.getFilesFacade(), configuration.getSqlCopyInputRoot(), glob, globOffsets);
         }
 
         @Override
         public RecordCursor getCursor(SqlExecutionContext executionContext) {
+            // Like files(), a pattern outside sql.copy.input.root can list any directory, the database
+            // root included, where table and column file names would disclose every table and its
+            // schema. Authorized per execution, since compiled factories are shared.
+            if (isOutsideCopyInputRoot) {
+                executionContext.getSecurityContext().authorizeSystemAdmin();
+            }
             executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             cursor.circuitBreaker = executionContext.getCircuitBreaker();
             cursor.toTop();

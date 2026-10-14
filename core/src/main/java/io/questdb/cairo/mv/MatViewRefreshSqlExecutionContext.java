@@ -132,6 +132,11 @@ public class MatViewRefreshSqlExecutionContext extends SqlExecutionContextImpl {
     }
 
     @Override
+    public boolean isMatViewRefresh() {
+        return true;
+    }
+
+    @Override
     public boolean isOverriddenIntrinsics(TableToken tableToken) {
         return tableToken == baseTableReader.getTableToken();
     }

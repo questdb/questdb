@@ -31,6 +31,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
@@ -46,6 +47,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
+import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -86,6 +88,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) {
         cursor.circuitBreaker = executionContext.getCircuitBreaker();
+        cursor.securityContext = executionContext.getSecurityContext();
         return cursor.initialize();
     }
 
@@ -107,12 +110,16 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
     private class TableStorageRecordCursor implements NoRandomAccessRecordCursor {
         private final TableStorageRecord record = new TableStorageRecord();
         private final ObjHashSet<TableToken> tableBucket = new ObjHashSet<>();
+        // the non-system tables the principal may see, in registry order
+        private final ObjList<TableToken> tables = new ObjList<>();
         private SqlExecutionCircuitBreaker circuitBreaker;
+        private SecurityContext securityContext;
         private int tableIndex = -1;
 
         @Override
         public void close() {
             tableBucket.clear();
+            tables.clear();
             // The factory nulls txReader once it is freed; a cursor closed after the
             // factory (late close on an error path) must not dereference it.
             final TxReader txReader = TableStorageRecordCursorFactory.this.txReader;
@@ -129,23 +136,10 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         @Override
         public boolean hasNext() {
             circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
-            ++tableIndex;
-            int n = tableBucket.size();
-
-            if (tableIndex >= n) {
-                return false;
+            if (++tableIndex < tables.size()) {
+                record.getTableStats(tables.getQuick(tableIndex));
+                return true;
             }
-
-            TableToken token;
-            do {
-                token = tableBucket.get(tableIndex);
-                if (!token.isSystem()) {
-                    record.getTableStats(token);
-                    return true;
-                }
-                tableIndex++;
-            } while (tableIndex < n);
-
             return false;
         }
 
@@ -156,7 +150,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
 
         @Override
         public long size() {
-            return tableBucket.size();
+            return tables.size();
         }
 
         @Override
@@ -166,6 +160,13 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
 
         private TableStorageRecordCursor initialize() {
             engine.getTableTokens(tableBucket, false);
+            tables.clear();
+            for (int i = 0, n = tableBucket.size(); i < n; i++) {
+                final TableToken token = tableBucket.get(i);
+                if (!token.isSystem() && securityContext.isTableVisible(token)) {
+                    tables.add(token);
+                }
+            }
             toTop();
             return this;
         }
