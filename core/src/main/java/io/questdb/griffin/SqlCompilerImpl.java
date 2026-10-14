@@ -3834,6 +3834,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             try {
                 return compileExecutionModelOnce(executionContext, generateCompileViewEvents);
             } catch (TableReferenceOutOfDateException e) {
+                if (executionContext.isWalApplication()) {
+                    throw e;
+                }
                 consumeRecompileAttempt(e);
                 LOG.info().$("retrying binding [fd=").$(executionContext.getRequestFd()).I$();
                 clearExceptSqlText();

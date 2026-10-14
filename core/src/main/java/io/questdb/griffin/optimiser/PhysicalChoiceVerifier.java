@@ -162,7 +162,7 @@ final class PhysicalChoiceVerifier {
         if ((application == LimitPlan.Application.SORT) != isBounded(algorithm)) {
             return PlanVerifier.LIMIT_APPLICATION;
         }
-        if (application != LimitPlan.Application.SORT) {
+        if (sort == null || application != LimitPlan.Application.SORT) {
             return null;
         }
         final boolean isTimestampOrdered = OperatorPlanning.isTimestampOrdered(sort);

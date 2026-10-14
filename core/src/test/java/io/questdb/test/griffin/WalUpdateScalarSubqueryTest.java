@@ -1102,6 +1102,46 @@ public class WalUpdateScalarSubqueryTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUpdateRecoversWhenTargetNameReusedDuringApply() throws Exception {
+        Assume.assumeTrue(walEnabled);
+        final AtomicBoolean isSwapPending = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (Utf8s.endsWithAscii(name, WalUtils.EVENT_FILE_NAME) && isSwapPending.compareAndSet(true, false)) {
+                    TestUtils.unchecked(WalUpdateScalarSubqueryTest.this::swapInFreshTableUnderOldName);
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createTargetTable(3);
+            update("UPDATE t SET v = 99 WHERE v >= 2");
+            isSwapPending.set(true);
+            drainWalQueue();
+            Assert.assertFalse("the swap must have fired during apply", isSwapPending.get());
+            final TableToken original = engine.verifyTableName("t_old");
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(original));
+            assertNamed("t_old", """
+                    2020-06-01T00:00:00.000000Z\t1
+                    2020-06-02T00:00:00.000000Z\t99
+                    2020-06-03T00:00:00.000000Z\t99
+                    """);
+            assertNamed("t", "2020-07-01T00:00:00.000000Z\t7\n");
+
+            update("UPDATE t_old SET v = v + 1 WHERE v >= 99");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(original));
+            assertNamed("t_old", """
+                    2020-06-01T00:00:00.000000Z\t1
+                    2020-06-02T00:00:00.000000Z\t100
+                    2020-06-03T00:00:00.000000Z\t100
+                    """);
+            assertNamed("t", "2020-07-01T00:00:00.000000Z\t7\n");
+        });
+    }
+
     // The discriminating guard for the fix: this is the one shape where the target's *own* name
     // raises "table does not exist". ALTER resolves its target through tableExistsOrFail, which
     // consults the registry; the apply job takes the writer, the old name is then handed to a

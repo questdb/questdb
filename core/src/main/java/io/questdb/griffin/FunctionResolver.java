@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
+import io.questdb.cairo.NanosTimestampDriver;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.FunctionArray;
 import io.questdb.cairo.sql.BindVariableService;
@@ -237,7 +238,7 @@ public class FunctionResolver implements Mutable {
     /**
      * Determines the appropriate timestamp type based on the string precision and year range.
      * If the string contains nanosecond precision (more than 6 digits after seconds) and
-     * the year is within nano timestamp range (1678 to 2261), returns nano type;
+     * the timestamp is representable at nanosecond precision, returns nano type;
      * otherwise returns the original signature type.
      *
      * @param timestampStr the timestamp string to analyze
@@ -249,21 +250,19 @@ public class FunctionResolver implements Mutable {
             return FunctionFactoryDescriptor.toType(sigArgType);
         }
 
-        // Extract year from timestamp string to check nano range
-        if (isBeyondNanoRange(extractYearFromTimestamp(timestampStr))) {
+        final int year = extractYearFromTimestamp(timestampStr);
+        if (year < 1677 || year > 2262) {
             return FunctionFactoryDescriptor.toType(sigArgType);
         }
 
-        // Look for fractional seconds part after last '.' or ':'
         int lastDot = -1;
         for (int i = timestampStr.length() - 1; i >= 0; i--) {
             char c = timestampStr.charAt(i);
-            if (c == '.' || c == ':') {
+            if (c == '.') {
                 lastDot = i;
                 break;
             }
-            // Stop if we hit a space or non-digit (except for timezone indicators)
-            if (c == ' ' || c == 'T' || c == '+' || c == '-') {
+            if (c == ' ' || c == 'T') {
                 break;
             }
         }
@@ -282,6 +281,13 @@ public class FunctionResolver implements Mutable {
 
             // If more than 6 digits (microsecond precision) and within nano range, use nanosecond type
             if (digitCount > 6) {
+                if (isBeyondNanoRange(year)) {
+                    try {
+                        NanosTimestampDriver.INSTANCE.parseFloorLiteral(timestampStr);
+                    } catch (NumericException e) {
+                        return FunctionFactoryDescriptor.toType(sigArgType);
+                    }
+                }
                 return ColumnType.TIMESTAMP_NANO;
             }
         }

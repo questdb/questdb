@@ -38,10 +38,7 @@ import java.util.function.LongPredicate;
 /**
  * A timestamp literal finer than the column compares exactly, at the literal's precision, wherever the
  * predicate runs: interval scan, JIT or Java filter, join filter, runtime bound or Parquet pruning.
- * Binding rewrites a constant comparison into the same comparison at the column's precision. Nanosecond
- * values span the years 1678 to 2261: a literal outside them with a sub-microsecond fraction takes microsecond
- * precision, and its extra digits are dropped (see {@link #testFractionBeyondNanosecondRangeKeepsMicroseconds}
- * and {@link #testFractionOutsideNanosecondRangeAgreesAcrossPredicates}).
+ * Binding rewrites a constant comparison into the same comparison at the column's precision.
  */
 public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
     private static final DateTimeFormatter NANOS = DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSSSSSSS'Z'").withZone(ZoneOffset.UTC);
@@ -395,8 +392,8 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
     @Test
     public void testFractionOutsideNanosecondRangeAgreesAcrossPredicates() throws Exception {
         assertMemoryLeak(() -> {
-            final ObjList<String> microDates = new ObjList<>("-001-01-01", "0001-01-01", "1500-01-01", "1677-12-01", "2262-01-01", "3000-01-01");
-            final ObjList<String> nanoDates = new ObjList<>("1678-01-01", "2020-01-01", "2261-12-01");
+            final ObjList<String> microDates = new ObjList<>("-001-01-01", "0001-01-01", "1500-01-01", "3000-01-01");
+            final ObjList<String> nanoDates = new ObjList<>("1677-12-01", "1678-01-01", "2020-01-01", "2261-12-01", "2262-01-01");
             final ObjList<String> dates = new ObjList<>();
             dates.addAll(microDates);
             dates.addAll(nanoDates);
@@ -414,6 +411,7 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
                     final String date = dates.getQuick(i);
                     final String literal = "'" + date + "T00:00:00.000000001'";
                     final boolean isTruncated = i < microDates.size();
+                    final boolean isIntervalTruncated = isTruncated || date.startsWith("1677") || date.startsWith("2262");
                     final String fromLiteral = isTruncated ? "id\n" + 2 * i + "\n" + (2 * i + 1) + "\n" : "id\n" + (2 * i + 1) + "\n";
                     assertQuery("SELECT id FROM o WHERE ts >= " + literal + " AND ts < '" + date + "T00:00:01' ORDER BY id")
                             .noLeakCheck()
@@ -422,7 +420,7 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
                     assertQuery("SELECT id FROM o WHERE ts IN '" + date + "T00:00:00.000000001;1s' ORDER BY id")
                             .noLeakCheck()
                             .sizeMayVary()
-                            .returns(fromLiteral);
+                            .returns(isIntervalTruncated ? "id\n" + 2 * i + "\n" + (2 * i + 1) + "\n" : fromLiteral);
                     assertQuery("SELECT id FROM o WHERE ts = " + literal + " ORDER BY id")
                             .noLeakCheck()
                             .sizeMayVary()
@@ -529,6 +527,54 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
                                     false\tfalse\ttrue
                                     """);
                 }
+            }
+        });
+    }
+
+    @Test
+    public void testNanosecondBoundaryCasts() throws Exception {
+        assertMemoryLeak(() -> assertQuery("""
+                SELECT '1677-09-21T00:12:43.145224193Z'::TIMESTAMP_NS::LONG AS lo,
+                       '1677-09-21T00:12:43.145224194Z'::TIMESTAMP_NS::LONG AS adjacent,
+                       '2262-04-11T23:47:16.854775807Z'::TIMESTAMP_NS::LONG AS hi,
+                       '1677-09-21T00:12:43.145224193Z'::TIMESTAMP_NS IS NULL AS is_null,
+                       NULL::TIMESTAMP_NS::LONG AS null_cast
+                """)
+                .noLeakCheck()
+                .expectSize()
+                .returns("""
+                        lo\tadjacent\thi\tis_null\tnull_cast
+                        -9223372036854775807\t-9223372036854775806\t9223372036854775807\tfalse\tnull
+                        """));
+    }
+
+    @Test
+    public void testNanosecondBoundaryPredicates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE boundary (ts TIMESTAMP_NS, id INT)");
+            execute("""
+                    INSERT INTO boundary VALUES
+                    (-9_223_372_036_854_775_807, 1), (-9_223_372_036_854_775_806, 2),
+                    (-9_223_372_036_854_775_000, 3), (0, 4),
+                    (9_223_372_036_854_775_806, 5), (9_223_372_036_854_775_807, 6), (null, 7)
+                    """);
+            execute("CREATE TABLE designated (ts TIMESTAMP_NS, id INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO designated VALUES (0, 1), (1, 2), (1_577_836_800_000_000_000, 3)");
+            final String lo = "'1677-09-21T00:12:43.145224193Z'";
+            final String adjacent = "'1677-09-21T00:12:43.145224194Z'";
+            final String hi = "'2262-04-11T23:47:16.854775807Z'";
+            for (boolean isJit : new boolean[]{true, false}) {
+                setJit(isJit);
+                assertQuery("SELECT id FROM boundary WHERE ts < " + lo).noLeakCheck().returns("id\n");
+                assertQuery("SELECT id FROM boundary WHERE ts = " + lo).noLeakCheck().returns("id\n1\n");
+                assertQuery("SELECT id FROM boundary WHERE " + lo + " = ts").noLeakCheck().returns("id\n1\n");
+                assertQuery("SELECT id FROM boundary WHERE ts < " + adjacent).noLeakCheck().returns("id\n1\n");
+                assertQuery("SELECT id FROM boundary WHERE ts >= " + hi).noLeakCheck().returns("id\n6\n");
+                assertQuery("SELECT id FROM boundary WHERE ts = " + hi).noLeakCheck().returns("id\n6\n");
+                assertQuery("SELECT id FROM boundary WHERE ts IS NULL").noLeakCheck().returns("id\n7\n");
+                assertQuery("SELECT id FROM designated WHERE ts < " + lo).noLeakCheck().returns("id\n");
+                assertQuery("SELECT id FROM designated WHERE ts > " + lo).noLeakCheck().returns("id\n1\n2\n3\n");
+                assertQuery("SELECT id FROM designated WHERE ts > " + hi).noLeakCheck().returns("id\n");
             }
         });
     }

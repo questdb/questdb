@@ -254,24 +254,27 @@ final class DecorrelationVerifier {
         }
 
         private void addConjuncts(BoundExpression predicate) {
-            if (predicate == null) {
-                return;
-            }
-            if (predicate instanceof FunctionExpression call && call.isAnd()) {
-                addConjuncts(call.argumentAt(0));
-                addConjuncts(call.argumentAt(1));
-                return;
-            }
-            if (predicate instanceof FunctionExpression call && call.getArgumentCount() == 2 && Chars.equals(call.getName(), '=')
-                    && isColumnReference(call.argumentAt(0)) && isColumnReference(call.argumentAt(1))) {
-                final boolean isLeftOuter = call.argumentAt(0) instanceof OuterColumnExpression;
-                final boolean isRightOuter = call.argumentAt(1) instanceof OuterColumnExpression;
-                if (isLeftOuter != isRightOuter) {
-                    outerPairCount++;
-                } else if (!isLeftOuter) {
-                    addPair(((ColumnExpression) call.argumentAt(0)).getColumnId(), ((ColumnExpression) call.argumentAt(1)).getColumnId());
+            switch (predicate) {
+                case null -> {
+                    return;
                 }
-                return;
+                case FunctionExpression call when call.isAnd() -> {
+                    addConjuncts(call.argumentAt(0));
+                    addConjuncts(call.argumentAt(1));
+                    return;
+                }
+                case FunctionExpression call when call.getArgumentCount() == 2 && Chars.equals(call.getName(), '=') && isColumnReference(call.argumentAt(0)) && isColumnReference(call.argumentAt(1)) -> {
+                    final boolean isLeftOuter = call.argumentAt(0) instanceof OuterColumnExpression;
+                    final boolean isRightOuter = call.argumentAt(1) instanceof OuterColumnExpression;
+                    if (isLeftOuter != isRightOuter) {
+                        outerPairCount++;
+                    } else if (!isLeftOuter) {
+                        addPair(((ColumnExpression) call.argumentAt(0)).getColumnId(), ((ColumnExpression) call.argumentAt(1)).getColumnId());
+                    }
+                    return;
+                }
+                default -> {
+                }
             }
             otherCount++;
         }

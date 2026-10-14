@@ -29,7 +29,10 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.cutlass.line.tcp.LineTcpParser;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.datetime.CommonUtils;
+import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -171,5 +174,43 @@ public class NanoTimestampDriverTest extends AbstractCairoTest {
         Assert.assertEquals(1577836800100000000L, driver.implicitCast("2020-01-01T00:00:00.1Z", ColumnType.STRING));
         Assert.assertEquals(1577836800120000000L, driver.implicitCast("2020-01-01T00:00:00.12Z", ColumnType.STRING));
         Assert.assertEquals(1577836800123000000L, driver.implicitCast("2020-01-01T00:00:00.123Z", ColumnType.STRING));
+    }
+
+    @Test
+    public void testParseFloorNanosecondRange() throws Exception {
+        assertParseFloor(Long.MIN_VALUE + 1, "1677-09-21T00:12:43.145224193Z");
+        assertParseFloor(Long.MIN_VALUE + 2, "1677-09-21T00:12:43.145224194Z");
+        assertParseFloor(Long.MIN_VALUE + 808, "1677-09-21T00:12:43.145225000Z");
+        assertParseFloor(Long.MIN_VALUE + 1, "1677-09-21T01:12:43.145224193+01:00");
+        assertParseFloor(Long.MIN_VALUE + 1, "1677-W38-2T00:12:43.145224193");
+        assertParseFloor(Long.MAX_VALUE - 1, "2262-04-11T23:47:16.854775806Z");
+        assertParseFloor(Long.MAX_VALUE, "2262-04-11T23:47:16.854775807Z");
+        assertParseFloor(Long.MAX_VALUE, "2262-04-12T00:47:16.854775807+01:00");
+        assertParseFloor(Long.MAX_VALUE, "2262-W15-5T23:47:16.854775807");
+        assertParseFloor(-1, "1969-12-31T23:59:59.999999999Z");
+        assertParseFloor(0, "1970-01-01T00:00:00.000000000Z");
+        assertParseFloor(1, "1970-01-01T00:00:00.000000001Z");
+        Assert.assertEquals(Numbers.LONG_NULL, driver.parseFloorLiteral((CharSequence) null));
+        Assert.assertEquals(Numbers.LONG_NULL, driver.parseFloorLiteral((Utf8Sequence) null));
+    }
+
+    @Test
+    public void testParseFloorRejectsNanosecondOverflow() {
+        for (String text : new String[]{
+                "1500-01-01", "1677", "1677-09-21T00:12:43.145224191Z",
+                "1677-09-21T00:12:43.145224192Z", "1677-09-21T00:12:43.145224Z",
+                "1677-09-21T00:12:43.145224193+00:01", "1677-W38-2T00:12:43.145224192",
+                "2262-04-11T23:47:16.854775808Z", "2262-04-11T23:47:16.854775807-00:01",
+                "2262-W15-5T23:47:16.854775808", "2262-12", "2263-01-01"
+        }) {
+            Assert.assertThrows(text, NumericException.class, () -> driver.parseFloorLiteral(text));
+            final Utf8String utf8 = new Utf8String(text);
+            Assert.assertThrows(text, NumericException.class, () -> driver.parseFloorLiteral(utf8));
+        }
+    }
+
+    private void assertParseFloor(long expected, String text) throws NumericException {
+        Assert.assertEquals(text, expected, driver.parseFloorLiteral(text));
+        Assert.assertEquals(text, expected, driver.parseFloorLiteral(new Utf8String(text)));
     }
 }

@@ -2452,6 +2452,45 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScalarBoundDoesNotPushThroughTimestampOffset() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-01-01T01:00:00.000000Z', 10),
+                        ('2024-01-02T01:00:00.000000Z', 20),
+                        ('2024-01-03T01:00:00.000000Z', NULL)
+                    """);
+            execute("CREATE TABLE bounds (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO bounds VALUES ('2024-01-02T00:00:00.000000Z')");
+
+            assertQuery("""
+                    SELECT shifted, doubled
+                    FROM (SELECT dateadd('h', -1, ts) shifted, price * 2 doubled FROM trades)
+                    WHERE shifted >= (SELECT max(ts) FROM bounds)
+                    """)
+                    .timestamp("shifted")
+                    .withPlanContaining("Filter filter: shifted [thread-safe] >= cursor", "Frame forward scan on: trades")
+                    .withPlanNotContaining("Interval forward scan on: trades")
+                    .returns("""
+                            shifted\tdoubled
+                            2024-01-02T00:00:00.000000Z\t40.0
+                            2024-01-03T00:00:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testScalarBoundPushesThroughComputedProjection() throws Exception {
+        assertScalarBoundPushdown(true);
+    }
+
+    @Test
+    public void testScalarBoundPushesThroughUnpartitionedComputedProjection() throws Exception {
+        assertScalarBoundPushdown(false);
+    }
+
+    @Test
     public void testSecondOffsetPushdown() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY DAY;");
@@ -2736,6 +2775,32 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVolatileScalarBoundDoesNotPushThroughComputedProjection() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-01-01T00:00:00.000000Z', 10),
+                        ('2024-01-02T00:00:00.000000Z', 20)
+                    """);
+
+            assertQuery("""
+                    SELECT ts, doubled
+                    FROM (SELECT ts, price * 2 doubled FROM trades)
+                    WHERE ts >= (SELECT rnd_timestamp('2023-01-01'::TIMESTAMP, '2023-01-02'::TIMESTAMP, 0))
+                    """)
+                    .timestamp("ts")
+                    .withPlanContaining("Filter filter: ts [thread-safe] >= cursor", "Frame forward scan on: trades")
+                    .withPlanNotContaining("Interval forward scan on: trades")
+                    .returns("""
+                            ts\tdoubled
+                            2024-01-01T00:00:00.000000Z\t20.0
+                            2024-01-02T00:00:00.000000Z\t40.0
+                            """);
+        });
+    }
+
+    @Test
     public void testWeekOffsetPushdown() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE trades (price DOUBLE, timestamp TIMESTAMP) TIMESTAMP(timestamp) PARTITION BY MONTH;");
@@ -3003,6 +3068,65 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             tt
                             2024-03-01T00:00:00.000000Z
                             """);
+        });
+    }
+
+    private void assertScalarBoundPushdown(boolean isPartitioned) throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, price DOUBLE) TIMESTAMP(ts)" + (isPartitioned ? " PARTITION BY DAY" : ""));
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2024-01-01T00:00:00.000000Z', 10),
+                        ('2024-01-02T00:00:00.000000Z', 20),
+                        ('2024-01-02T00:00:00.000001Z', NULL),
+                        ('2024-01-03T00:00:00.000000Z', 40)
+                    """);
+            execute("CREATE TABLE bounds (ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO bounds VALUES ('2024-01-02T00:00:00.000000Z')");
+
+            final String query = """
+                    SELECT ts, doubled
+                    FROM (SELECT ts, price * 2 doubled FROM trades)
+                    WHERE ts >= (SELECT max(ts) FROM bounds)
+                    """;
+            final String expected = """
+                    ts\tdoubled
+                    2024-01-02T00:00:00.000000Z\t40.0
+                    2024-01-02T00:00:00.000001Z\tnull
+                    2024-01-03T00:00:00.000000Z\t80.0
+                    """;
+            assertQuery(query)
+                    .timestamp("ts")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [ts,price*2]
+                                PageFrame
+                                    Row forward scan
+                                    Interval forward scan on: trades
+                                      intervals: [("2024-01-02T00:00:00.000000Z","MAX")]
+                            """)
+                    .returns(expected);
+
+            assertQuery(query)
+                    .timestamp("ts")
+                    .mutateWith("INSERT INTO bounds VALUES ('2024-01-03T00:00:00.000000Z')")
+                    .returns(expected, """
+                            ts\tdoubled
+                            2024-01-03T00:00:00.000000Z\t80.0
+                            """);
+
+            assertQuery("""
+                    SELECT ts, doubled FROM (SELECT ts, price * 2 doubled FROM trades)
+                    WHERE ts >= (SELECT ts FROM bounds WHERE ts < '2024-01-01')
+                    """)
+                    .timestamp("ts")
+                    .returns("ts\tdoubled\n");
+            assertQuery("""
+                    SELECT ts, doubled FROM (SELECT ts, price * 2 doubled FROM trades)
+                    WHERE ts >= (SELECT max(ts) FROM bounds WHERE ts < '2024-01-01')
+                    """)
+                    .timestamp("ts")
+                    .returns("ts\tdoubled\n");
         });
     }
 }

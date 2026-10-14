@@ -112,10 +112,6 @@ final class Decorrelation implements OptimiserPass {
     private final ConjunctTest bodyConjuncts = this::keepsBodyConjunct;
     private JoinPlan pendingJoin;
 
-    /**
-     * Allocates plan nodes and expressions from the statement binder's pools; the other arguments are
-     * temporary lists the optimiser lends to its passes.
-     */
     Decorrelation(
             OptimiserContext context,
             PlanNodePools planNodes,
@@ -226,7 +222,7 @@ final class Decorrelation implements OptimiserPass {
     }
 
     /**
-     * Projects a set-operation branch so it ends with one column for each outer column of {@link #domainOuterIds},
+     * Projects a set-operation branch so it ends with one column for each outer column of,
      * in that order; the branch's mapping lies in two ranges of the mapping stack.
      */
     private ProjectPlan alignBranch(LogicalPlan branch, int lo, int hi, int extraLo, int extraHi, int position) {
@@ -680,10 +676,9 @@ final class Decorrelation implements OptimiserPass {
      */
     private void liftAboveStep(JoinPlan join, JoinInput step, LogicalPlan body, int masterBase) throws SqlException {
         LogicalPlan node = body;
-        while (!(node instanceof ProjectPlan)) {
+        while (!(node instanceof ProjectPlan project)) {
             node = node.inputAt(0);
         }
-        final ProjectPlan project = (ProjectPlan) node;
         ctx.substitution.clear();
         for (int i = masterBase, n = ctx.masterOuterIds.size(); i < n; i++) {
             ctx.substitution.put(ctx.masterOuterIds.getQuick(i), ctx.masterColumn(ctx.masterOuterIds.getQuick(i)));

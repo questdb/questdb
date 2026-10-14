@@ -132,7 +132,7 @@ public class TransitiveFilterTest extends AbstractCairoTest {
                         bindVariableService.setInt(0, value);
                         final String rows = value == 1 ? "lid\trid\n1\t11\n"
                                 : value == 2 ? "lid\trid\n2\t12\n" : "lid\trid\n4\t14\n";
-                        Assert.assertEquals(sql, rows, printFactory(factory));
+                        assertRowsOnly(factory, rows);
                     }
                 }
             }

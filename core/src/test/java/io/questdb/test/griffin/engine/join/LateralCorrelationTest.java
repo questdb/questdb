@@ -3576,6 +3576,62 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testScalarCountGuardedByNullableDerivedTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT, ts TIMESTAMP)");
+            execute("""
+                    INSERT INTO o VALUES
+                        (1, 1, NULL),
+                        (2, 2, NULL),
+                        (3, 3, '2024-01-01T00:00:03.000000Z'),
+                        (4, 4, '2024-01-01T00:00:04.000000Z')
+                    """);
+            execute("CREATE TABLE t (k INT)");
+            execute("INSERT INTO t VALUES (1), (1), (3)");
+            execute("CREATE TABLE r (id INT, k INT)");
+            execute("INSERT INTO r VALUES (10, 1), (20, 2), (50, 5)");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    compiler.setFullFatJoins(isFullFat);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, r.id rid FROM (SELECT id, k, ts FROM o ORDER BY ts) o TIMESTAMP(ts)
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x
+                            FULL JOIN r ON r.k = o.k ORDER BY o.id, rid
+                            """, """
+                            id\tcnt\trid
+                            null\tnull\t50
+                            1\t2\t10
+                            2\t0\t20
+                            3\t1\tnull
+                            4\t0\tnull
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, r.id rid FROM (SELECT id, k, ts FROM o ORDER BY ts) o TIMESTAMP(ts)
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x
+                            RIGHT JOIN r ON r.k = o.k ORDER BY o.id, rid
+                            """, """
+                            id\tcnt\trid
+                            null\tnull\t50
+                            1\t2\t10
+                            2\t0\t20
+                            """);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, r.id rid FROM (SELECT id, k, ts FROM o ORDER BY ts) o TIMESTAMP(ts)
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x
+                            LEFT JOIN r ON r.k = o.k ORDER BY o.id, rid
+                            """, """
+                            id\tcnt\trid
+                            1\t2\t10
+                            2\t0\t20
+                            3\t1\tnull
+                            4\t0\tnull
+                            """);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testScalarCountGuardedByOuterDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
@@ -3604,6 +3660,37 @@ public class LateralCorrelationTest extends AbstractCairoTest {
             assertQuery(sql)
                     .noLeakCheck()
                     .assertsPlanNotContaining("__qdb_row_marker__", "true]");
+        });
+    }
+
+    @Test
+    public void testScalarCountGuardedByOverriddenNativeTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (id INT, k INT, ts TIMESTAMP, native_ts TIMESTAMP) TIMESTAMP(native_ts)");
+            execute("""
+                    INSERT INTO o VALUES
+                        (1, 1, NULL, '2024-01-01T00:00:01.000000Z'),
+                        (2, 2, NULL, '2024-01-01T00:00:02.000000Z')
+                    """);
+            execute("CREATE TABLE t (k INT)");
+            execute("INSERT INTO t VALUES (1), (1)");
+            execute("CREATE TABLE r (id INT, k INT)");
+            execute("INSERT INTO r VALUES (10, 1), (20, 2), (30, 3)");
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    compiler.setFullFatJoins(isFullFat);
+                    assertQueryReturns(compiler, """
+                            SELECT o.id, x.cnt, r.id rid FROM o TIMESTAMP(ts)
+                            CROSS JOIN LATERAL (SELECT count(*) cnt FROM t WHERE t.k = o.k) x
+                            FULL JOIN r ON r.k = o.k ORDER BY o.id, rid
+                            """, """
+                            id\tcnt\trid
+                            null\tnull\t30
+                            1\t2\t10
+                            2\t0\t20
+                            """);
+                }
+            }
         });
     }
 

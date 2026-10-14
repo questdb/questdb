@@ -549,7 +549,7 @@ final class FilterPushdown implements OptimiserPass {
         if (expression instanceof ConstantExpression || expression instanceof TypeExpression) {
             return STATIC_LEAVES;
         }
-        return expression instanceof CursorExpression ? OTHER_LEAVES : RUNTIME_LEAVES;
+        return expression instanceof CursorExpression && !LogicalPlans.isOrderIndependent(expression) ? OTHER_LEAVES : RUNTIME_LEAVES;
     }
 
     private static int sourceColumnId(LogicalPlan plan, int columnId, LogicalPlan target) {

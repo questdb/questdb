@@ -45,6 +45,7 @@ import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.Chars;
@@ -114,8 +115,8 @@ final class ScalarCompensation implements Mutable {
      * The argument index of the count column in a comparison of a count of the scalar projection with an
      * integer constant, or -1.
      */
-    private static int countComparisonSide(BoundExpression predicate, ProjectPlan scalar) {
-        if (!(predicate instanceof FunctionExpression call) || call.getArgumentCount() != 2) {
+    private static int countComparisonSide(FunctionExpression call, ProjectPlan scalar) {
+        if (call.getArgumentCount() != 2) {
             return -1;
         }
         for (int side = 0; side < 2; side++) {
@@ -183,15 +184,17 @@ final class ScalarCompensation implements Mutable {
     }
 
     private static boolean keepsEveryCount(BoundExpression predicate, ProjectPlan scalar) {
-        if (predicate instanceof FunctionExpression call && call.isAnd()) {
-            return keepsEveryCount(call.argumentAt(0), scalar) && keepsEveryCount(call.argumentAt(1), scalar);
-        }
-        final int countSide = countComparisonSide(predicate, scalar);
-        if (countSide < 0) {
+        if (!(predicate instanceof FunctionExpression call)) {
             return false;
         }
-        final FunctionExpression call = (FunctionExpression) predicate;
-        final long value = ((ConstantExpression) call.argumentAt(1 - countSide)).getLongValue();
+        if (call.isAnd()) {
+            return keepsEveryCount(call.argumentAt(0), scalar) && keepsEveryCount(call.argumentAt(1), scalar);
+        }
+        final int countSide = countComparisonSide(call, scalar);
+        if (countSide < 0 || !(call.argumentAt(1 - countSide) instanceof ConstantExpression constant)) {
+            return false;
+        }
+        final long value = constant.getLongValue();
         final String name = call.getName();
         if (Chars.equals(name, "!=") || Chars.equals(name, "<>")) {
             return value < 0;
@@ -231,7 +234,7 @@ final class ScalarCompensation implements Mutable {
     /**
      * The value a visible column of the projection over a keyless aggregate takes over no rows, over
      * {@code input}: counts read zero, other aggregates read their carried value (NULL), and the columns
-     * {@link #substitution} holds read their substitutes. Null when the column reads aggregates none of which
+     * {@link DecorrelationContext#substitution} holds read their substitutes. Null when the column reads aggregates none of which
      * counts: the LEFT join's NULL is then the value.
      */
     private BoundExpression emptyValue(ProjectPlan project, int index, OutputSchema input) throws SqlException {
@@ -343,13 +346,13 @@ final class ScalarCompensation implements Mutable {
 
     /**
      * A condition that holds on each row of the join input and fails where the join null-extends it: its
-     * designated timestamp is not NULL, or, for an input without one, its row marker, which a projection over
-     * the input defines.
+     * native stored timestamp is not NULL, or its row marker, which a projection over the input defines.
      */
     private BoundExpression rowGuard(JoinPlan join, JoinInput input, int position) throws SqlException {
         final OutputSchema output = input.getInput().getOutput();
         final int timestampIndex = output.getTimestampIndex();
-        if (timestampIndex > -1) {
+        if (timestampIndex > -1 && input.getInput() instanceof ScanPlan scan
+                && scan.getNativeTimestampColumnId() == output.getColumnId(timestampIndex)) {
             return ctx.context.bindCall("!=", position,
                     ctx.planNodes.columns.next().of(output.getColumnId(timestampIndex), output.getColumnType(timestampIndex), position),
                     ctx.planNodes.constants.next().ofNull(position), join.getOutput());
@@ -441,15 +444,17 @@ final class ScalarCompensation implements Mutable {
     }
 
     static boolean rejectsZeroCount(BoundExpression predicate, ProjectPlan scalar) {
-        if (predicate instanceof FunctionExpression call && call.isAnd()) {
-            return rejectsZeroCount(call.argumentAt(0), scalar) || rejectsZeroCount(call.argumentAt(1), scalar);
-        }
-        final int countSide = countComparisonSide(predicate, scalar);
-        if (countSide < 0) {
+        if (!(predicate instanceof FunctionExpression call)) {
             return false;
         }
-        final FunctionExpression call = (FunctionExpression) predicate;
-        final long value = ((ConstantExpression) call.argumentAt(1 - countSide)).getLongValue();
+        if (call.isAnd()) {
+            return rejectsZeroCount(call.argumentAt(0), scalar) || rejectsZeroCount(call.argumentAt(1), scalar);
+        }
+        final int countSide = countComparisonSide(call, scalar);
+        if (countSide < 0 || !(call.argumentAt(1 - countSide) instanceof ConstantExpression constant)) {
+            return false;
+        }
+        final long value = constant.getLongValue();
         final long left = countSide == 0 ? 0 : value;
         final long right = countSide == 0 ? value : 0;
         final String name = call.getName();
@@ -532,7 +537,7 @@ final class ScalarCompensation implements Mutable {
      * conjuncts above it. Returns null, changing nothing, when a hoisted conjunct reads a column the projection
      * does not select as is.
      */
-    LogicalPlan compensateConsumer(ProjectPlan project) throws SqlException {
+    LogicalPlan compensateConsumer(ProjectPlan project) {
         final BoundExpression hoisted = pendingConjuncts;
         ctx.substitution.clear();
         if (hoisted != null) {
@@ -741,6 +746,7 @@ final class ScalarCompensation implements Mutable {
      */
     void exposeCarriers(ProjectPlan project) {
         final AggregatePlan aggregate = scalarAggregateBelow(project);
+        assert aggregate != null;
         final OutputSchema output = project.getOutput();
         final int keyCount = aggregate.getGroupingExpressions().size();
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
@@ -768,6 +774,7 @@ final class ScalarCompensation implements Mutable {
 
     boolean hasZeroOnEmptyColumn(ProjectPlan project) {
         final AggregatePlan aggregate = scalarAggregateBelow(project);
+        assert aggregate != null;
         for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
             if (project.getOutput().isVisible(i) && project.getExpressions().getQuick(i) instanceof ColumnExpression column
                     && isZeroOnEmptyColumn(column.getColumnId(), aggregate)) {
@@ -904,8 +911,7 @@ final class ScalarCompensation implements Mutable {
             }
             node = node.inputAt(0);
         }
-        final ProjectPlan scalar = (ProjectPlan) node;
-        if (filter != null && !keepsEveryCount(filter.getPredicate(), scalar)) {
+        if (filter != null && !keepsEveryCount(filter.getPredicate(), project)) {
             return null;
         }
         for (int i = 0, n = top.getExpressions().size(); i < n; i++) {
@@ -913,7 +919,7 @@ final class ScalarCompensation implements Mutable {
                 return null;
             }
         }
-        return scalar;
+        return project;
     }
 
     /**

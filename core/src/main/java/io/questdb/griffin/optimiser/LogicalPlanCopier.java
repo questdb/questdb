@@ -24,6 +24,7 @@
 
 package io.questdb.griffin.optimiser;
 
+import io.questdb.griffin.BoundExpressionRewriter;
 import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
