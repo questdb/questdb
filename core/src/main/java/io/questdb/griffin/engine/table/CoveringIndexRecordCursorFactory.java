@@ -248,7 +248,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // under this many scanned rows and COVERING_SEEK_RULE_MIN_SEEKS seeks either plan is quick, and the
     // covering plan stays
     static final long COVERING_SEEK_RULE_MIN_SCANNED_ROWS = 100_000;
-    static final long COVERING_SEEK_RULE_MIN_SEEKS = 64;
+    static final long COVERING_SEEK_RULE_MIN_SEEKS = 16;
     // budget of (partition, key) count probes of one selection estimate, see estimateSelection():
     // the estimate runs on the compiling thread, and each probed partition opens its index
     private static final int SELECTION_ESTIMATE_MAX_PROBES = 256;

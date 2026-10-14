@@ -145,7 +145,7 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
     public void testManyKeysOverANarrowIntervalTakeTheScan() throws Exception {
         // a 10-hour interval scans ~167K rows: 30 keys would cost a seek each for ~5.6K rows, so the interval is
         // read instead (COVERING_MIN_ROWS_PER_KEY_SEEK); one key over the same interval keeps the covering plan,
-        // and so do the 30 keys over 2 hours, ~33K rows, under COVERING_SEEK_RULE_MIN_SCANNED_ROWS and
+        // and so do 8 keys over 2 hours, ~33K rows, under COVERING_SEEK_RULE_MIN_SCANNED_ROWS and
         // COVERING_SEEK_RULE_MIN_SEEKS
         assertMemoryLeak(() -> {
             createTable();
@@ -157,10 +157,19 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
             final String many = "select ts, sym, v, w from t where sym in (" + keys + ")" + interval + " order by ts, sym";
             assertPlanLacks(many, "CoveringIndex");
             assertSameResult(many, many.replace("select ", "select /*+ no_index */ "));
-            final String small = many.replace("10h", "2h");
+            // 8 keys over the 2 hours, ~33K rows, are 8 seeks: under both of the rule's floors
+            final StringBuilder eight = new StringBuilder();
+            for (int i = 0; i < 8; i++) {
+                eight.append(i == 0 ? "" : ",").append("'k").append(i).append('\'');
+            }
+            final String small = "select ts, sym, v, w from t where sym in (" + eight + ") and ts in '1970-01-01T02;2h' order by ts, sym";
             assertPlanContains(small, "CoveringIndex");
             assertSameResult(small, small.replace("select ", "select /*+ no_index */ "));
-            // 100 keys over the 2 hours are 100 seeks (COVERING_SEEK_RULE_MIN_SEEKS): the interval is read
+            // the 30 keys over the 2 hours are 30 seeks (COVERING_SEEK_RULE_MIN_SEEKS): the interval is read
+            final String thirty = many.replace("10h", "2h");
+            assertPlanLacks(thirty, "CoveringIndex");
+            assertSameResult(thirty, thirty.replace("select ", "select /*+ no_index */ "));
+            // and 100 keys over the 2 hours, 100 seeks
             final StringBuilder hundred = new StringBuilder();
             for (int i = 0; i < 97; i++) {
                 hundred.append(i == 0 ? "" : ",").append("'k").append(i).append('\'');
