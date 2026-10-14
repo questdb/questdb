@@ -1746,6 +1746,11 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         }
 
         @Override
+        public long openRWExisting(LPSZ name) {
+            return ioFault("openRWExisting", name) ? -1 : super.openRWExisting(name);
+        }
+
+        @Override
         public boolean removeQuiet(LPSZ name) {
             final boolean removed = super.removeQuiet(name);
             if (removed && removalCrashAt > 0 && ++removals >= removalCrashAt) {

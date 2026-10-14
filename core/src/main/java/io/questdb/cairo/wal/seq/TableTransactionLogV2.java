@@ -547,8 +547,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 final long fd = ff.openRWExisting(rootPath.$());
                 if (fd < 0) {
                     final int errno = ff.errno();
-                    // The WAL purge removed the part since the listing: there is nothing left to flush.
-                    if (Files.isErrnoFileDoesNotExist(errno)) {
+                    // The WAL purge removed the part since the listing: there is nothing left to flush. The errno
+                    // alone does not prove it, one left over from an earlier call would skip the flush.
+                    if (Files.isErrnoFileDoesNotExist(errno) && !ff.exists(rootPath.$())) {
                         continue;
                     }
                     throw CairoException.critical(errno).put("could not open read-write [file=").put(rootPath).put(']');

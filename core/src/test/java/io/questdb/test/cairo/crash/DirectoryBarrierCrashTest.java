@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnTaskJob;
+import io.questdb.cairo.DurableEpochManifest;
 import io.questdb.cairo.O3PartitionPurgeJob;
 import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableReader;
@@ -40,6 +41,7 @@ import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.mp.RingQueue;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Files;
+import io.questdb.std.ObjList;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -157,6 +159,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     @Test
+    public void testAdaptiveNewTableSequencerSurvivesCrashWhenEntryTypesAreUnknown() throws Exception {
+        assertNewTableSequencerSurvivesCrashWhenEntryTypesAreUnknown("adaptive");
+    }
+
+    @Test
     public void testAdaptiveNewTableSequencerSurvivesCrashWithoutFsWideSyncfs() throws Exception {
         assertNewTableSequencerSurvivesCrash("adaptive", new SingleFileSyncfsFacade());
     }
@@ -169,6 +176,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testAdaptiveNewTableWalIdSurvivesCrashWithoutFsWideSyncfs() throws Exception {
         assertNewTableWalIdSurvivesCrash("adaptive", new SingleFileSyncfsFacade());
+    }
+
+    @Test
+    public void testAdaptiveSequencerPartWrittenUnderNosyncSurvivesFirstSavePointWithoutFsWideSyncfs() throws Exception {
+        assertSequencerPartWrittenUnderNosyncSurvivesCrash(new SingleFileSyncfsFacade(), true);
     }
 
     @Test
@@ -248,6 +260,18 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
             assertAllColumns();
             releaseEngineHandles();
         });
+    }
+
+    @Test
+    public void testSequencerPartWrittenUnderNosyncSurvivesTableFlushWhenEntryTypesAreUnknown() throws Exception {
+        final UnknownEntryTypeFacade facade = new UnknownEntryTypeFacade();
+        facade.setSyncfsFileSystemWide(false);
+        assertSequencerPartWrittenUnderNosyncSurvivesCrash(facade, false);
+    }
+
+    @Test
+    public void testSequencerPartWrittenUnderNosyncSurvivesTableFlushWithoutFsWideSyncfs() throws Exception {
+        assertSequencerPartWrittenUnderNosyncSurvivesCrash(new SingleFileSyncfsFacade(), false);
     }
 
     @Test
@@ -499,6 +523,11 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     @Test
     public void testSyncNewTableSequencerSurvivesCrash() throws Exception {
         assertNewTableSequencerSurvivesCrash("sync", new CrashFaultFilesFacade());
+    }
+
+    @Test
+    public void testSyncNewTableSequencerSurvivesCrashWhenEntryTypesAreUnknown() throws Exception {
+        assertNewTableSequencerSurvivesCrashWhenEntryTypesAreUnknown("sync");
     }
 
     @Test
@@ -922,6 +951,43 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
+     * As {@link #assertNewTableSequencerSurvivesCrash}, with a V2 log, whose sequencer directory holds the parts
+     * directory, on a file system that reports no entry types (XFS without ftype, some FUSE and network file
+     * systems). The flush of the new sequencer has to ask which entries are directories: opening one as a file fails
+     * the CREATE, and skipping one leaves its entries out of the flush.
+     */
+    private void assertNewTableSequencerSurvivesCrashWhenEntryTypesAreUnknown(String commitMode) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 2);
+        final UnknownEntryTypeFacade facade = new UnknownEntryTypeFacade();
+        runWithFacade(facade, () -> {
+            crashFf.modelSharedJournal = false;
+            markDurableBaseline();
+            // The listings of the CREATE are the ones under test; the engine's other listings keep their types.
+            facade.isEntryTypeUnknown = true;
+            try {
+                execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            } finally {
+                facade.isEntryTypeUnknown = false;
+            }
+            Assert.assertTrue("the CREATE must list entries of unknown type", facade.unknownTypeCount > 0);
+            final TableToken token = engine.verifyTableName("x");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            Assert.assertEquals(1, engine.getTableSequencerAPI().getTxnTracker(token).getSeqTxn());
+
+            recoverAfterCrash(new TableToken[]{token});
+            assertNotSuspended(token);
+            assertQuery("SELECT count(), sum(v) FROM x").noRandomAccess().expectSize().returns("""
+                    count\tsum
+                    1\t1
+                    """);
+            releaseEngineHandles();
+        });
+    }
+
+    /**
      * A WAL table created after the baseline takes one commit, and the power fails before it is applied. After the
      * restart a second commit comes in before the apply. Its WAL id must be new: the sequencer's WAL id counter has to
      * be as durable as the log that names the ids it handed out. A counter lost to the power loss starts again from
@@ -1310,6 +1376,78 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
+     * A V2 log with two records per part, written under NOSYNC: its third commit opens a second part, and nothing
+     * flushes that part's entry in {@code _txn_parts}. A flush that inherits the table has to make it durable with
+     * the rest of the sequencer: the writer's first save point after a restart into ADAPTIVE, or the table flush an
+     * Enterprise promote, a start that leaves ADAPTIVE and COPY take. Both walk the sequencer only where syncfs is
+     * not filesystem-wide. After the power loss the log must still hold every record.
+     */
+    private void assertSequencerPartWrittenUnderNosyncSurvivesCrash(CrashFaultFilesFacade facade, boolean isFlushedBySavePoint) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 0);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 2);
+        runWithFacade(facade, () -> {
+            crashFf.modelSharedJournal = false;
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            final TableToken token = engine.verifyTableName("x");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            markDurableBaseline();
+
+            execute("INSERT INTO x VALUES ('2024-01-02T00:00:00.000000Z', 2)");
+            execute("INSERT INTO x VALUES ('2024-01-03T00:00:00.000000Z', 3)");
+            drainWalQueue();
+            final File secondPart = new File(
+                    root + File.separator + token.getDirName() + File.separator + WalUtils.SEQ_DIR
+                            + File.separator + WalUtils.TXNLOG_PARTS_DIR, "1"
+            );
+            Assert.assertTrue("the commits must open a second log part", secondPart.exists());
+
+            final String expectedLog;
+            final String expectedRows;
+            if (isFlushedBySavePoint) {
+                // A restart into ADAPTIVE. The reopened log ends inside its second part, so the open flushes nothing.
+                releaseEngineHandles();
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+                new RecoveryCoordinator(engine).recover();
+                execute("INSERT INTO x VALUES ('2024-01-04T00:00:00.000000Z', 4)");
+                drainWalQueue();
+                Assert.assertEquals(
+                        "the apply must take the writer's first save point",
+                        4,
+                        engine.getTableSequencerAPI().getTxnTracker(token).getDurableEpochSeqTxn()
+                );
+                expectedLog = "sequencerTxn\twalId\tsegmentTxn\n1\t1\t0\n2\t1\t1\n3\t1\t2\n4\t2\t0\n";
+                expectedRows = "count\tsum\n4\t10\n";
+            } else {
+                final ObjList<TableToken> tokens = new ObjList<>();
+                tokens.add(token);
+                if (facade instanceof UnknownEntryTypeFacade unknownTypes) {
+                    // The listings of the table flush are the ones under test; the engine's other listings keep their types.
+                    unknownTypes.isEntryTypeUnknown = true;
+                    try {
+                        DurableEpochManifest.fsyncTables(engine, tokens);
+                    } finally {
+                        unknownTypes.isEntryTypeUnknown = false;
+                    }
+                    Assert.assertTrue("the flush must list entries of unknown type", unknownTypes.unknownTypeCount > 0);
+                } else {
+                    DurableEpochManifest.fsyncTables(engine, tokens);
+                }
+                expectedLog = "sequencerTxn\twalId\tsegmentTxn\n1\t1\t0\n2\t1\t1\n3\t1\t2\n";
+                expectedRows = "count\tsum\n3\t6\n";
+            }
+
+            recoverAfterCrash(new TableToken[]{token});
+            assertNotSuspended(token);
+            assertQuery("SELECT sequencerTxn, walId, segmentTxn FROM wal_transactions('x')").noRandomAccess().returns(expectedLog);
+            assertQuery("SELECT count(), sum(v) FROM x").noRandomAccess().expectSize().returns(expectedRows);
+            releaseEngineHandles();
+        });
+    }
+
+    /**
      * A non-WAL table is converted to WAL, and the power fails. The conversion created the table's sequencer, and the
      * sequencer's WAL id counter has to outlive the power loss with the log: a counter lost to it starts again from 0,
      * and a writer then takes a WAL id that a commit in the log may already name.
@@ -1549,6 +1687,24 @@ public class DirectoryBarrierCrashTest extends AbstractAdaptiveCrashTest {
         @Override
         public void syncfs(long fd) {
             fsync(fd);
+        }
+    }
+
+    /**
+     * A file system that reports no entry types while armed: every listed entry is {@code DT_UNKNOWN}, as on XFS
+     * formatted without ftype and on some FUSE and network file systems.
+     */
+    private static final class UnknownEntryTypeFacade extends CrashFaultFilesFacade {
+        volatile boolean isEntryTypeUnknown;
+        int unknownTypeCount;
+
+        @Override
+        public int findType(long findPtr) {
+            if (isEntryTypeUnknown) {
+                unknownTypeCount++;
+                return Files.DT_UNKNOWN;
+            }
+            return super.findType(findPtr);
         }
     }
 

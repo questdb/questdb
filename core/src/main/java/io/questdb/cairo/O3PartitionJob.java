@@ -3918,12 +3918,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             if (isPowerLossDurable) {
                 // Data before metadata: the freshly encoded parquet data must be durable before _pm. ASYNC
                 // flushes _pm alone, as on the base release.
-                final long parquetDataFd = TableUtils.openRW(ff, parquetPath.$(), LOG, configuration.getWriterFileOpenOpts());
-                try {
-                    ff.fsync(parquetDataFd);
-                } finally {
-                    ff.close(parquetDataFd);
-                }
+                TableUtils.fsyncFileDurable(ff, parquetPath.$());
             }
             if (isSync) {
                 ff.fsync(parquetMetaFd);

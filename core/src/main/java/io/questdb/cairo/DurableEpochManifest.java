@@ -544,7 +544,10 @@ public final class DurableEpochManifest {
                 final long namePtr = ff.findName(findPtr);
                 final int type = ff.findType(findPtr);
                 final boolean isLink = type == Files.DT_LNK;
-                if (Files.notDots(namePtr) && (type == Files.DT_FILE || type == Files.DT_UNKNOWN || isLink)) {
+                // A file system that reports no entry type (DT_UNKNOWN) is asked whether the entry is a directory,
+                // which holds no data of its own to flush.
+                if (Files.notDots(namePtr) && (type == Files.DT_FILE || isLink
+                        || (type == Files.DT_UNKNOWN && !ff.isDirOrSoftLinkDir(dirPath.trimTo(dirLen).concat(namePtr).$())))) {
                     dirPath.trimTo(dirLen).concat(namePtr);
                     final long fd = openForFsync(configuration, dirPath, readOnly || isLink);
                     if (fd != -1) {
@@ -560,10 +563,15 @@ public final class DurableEpochManifest {
                         } finally {
                             ff.close(fd);
                         }
-                    } else if (!Files.isErrnoFileDoesNotExist(ff.errno())) {
-                        throw CairoException.critical(ff.errno()).put("could not open adaptive file for fsync [path=").put(dirPath).put(']');
+                    } else {
+                        // A file removed after the listing, by a column purge for one, has nothing to flush. The errno
+                        // alone does not prove it: one left over from an earlier call would turn a failed open into
+                        // a skipped flush, so the file must also be gone.
+                        final int errno = ff.errno();
+                        if (!Files.isErrnoFileDoesNotExist(errno) || ff.exists(dirPath.$())) {
+                            throw CairoException.critical(errno).put("could not open adaptive file for fsync [path=").put(dirPath).put(']');
+                        }
                     }
-                    // Otherwise the file was removed after the listing, by a column purge for one: nothing to flush.
                 }
                 findResult = ff.findNext(findPtr);
             } while (findResult > 0);
@@ -654,9 +662,13 @@ public final class DurableEpochManifest {
                 int findResult;
                 do {
                     final long namePtr = ff.findName(findPtr);
-                    if (ff.findType(findPtr) == Files.DT_DIR && Files.notDots(namePtr)) {
+                    final int type = ff.findType(findPtr);
+                    if (Files.notDots(namePtr) && (type == Files.DT_DIR || type == Files.DT_UNKNOWN)) {
                         final int subDirLen = tablePath.trimTo(seqLen).concat(namePtr).size();
-                        fsyncDirectoryFiles(configuration, tablePath, subDirLen, false);
+                        // A file system that reports no entry type (DT_UNKNOWN) is asked whether it is a directory.
+                        if (type == Files.DT_DIR || ff.isDirOrSoftLinkDir(tablePath.$())) {
+                            fsyncDirectoryFiles(configuration, tablePath, subDirLen, false);
+                        }
                     }
                     findResult = ff.findNext(findPtr);
                 } while (findResult > 0);

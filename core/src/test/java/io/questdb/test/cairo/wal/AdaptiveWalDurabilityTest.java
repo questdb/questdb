@@ -49,6 +49,7 @@ import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.wal.GroupCommitTestUtils.WalFdatasyncFacade;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
@@ -931,6 +932,47 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
+     * A failed open in the save point walk is skipped only when the file is gone. A does-not-exist errno is not proof
+     * on its own: an open that fails without setting errno (a fault-injecting facade, or any errno an earlier call on
+     * the thread left) would otherwise turn a file the walk could not flush into a skipped one, and the save point
+     * would certify it.
+     */
+    @Test
+    public void testSavePointWalkFailsOpenWithStaleDoesNotExistErrnoOnNonWideSyncfsPlatform() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
+
+        final StaleErrnoOpenFailureFacade ff = new StaleErrnoOpenFailureFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            execute("insert into x values ('2024-01-01T00:00:00.000000Z', 1)");
+            drainWalQueue();
+            try (TableWriter tableWriter = getWriter(tt)) {
+                tableWriter.advanceDurableEpoch(1L);
+            }
+            final long durableSeqTxn = tracker.getDurableEpochSeqTxn();
+            execute("insert into x values ('2024-01-01T01:00:00.000000Z', 2)");
+            drainWalQueue();
+
+            try (TableWriter tableWriter = getWriter(tt)) {
+                ff.failNextOpen(java.io.File.separator + "2024-01-01" + java.io.File.separator + "v.d");
+                try {
+                    tableWriter.advanceDurableEpoch(2L);
+                    Assert.fail("the save point must not skip a file it could not open");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not open adaptive file for fsync");
+                }
+            }
+            Assert.assertTrue("the open must have failed", ff.isFailed());
+            Assert.assertTrue("errno must say the file does not exist when the open fails", ff.isErrnoDoesNotExist());
+            Assert.assertEquals("the save point must not publish", durableSeqTxn, tracker.getDurableEpochSeqTxn());
+            assertQuery("select v from x").expectSize().returns("v\n1\n2\n");
+        });
+    }
+
+    /**
      * On the per-file flush path the save point lists each partition directory and opens every file it lists to flush
      * it. A superseded column version that the purge removes between the listing and the open has nothing left to
      * flush: the walk skips it. A creating open would bring it back as an empty file that outlives every restart, and
@@ -969,6 +1011,38 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             Assert.assertFalse("the walk must not re-create a removed file", superseded.exists());
             Assert.assertEquals("the save point must publish", appliedSeqTxn, tracker.getDurableEpochSeqTxn());
             assertQuery("select v from x").expectSize().returns("v\n11\n12\n");
+        });
+    }
+
+    /**
+     * A failed open in the V2 part flush is skipped only when the part is gone, as in the save point walk: a
+     * does-not-exist errno left by an earlier call must not turn a part the flush could not open into a skipped one.
+     */
+    @Test
+    public void testTxnLogPartFlushFailsOpenWithStaleDoesNotExistErrno() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, "-1");
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, 2);
+
+        final StaleErrnoOpenFailureFacade ff = new StaleErrnoOpenFailureFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("create table x (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("x");
+            for (int day = 1; day <= 5; day++) {
+                execute("insert into x values ('2024-01-0" + day + "T00:00:00.000000Z', " + day + ")");
+            }
+            drainWalQueue();
+
+            ff.failNextOpen(java.io.File.separator + WalUtils.TXNLOG_PARTS_DIR + java.io.File.separator + "0");
+            try {
+                // From txn 0: every part the log keeps, as the Enterprise primary flushes them.
+                engine.getTableSequencerAPI().fdatasyncTxnLog(tt, 0);
+                Assert.fail("the flush must not skip a part it could not open");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not open read-write");
+            }
+            Assert.assertTrue("the open must have failed", ff.isFailed());
+            Assert.assertTrue("errno must say the file does not exist when the open fails", ff.isErrnoDoesNotExist());
         });
     }
 
@@ -2276,6 +2350,53 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                 pathSuffix = null;
                 isRemoved = super.removeQuiet(name);
             }
+        }
+    }
+
+    /**
+     * Per-file flush path. Fails the next open of one file the way a fault-injecting facade does: it returns -1 and
+     * sets no errno, so errno still holds what an earlier failed lookup on the thread left, here a does-not-exist.
+     */
+    static class StaleErrnoOpenFailureFacade extends NonWideSyncfsWalFdatasyncFacade {
+        private volatile boolean isErrnoDoesNotExist;
+        private volatile boolean isFailed;
+        private volatile String pathSuffix;
+
+        public void failNextOpen(String pathSuffix) {
+            this.pathSuffix = pathSuffix;
+        }
+
+        public boolean isErrnoDoesNotExist() {
+            return isErrnoDoesNotExist;
+        }
+
+        public boolean isFailed() {
+            return isFailed;
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            return failIfArmed(name) ? -1 : super.openRW(name, opts);
+        }
+
+        @Override
+        public long openRWExisting(LPSZ name) {
+            return failIfArmed(name) ? -1 : super.openRWExisting(name);
+        }
+
+        private boolean failIfArmed(LPSZ name) {
+            final String suffix = pathSuffix;
+            if (suffix != null && Utf8s.endsWithAscii(name, suffix)) {
+                pathSuffix = null;
+                try (Path missing = new Path()) {
+                    // An earlier lookup of a file that does not exist.
+                    Assert.assertEquals(-1, super.openRO(missing.of(name).put(".missing").$()));
+                }
+                isErrnoDoesNotExist = Files.isErrnoFileDoesNotExist(errno());
+                isFailed = true;
+                return true;
+            }
+            return false;
         }
     }
 
