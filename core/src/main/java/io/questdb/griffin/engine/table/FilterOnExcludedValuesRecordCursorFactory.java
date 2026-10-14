@@ -57,11 +57,9 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     private final ObjList<SymbolFunctionRowCursorFactory> cursorFactories;
     // Points at the next factory to be reused.
     private final int[] cursorFactoriesIdx; // used to disable unneeded factories if there are duplicate excluded keys
-    private final boolean dynamicExcludedKeys;
     private final IntHashSet excludedKeys = new IntHashSet();
     private final boolean followedOrderByAdvice;
     private final boolean heapCursorUsed;
-    private final IntHashSet includedKeys = new IntHashSet();
     private final int indexDirection;
     private final int maxSymbolNotEqualsCount;
     private final int orderDirection;
@@ -90,20 +88,11 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
         this.orderDirection = orderDirection;
         this.indexDirection = indexDirection;
         this.maxSymbolNotEqualsCount = maxSymbolNotEqualsCount;
-        final int nKeyValues = keyValues.size();
-        boolean dynamicValues = false;
-        for (int i = 0; i < nKeyValues; i++) {
-            if (!keyValues.getQuick(i).isConstant()) {
-                dynamicValues = true;
-                break;
-            }
-        }
-        dynamicExcludedKeys = dynamicValues;
         keyExcludedValueFunctions.addAll(keyValues);
         this.columnIndex = columnIndex;
         this.filter = filter;
         cursorFactoriesIdx = new int[]{0};
-        cursorFactories = new ObjList<>(nKeyValues);
+        cursorFactories = new ObjList<>(keyValues.size());
         if (orderByMnemonic == OrderByMnemonic.ORDER_BY_INVARIANT && !orderByTimestamp) {
             heapCursorUsed = false;
             cursor = new PageFrameRecordCursorImpl(
@@ -143,14 +132,8 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
     }
 
     public void recalculateIncludedValues(PageFrameCursor pageFrameCursor) {
-        cursorFactoriesIdx[0] = cursorFactories.size();
+        cursorFactoriesIdx[0] = 0;
         excludedKeys.clear();
-        if (dynamicExcludedKeys) {
-            // In case of bind variable excluded values that may change between
-            // query executions the sets have to be subtracted from scratch.
-            includedKeys.clear();
-            cursorFactoriesIdx[0] = 0;
-        }
         try {
             symbolMapReader = pageFrameCursor.getSymbolTable(columnIndex);
 
@@ -160,17 +143,14 @@ public class FilterOnExcludedValuesRecordCursorFactory extends AbstractPageFrame
                 excludedKeys.add(symbolMapReader.keyOf(value));
             }
 
-            // Append new keys to the included set filtering out the excluded ones.
-            // Note: both includedKeys and cursorFactories are guaranteed to be monotonically
-            // growing in terms of the collection size.
+            // TRUNCATE can reassign symbol keys, so a previous execution's key set cannot be reused.
             for (int k = 0, n = symbolMapReader.getSymbolCount(); k < n; k++) {
-                if (!excludedKeys.contains(k) && includedKeys.add(k)) {
+                if (!excludedKeys.contains(k)) {
                     upsertRowCursorFactory(k);
                 }
             }
 
-            if (symbolMapReader.containsNullValue()
-                    && !excludedKeys.contains(SymbolTable.VALUE_IS_NULL) && includedKeys.add(SymbolTable.VALUE_IS_NULL)) {
+            if (symbolMapReader.containsNullValue() && !excludedKeys.contains(SymbolTable.VALUE_IS_NULL)) {
                 // If the table contains null values, and they're not excluded, we need to include
                 // them to the result set to match the behavior of the NOT IN() SQL function.
                 upsertRowCursorFactory(SymbolTable.VALUE_IS_NULL);
