@@ -14594,6 +14594,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // Do not remove detached partitions, they are probably about to be attached
         // Do not remove wal and sequencer directories either
         int checkedType = ff.typeDirOrSoftLinkDirNoDots(path, pathSize, pUtf8NameZ, type, utf8Sink);
+        if (type == Files.DT_UNKNOWN) {
+            // A file system that reports no entry type (DT_UNKNOWN) is asked about the names an interrupted DETACH or
+            // a kept ATTACH source bear, which have to be acted on. Any other unknown entry is left in place.
+            utf8Sink.clear();
+            Utf8s.utf8ZCopy(pUtf8NameZ, utf8Sink);
+            if ((Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix()) || Utf8s.endsWithAscii(utf8Sink, DETACHING_DIR_MARKER))
+                    && ff.isDirOrSoftLinkDir(path.trimTo(pathSize).concat(pUtf8NameZ).$())) {
+                checkedType = Files.DT_DIR;
+            }
+        }
         if (checkedType != Files.DT_UNKNOWN && Utf8s.endsWithAscii(utf8Sink, configuration.getAttachPartitionSuffix())) {
             try {
                 partitionMovesFound.add(partitionDirFmt.parse(utf8Sink.asAsciiCharSequence(), 0, utf8Sink.size() - configuration.getAttachPartitionSuffix().length(), EN_LOCALE), -1L);

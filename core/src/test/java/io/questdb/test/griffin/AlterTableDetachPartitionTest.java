@@ -3206,17 +3206,16 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
      * A crash between the link of a detached partition's files under its {@code .detached} name and the removal of
      * its temporary name leaves {@code .detached} without some files; the next writer open links what it lacks, then
      * removes the temporary name. On a file system that reports no entry types (XFS without ftype, some FUSE and
-     * network file systems) it must still link them: the removal would otherwise take the only copy.
+     * network file systems) the open's scan must still find the temporary name, and the finish must still link the
+     * files: the removal would otherwise take the only copy.
      */
     @Test
     public void testFinishDetachAfterCrashLinksFilesListedAsUnknown() throws Exception {
+        final AtomicBoolean isEntryTypeUnknown = new AtomicBoolean();
         ff = new TestFilesFacadeImpl() {
             @Override
             public int findType(long findPtr) {
-                // The listing of the finish is the one under test; the writer open's own scan keeps its types.
-                final boolean isLinkMissingFiles = StackWalker.getInstance().walk(frames -> frames.anyMatch(
-                        frame -> frame.getClassName().endsWith(".TableWriter") && frame.getMethodName().equals("linkMissingFiles")));
-                return isLinkMissingFiles ? Files.DT_UNKNOWN : super.findType(findPtr);
+                return isEntryTypeUnknown.get() ? Files.DT_UNKNOWN : super.findType(findPtr);
             }
         };
         assertMemoryLeak(ff, () -> {
@@ -3241,10 +3240,15 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             }
             Assert.assertFalse("the temporary name must hold the partition's files", files.isEmpty());
 
+            // Every listing from the crash on reports unknown types, the writer open's scan included. The DETACH
+            // and the ATTACH themselves link and copy with walks, unchanged from the base release, that take an
+            // unknown entry for a directory and fail on such a file system.
+            isEntryTypeUnknown.set(true);
             try (TableWriter writer = getWriter(tt)) {
                 Assert.assertNotNull(writer);
             }
             engine.releaseAllWriters();
+            isEntryTypeUnknown.set(false);
             Assert.assertFalse("the open must finish the detach", java.nio.file.Files.exists(detaching));
             try (Stream<java.nio.file.Path> list = java.nio.file.Files.list(detached)) {
                 Assert.assertEquals(files, list.map(p -> p.getFileName().toString()).sorted().collect(Collectors.toList()));
