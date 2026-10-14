@@ -29,6 +29,7 @@ import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.millitime.MillisecondClock;
@@ -54,15 +55,33 @@ import java.util.concurrent.locks.ReentrantLock;
  *     <li>the partition row count or Parquet file size recorded in {@code _txn}, which catches
  *     in-place appends;</li>
  *     <li>the modification time of the partition directory, which the file system updates
- *     whenever a file is created, deleted or renamed in it: new column versions, indexes, purges
- *     of superseded files;</li>
+ *     whenever a file is created, deleted or renamed in it: new column versions, purges of
+ *     superseded files. It does not change while a file grows or shrinks in place;</li>
+ *     <li>the metadata version recorded in {@code _txn}. A schema change such as ADD INDEX or a
+ *     column type change creates files in every partition and then grows them in place before it
+ *     commits, so a size measured in the middle of it would pass every check above. Its commit
+ *     bumps the metadata version, which makes the cache re-walk every partition of the table;</li>
+ *     <li>the removal of the last partition, which the truncate version recorded in {@code _txn}
+ *     or the disappearance of the previously last partition reveals. The writer then reopens
+ *     the partition before the removed one and grows its column files to an append page before
+ *     the removal commits, so a call that read {@code _txn} before the commit measures a grown
+ *     partition that it believes sealed. The cache re-walks the newest partition it knew
+ *     before;</li>
  *     <li>the age of the cached size, which {@link CairoConfiguration#getTableStorageCacheTTL()}
- *     bounds, so that changes invisible to the checks above, such as in-place edits by external
- *     tools, eventually show up.</li>
+ *     bounds, so that changes invisible to the checks above eventually show up: in-place edits
+ *     by external tools, writes that grow a file and then roll back, column files that UPDATE
+ *     rewrites until the purge of their superseded versions, and a replace commit that removes
+ *     the last partition when a partition with the same timestamp replaces it before the next
+ *     call.</li>
  * </ul>
- * The cache measures on every call: the last partition, which receives the appends, the files
- * in the table root, and the directories {@code _txn} does not list (WAL segments, the sequencer,
- * detached partitions, partition versions awaiting purge).
+ * The cache measures on every call: the partitions the writer may hold open for appends, the
+ * files in the table root, and the directories {@code _txn} does not list (WAL segments, the
+ * sequencer, detached partitions, partition versions awaiting purge). The writer holds open the
+ * last partition and, when that partition is in Parquet format, possibly the newest native one,
+ * whose column files stay grown to an append page until the writer closes them.
+ * <p>
+ * REINDEX rewrites index files in place without a {@code _txn} commit, so it evicts the table,
+ * see {@link #evict(TableToken)}.
  * <p>
  * The cache reads the TTL on every call and applies it to every cached size, so that a
  * configuration reload takes effect immediately, including for the sizes cached before it. A TTL
@@ -99,12 +118,15 @@ public class TableDiskSizeCache {
     }
 
     /**
-     * Forgets the sizes of a table whose directory the table name registry retires: a dropped
-     * table, or a non-WAL table that a rename moved to a new directory. The registry calls it
-     * once the directory stops resolving, and a drop calls it before releasing the table name,
-     * so no table created under the same directory name can own an entry yet.
+     * Forgets the sizes of a table. The table name registry calls it when it retires the table's
+     * directory: a dropped table, or a non-WAL table that a rename moved to a new directory. The
+     * registry calls it once the directory stops resolving, and a drop calls it before releasing
+     * the table name, so no table created under the same directory name can own an entry yet.
+     * REINDEX calls it after it rewrites index files in place, so that the next call re-measures
+     * the partitions it rebuilt. A call measuring the table concurrently keeps the entry it
+     * holds, and the next call starts a new one.
      *
-     * @param tableToken table whose directory the registry retires
+     * @param tableToken table to forget
      */
     public void evict(@NotNull TableToken tableToken) {
         tables.remove(tableToken.getDirName());
@@ -242,7 +264,13 @@ public class TableDiskSizeCache {
         private final CharSequenceObjHashMap<PartitionEntry> partitions = new CharSequenceObjHashMap<>();
         private final Rnd rnd = new Rnd();
         private long epoch;
+        // timestamp of the last partition in the _txn snapshot of the previous measurement round
+        private long lastPartitionTimestamp = Numbers.LONG_NULL;
+        // metadata version in the _txn snapshot of the previous measurement round
+        private int metadataVersion = -1;
         private int tableId = -1;
+        // truncate version in the _txn snapshot of the previous measurement round
+        private long truncateVersion = -1;
 
         private void evictStalePartitions(long epoch) {
             final ObjList<CharSequence> names = partitions.keys();
@@ -272,22 +300,44 @@ public class TableDiskSizeCache {
                 tableId = tableToken.getTableId();
             }
 
+            // A schema change such as ADD INDEX grows files of every partition in place and only
+            // then commits, bumping the metadata version: drop the sizes measured before the bump.
+            final boolean isMetadataChanged = txReader.getMetadataVersion() != metadataVersion;
+            metadataVersion = txReader.getMetadataVersion();
+            // A drop bumps the truncate version. Dropping the last partition, like a replace commit
+            // that removes it, makes the writer reopen the partition before it and grow its column
+            // files before the removal commits.
+            final boolean isTruncated = txReader.getTruncateVersion() != truncateVersion;
+            truncateVersion = txReader.getTruncateVersion();
+
             // Mark the partitions of the _txn snapshot, keyed by their directory names.
             final long epoch = ++this.epoch;
             final int partitionCount = txReader.getPartitionCount();
+            boolean hasPrevLastPartition = false;
+            int lastNativeIndex = -1;
+            PartitionEntry newestKnownPartition = null;
             for (int i = 0; i < partitionCount; i++) {
+                final long partitionTimestamp = txReader.getPartitionTimestampByIndex(i);
+                hasPrevLastPartition |= partitionTimestamp == lastPartitionTimestamp;
+                if (!txReader.isPartitionParquet(i)) {
+                    lastNativeIndex = i;
+                }
                 nameSink.clear();
                 TableUtils.setSinkForNativePartition(
                         nameSink,
                         timestampType,
                         partitionBy,
-                        txReader.getPartitionTimestampByIndex(i),
+                        partitionTimestamp,
                         txReader.getPartitionNameTxn(i)
                 );
                 final int keyIndex = partitions.keyIndex(nameSink);
                 final PartitionEntry partition;
                 if (keyIndex < 0) {
                     partition = partitions.valueAtQuick(keyIndex);
+                    if (isMetadataChanged) {
+                        partition.size = -1;
+                    }
+                    newestKnownPartition = partition;
                 } else {
                     partition = new PartitionEntry();
                     partitions.putAt(keyIndex, nameSink.toString(), partition);
@@ -295,6 +345,15 @@ public class TableDiskSizeCache {
                 partition.epoch = epoch;
                 partition.txnIndex = i;
             }
+            // When the last partition of the previous round is gone or a drop happened, the newest
+            // partition known before may have been the last one in between, its files grown by the
+            // writer. Any older partition kept a newer one throughout, so the writer never reopened it.
+            if (newestKnownPartition != null && (isTruncated || !hasPrevLastPartition)) {
+                newestKnownPartition.size = -1;
+            }
+            lastPartitionTimestamp = partitionCount > 0
+                    ? txReader.getPartitionTimestampByIndex(partitionCount - 1)
+                    : Numbers.LONG_NULL;
 
             // Walk the table root, sizing the partitions of the snapshot through the cache.
             final int rootLen = path.size();
@@ -326,7 +385,7 @@ public class TableDiskSizeCache {
                             }
                         }
                         total += partition != null
-                                ? measurePartition(partition, partitionCount, txReader, path, ff, clock, ttl)
+                                ? measurePartition(partition, partitionCount, lastNativeIndex, txReader, path, ff, clock, ttl)
                                 : ff.getDirSize(path);
                         circuitBreaker.statefulThrowExceptionIfTripped();
                     } while (ff.findNext(pFind) > 0);
@@ -344,6 +403,7 @@ public class TableDiskSizeCache {
         private long measurePartition(
                 PartitionEntry partition,
                 int partitionCount,
+                int lastNativeIndex,
                 TxReader txReader,
                 Path path,
                 FilesFacade ff,
@@ -351,8 +411,10 @@ public class TableDiskSizeCache {
                 long ttl
         ) {
             final int index = partition.txnIndex;
-            if (index == partitionCount - 1) {
-                // appends land in the last partition and grow its files in place
+            if (index == partitionCount - 1 || index == lastNativeIndex) {
+                // Appends land in the last partition and grow its files in place. When the last
+                // partition is in Parquet format, the writer may still hold the newest native
+                // partition open, its column files grown to an append page until it closes them.
                 partition.size = -1;
                 return ff.getDirSize(path);
             }

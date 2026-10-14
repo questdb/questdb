@@ -28,6 +28,7 @@ import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableDiskSizeCache;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -35,6 +36,8 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalUtils;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Chars;
@@ -229,6 +232,25 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDetectsAddIndexMeasuredMidway() throws Exception {
+        // ADD INDEX creates the index files of a partition and then fills them in place: the
+        // directory keeps its name, row count and modification time. A call that measures the
+        // partition in between caches a partial size.
+        final InterleavingFilesFacade ff = new InterleavingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            createDailyTable("x", false);
+            setClockPastRacyWindow();
+
+            // the indexer reads the symbol column of 2024-01-02 after it created its index files
+            ff.onRead(Files.SEPARATOR + "2024-01-02" + Files.SEPARATOR + "sym.d", () -> measureDiskSizeOnThisThread("x"));
+            execute("ALTER TABLE x ALTER COLUMN sym ADD INDEX");
+            ff.assertFired();
+            engine.releaseAllWriters();
+            assertDiskSize("x");
+        });
+    }
+
+    @Test
     public void testDetectsDetachedPartition() throws Exception {
         assertMemoryLeak(() -> {
             createDailyTable("x", false);
@@ -240,6 +262,29 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
             assertDiskSize("x");
             Assert.assertEquals(PARTITIONS.length - 1, engine.getTableDiskSizeCache().getPartitionCount(token("x")));
         });
+    }
+
+    @Test
+    public void testDetectsDropAndRecreateOfLastPartitionMeasuredMidway() throws Exception {
+        // like testDetectsDropOfLastPartitionMeasuredMidway, but a partition with the timestamp of
+        // the dropped one replaces it
+        assertDetectsLastPartitionRemovalMeasuredMidway(
+                false,
+                () -> executeOnThisThread("ALTER TABLE x DROP PARTITION LIST '2024-01-05'"),
+                "2024-01-05"
+        );
+    }
+
+    @Test
+    public void testDetectsDropOfLastPartitionMeasuredMidway() throws Exception {
+        // The drop of the last partition reopens the partition before it for appends and grows its
+        // column files to an append page, then commits. A call that read _txn before the commit
+        // measures the grown partition as sealed.
+        assertDetectsLastPartitionRemovalMeasuredMidway(
+                false,
+                () -> executeOnThisThread("ALTER TABLE x DROP PARTITION LIST '2024-01-05'"),
+                "2024-01-06"
+        );
     }
 
     @Test
@@ -372,6 +417,44 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
             engine.releaseAllWriters();
             assertDiskSize("x");
         });
+    }
+
+    @Test
+    public void testDetectsReindexMeasuredMidway() throws Exception {
+        // REINDEX rebuilds the index files in place and commits nothing to _txn
+        final InterleavingFilesFacade ff = new InterleavingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            createDailyTable("x", false);
+            execute("ALTER TABLE x ALTER COLUMN sym ADD INDEX");
+            engine.releaseAllWriters();
+            setClockPastRacyWindow();
+            assertDiskSize("x");
+
+            ff.onRead(Files.SEPARATOR + "2024-01-02" + Files.SEPARATOR + "sym.d", () -> measureDiskSizeOnThisThread("x"));
+            execute("REINDEX TABLE x COLUMN sym LOCK EXCLUSIVE");
+            ff.assertFired();
+            assertDiskSize("x");
+        });
+    }
+
+    @Test
+    public void testDetectsReplaceCommitRemovingLastPartitionMeasuredMidway() throws Exception {
+        // a replace commit that leaves the last partition empty removes it like a drop, but
+        // without bumping the truncate version
+        assertDetectsLastPartitionRemovalMeasuredMidway(
+                true,
+                () -> {
+                    try (WalWriter walWriter = engine.getWalWriter(token("x"))) {
+                        walWriter.commitWithParams(
+                                MicrosTimestampDriver.floor("2024-01-05"),
+                                MicrosTimestampDriver.floor("2024-01-06"),
+                                WalUtils.WAL_DEDUP_MODE_REPLACE_RANGE
+                        );
+                    }
+                    drainWalQueue();
+                },
+                "2024-01-06"
+        );
     }
 
     @Test
@@ -559,6 +642,88 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testKeepsSealedPartitionsAfterOutOfOrderCommits() throws Exception {
+        // out-of-order commits rewrite partitions, which the cache sees through their directory
+        // names, and must not make it re-walk the partitions they leave alone
+        final WalkRecordingFilesFacade ff = new WalkRecordingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            createDailyTable("x", true);
+            setClockPastRacyWindow();
+            assertDiskSize("x");
+
+            execute("INSERT INTO x VALUES ('2024-01-05T01:00:00.000000Z', 'z', 1, 'v')");
+            drainWalQueue();
+            ff.walkedDirs.clear();
+            assertDiskSize("x");
+            for (int i = 0; i < PARTITIONS.length - 1; i++) {
+                Assert.assertEquals(PARTITIONS[i], 0, ff.countWalks(PARTITIONS[i]));
+            }
+
+            execute("INSERT INTO x VALUES ('2024-01-02T01:00:00.000000Z', 'z', 1, 'v')");
+            drainWalQueue();
+            ff.walkedDirs.clear();
+            assertDiskSize("x");
+            Assert.assertEquals(0, ff.countWalks("2024-01-01"));
+            Assert.assertEquals(0, ff.countWalks("2024-01-03"));
+            Assert.assertEquals(0, ff.countWalks("2024-01-04"));
+        });
+    }
+
+    @Test
+    public void testKeepsSealedPartitionsAfterRemovalOfOlderPartitions() throws Exception {
+        // the drop of a partition that is not the last one, and TTL eviction, reopen nothing
+        final WalkRecordingFilesFacade ff = new WalkRecordingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            createDailyTable("x", false);
+            setClockPastRacyWindow();
+            assertDiskSize("x");
+
+            execute("ALTER TABLE x DROP PARTITION LIST '2024-01-02'");
+            ff.walkedDirs.clear();
+            assertDiskSize("x");
+            Assert.assertEquals(0, ff.countWalks("2024-01-01"));
+            Assert.assertEquals(0, ff.countWalks("2024-01-03"));
+            Assert.assertEquals(0, ff.countWalks("2024-01-04"));
+
+            execute("ALTER TABLE x SET TTL 2 DAYS");
+            // the TTL change bumps the metadata version, which re-walks every partition once
+            assertDiskSize("x");
+            // the new partition evicts 2024-01-01 and 2024-01-03
+            execute("INSERT INTO x VALUES ('2024-01-06T01:00:00.000000Z', 'z', 1, 'v')");
+            engine.releaseAllWriters();
+            ff.walkedDirs.clear();
+            assertDiskSize("x");
+            Assert.assertEquals(0, ff.countWalks("2024-01-04"));
+        });
+    }
+
+    @Test
+    public void testMeasuresNativePartitionHeldByWriterBeforeParquetLastPartition() throws Exception {
+        // When the last partition is in Parquet format, the writer keeps the newest native
+        // partition open, its column files grown to an append page, and truncates them when it
+        // closes. Nothing in _txn or the partition directory reflects the truncation.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT timestamp_sequence('2024-01-01', 8_640_000_000L), x, x::VARCHAR FROM long_sequence(20)");
+            drainWalQueue();
+            execute("ALTER TABLE x SET FORMAT PARQUET");
+            execute("INSERT INTO x VALUES ('2024-01-03T01:00:00.000000Z', 1, 'a')");
+            drainWalQueue();
+            try (TableReader reader = engine.getReader("x")) {
+                Assert.assertEquals(3, reader.getTxFile().getPartitionCount());
+                Assert.assertFalse(reader.getTxFile().isPartitionParquet(1));
+                Assert.assertTrue(reader.getTxFile().isPartitionParquet(2));
+            }
+            setClockPastRacyWindow();
+            final long sizeWithOpenWriter = assertDiskSize("x");
+
+            engine.releaseAllWriters();
+            // the test relies on the writer holding 2024-01-02 open until now
+            Assert.assertTrue(assertDiskSize("x") < sizeWithOpenWriter);
+        });
+    }
+
+    @Test
     public void testNonPartitionedTable() throws Exception {
         final WalkRecordingFilesFacade ff = new WalkRecordingFilesFacade();
         assertMemoryLeak(ff, () -> {
@@ -697,6 +862,32 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
         });
     }
 
+    // Measures the table while the writer removes its last partition, with a hook between the
+    // read of _txn and the walk of 2024-01-04, then adds a partition, which seals 2024-01-04 again
+    // before any call sees it as the last partition.
+    private static void assertDetectsLastPartitionRemovalMeasuredMidway(
+            boolean isWal,
+            TestUtils.LeakProneCode removeLastPartition,
+            String newPartition
+    ) throws Exception {
+        final InterleavingFilesFacade ff = new InterleavingFilesFacade();
+        assertMemoryLeak(ff, () -> {
+            createDailyTable("x", isWal);
+            setClockPastRacyWindow();
+
+            ff.onDirSize(Files.SEPARATOR + "2024-01-04", removeLastPartition);
+            measureDiskSize("x");
+            ff.assertFired();
+
+            execute("INSERT INTO x VALUES ('" + newPartition + "T01:00:00.000000Z', 'z', 1, 'v')");
+            if (isWal) {
+                drainWalQueue();
+            }
+            engine.releaseAllWriters();
+            assertDiskSize("x");
+        });
+    }
+
     // Asserts that table_storage() reports the size of a fresh walk of the table directory.
     private static long assertDiskSize(String tableName) throws SqlException {
         final long expected;
@@ -727,6 +918,13 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
         }
     }
 
+    // Executes a statement with an execution context of the calling thread.
+    private static void executeOnThisThread(String sql) throws SqlException {
+        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+            engine.execute(sql, executionContext);
+        }
+    }
+
     // Runs a statement until no concurrent query holds the metadata of the table: until then,
     // non-WAL DDL fails to lock the table.
     private static void executeRetryingBusy(String sql) throws SqlException {
@@ -745,14 +943,25 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
     }
 
     private static long measureDiskSize(String tableName) throws SqlException {
+        return measureDiskSize(tableName, sqlExecutionContext);
+    }
+
+    private static long measureDiskSize(String tableName, SqlExecutionContext executionContext) throws SqlException {
         try (
-                RecordCursorFactory factory = select("SELECT diskSize FROM table_storage() WHERE tableName = '" + tableName + "'");
-                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                RecordCursorFactory factory = engine.select("SELECT diskSize FROM table_storage() WHERE tableName = '" + tableName + "'", executionContext);
+                RecordCursor cursor = factory.getCursor(executionContext)
         ) {
             Assert.assertTrue(cursor.hasNext());
             final long diskSize = cursor.getRecord().getLong(0);
             Assert.assertFalse(cursor.hasNext());
             return diskSize;
+        }
+    }
+
+    // Measures the table with an execution context of the calling thread.
+    private static void measureDiskSizeOnThisThread(String tableName) throws SqlException {
+        try (SqlExecutionContext executionContext = TestUtils.createSqlExecutionCtx(engine)) {
+            measureDiskSize(tableName, executionContext);
         }
     }
 
@@ -808,6 +1017,86 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
         private void arm(String dirName, String dropSql) {
             this.dropSql = dropSql;
             this.dirName = dirName;
+        }
+    }
+
+    // Runs an action on another thread at a chosen file operation of the measured table and waits
+    // for it: on the walk of a directory, or on the first read of a file.
+    private static class InterleavingFilesFacade extends TestFilesFacadeImpl {
+        private volatile TestUtils.LeakProneCode action;
+        private volatile String dirSizeSuffix;
+        private volatile Throwable error;
+        private volatile boolean hasFired;
+        private volatile long readFd = -1;
+        private volatile String readSuffix;
+
+        @Override
+        public long getDirSize(Path path) {
+            final String suffix = dirSizeSuffix;
+            if (suffix != null && Utf8s.endsWithAscii(path, suffix)) {
+                dirSizeSuffix = null;
+                fire();
+            }
+            return super.getDirSize(path);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            final long fd = super.openRO(name);
+            final String suffix = readSuffix;
+            if (suffix != null && fd > -1 && Utf8s.endsWithAscii(name, suffix)) {
+                readSuffix = null;
+                readFd = fd;
+            }
+            return fd;
+        }
+
+        @Override
+        public long read(long fd, long buf, long len, long offset) {
+            if (fd == readFd) {
+                readFd = -1;
+                fire();
+            }
+            return super.read(fd, buf, len, offset);
+        }
+
+        private void assertFired() {
+            Assert.assertTrue(hasFired);
+            if (error != null) {
+                throw new AssertionError(error);
+            }
+        }
+
+        private void fire() {
+            final Thread thread = new Thread(() -> {
+                try {
+                    action.run();
+                } catch (Throwable th) {
+                    error = th;
+                } finally {
+                    Path.clearThreadLocals();
+                }
+            });
+            thread.start();
+            try {
+                thread.join(TimeUnit.MINUTES.toMillis(1));
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+            if (thread.isAlive()) {
+                error = new AssertionError("the action did not complete while the hook waited for it");
+            }
+            hasFired = true;
+        }
+
+        private void onDirSize(String dirSuffix, TestUtils.LeakProneCode action) {
+            this.action = action;
+            this.dirSizeSuffix = dirSuffix;
+        }
+
+        private void onRead(String fileSuffix, TestUtils.LeakProneCode action) {
+            this.action = action;
+            this.readSuffix = fileSuffix;
         }
     }
 

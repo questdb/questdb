@@ -4159,7 +4159,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
             executionContext.getSecurityContext().authorizeTableReindex(tableToken, columnNames);
             if (!executionContext.isValidationOnly()) {
-                indexBuilder.reindex(partition, columnName);
+                try {
+                    indexBuilder.reindex(partition, columnName);
+                } finally {
+                    // REINDEX rewrites index files in place without a _txn commit, a change that
+                    // none of the checks of the disk size cache sees
+                    engine.getTableDiskSizeCache().evict(tableToken);
+                }
             }
         }
         compiledQuery.ofRepair();
