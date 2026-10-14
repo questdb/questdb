@@ -8495,6 +8495,54 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByQualifiedTimestampBesideQualifiedColumn() throws Exception {
+        // CREATE MATERIALIZED VIEW failed with "Invalid table name or alias": rewriteSampleBy
+        // added t.ets to the group-by model under the dotted alias t.ets, which the wrapper
+        // cannot resolve. The view must compile, refresh and hold the rows of its query.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp(
+                    "CREATE TABLE t (k SYMBOL, val DOUBLE, ets #TIMESTAMP, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL"
+            );
+            final String viewSql = "SELECT t.ts, t.ets > t.ts AS late, avg(t.val) AS v FROM t SAMPLE BY 1h";
+            createMatView("t_1h", viewSql);
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 1.0, '2024-01-01T05:00:00.000000Z', '2024-01-01T00:00:00.000000Z'),
+                        ('b', 2.0, '2024-01-01T04:00:00.000000Z', '2024-01-01T01:15:00.000000Z'),
+                        ('a', 3.0, '2024-01-01T03:00:00.000000Z', '2024-01-01T03:00:00.000000Z'),
+                        ('b', 4.0, '2024-01-01T02:00:00.000000Z', '2024-01-01T03:30:00.000000Z')
+                    """);
+            drainQueues();
+
+            assertQuery("SELECT view_name, base_table_name, view_status FROM materialized_views")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tbase_table_name\tview_status
+                            t_1h\tt\tvalid
+                            """);
+
+            final String expected = replaceExpectedTimestamp("""
+                    ts\tlate\tv
+                    2024-01-01T00:00:00.000000Z\ttrue\t1.0
+                    2024-01-01T01:00:00.000000Z\ttrue\t2.0
+                    2024-01-01T03:00:00.000000Z\tfalse\t3.0
+                    2024-01-01T03:00:00.000000Z\tfalse\t4.0
+                    """);
+            assertQuery(viewSql)
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("t_1h ORDER BY ts, v")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testSelfJoinQuery() throws Exception {
         // Verify that the detached base table reader used by the refresh job
         // can be safely used in the mat view query multiple times.

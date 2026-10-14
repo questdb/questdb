@@ -822,6 +822,83 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullKeyedBucketWhenQualifiedFunctionReadsAsOfJoinTimestamp() throws Exception {
+        // q.ts is a key, and datediff() runs over the bucket and the key in every row,
+        // filled or not. The wrapper used to resolve the dotted alias q.ts to the bucket ts,
+        // so all 16 rows showed lag 0.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            execute("CREATE TABLE q (k SYMBOL, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO q VALUES
+                        ('a', 0.5, '2023-12-31T23:59:00.000000Z'),
+                        ('b', 1.5, '2024-01-01T01:10:00.000000Z'),
+                        ('a', 2.5, '2024-01-01T02:00:00.000000Z'),
+                        ('b', 3.5, '2024-01-01T03:20:00.000000Z')
+                    """);
+            assertQuery("SELECT t.ts, datediff('s', q.ts, t.ts) AS lag, avg(t.val) AS v FROM t ASOF JOIN q ON (k) SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tlag\tv
+                            2024-01-01T00:00:00.000000Z\t60\t1.0
+                            2024-01-01T00:00:00.000000Z\t4200\tnull
+                            2024-01-01T00:00:00.000000Z\t7200\tnull
+                            2024-01-01T00:00:00.000000Z\t12000\tnull
+                            2024-01-01T01:00:00.000000Z\t600\t2.0
+                            2024-01-01T01:00:00.000000Z\t3660\tnull
+                            2024-01-01T01:00:00.000000Z\t3600\tnull
+                            2024-01-01T01:00:00.000000Z\t8400\tnull
+                            2024-01-01T02:00:00.000000Z\t7260\tnull
+                            2024-01-01T02:00:00.000000Z\t3000\tnull
+                            2024-01-01T02:00:00.000000Z\t0\tnull
+                            2024-01-01T02:00:00.000000Z\t4800\tnull
+                            2024-01-01T03:00:00.000000Z\t3600\t3.0
+                            2024-01-01T03:00:00.000000Z\t1200\t4.0
+                            2024-01-01T03:00:00.000000Z\t10860\tnull
+                            2024-01-01T03:00:00.000000Z\t6600\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullKeyedBucketWhenQualifiedFunctionReadsQualifiedKey() throws Exception {
+        // a.k is a key, so the fill emits one row per (bucket, k) and concat() runs over the
+        // bucket. The query used to fail with "Invalid table name or alias" because the
+        // wrapper cannot resolve the dotted alias a.k. Every spelling must agree.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            final String expected = """
+                    ts\ts\tv
+                    2024-01-01T00:00:00.000000Z\ta00\t1.0
+                    2024-01-01T00:00:00.000000Z\tb00\tnull
+                    2024-01-01T01:00:00.000000Z\tb01\t2.0
+                    2024-01-01T01:00:00.000000Z\ta01\tnull
+                    2024-01-01T02:00:00.000000Z\ta02\tnull
+                    2024-01-01T02:00:00.000000Z\tb02\tnull
+                    2024-01-01T03:00:00.000000Z\ta03\t3.0
+                    2024-01-01T03:00:00.000000Z\tb03\t4.0
+                    """;
+            assertQuery("SELECT a.ts, concat(a.k, to_str(a.ts, 'HH')) AS s, avg(a.val) AS v FROM t a SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT ts, concat(a.k, to_str(ts, 'HH')) AS s, avg(a.val) AS v FROM t a SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT ts, concat(k, to_str(ts, 'HH')) AS s, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testFillNullKeyedBucketWhenQualifiedTimestampSelected() throws Exception {
         // With a user key k, the fill must key on (bucket, k) only; t.ts must not add a
         // third, raw key.

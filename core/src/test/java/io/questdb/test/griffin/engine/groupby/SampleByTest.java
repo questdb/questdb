@@ -17238,6 +17238,59 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampColumnAmbiguousBareInSelfJoinFunction() throws Exception {
+        // In a self-join the bare ts names both sides. rewriteSampleBy read it inside
+        // to_str() as the sampled a.ts because a.ts is the bucket spelling; the query must
+        // fail as it does for the bare literal.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            assertExceptionNoLeakCheck(
+                    "SELECT a.ts AS x, to_str(ts, 'HH') AS h, avg(a.val) AS v FROM t a JOIN t b ON (k) SAMPLE BY 1h",
+                    0,
+                    "Ambiguous column [name=ts]"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT a.ts AS x, ts AS y, avg(a.val) AS v FROM t a JOIN t b ON (k) SAMPLE BY 1h",
+                    18,
+                    "Ambiguous column [name=ts]"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnBareInFunctionWithQualifiedColumn() throws Exception {
+        // rewriteSampleBy added a.ets to the group-by model under the dotted alias a.ets,
+        // which the wrapper cannot resolve, so datediff('m', a.ets, ts) failed with "Invalid
+        // table name or alias". The qualified and the bare spellings must return the rows
+        // of the bare one: ets is a key and datediff() runs over the bucket.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            final String expected = """
+                    ts\td\tv
+                    2024-01-01T00:00:00.000000Z\t300\t1.0
+                    2024-01-01T01:00:00.000000Z\t180\t2.0
+                    2024-01-01T03:00:00.000000Z\t0\t3.0
+                    2024-01-01T03:00:00.000000Z\t60\t4.0
+                    """;
+            assertQuery("SELECT ts, datediff('m', a.ets, ts) AS d, avg(val) AS v FROM t a SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT a.ts, datediff('m', a.ets, a.ts) AS d, avg(a.val) AS v FROM t a SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT ts, datediff('m', ets, ts) AS d, avg(val) AS v FROM t SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testTimestampColumnJoinOtherTableTimestampStaysKey() throws Exception {
         // Guard: u.ts is another table's timestamp, so it stays a group-by key.
         assertMemoryLeak(() -> {
@@ -17411,6 +17464,70 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampColumnQualifiedInFunctionWithAsOfJoinTimestamp() throws Exception {
+        // rewriteSampleBy added q.ts to the group-by model under the dotted alias q.ts, and
+        // the wrapper resolved it to the bucket ts, so lag was 0 on every row. q.ts is a key
+        // and datediff() runs over the bucket, whether or not q.ts is also selected.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            execute("CREATE TABLE q (k SYMBOL, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO q VALUES
+                        ('a', 0.5, '2023-12-31T23:59:00.000000Z'),
+                        ('b', 1.5, '2024-01-01T01:10:00.000000Z'),
+                        ('a', 2.5, '2024-01-01T02:00:00.000000Z'),
+                        ('b', 3.5, '2024-01-01T03:20:00.000000Z')
+                    """);
+            assertQuery("SELECT t.ts, datediff('s', q.ts, t.ts) AS lag, avg(t.val) AS v FROM t ASOF JOIN q ON (k) SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tlag\tv
+                            2024-01-01T00:00:00.000000Z\t60\t1.0
+                            2024-01-01T01:00:00.000000Z\t600\t2.0
+                            2024-01-01T03:00:00.000000Z\t3600\t3.0
+                            2024-01-01T03:00:00.000000Z\t1200\t4.0
+                            """);
+            assertQuery("SELECT t.ts, q.ts AS qts, datediff('s', q.ts, t.ts) AS lag, avg(t.val) AS v FROM t ASOF JOIN q ON (k) SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tqts\tlag\tv
+                            2024-01-01T00:00:00.000000Z\t2023-12-31T23:59:00.000000Z\t60\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:10:00.000000Z\t600\t2.0
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z\t3600\t3.0
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:20:00.000000Z\t1200\t4.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimestampColumnQualifiedInFunctionWithSelfJoinTimestamp() throws Exception {
+        // b.ts is the other side's timestamp, so it is a key. The wrapper used to resolve
+        // its dotted alias b.ts to the bucket ts and returned d = 0 on every row.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            assertQuery("SELECT a.ts, datediff('m', b.ts, a.ts) AS d, avg(a.val) AS v FROM t a JOIN t b ON (k) SAMPLE BY 1h ORDER BY ts, d")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\td\tv
+                            2024-01-01T00:00:00.000000Z\t0\t1.0
+                            2024-01-01T00:00:00.000000Z\t180\t1.0
+                            2024-01-01T01:00:00.000000Z\t15\t2.0
+                            2024-01-01T01:00:00.000000Z\t150\t2.0
+                            2024-01-01T03:00:00.000000Z\t0\t3.0
+                            2024-01-01T03:00:00.000000Z\t30\t4.0
+                            2024-01-01T03:00:00.000000Z\t105\t4.0
+                            2024-01-01T03:00:00.000000Z\t180\t3.0
+                            """);
+        });
+    }
+
+    @Test
     public void testTimestampColumnQualifiedInFunctionWithTableAlias() throws Exception {
         // to_utc(a.ts, ...) used to stay a group-by key on the raw timestamp, one row per
         // input timestamp. rewriteSampleBy now evaluates it over the bucket, as it does for
@@ -17427,6 +17544,57 @@ public class SampleByTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t2.0
                             2024-01-01T03:00:00.000000Z\t2024-01-01T02:00:00.000000Z\t3.5
                             """);
+        });
+    }
+
+    @Test
+    public void testTimestampColumnQualifiedInOperatorWithQualifiedColumn() throws Exception {
+        // rewriteSampleBy added t.ets to the group-by model under the dotted alias t.ets,
+        // which the wrapper cannot resolve, so t.ets > t.ts failed with "Invalid table name
+        // or alias". Every spelling must key on ets and compare it with the bucket.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            final String expected = """
+                    ts\tlate\tv
+                    2024-01-01T00:00:00.000000Z\ttrue\t1.0
+                    2024-01-01T01:00:00.000000Z\ttrue\t2.0
+                    2024-01-01T03:00:00.000000Z\tfalse\t3.0
+                    2024-01-01T03:00:00.000000Z\tfalse\t4.0
+                    """;
+            assertQuery("SELECT t.ts, t.ets > t.ts AS late, avg(t.val) AS v FROM t SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT ts, t.ets > ts AS late, avg(t.val) AS v FROM t SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT ts, ets > ts AS late, avg(val) AS v FROM t SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+            // Two spellings of t.ets in two functions share one key.
+            final String expectedPair = """
+                    ts\ta\tb\tv
+                    2024-01-01T00:00:00.000000Z\ttrue\tfalse\t1.0
+                    2024-01-01T01:00:00.000000Z\ttrue\tfalse\t2.0
+                    2024-01-01T03:00:00.000000Z\tfalse\tfalse\t3.0
+                    2024-01-01T03:00:00.000000Z\tfalse\ttrue\t4.0
+                    """;
+            assertQuery("SELECT t.ts, T.ETS > t.ts AS a, t.ets < t.ts AS b, avg(val) AS v FROM t SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("keys: [ts,ETS]")
+                    .returns(expectedPair);
+            assertQuery("SELECT ts, ets > ts AS a, ets < ts AS b, avg(val) AS v FROM t SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expectedPair);
         });
     }
 

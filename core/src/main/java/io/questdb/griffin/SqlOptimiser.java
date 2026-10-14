@@ -262,6 +262,7 @@ public class SqlOptimiser implements Mutable {
     private final IntHashSet tempIntHashSet = new IntHashSet();
     private final IntList tempIntList = new IntList();
     private final ObjHashSet<IQueryModel> tempJoinTreeColumnModels = new ObjHashSet<>();
+    private final ObjList<ExpressionNode> tempQualifiedLiterals = new ObjList<>();
     private final StringSink tmpStringSink = new StringSink();
     private final PostOrderTreeTraversalAlgo traversalAlgo;
     private final ObjList<CharSequence> trivialExpressionCandidates = new ObjList<>();
@@ -439,6 +440,7 @@ public class SqlOptimiser implements Mutable {
         tempColumns.clear();
         tempColumns2.clear();
         tempCharSequenceHashSet.clear();
+        tempQualifiedLiterals.clear();
         pivotAliasMap.clear();
         pivotAliasSequenceMap.clear();
         subsampleNameScopeDepth = 0;
@@ -680,19 +682,6 @@ public class SqlOptimiser implements Mutable {
         return model.getTimestamp() != null
                 && model.getOrderBy().size() == 1
                 && Chars.equals(model.getOrderBy().getQuick(0).token, model.getTimestamp().token);
-    }
-
-    // rewriteSampleBy treats a literal as the sampled timestamp when it is the spelling it
-    // chose for the bucket (timestampColumn) or another spelling of the same column, bare or
-    // qualified with the FROM model's alias or table name. Without the second check,
-    // SELECT t.ts AS x, ts AS b keeps t.ts as a raw group-by key next to the bucket.
-    private static boolean isSampleByTimestampLiteral(
-            CharSequence token,
-            CharSequence timestampColumn,
-            CharSequence sourceTimestamp,
-            IQueryModel fromModel
-    ) {
-        return Chars.equalsIgnoreCase(token, timestampColumn) || isDesignatedTimestampReference(token, sourceTimestamp, fromModel);
     }
 
     /**
@@ -5245,21 +5234,28 @@ public class SqlOptimiser implements Mutable {
         return -1;
     }
 
+    // Rewrites every spelling of the sampled timestamp to the bucket alias. Collects the other
+    // bare literals by name and the qualified ones (t.ets, q.ts) by node: the caller gives
+    // each qualified literal a plain alias, because the wrapper model cannot resolve a dotted
+    // name.
     private void fixTimestampAndCollectMissingTokens(
             ExpressionNode node,
             CharSequence timestampColumn,
             CharSequence sourceTimestamp,
             IQueryModel fromModel,
             CharSequence timestampAlias,
-            CharSequenceHashSet missingTokens
+            CharSequenceHashSet missingTokens,
+            ObjList<ExpressionNode> qualifiedLiterals
     ) {
         sqlNodeStack.clear();
         while (node != null) {
             if (node.type == LITERAL) {
                 if (isSampleByTimestampLiteral(node.token, timestampColumn, sourceTimestamp, fromModel)) {
                     node.token = timestampAlias;
-                } else {
+                } else if (Chars.indexOfLastUnquoted(node.token, '.') < 0) {
                     missingTokens.add(node.token);
+                } else {
+                    qualifiedLiterals.add(node);
                 }
             }
 
@@ -6222,6 +6218,22 @@ public class SqlOptimiser implements Mutable {
                 && !joinModels.getQuick(index).getAliasToColumnMap().excludes(literal, dot + 1, literal.length());
     }
 
+    // rewriteSampleBy treats a literal as the sampled timestamp when it is the spelling it
+    // chose for the bucket (timestampColumn) or another spelling of the same column, bare or
+    // qualified with the FROM model's alias or table name. Without the second check,
+    // SELECT t.ts AS x, ts AS b keeps t.ts as a raw group-by key next to the bucket. A bare
+    // name that more than one join model carries is ambiguous: it matches only as the chosen
+    // spelling, so the group-by model reports the ambiguity instead of reading the sampled side.
+    private boolean isSampleByTimestampLiteral(
+            CharSequence token,
+            CharSequence timestampColumn,
+            CharSequence sourceTimestamp,
+            IQueryModel fromModel
+    ) {
+        return Chars.equalsIgnoreCase(token, timestampColumn)
+                || (isDesignatedTimestampReference(token, sourceTimestamp, fromModel) && !isAmbiguousColumn(fromModel, token));
+    }
+
     /**
      * Checks if the expression is a simple constant value (not a function).
      * CONSTANT and LITERAL types are allowed (string/numeric constants).
@@ -7101,7 +7113,11 @@ public class SqlOptimiser implements Mutable {
 
     // A non-null fromModel also matches the timestamp qualified with that model's alias or
     // table name (t.ts); a null fromModel matches the bare timestamp name only.
-    private boolean nonAggregateFunctionDependsOn(ExpressionNode node, ExpressionNode timestampNode, @Nullable IQueryModel fromModel) {
+    private boolean nonAggregateFunctionDependsOn(
+            ExpressionNode node,
+            ExpressionNode timestampNode,
+            @Nullable IQueryModel fromModel
+    ) {
         if (timestampNode == null) {
             return false;
         }
@@ -10893,8 +10909,17 @@ public class SqlOptimiser implements Mutable {
 
                 if ((wrapAction & SAMPLE_BY_REWRITE_WRAP_ADD_TIMESTAMP_COPIES) != 0) {
                     tempCharSequenceHashSet.clear();
+                    tempQualifiedLiterals.clear();
                     for (int i = 0, n = tempColumns.size(); i < n; i++) {
-                        fixTimestampAndCollectMissingTokens(tempColumns.get(i).getAst(), timestampColumn, timestamp.token, nested, timestampAlias, tempCharSequenceHashSet);
+                        fixTimestampAndCollectMissingTokens(
+                                tempColumns.get(i).getAst(),
+                                timestampColumn,
+                                timestamp.token,
+                                nested,
+                                timestampAlias,
+                                tempCharSequenceHashSet,
+                                tempQualifiedLiterals
+                        );
                     }
                     for (int i = 0, size = tempCharSequenceHashSet.size(); i < size; i++) {
                         final CharSequence dependentToken = tempCharSequenceHashSet.get(i);
@@ -10903,6 +10928,28 @@ public class SqlOptimiser implements Mutable {
                             needRemoveColumns++;
                         }
                     }
+                    // The wrapper resolves names against this model's aliases, so a dotted name
+                    // such as q.ts either fails there or loses its qualifier and binds to the
+                    // bucket ts. Each qualified literal therefore reads its column under a plain
+                    // alias: the alias of the same column when the user selected it, otherwise a
+                    // fresh one. The bare tokens above take their names first, so a fresh alias
+                    // never shadows one of them.
+                    for (int i = 0, n = tempQualifiedLiterals.size(); i < n; i++) {
+                        final ExpressionNode literal = tempQualifiedLiterals.getQuick(i);
+                        final QueryColumn selected = findQueryColumnByAst(model.getBottomUpColumns(), literal);
+                        final CharSequence alias;
+                        if (selected != null) {
+                            alias = selected.getAlias();
+                        } else {
+                            alias = createColumnAlias(literal, model);
+                            model.addBottomUpColumn(
+                                    queryColumnPool.next().of(alias, nextLiteral(literal.token, literal.position))
+                            );
+                            needRemoveColumns++;
+                        }
+                        literal.token = alias;
+                    }
+                    tempQualifiedLiterals.clear();
                 }
 
                 // Normalize ORDER BY by replacing column names with their aliases.
