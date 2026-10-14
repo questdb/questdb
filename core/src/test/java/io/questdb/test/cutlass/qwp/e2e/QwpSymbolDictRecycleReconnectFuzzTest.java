@@ -56,8 +56,10 @@ import java.util.concurrent.atomic.AtomicReference;
  * and can interrupt recycling or reconnecting. Progress waits leave the server up and reset
  * requests enabled: a slow host gets time to recycle instead of exhausting a restart count.
  * Every round must make progress before its targeted bounce, so post-test recovery cannot
- * satisfy the recycle floor. For targeted bounces the producer drains and pauses until a
- * DISCONNECTED event arrives, preventing a planned recycle from hiding the connection loss.
+ * satisfy the recycle floor. For targeted bounces the producer drains and pauses with no
+ * recycle armed. The server halts its workers while keeping the live socket open, then the
+ * producer sends one row. The bounce must interrupt that sent-but-unacknowledged frame,
+ * and the producer stays paused until DISCONNECTED so recycling cannot hide the loss.
  *
  * <p>Replay can duplicate rows, so the table deduplicates by timestamp and id. The final
  * queries check the exact id range and every row's symbol, catching dictionary corruption
@@ -160,8 +162,20 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                             if (pause != null) {
                                 Assert.assertTrue("producer must drain before a targeted bounce",
                                         sender.drain(30_000));
-                                pause.ready.countDown();
-                                pause.resume.await();
+                                // An armed recycle needs another normal batch before pausing:
+                                // the targeted row's table() must not reconnect with workers halted.
+                                if (!sender.isResetArmed()) {
+                                    pause.ready.countDown();
+                                    pause.publish.await();
+                                    writeRow(sender, id++, tsBase, tsStepNanos);
+                                    sender.flush();
+                                    // at() may auto-flush, so flushAndGetSequence() could return -1.
+                                    pause.publishedFsn = sender.getFsnEpochBaseForTesting()
+                                            + sender.getCursorEngineForTesting().publishedFsn();
+                                    rowsProduced.set(id);
+                                    pause.published.countDown();
+                                    pause.resume.await();
+                                }
                             }
                             Os.sleep(2);
                         }
@@ -211,8 +225,8 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                             Os.sleep(1);
                         }
 
-                        // Pause at a drained batch boundary so even an already-armed recycle
-                        // cannot close the connection before the I/O loop observes its loss.
+                        // Hold server processing until the targeted row is sent, so even a
+                        // slow bouncer must kill a live connection with unacknowledged data.
                         Os.sleep(40 + rnd.nextInt(160));
                         ProducerPause pause = new ProducerPause();
                         producerPause.set(pause);
@@ -221,7 +235,24 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                                     pause.ready.await(30, TimeUnit.SECONDS));
                             assertProducerHealthy(producerError, rowsProduced);
                             int disconnectsBeforeBounce = unplannedDisconnects.get();
-                            int killed = bounce(server);
+                            int killed;
+                            try {
+                                server.haltWorkers();
+                                long framesBefore = sender.getTotalFramesSent();
+                                pause.publish.countDown();
+                                Assert.assertTrue("producer did not publish within 30s in round " + round,
+                                        pause.published.await(30, TimeUnit.SECONDS));
+                                assertProducerHealthy(producerError, rowsProduced);
+                                TestUtils.assertEventually(() -> Assert.assertTrue(
+                                        "targeted row must reach the live socket",
+                                        sender.getTotalFramesSent() > framesBefore
+                                ), 30);
+                                Assert.assertTrue("targeted bounce must have unacknowledged published data",
+                                        sender.getAckedFsn() < pause.publishedFsn);
+                            } finally {
+                                // A failed gate must also restore service before producer close().
+                                killed = bounce(server);
+                            }
                             liveDrops += killed;
                             targetedLiveDrops += killed;
                             restarts++;
@@ -233,6 +264,7 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
                             ), 30);
                         } finally {
                             producerPause.set(null);
+                            pause.publish.countDown();
                             pause.resume.countDown();
                         }
                     }
@@ -355,7 +387,10 @@ public class QwpSymbolDictRecycleReconnectFuzzTest extends AbstractCairoTest {
     }
 
     private static class ProducerPause {
+        private final CountDownLatch publish = new CountDownLatch(1);
+        private final CountDownLatch published = new CountDownLatch(1);
         private final CountDownLatch ready = new CountDownLatch(1);
         private final CountDownLatch resume = new CountDownLatch(1);
+        private long publishedFsn;
     }
 }

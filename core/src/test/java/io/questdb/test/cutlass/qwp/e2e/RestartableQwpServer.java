@@ -292,6 +292,15 @@ public final class RestartableQwpServer implements AutoCloseable {
     }
 
     /**
+     * Stops processing without closing the HttpServer-owned sockets. A test can send an
+     * unacknowledged frame on a live connection before completing shutdown with stop().
+     * The halted pool cannot resume; the caller must stop/start the server, even on failure.
+     */
+    void haltWorkers() {
+        workerPool.halt();
+    }
+
+    /**
      * Records which connections have completed the WebSocket upgrade. {@code resumeRecv} is the
      * dispatcher's entry for every readable event after the protocol switch, and the dispatcher
      * re-enters it right after the upgrade completes, before any frame has arrived, so its first
