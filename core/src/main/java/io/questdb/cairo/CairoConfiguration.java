@@ -1533,6 +1533,8 @@ public interface CairoConfiguration {
      */
     boolean isSqlSymbolInBitsetEnabled();
 
+    boolean isSqlLatestByJitEnabled();
+
     boolean isSqlOrderBySortEnabled();
 
     boolean isSqlParallelFilterEnabled();

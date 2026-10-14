@@ -79,6 +79,7 @@ struct Function
     {
         questdb::aarch64::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
         questdb::aarch64::preload_constants(c, istream, size, const_cache);
+        questdb::aarch64::preload_vars(c, istream, size, vars_ptr, var_cache);
     }
 
     void compile(const instruction_t *istream, size_t size, uint32_t options)
@@ -109,7 +110,7 @@ struct Function
         {
             value_cache.clear();
             questdb::aarch64::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
-                                        input_index, labels, addr_cache, const_cache, value_cache);
+                                        input_index, labels, addr_cache, const_cache, var_cache, value_cache);
 
             if (!values.is_empty())
             {
@@ -207,6 +208,7 @@ struct Function
     a64::Gp output_index;
     ColumnAddressCache addr_cache;
     ConstantCache const_cache;
+    ColumnValueCache var_cache;
     ColumnValueCache value_cache;
 };
 
@@ -220,6 +222,7 @@ struct CountOnlyFunction
     {
         questdb::aarch64::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
         questdb::aarch64::preload_constants(c, istream, size, const_cache);
+        questdb::aarch64::preload_vars(c, istream, size, vars_ptr, var_cache);
     }
 
     void compile(const instruction_t *istream, size_t size, uint32_t options)
@@ -249,7 +252,7 @@ struct CountOnlyFunction
         {
             value_cache.clear();
             questdb::aarch64::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
-                                        input_index, labels, addr_cache, const_cache, value_cache);
+                                        input_index, labels, addr_cache, const_cache, var_cache, value_cache);
 
             if (!values.is_empty())
             {
@@ -340,6 +343,7 @@ struct CountOnlyFunction
     a64::Gp output_index;
     ColumnAddressCache addr_cache;
     ConstantCache const_cache;
+    ColumnValueCache var_cache;
     ColumnValueCache value_cache;
 };
 
@@ -356,6 +360,7 @@ struct Function
     {
         questdb::x86::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
         questdb::x86::preload_constants(c, istream, size, const_cache);
+        questdb::x86::preload_vars(c, istream, size, vars_ptr, var_cache);
     }
 
     void compile(const instruction_t *istream, size_t size, uint32_t options)
@@ -410,7 +415,7 @@ struct Function
             value_cache.clear();
             // Pass the label array and caches to emit_code
             questdb::x86::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
-                                    input_index, labels, addr_cache, const_cache, value_cache);
+                                    input_index, labels, addr_cache, const_cache, var_cache, value_cache);
 
             // If stack is empty, all predicates were resolved via short-circuit jumps
             // No final test needed.
@@ -468,6 +473,7 @@ struct Function
 
         // Preload constants into YMM registers for the SIMD loop
         questdb::avx2::preload_constants_ymm(c, istream, size, const_cache_ymm);
+        questdb::avx2::preload_vars_ymm(c, istream, size, vars_ptr, var_cache_ymm);
 
         Label l_loop = c.new_label();
         Label l_exit = c.new_label();
@@ -508,7 +514,7 @@ struct Function
             // same reason.
             value_cache_ymm.clear();
             questdb::avx2::emit_code(c, arena, istream, size, values, null_check, wide_lane, step, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
-                                     addr_cache, const_cache_ymm, value_cache_ymm);
+                                     addr_cache, const_cache_ymm, var_cache_ymm, value_cache_ymm);
 
             if (values.is_empty())
             {
@@ -619,6 +625,8 @@ struct Function
     ColumnAddressCache addr_cache;
     ConstantCache const_cache;
     ConstantCacheYmm const_cache_ymm;
+    ColumnValueCache var_cache;
+    ValueCacheYmm var_cache_ymm;
     ColumnValueCache value_cache;
     ValueCacheYmm value_cache_ymm;
 };
@@ -634,6 +642,7 @@ struct CountOnlyFunction
     {
         questdb::x86::preload_column_addresses(c, istream, size, data_ptr, addr_cache);
         questdb::x86::preload_constants(c, istream, size, const_cache);
+        questdb::x86::preload_vars(c, istream, size, vars_ptr, var_cache);
     }
 
     void compile(const instruction_t *istream, size_t size, uint32_t options)
@@ -688,7 +697,7 @@ struct CountOnlyFunction
             value_cache.clear();
             // Pass the label array and caches to emit_code
             questdb::x86::emit_code(c, arena, istream, size, values, null_check, data_ptr, varsize_aux_ptr, vars_ptr,
-                                    input_index, labels, addr_cache, const_cache, value_cache);
+                                    input_index, labels, addr_cache, const_cache, var_cache, value_cache);
 
             // If stack is empty, all predicates were resolved via short-circuit jumps
             // No final test needed.
@@ -745,6 +754,7 @@ struct CountOnlyFunction
 
         // Preload constants into YMM registers for the SIMD loop
         questdb::avx2::preload_constants_ymm(c, istream, size, const_cache_ymm);
+        questdb::avx2::preload_vars_ymm(c, istream, size, vars_ptr, var_cache_ymm);
 
         Label l_loop = c.new_label();
         Label l_tail = c.new_label();
@@ -781,7 +791,7 @@ struct CountOnlyFunction
             // same reason.
             value_cache_ymm.clear();
             questdb::avx2::emit_code(c, arena, istream, size, values, null_check, wide_lane, step, data_ptr, varsize_aux_ptr, vars_ptr, input_index,
-                                     addr_cache, const_cache_ymm, value_cache_ymm);
+                                     addr_cache, const_cache_ymm, var_cache_ymm, value_cache_ymm);
 
             if (values.is_empty())
             {
@@ -905,6 +915,8 @@ struct CountOnlyFunction
     ColumnAddressCache addr_cache;
     ConstantCache const_cache;
     ConstantCacheYmm const_cache_ymm;
+    ColumnValueCache var_cache;
+    ValueCacheYmm var_cache_ymm;
     ColumnValueCache value_cache;
     ValueCacheYmm value_cache_ymm;
 };

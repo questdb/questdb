@@ -1163,6 +1163,39 @@ public class CairoEngine implements Closeable, WriterSource {
         }
     }
 
+    /**
+     * Vetoes dropping a specific table outright, independently of permissions. Distinct from
+     * {@code isProtected()}, which denies every kind of access: a table can be readable, writable
+     * and truncatable by anyone holding the permission, yet still be one the database refuses to
+     * let go of. Overridden by Enterprise for the view audit table.
+     * <p>
+     * Consulted on every route by which a client drops an existing <b>table</b>: {@code DROP TABLE},
+     * {@code DROP ALL TABLES}, and a text import that overwrites the table. It sits on the engine
+     * so that each of them can reach it, and it is not on {@link #dropTableOrViewOrMatView} itself,
+     * which also drops what the engine created and has to clean up. The view, materialized view
+     * and live view drops have their own statements and do not consult it: a view cannot be made
+     * undroppable this way.
+     */
+    public void checkTableDroppable(TableToken tableToken) {
+    }
+
+    /**
+     * Refuses {@code ALTER TABLE ... RESUME WAL FROM TXN} on a table whose committed transactions
+     * no client may skip, whatever it is authorized to do. Resuming a suspended table from a later
+     * transaction marks every transaction before it as applied, so their rows never reach the
+     * table. Overridden by Enterprise for the view audit table. A plain {@code RESUME WAL} retries
+     * the failed transaction and skips nothing, so it does not consult this.
+     */
+    public void checkTableResumableFromTxn(TableToken tableToken, int tableNamePosition) {
+    }
+
+    /**
+     * Refuses {@code ALTER TABLE ... SUSPEND WAL} on a table whose WAL apply no client may stop,
+     * whatever it is authorized to do. Overridden by Enterprise for the view audit table.
+     */
+    public void checkTableSuspendable(TableToken tableToken, int tableNamePosition) {
+    }
+
     public void checkpointCreate(SqlExecutionCircuitBreaker circuitBreaker, boolean isIncrementalBackup) throws SqlException {
         checkpointAgent.checkpointCreate(circuitBreaker, false, isIncrementalBackup);
     }

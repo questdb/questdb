@@ -31,10 +31,10 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.GeoHashUtil;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
@@ -131,6 +131,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public static final int VARCHAR_HEADER_TYPE = 9;
     // Stub value for opcodes and options
     static final int UNDEFINED_CODE = -1;
+    private static final int BIND_VAR_SLOT_SIZE = 2 * Long.BYTES;
     private static final int EXEC_HINT_MIXED_SIZE_TYPE = 2;
     private static final int EXEC_HINT_SCALAR = 0;
     private static final int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
@@ -328,7 +329,6 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     private ExpressionNode unwidenableIntCmpFloatNode;
     private MemoryCARW memory;
     private RecordMetadata metadata;
-    private PageFrameCursor pageFrameCursor;
     // Whether the loaded native library compiles SYM_IN_SET. Survives clear(): it is a property of
     // the library, not of the filter. See JitUtil.isSymbolInSetSupported().
     private boolean symbolInSetSupported = JitUtil.isSymbolInSetSupported();
@@ -350,13 +350,14 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
     public void addScalarSubQuery(CharSequence token, AbstractScalarCursorFunction source) {
         scalarSubQueries.put(token, source);
     }
+    private SymbolTableSource symbolTableSource;
 
     @Override
     public void clear() {
         scalarSubQueries.clear();
         memory = null;
         metadata = null;
-        pageFrameCursor = null;
+        symbolTableSource = null;
         forceScalarMode = false;
         hasEmittedWideLaneConversion = false;
         hasI64WidenArithConstant = false;
@@ -549,13 +550,13 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             MemoryCARW memory,
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
-            PageFrameCursor pageFrameCursor,
+            SymbolTableSource symbolTableSource,
             ObjList<Function> bindVarFunctions
     ) {
         this.memory = memory;
         this.executionContext = executionContext;
         this.metadata = metadata;
-        this.pageFrameCursor = pageFrameCursor;
+        this.symbolTableSource = symbolTableSource;
         this.bindVarFunctions = bindVarFunctions;
         return this;
     }
@@ -943,6 +944,19 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
      * @throws SqlException thrown when IR serialization failed.
      */
     public int serialize(ExpressionNode node, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
+        final int options = serializeFilter(node, forceScalar, debug, nullChecks);
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+        final long capacity = (long) configuration.getSqlJitBindVarsMemoryPageSize() * configuration.getSqlJitBindVarsMemoryMaxPages();
+        final long required = (long) bindVarFunctions.size() * BIND_VAR_SLOT_SIZE;
+        if (required > capacity) {
+            throw SqlException.position(node.position)
+                    .put("bind variables exceed JIT bind variable memory [required=").put(required)
+                    .put(", capacity=").put(capacity).put(']');
+        }
+        return options;
+    }
+
+    private int serializeFilter(ExpressionNode node, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
         // Reset the per-element IN-key width override: the serializer instance is reused across
         // filters, and a throw mid-IN (JIT fallback) could otherwise leave it stale for the next one.
         hasEmittedWideLaneConversion = false;
@@ -4896,7 +4910,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                 // A live view's incremental refresh runs the filter over WAL segment data, whose
                 // symbol keys are segment-local. See serializeSymbolConstant.
                 || executionContext.isLiveViewCompile()
-                || pageFrameCursor == null
+                || symbolTableSource == null
                 || inKey.type != ExpressionNode.LITERAL) {
             return false;
         }
@@ -4904,7 +4918,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         if (columnIndex < 0 || ColumnType.tagOf(metadata.getColumnType(columnIndex)) != ColumnType.SYMBOL) {
             return false;
         }
-        final SymbolTable symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
+        final SymbolTable symbolTable = symbolTableSource.getSymbolTable(columnIndex);
         if (!(symbolTable instanceof StaticSymbolTable staticSymbolTable)) {
             return false;
         }
@@ -5683,22 +5697,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
             throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
         }
 
-        // Live view incremental refresh runs the JIT-compiled filter against WAL segment
-        // data, whose row int keys are segment-local and do not match the base table's
-        // global keys resolved here. Force the deferred bind-variable path so the key
-        // gets resolved per segment via the WAL cursor's symbol table (see
-        // WalSegmentPageFrameCursor.WalSymbolTable.keyOf).
-        if (!executionContext.isLiveViewCompile()) {
-            final int key = predicateContext.symbolTable.keyOf(symbol);
-            if (key != SymbolTable.VALUE_NOT_FOUND) {
-                // Known symbol constant case
-                putOperand(offset, IMM, I4_TYPE, key);
-                return;
-            }
-        }
-
-        // Unknown symbol constant case. Create a fake bind variable function to handle it.
-        final SymbolConstant function = SymbolConstant.newInstance(symbol);
+        final SymbolConstant function = SymbolConstant.newUnquotedInstance(symbol);
         bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
         int index = bindVarFunctions.size() - 1;
 
@@ -6303,7 +6302,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
         int shortCircuitMode = SC_NONE; // short-circuit evaluation mode
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
-        StaticSymbolTable symbolTable; // used for known symbol constant lookups
+        SymbolTable symbolTable;
         private boolean currentInSerialization = false;
         private boolean handledShortCircuitExit = false; // true if predicate emitted its own AND_SC/OR_SC exit
         private ExpressionNode inOperationNode = null;
@@ -6457,7 +6456,7 @@ public class CompiledFilterIRSerializer implements PostOrderTreeTraversalAlgo.Vi
                             .put("operators on different symbol columns are not supported by JIT: ")
                             .put(node.token);
                 }
-                symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
+                symbolTable = symbolTableSource.getSymbolTable(columnIndex);
                 symbolColumnIndex = columnIndex;
             }
 

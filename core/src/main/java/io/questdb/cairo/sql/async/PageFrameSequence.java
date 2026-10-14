@@ -290,6 +290,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 Os.pause();
             }
         }
+
+        if (frameCount > 0) {
+            suspendCollectSubSeq();
+        }
     }
 
     @Override
@@ -321,6 +325,9 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         if (cursor == LOCAL_TASK_CURSOR) {
             collectedFrameIndex = localTask.getFrameIndex();
             localTask.collected();
+            if (done) {
+                suspendCollectSubSeq();
+            }
             return;
         }
         PageFrameReduceTask task = reduceQueue.get(cursor);
@@ -337,6 +344,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         }
         task.collected(forceCollect);
         collectSubSeq.done(cursor);
+        if (done) {
+            suspendCollectSubSeq();
+            return;
+        }
         final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
         if (dispatcher != null) {
             dispatcher.signalProgress(this);
@@ -595,31 +606,17 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 } else if (dispatch(dispatchLimit, countOnly)) {
                     // We have dispatched something, so let's try to collect it.
                     continue;
-                }
-                if (dispatcher != null) {
-                    if (dispatcher.isCurrentFiberOwned()
-                            && dispatchStartFrameIndex == collectedFrameIndex + 1) {
-                        reduceLocally(countOnly);
-                        return LOCAL_TASK_CURSOR;
-                    }
-                    // Park only while one of our own frames is in flight: its completion is the
-                    // progress we wait for. With nothing in flight, the full ring may be held by
-                    // another sequence that this same fiber drives (e.g. the other side of an
-                    // ASOF Light join over two async filters), and only this fiber can release
-                    // it. Parking would then wait for the query timeout, so fall through to the
-                    // local reduce below instead.
-                    if (canPark && dispatchStartFrameIndex > collectedFrameIndex + 1) {
-                        final boolean isDraining = !isActive();
-                        awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining);
-                        continue;
-                    }
-                    if (!isActive()) {
-                        return -1;
-                    }
+                } else if (dispatcher != null && !isActive()) {
+                    continue;
                 }
                 if (dispatchStartFrameIndex == collectedFrameIndex + 1) {
                     reduceLocally(countOnly);
                     return LOCAL_TASK_CURSOR;
+                }
+                if (canPark) {
+                    final boolean isDraining = !isActive();
+                    awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining);
+                    continue;
                 }
                 return -1;
             } else {
@@ -819,6 +816,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     .I$();
 
             await();
+            messageBus.getPageFrameCollectFanOut(shard).resume(collectSubSeq);
 
             // done is reset by method call above
             done = false;
@@ -1176,5 +1174,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             return false;
         }
         return true;
+    }
+
+    private void suspendCollectSubSeq() {
+        messageBus.getPageFrameCollectFanOut(shard).suspend(collectSubSeq);
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        if (dispatcher != null) {
+            dispatcher.signalProgress(this);
+        }
     }
 }

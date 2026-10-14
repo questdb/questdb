@@ -1037,6 +1037,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.join.metadata.max.resizes\tQDB_CAIRO_SQL_JOIN_METADATA_MAX_RESIZES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.join.metadata.page.size\tQDB_CAIRO_SQL_JOIN_METADATA_PAGE_SIZE\t16384\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.join.symbol.translation.cache.capacity\tQDB_CAIRO_SQL_JOIN_SYMBOL_TRANSLATION_CACHE_CAPACITY\t1000000\tdefault\tfalse\ttrue\n" +
+                                    "cairo.sql.latest.by.jit.enabled\tQDB_CAIRO_SQL_LATEST_BY_JIT_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.latest.by.row.count\tQDB_CAIRO_SQL_LATEST_BY_ROW_COUNT\t1000\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.map.max.pages\tQDB_CAIRO_SQL_MAP_MAX_PAGES\t2147483647\tdefault\tfalse\tfalse\n" +
                                     "cairo.sql.map.max.resizes\tQDB_CAIRO_SQL_MAP_MAX_RESIZES\t2147483647\tdefault\tfalse\tfalse\n" +
@@ -1512,6 +1513,14 @@ public class ServerMainTest extends AbstractBootstrapTest {
                 "memory.usage.log.enabled\tQDB_MEMORY_USAGE_LOG_ENABLED\tfalse\tconf\tfalse\ttrue\n" +
                 "memory.usage.log.interval\tQDB_MEMORY_USAGE_LOG_INTERVAL\t60000\tdefault\tfalse\ttrue\n" +
                 "metrics.enabled\tQDB_METRICS_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
+                "qwp.browser.allowed.origins\tQDB_QWP_BROWSER_ALLOWED_ORIGINS\t\tdefault\tfalse\ttrue\n" +
+                "metrics.persist.enabled\tQDB_METRICS_PERSIST_ENABLED\tfalse\tconf\tfalse\tfalse\n" +
+                "metrics.persist.exclude\tQDB_METRICS_PERSIST_EXCLUDE\tworker_pool_fiber_(max_live|mounted|retained|finalizing|outstanding|created|retired|mount|wake|launch|scheduler_publication|scheduler_selection|orphan_recovery|mount_budget_exhaustion)(__.*)?\tdefault\tfalse\tfalse\n" +
+                "metrics.persist.interval\tQDB_METRICS_PERSIST_INTERVAL\t1000\tdefault\tfalse\tfalse\n" +
+                "metrics.persist.parquet.enabled\tQDB_METRICS_PERSIST_PARQUET_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
+                "metrics.persist.sync.interval\tQDB_METRICS_PERSIST_SYNC_INTERVAL\t-1\tdefault\tfalse\tfalse\n" +
+                "metrics.persist.ttl\tQDB_METRICS_PERSIST_TTL\t1 WEEK\tdefault\tfalse\tfalse\n" +
+                "metrics.persist.virtual.interval\tQDB_METRICS_PERSIST_VIRTUAL_INTERVAL\t60000\tdefault\tfalse\tfalse\n" +
                 "cairo.metadata.cache.snapshot.ordered\tQDB_CAIRO_METADATA_CACHE_SNAPSHOT_ORDERED\ttrue\tdefault\tfalse\tfalse\n" +
                 "cairo.mat.view.enabled\tQDB_CAIRO_MAT_VIEW_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                 "cairo.mat.view.covering.index.enabled\tQDB_CAIRO_MAT_VIEW_COVERING_INDEX_ENABLED\tfalse\tdefault\tfalse\tfalse\n" +

@@ -39,20 +39,20 @@ public class WorkerMetrics implements Mutable {
     }
 
     @Override
-    public void clear() {
+    public synchronized void clear() {
         min.setValue(Long.MAX_VALUE);
         max.setValue(Long.MIN_VALUE);
     }
 
-    public long getMaxElapsedMicros() {
+    public synchronized long getMaxElapsedMicros() {
         return max.getValue();
     }
 
-    public long getMinElapsedMicros() {
+    public synchronized long getMinElapsedMicros() {
         return min.getValue();
     }
 
-    public void update(long candidateMin, long candidateMax) {
+    public synchronized void update(long candidateMin, long candidateMax) {
         if (candidateMin < min.getValue()) {
             min.setValue(candidateMin);
         }

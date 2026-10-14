@@ -274,10 +274,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // checks that per open rather than trusting it.
     private final boolean isBackupSuppressedByHint;
     // Whether this factory frees symbolFunction / keyValueFuncs itself. False when the backup
-    // was built from them and so already owns them; see the constructor parameter.
+    // was built from them and so already owns them.
     private final boolean isKeyFunctionOwner;
     private final int keyQueryPosition;
     private final ObjList<Function> keyValueFuncs;
+    private final IntList keyValueKeyCache;
     // Runtime-owned key list for adaptive symbol-pattern routing. The adaptive factory refreshes this
     // list before opening this delegate and retains ownership; this factory only reads it.
     private final IntList patternKeys;
@@ -287,11 +288,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     private final MultiKeyCoveringCursor multiKeyCursor;
     private final MultiKeyCoveringPageFrameCursor multiKeyPageFrameCursor;
     private final int[] queryColToIncludeIdx;
-    private final IntList resolvedKeys;
     private final SingleKeyCoveringCursor singleKeyCursor;
     private final SingleKeyCoveringPageFrameCursor singleKeyPageFrameCursor;
     private final Function symbolFunction;
-    private final boolean symbolFunctionRuntimeConstant;
     // PERMISSION, not mode. True once a consumer has proved it needs no
     // designated-timestamp order and has therefore released this factory from the
     // guarantee, via tryDisableTimestampOrdering(). It is written once, during code
@@ -330,22 +329,20 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     // per open. Born 1, and only ever read on a path that unorderedFramesPermitted already
     // gates, so the born value is reachable only as the neutral multiplier.
     private int framePassesPerFrame = 1;
+    private int symbolKeyCache = SymbolTable.VALUE_NOT_FOUND;
 
     public CoveringIndexRecordCursorFactory(
             @NotNull RecordMetadata metadata,
             @NotNull PartitionFrameCursorFactory dfcFactory,
             int indexColumnIndex,
-            int symbolKey,
             Function symbolFunction,
             @NotNull IntList columnIndexes,
             int @NotNull [] queryColToIncludeIdx,
             @Nullable ObjList<Function> keyValueFuncs,
-            @Nullable TableReader reader,
             boolean latestBy,
             @Nullable Function latestByFilter,
             @Nullable IntList patternKeys,
             @Nullable RecordCursorFactory backup,
-            boolean backupOwnsKeyFunctions,
             boolean isBackupSuppressedByHint
     ) {
         // keyValueFuncs (IN/= key list) and patternKeys (positive pattern's matched key set) are two
@@ -353,14 +350,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         assert keyValueFuncs == null || patternKeys == null;
         this.metadata = metadata;
         this.backup = backup;
-        this.isKeyFunctionOwner = backup == null || !backupOwnsKeyFunctions;
+        this.isKeyFunctionOwner = backup == null;
         this.isBackupSuppressedByHint = isBackupSuppressedByHint;
         this.dfcFactory = dfcFactory;
         this.indexColumnIndex = indexColumnIndex;
         this.keyQueryPosition = findQueryPosition(columnIndexes, indexColumnIndex);
         this.symbolFunction = symbolFunction;
         this.columnIndexes = columnIndexes;
-        this.symbolFunctionRuntimeConstant = symbolKey == SymbolTable.VALUE_NOT_FOUND;
         this.latestBy = latestBy;
         this.latestByFilter = latestByFilter;
         this.patternKeys = patternKeys;
@@ -375,6 +371,12 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // list of the same Function instances -- which this factory owns and frees in close() (the
         // pooled model only clears references, never frees) -- to decouple from the model's lifecycle.
         this.keyValueFuncs = keyValueFuncs != null ? new ObjList<>(keyValueFuncs) : null;
+        if (this.keyValueFuncs != null) {
+            this.keyValueKeyCache = new IntList(this.keyValueFuncs.size());
+            keyValueKeyCache.setAll(this.keyValueFuncs.size(), SymbolTable.VALUE_NOT_FOUND);
+        } else {
+            this.keyValueKeyCache = null;
+        }
         int[] requiredIncludeIndices = buildRequiredIncludeIndices(queryColToIncludeIdx);
 
         int[] symInclCols = findSymbolIncludeCols(queryColToIncludeIdx, metadata);
@@ -384,26 +386,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         // a refactor hazard if the defensive copy above is ever changed or removed.
         final ObjList<Function> keyValueFuncsCopy = this.keyValueFuncs;
         if (keyValueFuncsCopy != null || patternKeys != null) {
-            final int multiKeyCapacity;
-            if (patternKeys != null) {
-                // Pattern path: the matched-key set is not known until getCursor (the adaptive owner
-                // resolves it from the static symbol table at execution time, so it also reflects symbols
-                // added after compile). Leave resolvedKeys null and size the merge with a small growable
-                // default.
-                this.resolvedKeys = null;
-                multiKeyCapacity = 16;
-            } else {
-                this.resolvedKeys = new IntList(keyValueFuncsCopy.size());
-                multiKeyCapacity = keyValueFuncsCopy.size();
-                if (reader != null) {
-                    SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
-                    for (int i = 0, n = keyValueFuncsCopy.size(); i < n; i++) {
-                        Function f = keyValueFuncsCopy.getQuick(i);
-                        int key = f.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : smr.keyOf(f.getStrA(null));
-                        resolvedKeys.add(key);
-                    }
-                }
-            }
+            final int multiKeyCapacity = patternKeys != null ? 16 : keyValueFuncsCopy.size();
             final MergeObserver mergeObserver = TEST_MERGE_OBSERVER.get();
             this.multiKeyCursor = new MultiKeyCoveringCursor(indexColumnIndex, multiKeyCapacity, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata, mergeObserver);
             this.singleKeyCursor = null;
@@ -412,11 +395,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     : null;
             this.singleKeyPageFrameCursor = null;
         } else {
-            this.resolvedKeys = null;
-            this.singleKeyCursor = new SingleKeyCoveringCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata);
+            this.singleKeyCursor = new SingleKeyCoveringCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, symInclCols, columnIndexes, latestBy, metadata);
             this.multiKeyCursor = null;
             this.singleKeyPageFrameCursor = !latestBy
-                    ? new SingleKeyCoveringPageFrameCursor(indexColumnIndex, symbolKey, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes)
+                    ? new SingleKeyCoveringPageFrameCursor(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes)
                     : null;
             this.multiKeyPageFrameCursor = null;
         }
@@ -604,8 +586,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
             Misc.free(dfcFactory);
             Misc.free(latestByFilter);
         }
-        // The key functions are the one part the backup does not always adopt: the LATEST ON
-        // single-key backup takes a resolved key as an int and never sees the function.
         if (isKeyFunctionOwner) {
             Misc.free(symbolFunction);
             Misc.freeObjList(keyValueFuncs);
@@ -717,33 +697,33 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
      * {@code minScannedRows} rows are scanned
      */
     public boolean estimateSelection(SqlExecutionContext executionContext, long minScannedRows, long[] sink) throws SqlException {
-        if (latestBy || patternKeys != null || (keyValueFuncs == null && symbolFunctionRuntimeConstant)) {
+        if (latestBy || patternKeys != null) {
             return false;
         }
-        final IntList keys = new IntList();
         if (keyValueFuncs != null) {
-            if (resolvedKeys.size() != keyValueFuncs.size()) {
-                // the keys were not resolved against a reader when the plan was built
-                return false;
-            }
             for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
                 if (keyValueFuncs.getQuick(i).isRuntimeConstant()) {
                     return false;
                 }
-                final int key = resolvedKeys.getQuick(i);
-                // a value the symbol table does not hold selects no rows
-                if (key != SymbolTable.VALUE_NOT_FOUND && !keys.contains(key)) {
-                    keys.add(key);
-                }
             }
-        } else if (singleKeyCursor.symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            keys.add(singleKeyCursor.symbolKey);
+        } else if (symbolFunction == null || symbolFunction.isRuntimeConstant()) {
+            return false;
         }
+        final IntList keys = new IntList();
         long scanned = 0;
         long sampledScanned = 0;
         long sampledSelected = 0;
         try (PartitionFrameCursor frameCursor = dfcFactory.getCursor(executionContext, columnIndexes, PartitionFrameCursorFactory.ORDER_ASC)) {
             final TableReader reader = frameCursor.getTableReader();
+            // the keys against the table's symbol map; a value it does not hold selects no rows
+            if (keyValueFuncs != null) {
+                resolveKeys(frameCursor, executionContext, keys);
+            } else {
+                final int key = resolveKey(frameCursor, executionContext);
+                if (key != SymbolTable.VALUE_NOT_FOUND) {
+                    keys.add(key);
+                }
+            }
             final int keyCount = keys.size();
             // the scanned rows first, from partition metadata, without opening a partition
             long frameCount = 0;
@@ -812,6 +792,25 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         return true;
     }
 
+    private int resolveKey(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext) throws SqlException {
+        symbolFunction.init(frameCursor, executionContext);
+        symbolKeyCache = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex).keyOf(symbolFunction.getStrA(null), symbolKeyCache);
+        return symbolKeyCache;
+    }
+
+    private void resolveKeys(PartitionFrameCursor frameCursor, SqlExecutionContext executionContext, IntList keys) throws SqlException {
+        Function.init(keyValueFuncs, frameCursor, executionContext, null);
+        final SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
+        keys.clear();
+        for (int i = 0, n = keyValueFuncs.size(); i < n; i++) {
+            final int key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null), keyValueKeyCache.getQuick(i));
+            keyValueKeyCache.setQuick(i, key);
+            if (key != SymbolTable.VALUE_NOT_FOUND && !keys.contains(key)) {
+                keys.add(key);
+            }
+        }
+    }
+
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
         if (parallelRows != null && isParallelRowsWorthIt(executionContext)) {
@@ -829,28 +828,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     multiKeyCursor.multiKeys = patternKeys;
                     multiKeyCursor.of(frameCursor);
                 } else {
-                    if (keyValueFuncs != null) {
-                        Function.init(keyValueFuncs, frameCursor, executionContext, null);
-                    }
-                    SymbolMapReader smr = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
-                    multiKeyCursor.multiKeys.clear();
-                    for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
-                        int key = resolvedKeys.getQuick(i);
-                        if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
-                            // keyOf() maps a null value to VALUE_IS_NULL, the NULL key, which
-                            // the chain does carry postings for. Short-circuiting to
-                            // VALUE_NOT_FOUND instead would drop every NULL row of the scan.
-                            key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null));
-                        }
-                        // Bind-variable / runtime-constant list elements may resolve
-                        // to the same symbol key; dedup so the multi-key merge does
-                        // not open a duplicate posting cursor per key and merge the
-                        // same row-id stream twice (duplicate rows / inflated
-                        // aggregates).
-                        if (key != SymbolTable.VALUE_NOT_FOUND && !multiKeyCursor.multiKeys.contains(key)) {
-                            multiKeyCursor.multiKeys.add(key);
-                        }
-                    }
+                    resolveKeys(frameCursor, executionContext, multiKeyCursor.multiKeys);
                     if (mustUseBackup(frameCursor, multiKeyCursor.multiKeys.contains(SymbolTable.VALUE_IS_NULL))) {
                         frameCursor = Misc.free(frameCursor);
                         return backup.getCursor(executionContext);
@@ -871,16 +849,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 return multiKeyCursor;
             }
 
-            int resolvedKey;
-            if (!this.symbolFunctionRuntimeConstant) {
-                resolvedKey = singleKeyCursor.symbolKey;
-            } else {
-                symbolFunction.init(frameCursor, executionContext);
-                SymbolMapReader symbolMapReader = frameCursor.getTableReader().getSymbolMapReader(indexColumnIndex);
-                // See the multi-key branch above: keyOf() answers VALUE_IS_NULL for a null
-                // value, so let it, rather than reporting the key as unknown.
-                resolvedKey = symbolMapReader.keyOf(symbolFunction.getStrA(null));
-            }
+            final int resolvedKey = resolveKey(frameCursor, executionContext);
             if (mustUseBackup(frameCursor, resolvedKey == SymbolTable.VALUE_IS_NULL)) {
                 frameCursor = Misc.free(frameCursor);
                 return backup.getCursor(executionContext);
@@ -937,31 +906,14 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 descending ? PartitionFrameCursorFactory.ORDER_DESC : PartitionFrameCursorFactory.ORDER_ASC
         );
         try {
-            TableReader reader = frameCursor.getTableReader();
             if (multiKeyPageFrameCursor != null) {
                 if (patternKeys != null) {
                     multiKeyPageFrameCursor.multiKeys = patternKeys;
-                    selectFrameMode(frameCursor, reader, patternKeys, configMaxRows);
+                    selectFrameMode(frameCursor, frameCursor.getTableReader(), patternKeys, configMaxRows);
                     multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false, executionContext.getMemoryTracker());
                     return multiKeyPageFrameCursor;
                 }
-                if (keyValueFuncs != null) {
-                    Function.init(keyValueFuncs, frameCursor, executionContext, null);
-                }
-                SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
-                multiKeyPageFrameCursor.multiKeys.clear();
-                for (int i = 0, n = resolvedKeys.size(); i < n; i++) {
-                    int key = resolvedKeys.getQuick(i);
-                    if (key == SymbolTable.VALUE_NOT_FOUND && keyValueFuncs != null) {
-                        // See getCursor(): keyOf() resolves a null value to the NULL key.
-                        key = smr.keyOf(keyValueFuncs.getQuick(i).getStrA(null));
-                    }
-                    // See getCursor(): dedup duplicate resolved keys so the
-                    // parallel GROUP BY page-frame path does not over-count.
-                    if (key != SymbolTable.VALUE_NOT_FOUND && !multiKeyPageFrameCursor.multiKeys.contains(key)) {
-                        multiKeyPageFrameCursor.multiKeys.add(key);
-                    }
-                }
+                resolveKeys(frameCursor, executionContext, multiKeyPageFrameCursor.multiKeys);
                 // A suppressed backup is exactly what leaves this page-frame cursor reachable
                 // for a null-capable key, so the promise is checked here too. It runs BEFORE
                 // mode selection: it throws, and the density estimate below walks the whole
@@ -977,22 +929,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 // not happened, and -- decisively -- factories are cached and re-executed,
                 // so any partition count read at compile time is a snapshot that goes stale
                 // as the table grows. A correctness bound cannot rest on that.
-                selectFrameMode(frameCursor, reader, multiKeyPageFrameCursor.multiKeys, configMaxRows);
+                selectFrameMode(frameCursor, frameCursor.getTableReader(), multiKeyPageFrameCursor.multiKeys, configMaxRows);
                 // Always wire the frame cursor; callers may probe getSymbolTable()
                 // before iteration. Empty multiKeys list yields no frames.
                 multiKeyPageFrameCursor.of(frameCursor, configMaxRows, false, executionContext.getMemoryTracker());
                 return multiKeyPageFrameCursor;
             }
-            // Single-key path: see the matching block in getCursor().
-            int resolvedKey;
-            if (!this.symbolFunctionRuntimeConstant) {
-                resolvedKey = singleKeyPageFrameCursor.symbolKey;
-            } else {
-                symbolFunction.init(frameCursor, executionContext);
-                SymbolMapReader smr = reader.getSymbolMapReader(indexColumnIndex);
-                // See getCursor(): keyOf() resolves a null value to the NULL key.
-                resolvedKey = smr.keyOf(symbolFunction.getStrA(null));
-            }
+            final int resolvedKey = resolveKey(frameCursor, executionContext);
             // See the multi-key branch above.
             checkHintPromise(frameCursor, resolvedKey == SymbolTable.VALUE_IS_NULL);
             singleKeyPageFrameCursor.resolvedKey = resolvedKey;
@@ -1688,7 +1631,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                 maxInclude = Math.max(maxInclude, includeIdx);
             }
             this.values = new BlockValues(maxInclude + 1);
-            this.record = new CoveringRecord(queryColToIncludeIdx, SymbolTable.VALUE_NOT_FOUND, metadata);
+            this.record = new CoveringRecord(queryColToIncludeIdx, metadata);
             this.record.of(values);
         }
 
@@ -1916,11 +1859,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         protected Function latestByFilter;
         protected TableReader tableReader;
 
-        CoveringCursor(int indexColumnIndex, int symbolKey, int[] queryColToIncludeIdx,
+        CoveringCursor(int indexColumnIndex, int[] queryColToIncludeIdx,
                        int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
                        boolean latestBy, RecordMetadata metadata) {
             this.indexColumnIndex = indexColumnIndex;
-            this.coveringRecord = new CoveringRecord(queryColToIncludeIdx, symbolKey, metadata);
+            this.coveringRecord = new CoveringRecord(queryColToIncludeIdx, metadata);
             this.requiredIncludeIndices = requiredIncludeIndices;
             this.symbolIncludeCols = symbolIncludeCols;
             this.symTablesCache = symbolIncludeCols != null ? new SymbolTable[queryColToIncludeIdx.length] : null;
@@ -3430,9 +3373,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private int symbolKey;
         private SymbolTable symbolTable;
 
-        CoveringRecord(int[] queryColToIncludeIdx, int symbolKey, RecordMetadata metadata) {
+        CoveringRecord(int[] queryColToIncludeIdx, RecordMetadata metadata) {
             this.queryColToIncludeIdx = queryColToIncludeIdx;
-            this.symbolKey = symbolKey;
+            this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
             this.metadata = metadata;
         }
 
@@ -3888,7 +3831,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         MultiKeyCoveringCursor(int indexColumnIndex, int multiKeyCapacity, int[] queryColToIncludeIdx,
                                int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
                                boolean latestBy, RecordMetadata metadata, MergeObserver mergeObserver) {
-            super(indexColumnIndex, SymbolTable.VALUE_NOT_FOUND, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
+            super(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
             this.multiKeys = new IntList(multiKeyCapacity);
             this.mergeObserver = mergeObserver;
         }
@@ -4450,11 +4393,11 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         int symbolKey;
         private boolean isLatestByDone;
 
-        SingleKeyCoveringCursor(int indexColumnIndex, int symbolKey, int[] queryColToIncludeIdx,
+        SingleKeyCoveringCursor(int indexColumnIndex, int[] queryColToIncludeIdx,
                                 int[] requiredIncludeIndices, int[] symbolIncludeCols, IntList columnIndexes,
                                 boolean latestBy, RecordMetadata metadata) {
-            super(indexColumnIndex, symbolKey, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
-            this.symbolKey = symbolKey;
+            super(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, symbolIncludeCols, columnIndexes, latestBy, metadata);
+            this.symbolKey = SymbolTable.VALUE_NOT_FOUND;
             if (!latestBy && CoveringBlock.isEligible(queryColToIncludeIdx, metadata)) {
                 this.block = new CoveringBlock(queryColToIncludeIdx, metadata);
             }
@@ -4566,7 +4509,6 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
     private static class SingleKeyCoveringPageFrameCursor extends CoveringPageFrameCursor {
         int resolvedKey;
-        int symbolKey;
         // Backward-scan state: the partition currently being drained from its
         // high row-range downward, and the exclusive upper bound of the next
         // sub-frame to emit. descPartitionIndex < 0 means no partition is open.
@@ -4576,15 +4518,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
 
         SingleKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
-                int symbolKey,
                 int[] queryColToIncludeIdx,
                 int[] requiredIncludeIndices,
                 RecordMetadata metadata,
                 IntList columnIndexes
         ) {
             super(indexColumnIndex, queryColToIncludeIdx, requiredIncludeIndices, metadata, columnIndexes);
-            this.symbolKey = symbolKey;
-            this.resolvedKey = symbolKey;
+            this.resolvedKey = SymbolTable.VALUE_NOT_FOUND;
         }
 
         @Override

@@ -545,6 +545,11 @@ public abstract class AbstractPostingIndexReader implements IndexReader {
     }
 
     @Override
+    public long getMaxValue() {
+        return entryMaxValue;
+    }
+
+    @Override
     public long getPartitionTxn() {
         return partitionTxn;
     }
