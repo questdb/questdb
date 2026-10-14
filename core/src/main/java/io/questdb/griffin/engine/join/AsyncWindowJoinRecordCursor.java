@@ -288,6 +288,10 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
 
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             }
+
+            if (!allFramesActive) {
+                throw buildInterruptionException();
+            }
         } finally {
             masterFrameSequence.getAtom().setSkipAggregation(oldSkipAggregation);
         }

@@ -248,6 +248,10 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 Os.pause();
             }
         }
+
+        if (frameCount > 0) {
+            suspendCollectSubSeq();
+        }
     }
 
     @Override
@@ -451,27 +455,18 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                 } else if (dispatch(dispatchLimit, countOnly)) {
                     // We have dispatched something, so let's try to collect it.
                     continue;
-                }
-                if (dispatcher != null) {
-                    if (dispatcher.isCurrentFiberOwned()
-                            && dispatchStartTaskIndex == collectedTaskIndex + 1) {
-                        reduceLocally(countOnly);
-                        beginCollectTask(LOCAL_TASK_CURSOR, localTask);
-                        return LOCAL_TASK_CURSOR;
-                    }
-                    if (canPark) {
-                        final boolean isDraining = !isActive();
-                        awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining);
-                        continue;
-                    }
-                    if (!isActive()) {
-                        return -1;
-                    }
+                } else if (dispatcher != null && !isActive()) {
+                    continue;
                 }
                 if (dispatchStartTaskIndex == collectedTaskIndex + 1) {
                     reduceLocally(countOnly);
                     beginCollectTask(LOCAL_TASK_CURSOR, localTask);
                     return LOCAL_TASK_CURSOR;
+                }
+                if (canPark) {
+                    final boolean isDraining = !isActive();
+                    awaitProgress(dispatcher, observedProgress, observedGlobalProgress, isDraining);
+                    continue;
                 }
                 return -1;
             } else {
@@ -641,6 +636,7 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
                     .I$();
 
             await();
+            messageBus.getPageFrameCollectFanOut(shard).resume(collectSubSeq);
 
             // done is reset by method call above
             done = false;
@@ -863,14 +859,21 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
         if (cursor == LOCAL_TASK_CURSOR) {
             collectedTaskIndex = localTask.getTaskIndex();
             localTask.collected();
+            if (done) {
+                suspendCollectSubSeq();
+            }
         } else {
             PageFrameReduceTask task = reduceQueue.get(cursor);
             collectedTaskIndex = task.getTaskIndex();
             task.collected(forceCollect);
             collectSubSeq.done(cursor);
-            final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
-            if (dispatcher != null) {
-                dispatcher.signalProgress(this);
+            if (done) {
+                suspendCollectSubSeq();
+            } else {
+                final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+                if (dispatcher != null) {
+                    dispatcher.signalProgress(this);
+                }
             }
         }
         heldCollectCursor = HELD_NONE;
@@ -973,5 +976,13 @@ public class PageFrameSequence<T extends StatefulAtom> extends AbstractPageFrame
             return false;
         }
         return true;
+    }
+
+    private void suspendCollectSubSeq() {
+        messageBus.getPageFrameCollectFanOut(shard).suspend(collectSubSeq);
+        final PageFrameReduceDispatcher dispatcher = messageBus.getPageFrameReduceDispatcher();
+        if (dispatcher != null) {
+            dispatcher.signalProgress(this);
+        }
     }
 }
