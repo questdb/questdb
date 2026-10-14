@@ -77,6 +77,8 @@ import io.questdb.std.str.Utf8s;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.ArrayDeque;
+
 import static io.questdb.std.GenericLexer.unquote;
 import static io.questdb.std.datetime.DateLocaleFactory.EN_LOCALE;
 import static io.questdb.std.datetime.millitime.DateFormatUtils.PG_DATE_MILLI_TIME_Z_FORMAT;
@@ -88,6 +90,88 @@ public class SqlUtil {
     private static final int IMPLICIT_CAST_FORMATS_SIZE;
     private static final FiberLocal<StringSink> IMPLICIT_CAST_VARCHAR_SINK = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<Long256ConstantFactory> LONG256_FACTORY = new FiberLocal<>(Long256ConstantFactory::new);
+
+    public static boolean containsWithin(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
+        stack.clear();
+        if (node != null) {
+            stack.push(node);
+        }
+        try {
+            while (!stack.isEmpty()) {
+                ExpressionNode next = stack.pop();
+                if (next.token != null && SqlKeywords.isWithinKeyword(next.token)) {
+                    return true;
+                }
+                if (next.lhs != null) {
+                    stack.push(next.lhs);
+                }
+                if (next.rhs != null) {
+                    stack.push(next.rhs);
+                }
+                for (int i = 0, n = next.args.size(); i < n; i++) {
+                    stack.push(next.args.getQuick(i));
+                }
+            }
+            return false;
+        } finally {
+            stack.clear();
+        }
+    }
+
+    public static ExpressionNode getEqualsOrColumn(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
+        if (node == null || node.paramCount != 2 || node.token == null || !SqlKeywords.isOrKeyword(node.token)) {
+            return null;
+        }
+        ExpressionNode column = null;
+        stack.clear();
+        stack.push(node);
+        try {
+            while (!stack.isEmpty()) {
+                ExpressionNode leaf = stack.pop();
+                if (leaf.paramCount == 2 && SqlKeywords.isOrKeyword(leaf.token)) {
+                    stack.push(leaf.lhs);
+                    stack.push(leaf.rhs);
+                    continue;
+                }
+                ExpressionNode key = getEqualsKey(leaf);
+                if (key == null || (column != null && !Chars.equalsIgnoreCase(column.token, key.token))) {
+                    return null;
+                }
+                column = key;
+            }
+            return column;
+        } finally {
+            stack.clear();
+        }
+    }
+
+    public static void rewriteEqualsOrToIn(ExpressionNode node, ArrayDeque<ExpressionNode> stack) {
+        assert node.args.size() == 0;
+        ExpressionNode column = null;
+        stack.clear();
+        stack.push(node);
+        try {
+            while (!stack.isEmpty()) {
+                ExpressionNode leaf = stack.pop();
+                if (leaf.paramCount == 2 && SqlKeywords.isOrKeyword(leaf.token)) {
+                    stack.push(leaf.lhs);
+                    stack.push(leaf.rhs);
+                    continue;
+                }
+                column = getEqualsKey(leaf);
+                assert column != null;
+                node.args.add(column == leaf.lhs ? leaf.rhs : leaf.lhs);
+            }
+        } finally {
+            stack.clear();
+        }
+        node.args.add(column);
+        node.paramCount = node.args.size();
+        node.type = ExpressionNode.FUNCTION;
+        node.token = "in";
+        node.lhs = null;
+        node.rhs = null;
+    }
 
     public static void addSelectStar(
             IQueryModel model,
@@ -2022,6 +2106,19 @@ public class SqlUtil {
                 collectColumnReferencesFromExpression(engine, joinColumn, model, depMap);
             }
         }
+    }
+
+    private static ExpressionNode getEqualsKey(ExpressionNode node) {
+        if (node.paramCount != 2 || !Chars.equals(node.token, "=") || node.lhs == null || node.rhs == null) {
+            return null;
+        }
+        ExpressionNode key = node.lhs.type == ExpressionNode.LITERAL ? node.lhs : node.rhs;
+        ExpressionNode value = key == node.lhs ? node.rhs : node.lhs;
+        if (key.type != ExpressionNode.LITERAL || value.type != ExpressionNode.CONSTANT
+                || !(SqlKeywords.isNullKeyword(value.token) || Chars.isQuoted(value.token))) {
+            return null;
+        }
+        return key;
     }
 
     private static int findEndOfDigitsPos(CharSequence tok, int tokLen, int tokPosition) throws SqlException {

@@ -58,6 +58,7 @@ import io.questdb.lifecycle.LifecycleOrchestrator;
 import io.questdb.lifecycle.State;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.MetricsPersistenceJob;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.mp.Job;
 import io.questdb.mp.SynchronizedJob;
@@ -855,6 +856,15 @@ public class ServerMain implements Closeable {
                                     .$(" to a positive value or keep default to enable export.")
                                     .$();
                         }
+                    }
+
+                    if (!isReadOnly && config.getMetricsConfiguration().isPersistEnabled()) {
+                        final MetricsPersistenceJob metricsPersistenceJob = new MetricsPersistenceJob(
+                                engine,
+                                config.getMetricsConfiguration()
+                        );
+                        sharedPoolWrite.assign(metricsPersistenceJob);
+                        sharedPoolWrite.freeOnExit(metricsPersistenceJob);
                     }
 
                     // telemetry
