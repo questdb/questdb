@@ -4033,7 +4033,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableToken.getDirName(),
                 struct,
                 ColumnType.VERSION,
-                tableToken.getTableId()
+                tableToken.getTableId(),
+                configuration.getCommitMode()
         );
     }
 
@@ -4055,7 +4056,8 @@ public class CairoEngine implements Closeable, WriterSource {
                 tableToken.getDirName(),
                 struct,
                 ColumnType.VERSION,
-                tableToken.getTableId()
+                tableToken.getTableId(),
+                configuration.getCommitMode()
         );
     }
 
