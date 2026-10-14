@@ -15,6 +15,7 @@ package io.questdb.cairo;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMR;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
@@ -260,6 +261,16 @@ public final class DurableEpochManifest {
                         syncfsTable(configuration, tablePath, rootLen);
                     }
                 }
+                // A conversion to WAL or a REBASE clone created the table's sequencer just before, unflushed. Its few
+                // files are flushed one by one on every platform, so a table without rows pays no filesystem-wide
+                // flush; a new table's baseline comes before its sequencer, which then does not exist yet.
+                final int seqLen = tablePath.trimTo(rootLen).concat(WalUtils.SEQ_DIR).size();
+                if (ff.exists(tablePath.$())) {
+                    fsyncDirectoryFiles(configuration, tablePath, seqLen, false);
+                    fsyncDirectory(configuration, tablePath, seqLen);
+                    fsyncDirectory(configuration, tablePath, rootLen);
+                }
+                tablePath.trimTo(rootLen);
                 seqTxn = txReader.getSeqTxn();
                 txn = txReader.getTxn();
                 columnVersion = txReader.getColumnVersion();

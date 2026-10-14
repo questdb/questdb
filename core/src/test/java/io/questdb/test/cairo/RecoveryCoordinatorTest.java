@@ -3997,7 +3997,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         }
 
         // The first generation-zero manifest written since the reset must follow a barrier through its own table
-        // directory and, file by file, a flush of the partition's files.
+        // directory and, file by file, a flush of the partition's files and of the sequencer the baseline names.
         void assertBaselineFlushedFirst(String partitionName) {
             synchronized (ops) {
                 final String generationZero = io.questdb.std.Files.SEPARATOR + DurableEpochManifest.FILE_NAME + ".0";
@@ -4011,13 +4011,17 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 final String tableDir = ops.get(manifest).substring("manifest ".length(), ops.get(manifest).length() - generationZero.length());
                 boolean hasBarrier = false;
                 boolean hasPartitionFlush = false;
+                boolean hasSequencerFlush = false;
                 for (int i = 0; i < manifest; i++) {
                     final String op = ops.get(i);
                     hasBarrier |= op.startsWith("syncfs " + tableDir + io.questdb.std.Files.SEPARATOR);
                     hasPartitionFlush |= op.startsWith("fsync " + tableDir + io.questdb.std.Files.SEPARATOR + partitionName);
+                    hasSequencerFlush |= op.startsWith("fsync " + tableDir + io.questdb.std.Files.SEPARATOR + WalUtils.SEQ_DIR
+                            + io.questdb.std.Files.SEPARATOR + WalUtils.TXNLOG_FILE_NAME);
                 }
                 Assert.assertTrue("no barrier through " + tableDir + " before its baseline: " + ops, hasBarrier);
                 Assert.assertTrue("no flush of the partition before its baseline: " + ops, isWide || hasPartitionFlush);
+                Assert.assertTrue("no flush of the sequencer log before its baseline: " + ops, isWide || hasSequencerFlush);
             }
         }
 
