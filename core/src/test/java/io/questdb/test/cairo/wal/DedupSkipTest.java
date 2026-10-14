@@ -248,6 +248,155 @@ public class DedupSkipTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSkipDuplicatesKeepPartitionWithColumnTop() throws Exception {
+        // The table adds w and s after it wrote both partitions, which have column tops for them. On a
+        // duplicate-only UPSERT commit, O3PartitionJob leaves a partition as it is only when the duplicates
+        // carry the stored values, and a column top matches nulls only. SKIP drops the duplicates, so it
+        // leaves the partitions as they are whatever values the duplicates carry.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, k)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, 10),
+                    ('2024-01-01T01:00:00.000000Z', 2, 20),
+                    ('2024-01-02T00:00:00.000000Z', 3, 30)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN w INT");
+            execute("ALTER TABLE t ADD COLUMN s VARCHAR");
+            drainWalQueue();
+
+            final TableToken tableToken = engine.verifyTableName("t");
+            final Set<String> partitionDirs = listPartitionDirs(tableToken);
+            final long dedupRowCount = getDedupRowCount();
+            // nulls in the added columns
+            assertPartitionsUnchanged("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, 11, null, null),
+                    ('2024-01-01T01:00:00.000000Z', 2, 21, null, null),
+                    ('2024-01-02T00:00:00.000000Z', 3, 31, null, null)
+                    """);
+            // values in the fixed-size column
+            assertPartitionsUnchanged("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, 12, 1, null),
+                    ('2024-01-01T01:00:00.000000Z', 2, 22, 2, null),
+                    ('2024-01-02T00:00:00.000000Z', 3, 32, 3, null)
+                    """);
+            // values in the var-size column, inlined and not
+            assertPartitionsUnchanged("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, 13, null, 'a'),
+                    ('2024-01-01T01:00:00.000000Z', 2, 23, null, 'a varchar value that is not inlined'),
+                    ('2024-01-02T00:00:00.000000Z', 3, 33, null, 'b')
+                    """);
+            Assert.assertEquals(dedupRowCount + 9, getDedupRowCount());
+            // no new version of the partition, not even an empty directory
+            Assert.assertEquals(partitionDirs, listPartitionDirs(tableToken));
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tv\tw\ts
+                            2024-01-01T00:00:00.000000Z\t1\t10\tnull\t
+                            2024-01-01T01:00:00.000000Z\t2\t20\tnull\t
+                            2024-01-02T00:00:00.000000Z\t3\t30\tnull\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testSkipDuplicatesKeepPartitionWithPartialColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, k)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, 10),
+                    ('2024-01-01T01:00:00.000000Z', 2, 20)
+                    """);
+            drainWalQueue();
+            // the column top of w covers the first two rows of the partition
+            execute("ALTER TABLE t ADD COLUMN w INT");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T02:00:00.000000Z', 3, 30, 3),
+                    ('2024-01-01T03:00:00.000000Z', 4, 40, 4)
+                    """);
+            drainWalQueue();
+
+            // duplicates of rows in the column top
+            assertPartitionsUnchanged("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, 11, 101),
+                    ('2024-01-01T01:00:00.000000Z', 2, 21, 102)
+                    """);
+            // duplicates of a row in the column top and of the row after it
+            assertPartitionsUnchanged("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T01:00:00.000000Z', 2, 22, 202),
+                    ('2024-01-01T02:00:00.000000Z', 3, 32, 203)
+                    """);
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tv\tw
+                            2024-01-01T00:00:00.000000Z\t1\t10\tnull
+                            2024-01-01T01:00:00.000000Z\t2\t20\tnull
+                            2024-01-01T02:00:00.000000Z\t3\t30\t3
+                            2024-01-01T03:00:00.000000Z\t4\t40\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testSkipDuplicatesThenAppendWithColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, k)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, 10),
+                    ('2024-01-01T01:00:00.000000Z', 2, 20),
+                    ('2024-01-02T00:00:00.000000Z', 3, 30)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN w INT");
+            drainWalQueue();
+
+            // The rows that overlap the partition data are duplicates, which carry values for w where the stored
+            // rows have its column top. The row after the partition data goes to the end of the partition, an
+            // append that writes no new version of the partition.
+            final TableToken tableToken = engine.verifyTableName("t");
+            final Set<String> partitionDirs = listPartitionDirs(tableToken);
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T00:00:00.000000Z', 1, 11, 101),
+                    ('2024-01-01T01:00:00.000000Z', 2, 21, 102),
+                    ('2024-01-01T05:00:00.000000Z', 5, 50, 105)
+                    """);
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertEquals(partitionDirs, listPartitionDirs(tableToken));
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tv\tw
+                            2024-01-01T00:00:00.000000Z\t1\t10\tnull
+                            2024-01-01T01:00:00.000000Z\t2\t20\tnull
+                            2024-01-01T05:00:00.000000Z\t5\t50\t105
+                            2024-01-02T00:00:00.000000Z\t3\t30\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testSkipFormatParquetTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY FORMAT PARQUET WAL DEDUP SKIP KEYS(ts, sym)");
@@ -294,6 +443,58 @@ public class DedupSkipTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\tb\t40
                             2024-01-01T02:00:00.000000Z\ta\t3
                             2024-01-01T03:00:00.000000Z\ta\t60
+                            """);
+        });
+    }
+
+    @Test
+    public void testSkipMergeWithColumnTop() throws Exception {
+        // The duplicates come with new rows, which the merge writes into the partitions. The stored rows keep
+        // the nulls of their column tops and the new rows take their values.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, k INT, v INT) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, k)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T01:00:00.000000Z', 1, 10),
+                    ('2024-01-01T02:00:00.000000Z', 2, 20),
+                    ('2024-01-02T01:00:00.000000Z', 3, 30),
+                    ('2024-01-02T02:00:00.000000Z', 4, 40),
+                    ('2024-01-03T00:00:00.000000Z', 5, 50)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t ADD COLUMN w INT");
+
+            // a new row between the duplicates
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T01:00:00.000000Z', 1, 11, 101),
+                    ('2024-01-01T01:30:00.000000Z', 6, 60, 106),
+                    ('2024-01-01T02:00:00.000000Z', 2, 21, 102)
+                    """);
+            drainWalQueue();
+            // a new row before the partition data, every row that overlaps the partition data is a duplicate
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-02T00:00:00.000000Z', 7, 70, 107),
+                    ('2024-01-02T01:00:00.000000Z', 3, 31, 103),
+                    ('2024-01-02T02:00:00.000000Z', 4, 41, 104)
+                    """);
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("t")));
+
+            assertQuery("t")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tv\tw
+                            2024-01-01T01:00:00.000000Z\t1\t10\tnull
+                            2024-01-01T01:30:00.000000Z\t6\t60\t106
+                            2024-01-01T02:00:00.000000Z\t2\t20\tnull
+                            2024-01-02T00:00:00.000000Z\t7\t70\t107
+                            2024-01-02T01:00:00.000000Z\t3\t30\tnull
+                            2024-01-02T02:00:00.000000Z\t4\t40\tnull
+                            2024-01-03T00:00:00.000000Z\t5\t50\tnull
                             """);
         });
     }
