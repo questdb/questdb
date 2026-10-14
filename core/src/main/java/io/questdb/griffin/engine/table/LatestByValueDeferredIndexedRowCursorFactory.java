@@ -61,7 +61,7 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             try (RowCursor indexReaderCursor = pageFrame
                     .getIndexReader(columnIndex, IndexReader.DIR_BACKWARD)
-                    .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1)) {
+                    .getCursor(TableUtils.toIndexKey(symbolKey), pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1)) {
                 if (indexReaderCursor.hasNext()) {
                     cursor.of(indexReaderCursor.next());
                     return cursor;
@@ -92,15 +92,7 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
 
     @Override
     public void prepareCursor(PageFrameCursor pageFrameCursor) {
-        final CharSequence symbol = symbolFunc.getStrA(null);
-        final int key = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbol);
-        // Index keys are not symbol keys plus one: keyOf() answers VALUE_IS_NULL for a null
-        // value, which is Integer.MIN_VALUE, and the NULL key's index key is 0. toIndexKey()
-        // is what knows that, and every sibling factory resolves through it. Incrementing
-        // here instead sent a bound NULL key to an index key nothing matches, so
-        // "sym = $1 LATEST ON ts" with $1 bound to NULL silently returned no rows while the
-        // literal "sym = null" returned them.
-        symbolKey = key != SymbolTable.VALUE_NOT_FOUND ? TableUtils.toIndexKey(key) : SymbolTable.VALUE_NOT_FOUND;
+        symbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbolFunc.getStrA(null), symbolKey);
     }
 
     @Override
