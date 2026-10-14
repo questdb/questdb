@@ -256,7 +256,10 @@ public class DatabaseCheckpointAgent implements DatabaseCheckpointStatus, QuietC
         final ObjHashSet<String> volumes = new ObjHashSet<>();
         try (Path target = new Path()) {
             ff.iterateDir(dir.trimTo(dirLen).$(), (pUtf8NameZ, type) -> {
-                if (type == Files.DT_LNK && ff.isDirOrSoftLinkDirNoDots(dir, dirLen, pUtf8NameZ, type)) {
+                // A file system that reports no entry type (DT_UNKNOWN) is asked whether the entry is a link.
+                final boolean isLink = type == Files.DT_LNK
+                        || (type == Files.DT_UNKNOWN && Files.notDots(pUtf8NameZ) && ff.isSoftLink(dir.trimTo(dirLen).concat(pUtf8NameZ).$()));
+                if (isLink && ff.isDirOrSoftLinkDirNoDots(dir, dirLen, pUtf8NameZ, Files.DT_LNK)) {
                     target.trimTo(0);
                     // A link that cannot be read still leads to its volume, since open() follows it.
                     volumes.add(ff.readLink(dir, target) ? target.parent().toString() : dir.toString());

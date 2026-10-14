@@ -1234,10 +1234,21 @@ public class CheckpointTest extends AbstractCairoTest {
 
     @Test
     public void testCheckpointRestoreFlushesEachVolumeOnce() throws Exception {
-        // A table created IN VOLUME lives on another filesystem behind a soft link, so flushing the database
-        // root's filesystem does not cover it. Two tables share one volume, and so one flush.
+        assertCheckpointRestoreFlushesEachVolumeOnce(false);
+    }
+
+    @Test
+    public void testCheckpointRestoreFlushesEachVolumeOnceWhenEntryTypesAreUnknown() throws Exception {
+        // A file system that reports no entry types (XFS without ftype, some FUSE and network file systems) lists
+        // the soft link of a table IN VOLUME as unknown: the flush has to ask, or it flushes no volume.
+        assertCheckpointRestoreFlushesEachVolumeOnce(true);
+    }
+
+    // A table created IN VOLUME lives on another filesystem behind a soft link, so flushing the database root's
+    // filesystem does not cover it. Two tables share one volume, and so one flush.
+    private void assertCheckpointRestoreFlushesEachVolumeOnce(boolean isEntryTypeUnknown) throws Exception {
         assertMemoryLeak(() -> {
-            final File volume = temp.newFolder("checkpoint_volume");
+            final File volume = temp.newFolder(isEntryTypeUnknown ? "checkpoint_volume_unknown_types" : "checkpoint_volume");
             final String volumeAlias = "checkpoint_vol";
             try (Path p = new Path()) {
                 configuration.getVolumeDefinitions().of(volumeAlias + "->" + volume.getAbsolutePath(), p, root);
@@ -1253,10 +1264,12 @@ public class CheckpointTest extends AbstractCairoTest {
                 engine.clear();
                 createTriggerFile();
                 testFilesFacade.isSyncfsForced = true;
+                testFilesFacade.isEntryTypeUnknown = isEntryTypeUnknown;
                 try {
                     engine.checkpointRecover();
                 } finally {
                     testFilesFacade.isSyncfsForced = false;
+                    testFilesFacade.isEntryTypeUnknown = false;
                 }
 
                 final String volumePath = volume.getCanonicalPath();
@@ -6330,6 +6343,8 @@ public class CheckpointTest extends AbstractCairoTest {
         boolean errorOnSync = false;
         boolean errorOnSyncfs = false;
         boolean errorOnTriggerFileRemoval = false;
+        // Reports every entry the volume flush lists as of unknown type, as a file system without entry types does.
+        boolean isEntryTypeUnknown = false;
         // Takes the syncfs(2) path on any OS, and records the dir behind every syncfs call.
         boolean isSyncfsForced = false;
         // Plays Windows: no filesystem-wide syncfs, a restricted file system, and a sync() that returns -1.
@@ -6344,6 +6359,15 @@ public class CheckpointTest extends AbstractCairoTest {
                 return -1;
             }
             return super.copy(from, to);
+        }
+
+        @Override
+        public int findType(long findPtr) {
+            if (isEntryTypeUnknown && StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                    frame -> frame.getClassName().endsWith(".DatabaseCheckpointAgent") && frame.getMethodName().equals("syncVolumes")))) {
+                return Files.DT_UNKNOWN;
+            }
+            return super.findType(findPtr);
         }
 
         @Override
@@ -6404,6 +6428,7 @@ public class CheckpointTest extends AbstractCairoTest {
             errorOnTriggerFileRemoval = false;
             errorOnRegistryFileRemoval = false;
             errorOnRegistryFileCopy = false;
+            isEntryTypeUnknown = false;
             isSyncfsForced = false;
             isWindowsSyncSimulated = false;
             openedPaths.clear();

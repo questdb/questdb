@@ -3202,6 +3202,60 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         });
     }
 
+    /**
+     * A crash between the link of a detached partition's files under its {@code .detached} name and the removal of
+     * its temporary name leaves {@code .detached} without some files; the next writer open links what it lacks, then
+     * removes the temporary name. On a file system that reports no entry types (XFS without ftype, some FUSE and
+     * network file systems) it must still link them: the removal would otherwise take the only copy.
+     */
+    @Test
+    public void testFinishDetachAfterCrashLinksFilesListedAsUnknown() throws Exception {
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int findType(long findPtr) {
+                // The listing of the finish is the one under test; the writer open's own scan keeps its types.
+                final boolean isLinkMissingFiles = StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                        frame -> frame.getClassName().endsWith(".TableWriter") && frame.getMethodName().equals("linkMissingFiles")));
+                return isLinkMissingFiles ? Files.DT_UNKNOWN : super.findType(findPtr);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("create table tab (ts " + timestampType.getTypeName() + ", v long) timestamp(ts) partition by day bypass wal");
+            execute("insert into tab values ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-02T00:00:00.000000Z', 2)");
+            execute("alter table tab detach partition list '2024-01-01'");
+            final TableToken tt = engine.verifyTableName("tab");
+            final long detachTxn;
+            try (TableWriter writer = getWriter(tt)) {
+                detachTxn = writer.getTxn();
+            }
+            engine.releaseAllWriters();
+
+            final java.nio.file.Path tableDir = java.nio.file.Path.of(configuration.getDbRoot().toString(), tt.getDirName());
+            final java.nio.file.Path detached = tableDir.resolve("2024-01-01" + TableUtils.DETACHED_DIR_MARKER);
+            final java.nio.file.Path detaching = tableDir.resolve("2024-01-01." + detachTxn + TableUtils.DETACHING_DIR_MARKER);
+            java.nio.file.Files.move(detached, detaching);
+            java.nio.file.Files.createDirectory(detached);
+            final List<String> files;
+            try (Stream<java.nio.file.Path> list = java.nio.file.Files.list(detaching)) {
+                files = list.map(p -> p.getFileName().toString()).sorted().collect(Collectors.toList());
+            }
+            Assert.assertFalse("the temporary name must hold the partition's files", files.isEmpty());
+
+            try (TableWriter writer = getWriter(tt)) {
+                Assert.assertNotNull(writer);
+            }
+            engine.releaseAllWriters();
+            Assert.assertFalse("the open must finish the detach", java.nio.file.Files.exists(detaching));
+            try (Stream<java.nio.file.Path> list = java.nio.file.Files.list(detached)) {
+                Assert.assertEquals(files, list.map(p -> p.getFileName().toString()).sorted().collect(Collectors.toList()));
+            }
+
+            java.nio.file.Files.move(detached, tableDir.resolve("2024-01-01" + configuration.getAttachPartitionSuffix()));
+            execute("alter table tab attach partition list '2024-01-01'");
+            assertQuery("select count(), sum(v) from tab").noRandomAccess().expectSize().returns("count\tsum\n2\t3\n");
+        });
+    }
+
     @Test
     public void testNoDesignatedTimestamp() throws Exception {
         assertMemoryLeak(() -> {

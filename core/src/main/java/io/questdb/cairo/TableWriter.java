@@ -9464,7 +9464,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         try {
             do {
                 final long name = ff.findName(findPtr);
-                if (Files.notDots(name) && ff.findType(findPtr) == Files.DT_FILE) {
+                final int type = ff.findType(findPtr);
+                // A file system that reports no entry type (DT_UNKNOWN) is asked whether the entry is a directory:
+                // skipping its files would let the caller remove `from` while `to` lacks them.
+                if (Files.notDots(name) && (type == Files.DT_FILE
+                        || (type == Files.DT_UNKNOWN && !ff.isDirOrSoftLinkDir(from.trimTo(fromLen).concat(name).$())))) {
                     to.trimTo(toLen).concat(name);
                     from.trimTo(fromLen).concat(name);
                     if (ff.length(to.$()) != ff.length(from.$())) {
