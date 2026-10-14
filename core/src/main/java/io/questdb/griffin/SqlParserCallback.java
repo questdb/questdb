@@ -174,6 +174,24 @@ public interface SqlParserCallback {
         return builder;
     }
 
+    /**
+     * Takes the clauses after the bracketed body of a {@code CREATE OR REPLACE VIEW} that replaces
+     * an existing view, the ones {@link #parseCreateViewExt} takes when the statement creates it.
+     * The base grammar has none, so any token is unexpected.
+     *
+     * @param tok the first token after the body, null at the end of the statement
+     */
+    default void parseReplaceViewExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            TableToken viewToken,
+            @Nullable CharSequence tok
+    ) throws SqlException {
+        if (tok != null) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+    }
+
     default int parseShowSql(
             GenericLexer lexer,
             IQueryModel model,

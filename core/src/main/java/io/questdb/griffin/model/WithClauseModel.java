@@ -26,21 +26,16 @@ package io.questdb.griffin.model;
 
 import io.questdb.std.LowerCaseCharSequenceObjHashMap;
 import io.questdb.std.Mutable;
-import io.questdb.std.ObjList;
 import io.questdb.std.ObjectFactory;
 import org.jetbrains.annotations.Nullable;
 
 public class WithClauseModel implements Mutable {
     public static final ObjectFactory<WithClauseModel> FACTORY = WithClauseModel::new;
     private IQueryModel model;
-    private LowerCaseCharSequenceObjHashMap<WithClauseModel> originalWithClauses;
-    // Size of withClauses at time of `of()` method call. We need to maintain the 'snapshot' because
-    // map can grow and subsequent WITH clause can override table used by current one,
-    // leading to stack overflow on re-evaluation.
-    private int originalWithClausesSize = -1;
     private int position;
+    // The CTEs visible at the definition, as they stood there, which every parse of the body
+    // reads; see of().
     private LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses;
-    private boolean withClausesInitialized;
 
     private WithClauseModel() {
     }
@@ -49,9 +44,6 @@ public class WithClauseModel implements Mutable {
     public void clear() {
         position = 0;
         model = null;
-        originalWithClauses = null;
-        originalWithClausesSize = -1;
-        withClausesInitialized = false;
         withClauses = null;
     }
 
@@ -59,40 +51,32 @@ public class WithClauseModel implements Mutable {
         return position;
     }
 
+    /**
+     * @return the CTEs visible at the definition, or null when there were none
+     */
+    @Nullable
     public LowerCaseCharSequenceObjHashMap<WithClauseModel> getWithClauses() {
-        if (!withClausesInitialized) {
-            withClauses = getSubMap();
-            withClausesInitialized = true;
-        }
         return withClauses;
     }
 
-    public void of(int position, LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses, IQueryModel model) {
+    /**
+     * @param withClauses the CTEs visible at the definition, or null for none: a copy that nothing
+     *                    changes while this model is in use. The map of the WITH that defines the
+     *                    CTE keeps changing. A later CTE of the same WITH adds a name, and can reuse
+     *                    the name of a CTE inherited from an enclosing query, which replaces the
+     *                    CTE under that name. A copy keeps every parse of the body binding each
+     *                    name as the definition's parse did, so a CTE that names itself reads the
+     *                    CTE it shadows rather than itself.
+     */
+    public void of(int position, @Nullable LowerCaseCharSequenceObjHashMap<WithClauseModel> withClauses, IQueryModel model) {
         this.position = position;
         this.model = model;
-        this.originalWithClauses = withClauses;
-        this.originalWithClausesSize = withClauses.size();
+        this.withClauses = withClauses;
     }
 
     public IQueryModel popModel() {
         IQueryModel m = model;
         model = null;
         return m;
-    }
-
-    @Nullable
-    private LowerCaseCharSequenceObjHashMap<WithClauseModel> getSubMap() {
-        if (originalWithClausesSize == 0) {
-            return null;
-        } else {
-            LowerCaseCharSequenceObjHashMap<WithClauseModel> subMap = new LowerCaseCharSequenceObjHashMap<>();
-            ObjList<CharSequence> keys = originalWithClauses.keys();
-            for (int i = 0; i < originalWithClausesSize; i++) {
-                CharSequence key = keys.get(i);
-                WithClauseModel value = originalWithClauses.get(key);
-                subMap.put(key, value);
-            }
-            return subMap;
-        }
     }
 }
