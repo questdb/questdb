@@ -130,7 +130,12 @@ When the queue is empty:
 
 1. Read `.pi/skills/review-pr/SKILL.md` and follow it with
    `--range=<START>..HEAD --level=<review-level>`. In a later round, review
-   only the new commits: `--range=<previous round's HEAD>..HEAD`.
+   only the new commits: `--range=<previous round's HEAD>..HEAD`. Its Step 2.6
+   measures the coverage of the whole range at HEAD, in a scratch worktree.
+   That catches what the per-item runs miss, since each measured one item's
+   files at its own commit: coverage a later item broke, lines a helper left
+   open, files an item didn't measure. Never-run lines return as Moderate
+   findings, one per file.
 2. Queue its Critical and Moderate findings as new items and run them through
    the per-item steps. Each one is a test the standard should have produced:
    its test plan names the dimension of CLAUDE.md "Testing" that missed it.
@@ -163,7 +168,8 @@ Unless `--no-issues`, file each one:
 
 - One local commit per item for the change and its tests, plus one if the
   test-gaps step added tests. Never push, amend, rebase, reset, stash, clean,
-  switch branches or create worktrees.
+  switch branches or create worktrees; the one exception is the scratch
+  worktree review-pr creates and removes in the backstop review.
 - Stage only the files a helper changed; never `git add -A` or `git commit -a`.
 - Never weaken an existing test to make a change pass (CLAUDE.md "Test
   integrity"); a changed expectation needs its reason in the commit message.
@@ -181,9 +187,9 @@ Outcome is `built <sha>` (plus `tests <sha>` when the test-gaps step added
 tests), `skipped: <reason>` or `blocked: <reason>`. Coverage is the final
 changed lines and branches covered, e.g. `42/42 L, 18/18 B`.
 
-Then one line each: review rounds and what they found; issues filed or matched
-(links); items left for the user (blocked, security-sensitive, Minor,
-disagreements, open coverage gaps); and
+Then one line each: review rounds, what they found and the range's measured
+coverage; issues filed or matched (links); items left for the user (blocked,
+security-sensitive, Minor, disagreements, open coverage gaps); and
 `git log --oneline <START>..HEAD`. State that nothing was pushed.
 
 End with a test plan for the PR description, from the analysis files: per
