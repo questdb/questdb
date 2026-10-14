@@ -122,6 +122,21 @@ public class TimestampFloorFromFunctionFactoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInvalidUnit() throws Exception {
+        assertMemoryLeak(() -> {
+            assertQuery("select timestamp_floor(null, '2016-02-10T01:18:22.862145Z', '2016-02-10T00:00:00Z')")
+                    .noLeakCheck()
+                    .fails(23, "invalid unit 'null'");
+            assertQuery("select timestamp_floor('', '2016-02-10T01:18:22.862145Z', '2016-02-10T00:00:00Z')")
+                    .noLeakCheck()
+                    .fails(23, "invalid unit ''");
+            assertQuery("select timestamp_floor('5min', '2016-02-10T01:18:22.862145Z', '2016-02-10T00:00:00Z')")
+                    .noLeakCheck()
+                    .fails(23, "Invalid unit: 5min");
+        });
+    }
+
+    @Test
     public void testMicrosecondsFloorWithStride() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("select timestamp_floor('3U', '2016-02-10T16:18:18.862144Z', '2016-02-10T16:18:18.123456Z')")
