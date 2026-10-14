@@ -4000,7 +4000,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
         // directory and, file by file, a flush of the partition's files.
         void assertBaselineFlushedFirst(String partitionName) {
             synchronized (ops) {
-                final String generationZero = "/" + DurableEpochManifest.FILE_NAME + ".0";
+                final String generationZero = io.questdb.std.Files.SEPARATOR + DurableEpochManifest.FILE_NAME + ".0";
                 int manifest = -1;
                 for (int i = 0, n = ops.size(); i < n && manifest < 0; i++) {
                     if (ops.get(i).startsWith("manifest ") && ops.get(i).endsWith(generationZero)) {
@@ -4013,8 +4013,8 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                 boolean hasPartitionFlush = false;
                 for (int i = 0; i < manifest; i++) {
                     final String op = ops.get(i);
-                    hasBarrier |= op.startsWith("syncfs " + tableDir + "/");
-                    hasPartitionFlush |= op.startsWith("fsync " + tableDir + "/" + partitionName);
+                    hasBarrier |= op.startsWith("syncfs " + tableDir + io.questdb.std.Files.SEPARATOR);
+                    hasPartitionFlush |= op.startsWith("fsync " + tableDir + io.questdb.std.Files.SEPARATOR + partitionName);
                 }
                 Assert.assertTrue("no barrier through " + tableDir + " before its baseline: " + ops, hasBarrier);
                 Assert.assertTrue("no flush of the partition before its baseline: " + ops, isWide || hasPartitionFlush);
