@@ -5334,9 +5334,22 @@ public class CheckpointTest extends AbstractCairoTest {
 
             @Override
             public @NotNull FileVisitResult visitFile(java.nio.file.@NotNull Path file, @NotNull BasicFileAttributes attrs) throws IOException {
-                java.nio.file.Files.copy(file, target.toPath().resolve(source.toPath().relativize(file)),
-                        java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                try {
+                    java.nio.file.Files.copy(file, target.toPath().resolve(source.toPath().relativize(file)),
+                            java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+                } catch (java.nio.file.NoSuchFileException ignore) {
+                    // The source is a live server: a background job's table lock file can vanish between the
+                    // listing and the copy. A checkpoint does not carry lock files.
+                }
                 return FileVisitResult.CONTINUE;
+            }
+
+            @Override
+            public @NotNull FileVisitResult visitFileFailed(java.nio.file.@NotNull Path file, @NotNull IOException exc) throws IOException {
+                if (exc instanceof java.nio.file.NoSuchFileException) {
+                    return FileVisitResult.CONTINUE;
+                }
+                throw exc;
             }
         });
     }
