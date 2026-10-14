@@ -108,6 +108,10 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     private static final String SYNTHETIC_KEY = "ZZ";
     // sum, count, max, row_number, avg, rank, dense_rank
     private static final int VARIANT_COUNT = 7;
+    // The variants before rank: their functions hold their state in the fused anchor root.
+    // rank() and dense_rank() keep a partition map of their own, which the keyed open-segment
+    // routes decline (LiveViewRefreshJob.isEveryFunctionDurablyGrouped).
+    private static final int GROUPED_VARIANT_COUNT = 5;
     private final LiveViewRouteCoverage coverage = new LiveViewRouteCoverage();
     private final FaultLedger ledger = new FaultLedger();
     private final ObjList<String> runKeys = new ObjList<>();
@@ -609,14 +613,18 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
      * stays committed and unapplied while later drains publish leads. Reads must stay on the
      * table as it stands throughout ({@link #assertTierReadConsistent}).
      */
-    private void heldWriterEpisode(Rnd rnd, PassShape shape) throws Exception {
+    private void heldWriterEpisode(Rnd rnd, PassShape shape, long dataStartMicros) throws Exception {
         // Under the reason the WAL apply job takes the writer with, which is what a busy writer
         // looks like to the view's own apply.
         final TableWriter writer = engine.getWriterUnsafe(viewInstance().getLiveViewToken(), TableUtils.WAL_2_TABLE_WRITE_REASON);
         try {
             for (int k = 0, n = 1 + rnd.nextInt(3); k < n; k++) {
                 final long frontier = maxInsertedTs;
-                insertSynthetic(rnd.nextBoolean() ? frontier + 1 + rnd.nextInt(1_000_000) : frontier - 1 - rnd.nextLong(HOUR_MICROS));
+                // Clamped like the other episodes' late rows: the 1970 anchor shape's data starts
+                // half an hour above the epoch, and the base refuses a timestamp below it.
+                insertSynthetic(rnd.nextBoolean()
+                        ? frontier + 1 + rnd.nextInt(1_000_000)
+                        : Math.max(dataStartMicros, frontier - 1 - rnd.nextLong(HOUR_MICROS)));
                 drainWalQueue();
                 pass(rnd, shape, -1, PIN_RANDOM, false);
                 checkReads(rnd, shape, false);
@@ -698,7 +706,7 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     private void runOne(Rnd rnd, int run, int steer) throws Exception {
         final LiveViewFuzzKnobs knobs = LiveViewFuzzKnobs.randomize(rnd);
         int anchorMode = rnd.nextInt(LiveViewFuzzAnchor.MODE_COUNT);
-        final int variant = rnd.nextInt(VARIANT_COUNT);
+        int variant = rnd.nextInt(VARIANT_COUNT);
         final int rowCount = 150 + rnd.nextInt(250);
         int symCount = 1 + rnd.nextInt(SYMBOLS.length);
         boolean isIndexed = rnd.nextInt(4) != 0;
@@ -723,8 +731,12 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         isOpenSegmentKeyedReplayForced = false;
         // Half the fault runs take the keyed open-segment shape, so the faults placed in the keyed
         // routes - the cold keyed timeline, the stored row count, the transplant - have a route
-        // to fire in.
-        final boolean isKeyedShape = steer == STEER_KEYED_OPEN_SEGMENT || (steer == STEER_FAULTS && rnd.nextBoolean());
+        // to fire in. Every third fault run takes it whatever the draw, forced onto the route
+        // and over a variant the route serves, so no batch goes without a keyed route by
+        // chance.
+        final boolean isKeyedRunGuaranteed = steer == STEER_FAULTS && run % 3 == 0;
+        final boolean isKeyedShape = steer == STEER_KEYED_OPEN_SEGMENT
+                || (steer == STEER_FAULTS && (isKeyedRunGuaranteed || rnd.nextBoolean()));
         if (isKeyedShape) {
             // The open segment is the day the frontier stands in. Small lateness keeps the
             // corrections inside it, tight steps put many rows and so many roots in it, and the
@@ -744,12 +756,20 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
             knobs.isIsolatedRuntime = true;
             knobs.isKeyedReplay = true;
             knobs.isOpenSegmentKeyedReplay = true;
+            // The per-segment decomposition is what collects the open segment's key domain,
+            // so with it off neither keyed open-segment route is on offer.
+            knobs.isPerSegment = true;
             knobs.isSparsePublication = true;
             knobs.scanMaxKeys = LiveViewFuzzKnobs.DEFAULT;
             knobs.scanMaxRows = LiveViewFuzzKnobs.DEFAULT;
             // Forcing takes the route whatever the pricing says, which the keyed arm always does
             // so every batch reaches it; the fault arm leaves one run in four to the pricing.
-            isOpenSegmentKeyedReplayForced = steer == STEER_KEYED_OPEN_SEGMENT || rnd.nextInt(4) != 0;
+            isOpenSegmentKeyedReplayForced = steer == STEER_KEYED_OPEN_SEGMENT
+                    || isKeyedRunGuaranteed
+                    || rnd.nextInt(4) != 0;
+            if (isKeyedRunGuaranteed) {
+                variant = rnd.nextInt(GROUPED_VARIANT_COUNT);
+            }
         }
         switch (steer) {
             case STEER_SPARSE_FALLBACK -> {
@@ -783,7 +803,9 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
         }
         if ((steer == STEER_MIXED || steer == STEER_ANCHORS) && run % 3 == 0) {
             // A one-row replay budget with the yield on parks nearly every repair, so each batch
-            // has runs that restart over a parked repair and resume one.
+            // has runs that restart over a parked repair and resume one. Only the per-segment
+            // loop yields, so it goes on too.
+            knobs.isPerSegment = true;
             knobs.isSegmentYield = true;
             knobs.replayMaxRows = 1;
         }
@@ -896,7 +918,7 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
                     if (rnd.nextBoolean()) {
                         tieBehindLateRowsEpisode(rnd, shape, anchor.dataStartMicros);
                     } else {
-                        heldWriterEpisode(rnd, shape);
+                        heldWriterEpisode(rnd, shape, anchor.dataStartMicros);
                     }
                 } else {
                     pass(rnd, shape, -1);
