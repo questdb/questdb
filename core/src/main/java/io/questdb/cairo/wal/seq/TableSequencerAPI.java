@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoError;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.TableStructure;
 import io.questdb.cairo.TableToken;
@@ -556,8 +557,11 @@ public class TableSequencerAPI implements QuietCloseable {
         final SeqTxnTracker tracker = getTxnTracker(tableToken);
         try (TableSequencerImpl sequencer = openSequencerLocked(tableToken, SequencerLockType.WRITE)) {
             try {
+                // A replica keeps no save point, so the boot arm owes nothing there.
+                final boolean isCompletionOutstanding = tracker.isDurableEpochCompletionRequired()
+                        && engine.getResolvedCommitMode() == CommitMode.ADAPTIVE;
                 // Re-notify an already resumed table too. Ordinary RESUME must not contend with its apply writer.
-                if (!tracker.isDurableEpochCompletionRequired() && (!isSuspended(tableToken) || resumeFromTxn <= 0)) {
+                if (!isCompletionOutstanding && (!isSuspended(tableToken) || resumeFromTxn <= 0)) {
                     sequencer.resumeTable();
                     return;
                 }
@@ -592,6 +596,10 @@ public class TableSequencerAPI implements QuietCloseable {
                     sequencer.unlockWrite();
                 }
             }
+        } catch (EntryUnavailableException busy) {
+            // Another thread holds the writer and nothing was attempted: the suspension and its reason
+            // stay as they were, and the caller retries.
+            throw busy;
         } catch (CairoException e) {
             if (engine.isDataSyncFailureFatal(e)) {
                 engine.handleDataSyncFailure(e);

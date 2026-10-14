@@ -32,6 +32,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DurableEpochManifest;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.ErrorTag;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.O3PartitionPurgeJob;
@@ -49,6 +50,7 @@ import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableMetadata;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
@@ -3254,6 +3256,170 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
             Assert.assertNull(failure.get());
             drainWalQueue();
             assertQuery("SELECT id FROM resume_busy ORDER BY id").expectSize().returns("id\n1\n2\n");
+        });
+    }
+
+    @Test
+    public void testPlainResumeDuringForceDropKeepsSuspensionReason() throws Exception {
+        assertPlainResumeDuringForceDrop(true);
+    }
+
+    @Test
+    public void testPlainResumeDuringForceDropKeepsTableRunning() throws Exception {
+        assertPlainResumeDuringForceDrop(false);
+    }
+
+    @Test
+    public void testPlainResumeOnReplicaDoesNotAcquireWriter() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE resume_replica (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO resume_replica VALUES ('2024-01-01', 1)");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("resume_replica");
+            // Boot as a replica does: recovery arms the required completion before any role exists, then the
+            // replica role opens and reconciles each writer, which never runs that completion.
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            engine.getTableSequencerAPI().resetForReboot(token);
+            new RecoveryCoordinator(engine).recover();
+            final var tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            Assert.assertTrue(tracker.isDurableEpochCompletionRequired());
+            engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.REPLICA_SKIP);
+            final PoolListener listener = engine.getPoolListener();
+            try {
+                try (TableWriter writer = engine.getWriterUnsafe(token, "demote clear")) {
+                    writer.reconcileDurableEpochAnchor();
+                }
+                Assert.assertTrue(tracker.isDurableEpochCompletionRequired());
+                final CountDownLatch acquired = new CountDownLatch(1);
+                final CountDownLatch release = new CountDownLatch(1);
+                final AtomicReference<Throwable> failure = new AtomicReference<>();
+                final Thread apply = new Thread(() -> {
+                    try {
+                        TestUtils.drainWalQueue(engine);
+                    } catch (Throwable th) {
+                        failure.set(th);
+                    } finally {
+                        acquired.countDown();
+                        Path.clearThreadLocals();
+                    }
+                });
+                engine.setPoolListener((source, thread, table, event, segment, position) -> {
+                    if (source == PoolListener.SRC_WRITER && event == PoolListener.EV_GET
+                            && token.equals(table) && Thread.currentThread() == apply) {
+                        acquired.countDown();
+                        TestUtils.await(release);
+                    }
+                });
+                try {
+                    execute("INSERT INTO resume_replica VALUES ('2024-01-02', 2)");
+                    apply.start();
+                    TestUtils.await(acquired);
+                    Assert.assertNull(failure.get());
+                    Assert.assertEquals(1, engine.getBusyWriterCount());
+                    // Succeeds while the apply job holds the writer, so it took none.
+                    execute("ALTER TABLE resume_replica RESUME WAL");
+                    Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                } finally {
+                    release.countDown();
+                    apply.join();
+                    engine.setPoolListener(listener);
+                }
+                Assert.assertNull(failure.get());
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+                assertQuery("SELECT id FROM resume_replica ORDER BY id").expectSize().returns("id\n1\n2\n");
+            } finally {
+                engine.setLocalDurabilityPolicy(LocalDurabilityPolicy.ALWAYS_ON);
+            }
+        });
+    }
+
+    private void assertPlainResumeDuringForceDrop(boolean isSuspendedBefore) throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        final AtomicReference<TableToken> blockedToken = new AtomicReference<>();
+        final AtomicReference<Thread> holder = new AtomicReference<>();
+        final AtomicBoolean isBlocked = new AtomicBoolean();
+        final CountDownLatch inCompletion = new CountDownLatch(1);
+        final CountDownLatch release = new CountDownLatch(1);
+        final FilesFacade facade = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                maybeBlock(name);
+                return super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                maybeBlock(name);
+                return super.openRW(name, opts);
+            }
+
+            // Parks FORCE DROP inside its required completion, while it holds the writer.
+            private void maybeBlock(LPSZ name) {
+                final TableToken token = blockedToken.get();
+                if (token != null && Thread.currentThread() == holder.get()
+                        && Utf8s.containsAscii(name, DurableEpochManifest.FILE_NAME)
+                        && engine.getTableSequencerAPI().getTxnTracker(token).isDurableEpochCompletionRequired()
+                        && isBlocked.compareAndSet(false, true)) {
+                    inCompletion.countDown();
+                    TestUtils.await(release);
+                }
+            }
+        };
+        assertMemoryLeak(facade, () -> {
+            execute("CREATE TABLE resume_force (ts TIMESTAMP, id LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO resume_force VALUES ('2024-01-01', 1), ('2024-01-02', 2)");
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("resume_force");
+            final String walTablesQuery = "SELECT suspended, errorTag, errorMessage FROM wal_tables() WHERE name = 'resume_force'";
+            final String operatorSuspension = "suspended\terrorTag\terrorMessage\ntrue\tDISK FULL\toriginal operator reason\n";
+            if (isSuspendedBefore) {
+                execute("ALTER TABLE resume_force SUSPEND WAL WITH 'DISK FULL', 'original operator reason'");
+            }
+            final AtomicReference<Throwable> failure = new AtomicReference<>();
+            final Thread forceDrop = new Thread(() -> {
+                try (var context = TestUtils.createSqlExecutionCtx(engine)) {
+                    engine.execute("ALTER TABLE resume_force FORCE DROP PARTITION LIST '2024-01-01'", context);
+                } catch (Throwable th) {
+                    failure.set(th);
+                } finally {
+                    inCompletion.countDown();
+                    Path.clearThreadLocals();
+                }
+            });
+            blockedToken.set(token);
+            holder.set(forceDrop);
+            forceDrop.start();
+            try {
+                TestUtils.await(inCompletion);
+                Assert.assertNull(failure.get());
+                Assert.assertTrue(isBlocked.get());
+                Assert.assertEquals(1, engine.getBusyWriterCount());
+                final CairoException e = Assert.assertThrows(CairoException.class, () -> execute("ALTER TABLE resume_force RESUME WAL"));
+                // Nothing was attempted, so the suspension state and its reason stay as they were.
+                Assert.assertEquals(isSuspendedBefore, engine.getTableSequencerAPI().isSuspended(token));
+                if (isSuspendedBefore) {
+                    assertQuery(walTablesQuery).noLeakCheck().noRandomAccess().returns(operatorSuspension);
+                }
+                Assert.assertTrue(e instanceof EntryUnavailableException);
+                TestUtils.assertContains(e.getFlyweightMessage(), "table busy");
+            } finally {
+                release.countDown();
+                forceDrop.join();
+            }
+            Assert.assertNull(failure.get());
+            execute("INSERT INTO resume_force VALUES ('2024-01-02T01:00:00.000000Z', 3)");
+            drainWalQueue();
+            Assert.assertEquals(isSuspendedBefore, engine.getTableSequencerAPI().isSuspended(token));
+            if (isSuspendedBefore) {
+                assertQuery(walTablesQuery).noLeakCheck().noRandomAccess().returns(operatorSuspension);
+                execute("ALTER TABLE resume_force RESUME WAL");
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(token));
+            }
+            assertQuery("SELECT id FROM resume_force ORDER BY id").expectSize().returns("id\n2\n3\n");
         });
     }
 
