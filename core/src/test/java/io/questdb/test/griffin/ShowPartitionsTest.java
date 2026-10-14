@@ -789,6 +789,102 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testShowPartitionsSubQueryAsLateralOuterSource() throws Exception {
+        // A LATERAL join that correlates its outer source by plain column equality reads that source
+        // once, so the cursor of the SHOW statement serves the join like any other outer source.
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            createTable(tableName);
+            execute("CREATE TABLE picks (name SYMBOL)");
+            execute("INSERT INTO picks VALUES ('2023-01'), ('2023-03'), ('2023-01')");
+            assertQuery("SELECT o.name, l.c FROM (SHOW PARTITIONS FROM '" + tableName + "') o" +
+                    " JOIN LATERAL (SELECT count() c FROM picks p WHERE p.name = o.name) l ON true")
+                    .noRandomAccess()
+                    .returns("""
+                            name\tc
+                            2023-01\t2
+                            2023-02\t0
+                            2023-03\t1
+                            2023-04\t0
+                            2023-05\t0
+                            2023-06\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testShowPartitionsSubQueryFreedWhenNeverRead() throws Exception {
+        // The optimiser builds the cursor of a SHOW statement in a declared variable that nothing
+        // reads, and code generation never takes it over, so the compile must free it.
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            createTable(tableName);
+            assertQuery("DECLARE @n := (SELECT count() FROM (SHOW PARTITIONS FROM '" + tableName + "')) SELECT x FROM long_sequence(2)")
+                    .expectSize()
+                    .returns("""
+                            x
+                            1
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testShowPartitionsSubQueryFreedWhenOptimiseFails() throws Exception {
+        // The optimiser builds the cursor of a SHOW statement before it resolves the rest of the
+        // query, so a failure after that must free it, like the cursor of a table function.
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            createTable(tableName);
+            final String sql = "SELECT * FROM (SHOW PARTITIONS FROM '" + tableName + "') WHERE no_such_col = 1";
+            assertQuery(sql).fails(sql.indexOf("no_such_col"), "Invalid column: no_such_col");
+        });
+    }
+
+    @Test
+    public void testShowPartitionsSubQueryInParallelFilter() throws Exception {
+        // A filter that is not thread-safe compiles again for each worker of the shared query pool, and
+        // so does the SHOW statement in its sub-query. Every compile needs a cursor of its own, and the
+        // plan frees each of them, along with the native path it holds.
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            createTable(tableName);
+            execute("CREATE TABLE picks (name SYMBOL)");
+            execute("INSERT INTO picks VALUES ('2023-01'), ('2022-12'), ('2023-03')");
+            assertQuery("SELECT name FROM picks WHERE name IN (SELECT name FROM (SHOW PARTITIONS FROM '" + tableName + "'))")
+                    .returns("""
+                            name
+                            2023-01
+                            2023-03
+                            """);
+        });
+    }
+
+    @Test
+    public void testShowPartitionsSubQueryReadTwiceByLateralJoin() throws Exception {
+        // A non-equality correlation makes the LATERAL join read its outer source twice: as its left
+        // side and as the outer references of its right side. Each read gets a cursor of its own.
+        String tableName = testTableName(testName.getMethodName());
+        assertMemoryLeak(() -> {
+            createTable(tableName);
+            execute("CREATE TABLE picks (name SYMBOL)");
+            execute("INSERT INTO picks VALUES ('2023-01'), ('2023-03'), ('2023-01')");
+            assertQuery("SELECT o.name, l.c FROM (SHOW PARTITIONS FROM '" + tableName + "') o" +
+                    " JOIN LATERAL (SELECT count() c FROM picks p WHERE p.name <= o.name) l ON true")
+                    .noRandomAccess()
+                    .returns("""
+                            name\tc
+                            2023-01\t2
+                            2023-02\t2
+                            2023-03\t3
+                            2023-04\t3
+                            2023-05\t3
+                            2023-06\t3
+                            """);
+        });
+    }
+
+    @Test
     public void testShowPartitionsTableDoesNotExist() throws Exception {
         assertMemoryLeak(() -> {
             assertQuery("show partitions from banana")

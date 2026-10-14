@@ -1976,6 +1976,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public boolean isSqlLatestByJitEnabled() {
+        return true;
+    }
+
+    @Override
     public boolean isSqlOrderBySortEnabled() {
         return true;
     }

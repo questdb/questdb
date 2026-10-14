@@ -41,6 +41,15 @@ public interface StaticSymbolTable extends SymbolTable, SymbolLookup {
 
     int getSymbolCount();
 
+    /**
+     * Resolves {@code value} like {@link #keyOf(CharSequence)}. {@code cachedKey} is the key an
+     * earlier call returned for the same value; an implementation that can confirm it without a
+     * dictionary lookup, and without retaining anything on the heap, may answer it directly.
+     */
+    default int keyOf(CharSequence value, int cachedKey) {
+        return keyOf(value);
+    }
+
     @Override
     default boolean supportsKeyValueAccess() {
         return true;
