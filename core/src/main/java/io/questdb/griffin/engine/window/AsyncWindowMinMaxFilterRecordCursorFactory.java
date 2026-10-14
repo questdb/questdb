@@ -129,6 +129,8 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     public static final int ARG_TIMESTAMP = 3;
     private static final long DEFAULT_MAX_REPLAY_LONGS = 1L << 22;
     private static final long MAX_DENSE_SLOTS = 1 << 22;
+    // phase one aggregates an all-SYMBOL key into per-slot arrays up to this many key combinations
+    private static final long MAX_DENSE_AGGREGATE_SLOTS = 1 << 18;
     private static final int MODE_AGGREGATE = 0;
     private static final int MODE_COLLECT = 1;
     private static final UnorderedPageFrameReducer REDUCER = AsyncWindowMinMaxFilterRecordCursorFactory::reduce;
@@ -163,6 +165,14 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     // The dense lookup of an all-SYMBOL key, or 0: per window, one value per combination of
     // symbol keys, NULL included; see buildDense().
     private long denseAddr;
+    // Phase one's dense form for this execution, or 0 slots: per phase-one slot (the owner first), each
+    // window's value per combination of symbol keys, and whether a row of that combination came; see
+    // aggregateFrameDense().
+    private long denseAggSlots;
+    private long denseAggregateCount;
+    private long[] denseAggSeen;
+    private long[] denseAggValues;
+    private MemoryTracker denseAggTracker;
     // the bound window's loosest value across partitions, when every partition holds one
     private boolean boundActive;
     private double boundDouble;
@@ -403,6 +413,11 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
      * Executions that looked window values up in a dense array rather than the map.
      */
     @TestOnly
+    public long getDenseAggregateCount() {
+        return denseAggregateCount;
+    }
+
+    @TestOnly
     public boolean isBoundActive() {
         return boundActive;
     }
@@ -551,7 +566,9 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             }
             final PageFrameMemory frameMemory = pool.navigateTo(frameIndex, atom.aggregateColumns);
             record.init(frameMemory);
-            if (atom.mode == MODE_AGGREGATE) {
+            if (atom.mode == MODE_AGGREGATE && atom.factory.denseAggSlots > 0) {
+                atom.factory.aggregateFrameDense(slotId, atom.getMap(slotId), atom.getSink(slotId), record, frameRowCount);
+            } else if (atom.mode == MODE_AGGREGATE) {
                 atom.factory.aggregateFrame(atom.getMap(slotId), atom.getSink(slotId), record, frameRowCount);
             } else {
                 atom.factory.collectFrame(atom, slotId, record, frameIndex, frameRowCount);
@@ -602,8 +619,10 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         try {
             frameSequence.prepareForDispatch();
             atom.initPools(frameSequence);
-            frameSequence.dispatchAndAwait();
             readSymbolCounts();
+            allocDenseAggregate(executionContext.getMemoryTracker());
+            frameSequence.dispatchAndAwait();
+            mergeDenseAggregate();
             for (int i = 0, n = atom.workerMaps.size(); i < n; i++) {
                 final OrderedMap workerMap = atom.workerMaps.getQuick(i);
                 if (workerMap.isOpen() && workerMap.size() > 0) {
@@ -613,43 +632,212 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         } finally {
             frameSequence.await();
             frameSequence.reset();
+            freeDenseAggregate();
         }
     }
 
-    private void aggregateFrame(OrderedMap map, RecordSink sink, PageFrameMemoryRecord record, long frameRowCount) {
+    // Phase one over symbol keys: the slot's arrays take the row's window values at its keys' combination,
+    // without a map probe. A key outside the symbol counts read before dispatch takes the map.
+    private void aggregateFrameDense(int slotId, OrderedMap map, RecordSink sink, PageFrameMemoryRecord record, long frameRowCount) {
         final int windowCount = argColumns.length;
+        final long slots = denseAggSlots;
+        final long valuesAddr = denseAggValues[slotId + 1];
+        final long seenAddr = denseAggSeen[slotId + 1];
+        final int keyCount = keyColumnArray.length;
         for (long r = 0; r < frameRowCount; r++) {
             record.setRowIndex(r);
-            final MapKey key = map.withKey();
-            sink.copy(record, key);
-            final MapValue value = key.createValue();
-            if (value.isNew()) {
-                initValue(value);
+            long slot = 0;
+            for (int k = 0; k < keyCount; k++) {
+                final int count = symbolCounts[k];
+                final long index = denseIndex(record.getInt(keyColumnArray[k]), count);
+                if (index < 0) {
+                    slot = -1;
+                    break;
+                }
+                slot = slot * (count + 1L) + index;
             }
+            if (slot < 0) {
+                aggregateRow(map, sink, record);
+                continue;
+            }
+            Unsafe.putByte(seenAddr + slot, (byte) 1);
             for (int i = 0; i < windowCount; i++) {
-                final int slot = windowSlots[i];
+                final long addr = valuesAddr + (i * slots + slot) * Long.BYTES;
                 switch (argKinds[i]) {
-                    case ARG_DOUBLE: {
-                        final double d = record.getDouble(argColumns[i]);
-                        if (Numbers.isFinite(d)) {
-                            updateDouble(value, slot, d, isMin[i]);
-                        }
-                        break;
-                    }
+                    case ARG_DOUBLE:
                     case ARG_FLOAT: {
-                        final double d = record.getFloat(argColumns[i]);
+                        final double d = argKinds[i] == ARG_FLOAT ? record.getFloat(argColumns[i]) : record.getDouble(argColumns[i]);
                         if (Numbers.isFinite(d)) {
-                            updateDouble(value, slot, d, isMin[i]);
+                            final double current = Unsafe.getDouble(addr);
+                            if (Double.isNaN(current) || (isMin[i] ? Double.compare(d, current) < 0 : Double.compare(d, current) > 0)) {
+                                Unsafe.putDouble(addr, d);
+                            }
                         }
                         break;
                     }
                     default: {
                         final long l = readLong(record, i);
                         if (l != Numbers.LONG_NULL) {
-                            updateLong(value, slot, l, isMin[i]);
+                            final long current = Unsafe.getLong(addr);
+                            if (current == Numbers.LONG_NULL || (isMin[i] ? l < current : l > current)) {
+                                Unsafe.putLong(addr, l);
+                            }
                         }
                         break;
                     }
+                }
+            }
+        }
+    }
+
+    // The dense form of phase one, when every key is a SYMBOL with a known count, no window keeps a tie,
+    // and the combinations are few.
+    private void allocDenseAggregate(MemoryTracker memoryTracker) {
+        denseAggSlots = 0;
+        if (!isAllSymbolKeys || tieWindows.length > 0) {
+            return;
+        }
+        long slots = 1;
+        for (int count : symbolCounts) {
+            if (count < 0) {
+                return;
+            }
+            slots *= count + 1L;
+            if (slots > MAX_DENSE_AGGREGATE_SLOTS) {
+                return;
+            }
+        }
+        final int windowCount = argColumns.length;
+        final int slotCount = workerCount + 1;
+        if (denseAggValues == null || denseAggValues.length != slotCount) {
+            denseAggValues = new long[slotCount];
+            denseAggSeen = new long[slotCount];
+        }
+        denseAggTracker = memoryTracker;
+        denseAggSlots = slots;
+        denseAggregateCount++;
+        for (int s = 0; s < slotCount; s++) {
+            final long values = Unsafe.malloc(slots * windowCount * Long.BYTES, MemoryTag.NATIVE_DEFAULT, memoryTracker);
+            denseAggValues[s] = values;
+            for (int w = 0; w < windowCount; w++) {
+                final long nullBits = argKinds[w] <= ARG_FLOAT ? Double.doubleToRawLongBits(Double.NaN) : Numbers.LONG_NULL;
+                Vect.setMemoryLong(values + w * slots * Long.BYTES, nullBits, slots);
+            }
+            final long seen = Unsafe.malloc(slots, MemoryTag.NATIVE_DEFAULT, memoryTracker);
+            denseAggSeen[s] = seen;
+            Vect.memset(seen, slots, 0);
+        }
+    }
+
+    private void freeDenseAggregate() {
+        if (denseAggSlots == 0) {
+            return;
+        }
+        final long slots = denseAggSlots;
+        denseAggSlots = 0;
+        for (int s = 0, n = denseAggValues.length; s < n; s++) {
+            if (denseAggValues[s] != 0) {
+                denseAggValues[s] = Unsafe.free(denseAggValues[s], slots * argColumns.length * Long.BYTES, MemoryTag.NATIVE_DEFAULT, denseAggTracker);
+            }
+            if (denseAggSeen[s] != 0) {
+                denseAggSeen[s] = Unsafe.free(denseAggSeen[s], slots, MemoryTag.NATIVE_DEFAULT, denseAggTracker);
+            }
+        }
+        denseAggTracker = null;
+    }
+
+    // The slots' arrays into the lookup map: a combination any row came with gets its entry, its windows
+    // the slots' values merged as the maps' are.
+    private void mergeDenseAggregate() {
+        final long slots = denseAggSlots;
+        if (slots == 0) {
+            return;
+        }
+        final int windowCount = argColumns.length;
+        final int keyCount = keyColumnArray.length;
+        final int slotCount = denseAggValues.length;
+        for (long slot = 0; slot < slots; slot++) {
+            boolean seen = false;
+            for (int s = 0; s < slotCount && !seen; s++) {
+                seen = Unsafe.getByte(denseAggSeen[s] + slot) != 0;
+            }
+            if (!seen) {
+                continue;
+            }
+            final MapKey key = lookupMap.withKey();
+            // the slot's keys, the first key the most significant
+            long rest = slot;
+            long divisor = slots;
+            for (int k = 0; k < keyCount; k++) {
+                divisor /= symbolCounts[k] + 1L;
+                final long index = rest / divisor;
+                rest -= index * divisor;
+                key.putInt(index == 0 ? SymbolTable.VALUE_IS_NULL : (int) (index - 1));
+            }
+            final MapValue value = key.createValue();
+            if (value.isNew()) {
+                initValue(value);
+            }
+            for (int s = 0; s < slotCount; s++) {
+                if (Unsafe.getByte(denseAggSeen[s] + slot) == 0) {
+                    continue;
+                }
+                for (int i = 0; i < windowCount; i++) {
+                    final long addr = denseAggValues[s] + (i * slots + slot) * Long.BYTES;
+                    if (argKinds[i] <= ARG_FLOAT) {
+                        final double d = Unsafe.getDouble(addr);
+                        if (!Double.isNaN(d)) {
+                            updateDouble(value, windowSlots[i], d, isMin[i]);
+                        }
+                    } else {
+                        final long l = Unsafe.getLong(addr);
+                        if (l != Numbers.LONG_NULL) {
+                            updateLong(value, windowSlots[i], l, isMin[i]);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private void aggregateFrame(OrderedMap map, RecordSink sink, PageFrameMemoryRecord record, long frameRowCount) {
+        for (long r = 0; r < frameRowCount; r++) {
+            record.setRowIndex(r);
+            aggregateRow(map, sink, record);
+        }
+    }
+
+    private void aggregateRow(OrderedMap map, RecordSink sink, PageFrameMemoryRecord record) {
+        final int windowCount = argColumns.length;
+        final MapKey key = map.withKey();
+        sink.copy(record, key);
+        final MapValue value = key.createValue();
+        if (value.isNew()) {
+            initValue(value);
+        }
+        for (int i = 0; i < windowCount; i++) {
+            final int slot = windowSlots[i];
+            switch (argKinds[i]) {
+                case ARG_DOUBLE: {
+                    final double d = record.getDouble(argColumns[i]);
+                    if (Numbers.isFinite(d)) {
+                        updateDouble(value, slot, d, isMin[i]);
+                    }
+                    break;
+                }
+                case ARG_FLOAT: {
+                    final double d = record.getFloat(argColumns[i]);
+                    if (Numbers.isFinite(d)) {
+                        updateDouble(value, slot, d, isMin[i]);
+                    }
+                    break;
+                }
+                default: {
+                    final long l = readLong(record, i);
+                    if (l != Numbers.LONG_NULL) {
+                        updateLong(value, slot, l, isMin[i]);
+                    }
+                    break;
                 }
             }
         }

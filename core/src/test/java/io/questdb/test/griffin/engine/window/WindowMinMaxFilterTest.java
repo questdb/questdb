@@ -161,6 +161,36 @@ public class WindowMinMaxFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDenseAggregateOverSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            createT(engine, sqlExecutionContext, 5_000);
+            // SYMBOL keys without a tie window aggregate into arrays; a DOUBLE min window keeps a tie and the map
+            final String[][] queries = {
+                    {taq56(), "true"},
+                    // size is FLOAT here: its min window keeps a tie
+                    {taq60(), "false"},
+                    {"select " + C + ", mx from (select " + C + ", max(l) over (partition by ex, sym) mx from t) where l = mx", "true"},
+                    {"select " + C + ", mn from (select " + C + ", min(price) over (partition by ex) mn from t) where price = mn", "false"},
+                    {"select " + C + ", mx from (select " + C + ", max(l) over (partition by i) mx from t) where l = mx", "false"},
+            };
+            for (String[] q : queries) {
+                final String expected = serial(engine, sqlExecutionContext, q[0]);
+                sqlExecutionContext.setParallelWindowMinMaxRewriteEnabled(true);
+                try (RecordCursorFactory factory = select(q[0])) {
+                    final AsyncWindowMinMaxFilterRecordCursorFactory minMax = find(factory);
+                    Assert.assertNotNull(q[0], minMax);
+                    for (int run = 0; run < 2; run++) {
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            TestUtils.assertEquals(q[0], expected, print(cursor, factory));
+                        }
+                    }
+                    Assert.assertEquals(q[0], Boolean.parseBoolean(q[1]) ? 2 : 0, minMax.getDenseAggregateCount());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testFullSortCopiesTheRows() throws Exception {
         assertMemoryLeak(() -> {
             createT(engine, sqlExecutionContext, 5_000);
