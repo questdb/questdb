@@ -35,29 +35,13 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * The production driver for physical checkpoint compaction: it decides which data
- * segments are worth reclaiming, repacks their still-live state pages into one
- * fresh segment, and publishes a generation that redirects every root onto the
- * relocated pages.
- *
- * <p>Repairs re-version roots, so a page a root once named is superseded when no
- * surviving root names it; the segment holding it keeps the file - the catalogue
- * cannot free a segment with even one live page - so its dead bytes accumulate.
- * Compaction walks the pinned generation's roots to measure how much of each
- * segment is still live, selects the sparsest referenced segments (dead bytes
- * dominate), copies their live pages forward into a new target and publishes the
- * redirect. The drained segments then hold no live page and retire for the purge
- * job to reclaim.</p>
- *
- * <p>A pass runs on the writer's {@link LiveViewCheckpointCompactionScratch},
- * which owns every store, reader, reference and result it needs: the driver
- * constructs none of them per call, and {@code end()} releases every mapping and
- * every tracker-bound allocation before the worker moves to another view. Every
- * step is best-effort, and what abandoning the candidate does depends on where the
- * failure landed: before the metadata commit point it unlinks the half-written
- * target and leaves the published generation byte-identical, while past that
- * point it keeps the target, because the committed generation already names
- * it.</p>
+ * Repackages live pages from sparse data segments and publishes roots redirected to
+ * the new segment. Segments retire only when no surviving root names their pages.
+ * <p>
+ * The writer's reusable compaction scratch owns mappings and tracked allocations;
+ * end() releases them between views. Before metadata commit, failure removes the
+ * candidate and preserves the published generation. After commit, the target must
+ * remain because the new generation references it.
  */
 public final class LiveViewCheckpointCompaction {
 

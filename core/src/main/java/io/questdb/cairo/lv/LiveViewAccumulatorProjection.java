@@ -29,40 +29,17 @@ import io.questdb.griffin.engine.window.WindowAccumulatorProjection;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * The <b>durable</b> half of one output's binding onto an accumulator component: where the
- * fields the {@link WindowAccumulatorProjection runtime projection} reads as map value
- * slots sit as byte offsets in a fused leaf's scalar payload.
+ * Durable byte offsets for a {@link WindowAccumulatorProjection}'s runtime binding.
+ * The runtime projection owns component, slot and derivation decisions; this class
+ * adds the fused payload offset and the slice consumed by the function's decoder.
  * <p>
- * Everything about the binding itself - which component this output reads, which slots its
- * fields occupy, whether it is derived or guarded - is the runtime projection's and is read
- * off it rather than restated here. The fields this class adds are the ones an ordinary
- * query has no use for: the component's offset in the payload, and the narrower slice the
- * projecting function's own decoder consumes out of it.
- *
- * <h2>Derived projections</h2>
- * A projection's component need not be the one its own function would have persisted
- * alone. A {@code count(x)} beside a {@code sum(x)} reads the counter the sum already
- * keeps, which the plan admits only where
- * {@link LiveViewAccumulatorDescriptor#derivedStateOffset} proves the count's whole image
- * sits verbatim inside the sum's. {@link #getFunctionStateOffset()} and
- * {@link #getFunctionStateLength()} are that narrower slice, and are what a restore hands
- * the function rather than the component's own bounds.
- *
- * <h2>Not checkpoint-stateless</h2>
- * A derived {@code avg} or {@code count} still depends on every row its component has
- * absorbed, so it keeps its real {@link LiveViewCheckpointDependency} for repair planning
- * even when it owns no checkpoint root of its own. Reporting it as stateless would hand a
- * localized repair a zero-width replay floor and restore wrong state.
- *
- * <h2>Runtime-only members</h2>
- * A projection whose component the leaf budget left out of the manifest is a member of the
- * group at runtime and of no fused payload at all: its slots are in the window's one map
- * value like everyone else's, and its bytes go to the function root it keeps. Such a
- * projection carries {@link #NOT_PERSISTED} for every byte offset below - there is no fused
- * payload for them to point into - while the runtime slots and both durable descriptors stay
- * exactly what they are, because the descriptor is what turns the group's slots into the
- * image that root holds. {@link #isDurable()} is the one question a caller has to ask before
- * reading an offset.
+ * Derived slices require {@link LiveViewAccumulatorDescriptor#derivedStateOffset} to
+ * prove codec containment. They retain their real repair dependency even without a
+ * separate root: derived state is not checkpoint-stateless.
+ * <p>
+ * Runtime-only components persist through their own function roots and carry
+ * {@link #NOT_PERSISTED} for fused byte offsets. Callers must check {@link #isDurable()}
+ * before reading those offsets.
  */
 public final class LiveViewAccumulatorProjection {
     /**

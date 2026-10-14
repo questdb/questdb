@@ -36,50 +36,18 @@ import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * The base table metadata a live view's plan was compiled against, less the two things the
- * plan provably does not depend on: the metadata version itself and every SYMBOL column's
- * capacity.
+ * Compiled base metadata used to admit SYMBOL-capacity-only version changes without
+ * recompiling. Capacity changes preserve symbol ids; readers reload their symbol maps,
+ * and the live-view plan neither depends on nor inherits base symbol capacity.
  * <p>
- * {@link LiveViewRefreshSqlExecutionContext#getReader} refuses a base reader whose metadata
- * version moved past the compiled plan's, and each refusal costs the view a recompile and a
- * runtime restore. {@code TableWriter.changeSymbolCapacity} moves that version too, and the
- * writer's auto-scale calls it on every capacity doubling of a growing key set. Nothing the
- * compiled runtime holds depends on the capacity:
- * <ul>
- *     <li>The rebuild keeps every symbol key. It hard-links the values file, copies the
- *     offsets file under a new symbol table name txn and rebuilds only the hash index, so the
- *     window partition maps, the checkpoint timeline and every other structure keyed by
- *     symbol key stay valid.</li>
- *     <li>The base reader reopens its {@code SymbolMapReader} in place on the new name txn and
- *     reads the new capacity from its header, and the compiled plan binds its symbol tables
- *     again at every cursor open.</li>
- *     <li>The plan's column mapping, types and filter do not read it. The only planner path
- *     that compares capacities picks an indexed symbol key column, which a live view compile
- *     never does, and the view's own table does not inherit the base capacity
- *     ({@link LiveViewTableStructure#getSymbolCapacity}).</li>
- * </ul>
- * So a base reader that moved from this snapshot by SYMBOL capacities alone may be served to
- * the plan. Everything else still counts as drift: a column added, dropped, renamed or
- * retyped, a dedup change, an index, a symbol cache flag, a table parameter. Three checks
- * make up "capacities alone":
- * <ul>
- *     <li>The column structure version has not moved. Every structural change moves it, even
- *     one that leaves the metadata as it was, such as a DEDUP DISABLE on a base that never
- *     deduplicated. A capacity change never does.</li>
- *     <li>The metadata equals the snapshot in every field but the capacities.</li>
- *     <li>At least one capacity differs. A metadata version that moved with no visible
- *     change at all is not a capacity change, so it stays drift.</li>
- * </ul>
- * A statement that rewrites the metadata without changing it, landing in the same backlog as
- * a capacity change, passes with it. It changed nothing the plan could read.
+ * Admission requires an unchanged column-structure version, equality of every metadata
+ * field except capacities, and at least one changed capacity. All other drift still
+ * requires recompilation. A simultaneous metadata rewrite with no visible changes is
+ * indistinguishable from the capacity change and is safe to admit.
  * <p>
- * Both sides of the comparison come from a fresh parse of the reader's own metadata bytes
- * ({@link TableReaderMetadata#loadFrom}), never from the reader's metadata object. A reloaded
- * reader keeps a column's metadata object across a change that leaves the column's name,
- * writer index, index and dedup flag alone, so that object can still carry the previous cache
- * flag, capacity and parquet encoding, and a cache flag change would read as no change at all.
- * <p>
- * The refresh job accesses a snapshot only under the view's refresh latch.
+ * Compare fresh parses of the reader's metadata bytes, not its cached column objects:
+ * reload can retain objects with stale cache flags, capacities or parquet encoding.
+ * Access requires the view's refresh latch.
  */
 final class LiveViewBaseMetadataSnapshot {
     private final int columnStructureVersion;

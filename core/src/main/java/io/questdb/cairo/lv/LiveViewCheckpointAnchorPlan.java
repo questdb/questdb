@@ -37,97 +37,24 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Immutable compiler-owned description of the fixed segment an anchored live view
- * resets on. The anchor counterpart of {@link LiveViewCheckpointRangePlan} and
- * {@link LiveViewCheckpointRowsPlan}, and the third way a live view can carry a
- * finite dependency contract.
+ * Compiler-owned bounds for anchors derived solely from the designated timestamp.
+ * A segment is a maximal run of one anchor value; resetting at either end isolates
+ * its state from adjacent runs. For a recognized calendar floor, repair uses the
+ * segment start as L and its exclusive end as H, clamped against START FROM.
  * <p>
- * The two frame plans describe what a window function reads around one row; this one
- * describes where the runtime throws that state away. An anchored window resets every
- * function on it the moment the anchor expression's value changes, so a segment - one
- * maximal run of rows sharing an anchor value - is a hard wall in both directions: no
- * row above the wall reads state from below it, and no row below it is influenced by
- * anything above. That is the whole dependency contract, and it needs neither a frame
- * width nor a row count to state.
+ * Time-zone bounds use the runtime's own floor and offset primitives, so civil days
+ * may span 23 or 25 hours. Both bounds self-check against the runtime floor; an
+ * unusable start is open below and an unusable end is EOF. The two checks are
+ * independent, and a closed-segment caller must accept neither bound without the other.
  * <p>
- * What makes the segment <b>fixed</b> is that its boundaries are a function of the
- * designated timestamp alone, so this plan computes them without reading a base row.
- * The recognized anchor is a calendar-period floor of the designated timestamp -
- * {@code timestamp_floor('<stride><unit>', ts)}, which is also what {@code ANCHOR DAILY}
- * desugars to - whose bucket start is {@link #getSegmentStart(long)} and whose next
- * bucket start is {@link #getSegmentEndExclusive(long)}. A localized repair of a change
- * at {@code C} therefore has {@code L} at the start of {@code C}'s segment and {@code H}
- * at its end, both clamped by the caller against {@code S}.
+ * A DST fallback can repeat one anchor value in disjoint runs. Transition checks
+ * refuse a finite end that excludes a later run, and refuse a start crossed by a
+ * run from below. A probe in the upper repeated run may retain bounds spanning a
+ * union of complete runs. A skipped civil day can collapse both bounds to one
+ * instant, which cannot be a finite segment.
  * <p>
- * A daily anchor carrying an IANA time zone desugars to {@code timestamp_floor_utc}
- * instead, and {@link #ofTimeZone} builds the same two bounds for it. A civil day in a
- * DST-observing zone is 23 or 25 hours wide across a transition, so its boundaries are
- * not fixed-stride arithmetic - but they are still a function of the designated
- * timestamp alone, computed from the zone's transition table rather than from a modulus.
- * The variant floors and advances through the very primitives the runtime
- * {@code timestamp_floor_utc} calls ({@link CommonUtils#getFloorUtcTzOffset} and
- * {@link CommonUtils#offsetFlooredUtcResult}), so the grid it describes is the grid the
- * runtime resets on rather than one that merely resembles it.
- * <p>
- * <b>The arithmetic checks itself.</b> The segment end is the floor's own next boundary,
- * which this derives by adding one period to the segment start - a step that is exact
- * for a calendar-aligned unit and is not for a sub-resolution one (nanoseconds on a
- * microsecond column advance nothing). Rather than allowlist units per timestamp
- * precision, {@link #getSegmentEndExclusive(long)} verifies the boundary it computed
- * against the same floor the runtime anchor uses and reports no finite end when the two
- * disagree. A caller reads that as a high bound of
- * {@link LiveViewCheckpointContracts.HighBoundTag#EOF} and falls back to the unbounded
- * rebuild, so an anchor whose period this cannot reproduce costs the view only the
- * localized path.
- * <p>
- * The time-zone variant runs a self-check of its own on each bound and needs both more. A
- * zone floor is not monotone through a transition: an anchor whose local wall time falls in
- * the hour a spring-forward skips, or in the hour a fall-back repeats, reports boundaries
- * that overlap or reverse for the rows around it. The end check catches that from above and
- * answers EOF; the start check catches it from below and answers an open-below start.
- * <p>
- * A fall-back needs one check more than either, because it can split a segment in two. It
- * winds local time back, so an instant well above the segment's end can read below the
- * segment's own local boundary again and floor straight back to its start - the anchor value
- * is then carried by two disjoint intervals with a different value between them. The bounds
- * describe the lower interval and say nothing about the upper one, which a repair bounded by
- * them would leave standing with stale output, so {@link #getSegmentEndExclusive(long)} walks
- * the transitions above its end and reports no finite end when one of them winds local time
- * back below the boundary. A probe in the UPPER interval keeps both bounds, and the pair it
- * gets spans from the lower interval's start: wider than that probe's own run, but still a
- * wall at each end, so it is a union of whole runs and a repair over it recomputes each of
- * them from a reset.
- * <p>
- * The same winding back breaks the start of the run it interrupts. The segment that opens
- * inside the repeated hour has the rows the fall-back repeats standing ABOVE its start and
- * carrying the previous day's value, so a key's run of that value reaches straight across
- * the start, and a replay floored there would restart it from a reset.
- * {@link #getSegmentStart(long)} therefore walks the transitions above its start too, and
- * reports the segment open below when one of them floors below the start. The mirror image
- * is a zone that skips a whole civil day, as Pacific/Apia did crossing the date line: the
- * missing day's start and end convert back to one instant, which the rows after the jump
- * carry as their anchor value from below it, so {@link #getSegmentEndExclusive(long)}
- * refuses an end that does not lie above its start.
- * <p>
- * <b>The two checks are independent, and refuse independently.</b> They are separate
- * expressions over separate instants, so a probe beside a spring-forward usually gets one
- * finite bound and one refusal rather than two refusals: a start the runtime agrees with
- * under an EOF end on the day the gap ends a segment, and an open-below start under a finite
- * end on the day the gap starts one. A fall-back splits the day below it the same way,
- * keeping its start and refusing its end, but it refuses both bounds for a probe in the run
- * that opens inside the repeated hour: that run stops at the fall-back instant, well below
- * its arithmetic end, and the rows the fall-back repeats above its start carry the previous
- * day's value. Each refusal widens the repair on its own side and each surviving bound
- * stands on its own proof, so a caller that reads one bound may take it. A caller that needs
- * a <b>closed</b> segment must test both:
- * {@link LiveViewCheckpointSegmentChangeSet#addRow} does, because an open-below start is a
- * refusal rather than a floor a segment can be repaired from.
- * <p>
- * Anchors outside the recognized shape - an anchor over a non-designated column, an
- * arbitrary expression, a zone name this cannot resolve - produce no plan at all.
- * Declining is the conservative direction: without a proven segment boundary there is
- * nothing to bound a repair with, and the view keeps the from-boundary rebuild it has
- * today.
+ * Unrecognized expressions, unresolved zones and unprovable arithmetic widen repair
+ * instead of supplying an unsafe bound.
  */
 public final class LiveViewCheckpointAnchorPlan {
     private final char addUnit;
@@ -192,32 +119,13 @@ public final class LiveViewCheckpointAnchorPlan {
     }
 
     /**
-     * Builds the plan for the same calendar-period anchor read in a named time zone -
-     * what {@code ANCHOR DAILY 'HH:MM' '<zone>'} desugars to - or returns null when the
-     * zone cannot be resolved or the period gives no usable segment arithmetic. Null is
-     * an ordinary answer here for the same reason it is in {@link #of}.
-     * <p>
-     * The zone shifts where the buckets sit and how wide they are; it does not change
-     * what a segment means, so the two bounds the caller reads are the same two. Both are
-     * computed in local time and returned as UTC instants, which is what the runtime
-     * {@code timestamp_floor_utc} anchor emits and therefore what the view's own output
-     * timestamps are comparable to.
-     * <p>
-     * The zone string resolves here in the order the runtime {@code timestamp_floor_utc}
-     * resolves it: as a fixed UTC offset first, and through the zone table only when it
-     * is not one. The order decides the grid. The table matches a name by prefix and
-     * indexes zone display names beside zone ids, so asked alone it reads
-     * {@code 'UTC+05:00'} as plain UTC and {@code 'GMT+05:00'} as whichever zone the JDK
-     * displays under that name, while the runtime resets on the fixed +05:00 grid both
-     * spell. None of this plan's self-checks can see that difference, because each of
-     * them re-floors on the plan's own rules.
+     * Builds the runtime's calendar-floor grid in local time and returns UTC bounds, or
+     * null for an unresolved zone or unusable period. Resolve fixed UTC offsets before
+     * zone names, matching timestamp_floor_utc: prefix-based zone lookup alone can
+     * interpret UTC+05:00 as UTC, and self-checking that wrong grid cannot detect it.
      *
-     * @param segmentOffset the origin the buckets are aligned to, on the <i>local</i>
-     *                      grid - {@code timestamp_floor_utc} treats its {@code from}
-     *                      argument as a modulus seed for local time rather than as a
-     *                      UTC instant
-     * @param timeZone      the zone as the anchor expression spells it: a UTC offset or
-     *                      a zone name
+     * @param segmentOffset modulus origin on the local grid, not a UTC instant
+     * @param timeZone      fixed UTC offset or zone name as spelled by the anchor
      */
     public static @Nullable LiveViewCheckpointAnchorPlan ofTimeZone(
             char unit,

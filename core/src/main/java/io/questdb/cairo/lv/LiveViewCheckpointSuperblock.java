@@ -497,23 +497,9 @@ public class LiveViewCheckpointSuperblock implements Closeable {
      */
     public void publish() {
         ensureOpen();
-        // Gate on every valid slot that OUTLIVES this publication, read fresh, rather
-        // than on the newest valid slot overall. The two differ only after
-        // selectFallbackSlot() stepped down over a slot whose referenced roots failed
-        // validation: that corrupt slot is the publication target, so it is about to be
-        // replaced and must not gate the value replacing it. Gating on the global
-        // maximum there wedges the view permanently - generations advance by exactly one
-        // per successful publication, so the seal computes fallbackGeneration + 1, which
-        // is exactly the corrupt slot's generation and is refused, and no later
-        // publication can ever get past it. The head, its baseSeqTxn and the timeline
-        // WAL purge floor then freeze, and the BASE table's WAL is retained while it
-        // keeps ingesting.
-        //
-        // With no slot selected nothing was validated, so the target is excluded from
-        // nothing: keep gating on both slots exactly as before. That is what stops a
-        // file whose every slot failed validation from being quietly restarted at a
-        // lower generation, and it is what testBothRootCorruptGenerationsAreRejected
-        // pins - independently of which slot happens to hold the newest generation.
+        // Gate on freshly read valid slots that survive this publication. After fallback,
+        // the corrupt slot being replaced must not block fallbackGeneration + 1. With no
+        // validated slot selected, gate on both slots to prevent a lower-generation restart.
         final int target = selectedSlot == 0 ? 1 : 0;
         final boolean hasSelection = selectedSlot != NO_SLOT;
         long gateGeneration = Long.MIN_VALUE;

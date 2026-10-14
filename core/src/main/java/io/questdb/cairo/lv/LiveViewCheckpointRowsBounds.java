@@ -52,101 +52,28 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Discovers the repair bounds of a bounded {@code ROWS N PRECEDING ... CURRENT ROW}
- * live view, in the order the bounds actually depend on each other:
- * {@code H -> Q -> L}.
+ * Discovers ROWS repair bounds in dependency order H -> Q -> L against one pinned
+ * snapshot. Insert-only changes are required: a deleted key can disappear from the
+ * post-change interval while still affecting later output.
  * <p>
- * A RANGE view derives both bounds from timestamp arithmetic and never reads a row.
- * A ROWS view cannot: {@code Nmax} counts rows of one partition key, so how far a
- * change reaches forward, and how much history a key needs behind it, are properties
- * of where that key's rows sit rather than of the frame. The three steps, and why
- * they are ordered this way:
- * <ol>
- *     <li><b>{@code H}, the convergence boundary.</b> Let {@code c} be a key's last
- *     row at or below {@code changeMaxTs} and {@code f1, f2, ...} its rows above it.
- *     The frame at {@code f_i} spans the {@code Nmax} rows preceding it plus itself,
- *     so it contains {@code c} exactly while {@code i <= Nmax}. A key's output has
- *     therefore converged from its {@code (Nmax + 1)}-th row above the change on, and
- *     {@code H} is the first distinct timestamp after the last such row across every
- *     affected key. Stopping at the next distinct timestamp rather than at a row
- *     position is what admits the complete tie below it.</li>
- *     <li><b>{@code Q}, the output key domain.</b> Because {@code REPLACE_RANGE} is
- *     timestamp-global, the replacement re-emits every key with a qualifying row in
- *     {@code [R, H)}, not only the keys the change touched. The forward scan collects
- *     {@code Q} as it goes, so the pass that finds {@code H} finishes holding the
- *     exact key set {@code [R, H)} contains - it stops on the first row at or above
- *     {@code H}, which is one row past the interval and joins neither.</li>
- *     <li><b>{@code L}, the dependency floor.</b> Only now is {@code Q} known, and
- *     only {@code Q} says which keys need warm-up. The backward scan walks down from
- *     {@code R} counting qualifying predecessors per key and stops on the row that
- *     satisfies the last key still short; that row <i>is</i> {@code L}. Closing there
- *     leaves every partition below it unopened, which is what makes the cost follow
- *     {@code Nmax} rather than the view's age.</li>
- * </ol>
- * <b>Indexed predecessor seek.</b> A view keyed on a single indexed SYMBOL column
- * discovers {@code L} one key at a time instead, through
- * {@link PageFrameRecordCursorFactory#getCursorInTimestampRangeBackwardIndexed}: the
- * index names that key's row positions inside each partition, so the seek reads
- * {@code Nmax} rows per key and none of any other key's. The unrestricted walk has to
- * pull every key's rows to count one key's, which makes its cost follow how sparsely the
- * neediest key is spread rather than how wide the frame is - a key that first appears at
- * {@code R} has no predecessors at all, and proving that costs a walk over the view's
- * whole history. Both forms return the same {@code L}: it is the lowest of the per-key
- * satisfying timestamps, and a key that runs out of history pins it to {@code S} either
- * way. The seek is preferred wherever it is available, and the walk remains the answer
- * for a composite key, a non-SYMBOL key, an unindexed one, or a key the plan projects
- * through an expression rather than off a column.
+ * H closes after each affected key has enough following rows for convergence, at the
+ * next distinct timestamp so ties remain complete. A contains qualifying keys in the
+ * change interval; a superset safely widens H. Q contains every qualifying output key
+ * in [R, H), since replacement is timestamp-global. Only after Q is known can the
+ * backward scan find Nmax predecessors per output key and derive L.
  * <p>
- * The affected key set {@code A} comes off the same forward scan: every key with a
- * qualifying row in {@code [changeLowTs, changeMaxTs]}. That interval encloses the
- * whole incorporated change set by construction, so the keys inside it are a superset
- * of the keys the change touched, and a superset only widens {@code H}.
+ * An indexed SYMBOL key permits per-key predecessor seeks. Otherwise scan backward
+ * in timestamp order. A key with insufficient history sets L to START FROM S in either
+ * case. Empty A, insufficient following rows or an unsupported backward scan yields
+ * H = EOF and L = S.
  * <p>
- * <b>{@code Q} leaves in two forms.</b> The bounds themselves only need it counted, and
- * the scans key it however they read it cheapest - a SYMBOL column as the reader's
- * table-local integer. A repair that goes on to re-version logical boundaries needs it
- * as keys instead, and needs them encoded the way a checkpoint partition map keys an
- * entry, so that a key it collected and a key a published root holds compare equal.
- * {@link #collectOutputKeys} answers that second form, off a parallel map the forward
- * scan fills once per distinct key through
- * {@link LiveViewCheckpointRowsPlan#getCheckpointKeySink()}. It is readable only when
- * {@link #isOutputKeyDomainComplete()} holds, because a publication that keeps every
- * key outside {@code Q} untouched must not be handed a fragment of it.
+ * Discovery uses reader-local SYMBOL ids; checkpoint publication needs encoded string
+ * keys from the parallel map. collectOutputKeys is valid only when the complete Q is
+ * available, since publication preserves all keys outside it.
  * <p>
- * <b>Insert-only.</b> Reading {@code A} off the post-change snapshot assumes the
- * change added rows rather than removing them. A deletion that emptied a key's rows
- * out of {@code [changeLowTs, changeMaxTs]} leaves that key invisible to this scan
- * while its later rows still pull older history into their frames, so a caller that
- * cannot prove the incorporated change set insert-only must not localize a ROWS repair
- * on these bounds. RANGE needs no such proof - its bound is key-independent arithmetic
- * over an interval a deletion cannot escape - which is exactly the difference between
- * deriving a bound and discovering one.
- * <p>
- * Three outcomes leave the caller with no bound at all, each reported as
- * {@code H = EOF} and {@code L = S}: the change is invisible in the snapshot (nothing
- * qualifies in {@code [changeLowTs, changeMaxTs]}, so {@code A} is empty and the
- * forward scan stops at once); an affected key runs out of following rows before the
- * end of the base table, which is the case where the change does reach the runtime
- * head; and a factory whose rows come from an index, which cannot be walked backwards
- * in timestamp order at all.
- * <p>
- * <b>Scan budgets.</b> Every bound above is finite, but nothing in the data says it is
- * cheap: where the indexed seek does not apply, a key that first appears at {@code R} has
- * no predecessors to find and the backward walk cannot know that until it reaches
- * {@code S}, so one such key costs a walk over the view's whole history - bounded, but no
- * cheaper than the rebuild it was meant to replace. Two configured budgets cap that. One
- * counts base rows across every scan of one discovery, the other counts the keys of
- * {@code Q}, and each is checked as the scan runs rather than after it. Crossing either
- * stops the search and records the verdict on {@link #getScanBudgetStatus()}, and the
- * bound the search had not finished proving falls back to its conservative value - so a
- * caller that only reads the bounds still plans a correct repair, and one that reads the
- * status knows it declined on cost rather than on data. The row budget counts rows the
- * view's {@code WHERE} then discards, because a filter that admits nothing still reads
- * every row it rejects; the key budget is what keeps the per-key seek from turning into
- * an index lookup per key of an unbounded domain.
- * <p>
- * One instance per refresh worker, reused across repairs. {@link #discover} overwrites
- * every result, so no reset is needed between calls.
+ * Row and key budgets apply during all discovery scans, counting filtered-out base
+ * rows too. Crossing a budget keeps conservative bounds and records the reason.
+ * One worker reuses the scratch; discover() overwrites every result.
  */
 public final class LiveViewCheckpointRowsBounds implements QuietCloseable {
     // Per-key value slots. FOLLOWING doubles as A membership: NOT_AFFECTED until the

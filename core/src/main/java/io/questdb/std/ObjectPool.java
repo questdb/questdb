@@ -61,6 +61,10 @@ public class ObjectPool<T extends Mutable> implements Mutable {
         pos = 0;
     }
 
+    public int getCapacity() {
+        return size;
+    }
+
     public int getPos() {
         return pos;
     }

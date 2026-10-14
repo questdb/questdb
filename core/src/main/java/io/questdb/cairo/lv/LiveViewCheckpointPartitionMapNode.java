@@ -26,6 +26,7 @@ package io.questdb.cairo.lv;
 
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.std.LongList;
+import io.questdb.std.ObjectPool;
 import org.jetbrains.annotations.NotNull;
 
 import java.util.Arrays;
@@ -66,7 +67,7 @@ final class LiveViewCheckpointPartitionMapNode {
      * per decode. What leaves the node does so through {@link #copyEntryTo}, which
      * copies into the caller's own flyweight.
      */
-    private final LiveViewCheckpointPageRefPool decodedChildRefs = new LiveViewCheckpointPageRefPool();
+    private final ObjectPool<LiveViewCheckpointPageRef> decodedChildRefs = new ObjectPool<>(LiveViewCheckpointPageRef::new, 1);
     private int count;
     private boolean leaf;
 
@@ -119,7 +120,7 @@ final class LiveViewCheckpointPartitionMapNode {
     void decode(
             @NotNull LiveViewCheckpointMetaSegmentReader reader,
             @NotNull LiveViewCheckpointMutationArena arena,
-            @NotNull LiveViewCheckpointPageRefPool pageRefPool
+            @NotNull ObjectPool<LiveViewCheckpointPageRef> pageRefPool
     ) {
         final int pageKind = reader.getPageKind();
         if (pageKind != LiveViewCheckpointPartitionMap.PAGE_KIND_LEAF
@@ -220,7 +221,7 @@ final class LiveViewCheckpointPartitionMapNode {
      */
     void decodeOwned(@NotNull LiveViewCheckpointMetaSegmentReader reader, @NotNull LiveViewCheckpointMutationArena arena) {
         arena.clear();
-        decodedChildRefs.reset();
+        decodedChildRefs.clear();
         decode(reader, arena, decodedChildRefs);
     }
 

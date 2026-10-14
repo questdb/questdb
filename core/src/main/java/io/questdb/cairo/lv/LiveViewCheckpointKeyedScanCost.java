@@ -35,86 +35,21 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Prices a <b>keyed</b> repair scan - one that follows the affected keys' rows through the
- * base's posting index - against the whole-range scan that reads every row, so a repair
- * takes the cheaper of the two on evidence rather than on the assumption that fewer keys
- * is always less work.
+ * Prices indexed repair against a whole-range scan using actual postings from the
+ * pinned reader, so hot keys are not hidden by an average rows-per-key estimate.
+ * The price combines posting rows, a per-row ceil(log2 |Q|) merge charge, one index
+ * open per partition and one seek per (key, frame). Setup uses configured row-equivalent
+ * open cost and {@link #INDEX_SEEKS_PER_INDEX_OPEN} seeks per open.
  * <p>
- * The estimate reads the pinned reader's own posting lists, never
- * {@code affectedKeys * averageRowsPerKey}: one hot key can hold most of a segment's rows,
- * and an average would price that segment as though it held a few thousand.
- *
- * <h2>The three terms</h2>
- * A keyed scan does not cost one unit per row it yields. {@code HeapRowCursorFactory}
- * rebuilds one row cursor per key for every page frame, and merges those cursors through a
- * priority queue, so the price is:
- * <ul>
- *     <li><b>posting rows</b> - what the index says those keys hold over the interval, and
- *     what the scan actually pulls off the columns;</li>
- *     <li><b>the merge</b> - {@code O(rows * log |Q|)} rather than {@code O(rows)}, because
- *     the priority queue, {@code IntLongSortedList}, is an array-backed binary min-heap:
- *     every row that leaves it sifts its replacement down from the root through a number
- *     of levels logarithmic in {@code |Q|}, however the keys' rows interleave. Each posting
- *     row pays {@code ceil(log2 |Q|)} on top of its own read, which is also the charge this
- *     route's own measurement was taken under;</li>
- *     <li><b>the setup</b> - two counts, not one, because the scan does two different
- *     things. It <b>opens</b> the index once per <b>partition</b>: {@code TableReader}
- *     caches an index reader per (partition, column, direction) and hands the same one to
- *     every key and every frame, so the count is neither {@code |Q|} nor {@code F} times
- *     that - a base partitioned by hour against a daily anchor segment is 24 opens. Inside
- *     a partition it then <b>seeks</b> that already-open reader once per {@code (key,
- *     frame)} pair, which is what {@code HeapRowCursorFactory} rebuilds, for
- *     {@code 24 * F * |Q|} seeks; a seek is a pooled cursor and a block-chain walk rather
- *     than two file opens and two mmaps, and is charged a sixth of the configured open
- *     price - a policy divisor, not the ratio the two measure at. Together they are the
- *     term that sinks a keyed scan over a sparse key domain.</li>
- * </ul>
- * The setup term is expressed in row-equivalents through
- * {@link io.questdb.cairo.CairoConfiguration#getLiveViewCheckpointRepairKeyedScanIndexOpenRows()},
- * because the two halves have to be comparable and only one of them is rows. The seek price
- * derives from that one knob through {@link #INDEX_SEEKS_PER_INDEX_OPEN} rather than
- * carrying a knob of its own, so the knob moves both halves together - it prices the setup
- * term, and is not a number to calibrate against a measured index open.
- *
- * <h2>What it rounds, and in which direction</h2>
- * A key's postings are counted per <b>partition</b>, whole, for every partition the
- * interval touches at all - the index names row positions rather than timestamps, so the
- * two partitions the interval ends inside cannot be narrowed without walking them. That
- * overestimates the keyed side and never the whole-range one, so the comparison errs
- * towards the whole-range scan, which is the safe direction: it is correct for every shape
- * and merely reads more.
+ * Postings and frame counts cover whole intersecting partitions, conservatively
+ * overpricing partial end partitions. Frame estimates omit extra column-top splits.
+ * Partitions must open before obtaining index readers: an unopened partition can
+ * cache a no-op reader that both misprices and later misses rows.
  * <p>
- * The frame split behind the setup term rounds the same way, and for the same reason: it
- * derives from each partition's whole row count rather than from the rows the interval
- * leaves inside the two it ends in. It ignores the extra split a column top forces, which
- * rounds the other way - a partition written before one of the scan's columns existed
- * carries one more frame than the row limit alone accounts for.
- * <p>
- * The estimate opens every partition the interval touches, which is what the scan it prices
- * would map anyway. It has to: {@code TableReader} hands out a no-op index reader for a
- * partition whose columns it has not mapped, and caches it, so pricing through an unopened
- * partition would both report the keyed scan as free and leave a cached reader behind that a
- * later index-driven query on the same {@code TableReader} would miss rows through.
- * <p>
- * A key whose postings the index cannot count in constant time - a bitmap index reports no
- * size - is walked, and the walk stops at {@link #estimateKeyedScanRows}'s budget. The
- * budget is not an approximation of the answer: it is the count past which the caller's
- * verdict cannot change, so stopping there costs nothing and bounds the pricing by what the
- * keyed side is weighed against. For the row verdict that is the whole-range scan's row
- * count. An open-segment resume whose whole range estimates at zero rows beside a root
- * restore passes the count that prices the scan past the elapsed override's break-even -
- * the largest keyed cost that restore lets win. It costs nothing for <b>that</b> verdict
- * only - a stopped walk leaves every key below it and every partition above it out of all
- * three figures - so {@link #isSaturated()} reports the stop for any consumer that prices
- * the keyed side against something the budget does not bound.
- * <p>
- * A posting budget does not bound the setup term: keys that hold no posting in most of the
- * interval's partitions leave the count far below it while every partition still charges
- * its open and seeks. A caller whose verdict is the whole keyed price passes the setup
- * prices, and the walk then stops once that price, setup included, reaches the budget.
- * <p>
- * One instance per refresh job, bound to the repair's pinned reader by {@link #of} and
- * reused across repairs.
+ * Unknown posting sizes require a bounded walk. Saturation means the budget already
+ * decides the caller's verdict, but the partial counts cannot price a different
+ * comparison. A total-cost budget includes setup, since empty postings alone do not
+ * bound index-open and seek work. One worker reuses the estimator across repairs.
  */
 public final class LiveViewCheckpointKeyedScanCost {
     /**

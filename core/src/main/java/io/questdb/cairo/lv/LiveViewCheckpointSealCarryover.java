@@ -33,53 +33,19 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Carries the incremental-seal bookkeeping of every checkpoint target across a
- * converging repair's runtime exchange - the companion of
- * {@link LiveViewCheckpointScratchOverlay}, which carries the state that bookkeeping
- * describes.
+ * Preserves incremental-seal bookkeeping across a converging repair's runtime
+ * exchange. Baseline generation and dirty sets must move together; restoring only
+ * the baseline after a wipe would silently omit dirty keys from the next root.
  * <p>
- * A repair with a finite convergence boundary replays through the compiled factory's
- * own window functions, so it wipes them to identity and puts the pre-repair state
- * back from the overlay afterwards. The overlay restores the state through the same
- * contract a checkpoint restore reads it under, and that contract deliberately leaves
- * every target on the complete scan: it clears the baseline generation, drops the
- * dirty set and raises the full-scan flag. Without this class the seal that follows a
- * repair therefore freezes the whole live domain rather than the keys its own batch
- * touched - at 20M keys a ~50 s freeze, once per repair.
+ * The caller may restamp the baseline only when the splice preserves the newest
+ * root's payload at or above H. Otherwise targets retain the complete-freeze
+ * requirement established by restore. An isolated runtime needs the same restamp
+ * even though it leaves the primary's state untouched.
  * <p>
- * Restoring the baseline alone would be worse than the cost it saves: a target holding
- * a baseline whose dirty set was dropped publishes a root missing exactly the keys that
- * set named, which no reader detects and a restart fails on. So the two move together,
- * per target, or neither does.
- *
- * <h2>Why the generation moves and the payload does not</h2>
- * The baseline names the newest root of the generation it was recorded against. The
- * repair's splice re-versions only the roots inside {@code [C, H)} and leaves
- * everything at or above {@code H} carrying the payload it already had - which is the
- * same convergence proof that let the repair keep the primary runtime in the first
- * place. So when the newest root sits at or above {@code H}, the state the overlay
- * puts back is still that root's state entry for entry, and only the generation number
- * moved. The caller checks exactly that before handing a generation in; anything else
- * declines and the targets keep the complete freeze the wipe left them owing.
- *
- * <h2>Ordering</h2>
- * {@link #capture} runs before the repair retires the in-memory head - which resets
- * {@code minSeenTsSinceCheckpoint} - and before the wipe reaches the runtime.
- * {@link #restore} runs in the repair's single runtime exchange, after the overlay has
- * put the state back and before the post-repair head seal reads any of it.
- *
- * <h2>An isolated replay needs it too, and for one reason rather than two</h2>
- * A repair that replays through {@link LiveViewRepairRuntime} wipes nothing, so the
- * bookkeeping is never destroyed and there is no state for it to travel beside. What
- * still moves under it is the generation: the repair's retire deletes the roots the
- * baseline names, and its splice re-versions the ones it keeps. So the carry is what
- * re-stamps the baseline against the generation the splice published - or, when there is
- * none to name, drops the bookkeeping and leaves every target on the complete freeze that
- * is the safe direction. {@code minSeenTsSinceCheckpoint} travels for the same reason it
- * always did: the replay lowers it to the bottom of the range it reads, whichever runtime
- * folds the rows.
- * <p>
- * One instance per repair session, reused across repairs.
+ * Capture before head retirement resets minSeenTsSinceCheckpoint and before any
+ * runtime wipe. Restore after the overlay restores state and before the closing
+ * seal. Carry the minimum too: replay lowers it regardless of which runtime folds
+ * its rows. One reusable instance belongs to each repair session.
  */
 public final class LiveViewCheckpointSealCarryover implements QuietCloseable {
     // Slot 0 is the anchored window's, slots 1..n each function's, in factory order.

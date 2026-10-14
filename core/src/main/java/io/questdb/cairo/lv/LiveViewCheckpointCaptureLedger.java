@@ -27,42 +27,13 @@ package io.questdb.cairo.lv;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * What one publication's freeze actually walked, split by the root kind that walked it.
+ * Freeze work by root kind. Captures count roots; keysVisited counts map walks, which
+ * runtime-only functions may share. keysImaged and elisionProbes remain separate:
+ * imaging a changed key need not probe its predecessor.
  * <p>
- * Nothing in the published artifacts separates an incremental capture from a complete
- * one: both leave a root naming the whole live key domain, because the incremental one
- * keeps every key it did not touch from its predecessor. Timing does not separate them
- * either - a complete walk of a small domain beats an incremental walk that had to map an
- * older segment to compare against. So the structural claim that a seal costs the keys the
- * batch changed rather than the keys the view holds needs a ledger of its own, and this is
- * it.
- * <p>
- * The window root and the function roots are counted apart because they are the two halves
- * the layout-removal change moved state between: one window root replaced the separate
- * anchor root and every durable projection's root at once, and what stays on a root of its own is a
- * residual function or a component the inline leaf budget left out. A reading that pooled
- * them could not tell a seal that fused its state from one that did not.
- * <p>
- * {@code keysVisited} counts <b>walks</b> rather than roots on the function side: one seal
- * shares a single walk of the group's map across every runtime-only member that agrees on
- * the incremental disposition, so a wide SELECT list adds roots and images without adding
- * walks. {@code captures} counts roots either way.
- * <p>
- * {@code elisionProbes} is the window half's second structural reading. Imaging a key and
- * publishing it are not the same act: a seal leaves the predecessor's entry standing for a
- * key whose payload has not moved, and what it pays to find that out is one lookup into the
- * predecessor root per key it probes. The probe is worth its cost only where an elision can
- * follow, so the count standing apart from {@code keysImaged} is what says the freeze
- * skipped the keys it already knew were changed rather than probing the whole imaged
- * domain.
- * <p>
- * A mutable accumulator, owned by the freeze scratch the operation is bound to rather than
- * by {@link LiveViewCheckpointTimelineStoreWriter} itself: a suspended repair holds its own
- * scratch across refresh turns, and a writer-level ledger would be cleared out from under it
- * by any cadence seal that worker ran in between. Binding the scratch clears it, each freeze
- * charges into it, and the refresh worker copies it onto the view's {@link LiveViewInstance}
- * once the publication is durable. Not thread-safe, and valid only until its scratch is
- * bound again.
+ * The operation's scratch owns this mutable ledger, so a parked repair keeps its
+ * counts across unrelated seals. Binding clears it; each freeze adds work, and a
+ * durable publication records it on the instance. Not thread-safe.
  */
 public final class LiveViewCheckpointCaptureLedger {
 

@@ -29,31 +29,15 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * The route one out-of-order repair takes, decided once before its executor runs.
+ * One repair's scan, runtime, splice eligibility and publication route. The repair plan
+ * supplies bounds and disposition; {@code LiveViewRefreshJob.decideRepairRoute} selects
+ * the route once. Executors may only downgrade a keyed scan through
+ * {@link #declineKeyedScan}, which records its reason.
  * <p>
- * {@link LiveViewCheckpointRepairPlan} picks the disposition and the bounds. This object
- * picks everything the executors used to re-derive from flags as they went: which rows
- * the replay reads (the whole range, or a key domain through the posting index), which
- * runtime it folds them into, whether the timeline can be spliced, and how the
- * replacement publishes. {@code LiveViewRefreshJob.decideRepairRoute} is the only code
- * that writes the route; the executors read it and never re-evaluate an eligibility
- * predicate. A keyed route that has started can still lose its keyed scan, but only
- * through {@link #declineKeyedScan}, which records why.
- * <p>
- * Two inputs reach the route from outside the decision:
- * <ul>
- *     <li>the open segment's key domain, which {@code repairChangeSetSegments} classifies
- *     for the residual behind a segment loop. {@link #setOpenSegmentKeyDomainReady}
- *     publishes it and {@link #clear} withdraws it, so a repair that classified nothing
- *     never follows another repair's keys;</li>
- *     <li>the pricing of a keyed open-segment read, which the decision runs itself and
- *     records through {@link #ofOpenSegmentPricing}, so the log and the availability
- *     check read the same verdict.</li>
- * </ul>
- * One instance per refresh worker, reused across repairs, which never nest. A repair
- * that parks copies the decided route into its session, and the turn that resumes it
- * takes the route back from there rather than deciding again: the inputs move between
- * turns, and a replay that is half done may not switch routes.
+ * The open-segment key domain and pricing verdict belong to this repair; {@link #clear}
+ * withdraws them. One worker reuses this object across non-nested repairs. A parked
+ * repair copies its route into the session and restores it on resume, since changing
+ * inputs between turns must not change a partially executed route.
  */
 public final class LiveViewCheckpointRepairRoute implements Mutable {
     public static final int PUBLICATION_NONE = 0;

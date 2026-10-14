@@ -27,110 +27,47 @@ package io.questdb.cairo.lv;
 import io.questdb.std.Numbers;
 
 /**
- * Frozen contracts for the versioned checkpoint timeline and localized
- * out-of-order repair.
- * <p>
- * This class carries no runtime behavior beyond the floating-point tolerance
- * helper. It exists to <b>pin</b>, at compile time and under test, the design
- * decisions the file schemas and planning logic are built on, so an accidental
- * drift in the supported-window matrix, the repair publication ordering, or the
- * floating tolerance breaks a test rather than silently changing the contract.
- * The matching test is {@code LiveViewCheckpointContractsTest}.
+ * Contracts for checkpoint timelines and localized out-of-order repair.
  *
- * <h2>Coordinate terminology</h2>
- * These coordinates live in three distinct spaces that must never be conflated:
- * base-table {@code seqTxn} progress, live-view-writer {@code seqTxn} progress,
- * and per-root designated timestamp plus effective {@code lvRowPosition}.
+ * <h2>Coordinates</h2>
+ * Base-table seqTxn, live-view-writer seqTxn, and designated timestamp/row position
+ * are distinct coordinate spaces.
  * <ul>
- *     <li>{@code S} - resolved {@code START FROM} boundary.</li>
- *     <li>{@code E} - applied base-table {@code seqTxn} pinned for one localized
- *     repair publication.</li>
- *     <li>{@code normalizedBaseSeqTxn} - per-generation base-{@code seqTxn}
- *     through which every current root is validated; the authoritative
- *     base-transaction-inclusion boundary for recovery replay.</li>
- *     <li>{@code F} - inclusive designated-timestamp frontier through which
- *     durable output is reconciled. A root-compatibility and output-
- *     reconciliation coordinate, <b>not</b> a base-transaction-inclusion
- *     bound.</li>
- *     <li>{@code C} - earliest timestamp whose existing result may have
- *     changed (the correction floor; state roots are versioned from here).</li>
- *     <li>{@code D} - earliest qualifying output already incorporated in
- *     runtime state but not yet durable; absent when all incorporated output is
- *     durable.</li>
- *     <li>{@code R} - inclusive non-durable-output / materialization floor:
- *     {@code max(S, min(C, D))} when {@code D} exists, otherwise
- *     {@code max(S, C)}. Durable output is re-emitted from {@code R}; logical
- *     state roots are versioned only from {@code C}.</li>
- *     <li>{@code L} - earliest timestamp/row position required to reconstruct
- *     state immediately before the replay floor {@code R}.</li>
- *     <li>{@code H} - tagged exclusive high influence bound
- *     ({@link HighBoundTag#FINITE} or {@link HighBoundTag#EOF}).</li>
- *     <li>{@code A} - partition keys actually affected by incorporated base
- *     changes; {@code Q} - partition keys whose output must be materialized in
- *     the timestamp-global replacement range {@code [R, H)}.</li>
+ *     <li>{@code S}: resolved START FROM boundary.</li>
+ *     <li>{@code E}: applied base seqTxn pinned for the repair.</li>
+ *     <li>{@code normalizedBaseSeqTxn}: authoritative base-transaction inclusion
+ *     boundary shared by every root in the generation.</li>
+ *     <li>{@code F}: inclusive durable-output timestamp frontier, not a base-transaction bound.</li>
+ *     <li>{@code C}: earliest timestamp whose result may have changed.</li>
+ *     <li>{@code D}: earliest incorporated output not yet durable, if any.</li>
+ *     <li>{@code R}: inclusive materialization floor, {@code max(S, min(C, D))}
+ *     when D exists, otherwise {@code max(S, C)}.</li>
+ *     <li>{@code L}: earliest timestamp/row position needed to reconstruct state before R.</li>
+ *     <li>{@code H}: exclusive influence bound, tagged FINITE or EOF.</li>
+ *     <li>{@code A}: affected keys; {@code Q}: keys materialized in {@code [R, H)}.</li>
  * </ul>
- *
  * <h2>Timeline invariants</h2>
- * <ol>
- *     <li>A boundary {@code B} represents function state after all qualifying
- *     rows with designated timestamp {@code <= B} in canonical cursor order.</li>
- *     <li>Every current root in generation {@code G} is correct for the same
- *     pinned base snapshot {@code G.normalizedBaseSeqTxn}.</li>
- *     <li>A generation is visible only after every file it references has
- *     reached its final versioned name.</li>
- *     <li>A reader pins one generation before resolving any root/page
- *     reference.</li>
- *     <li>Files referenced by a published superblock slot or a pinned reader are
- *     not deleted.</li>
- *     <li>Insert-only advancement with
- *     {@code minNewTimestamp > oldHead.maxTimestamp} cannot affect an older
- *     root.</li>
- *     <li>An O3 publication replaces every root with {@code C <= B < H} and
- *     reuses every root outside that interval.</li>
- *     <li>No current root points to a temporary, mutable, or retired physical
- *     object.</li>
- *     <li>Generation normalization records snapshot validity, not a per-root
- *     recovery position: restoring a root at {@code B} still rebuilds
- *     {@code (B, F]}, bounded by the base-{@code seqTxn} boundary, not by
- *     {@code F}.</li>
- *     <li>The effective {@code lvRowPosition} of every logical checkpoint is
- *     correct in every generation, including the reused suffix after an O3
- *     replacement changes the cumulative position.</li>
- * </ol>
+ * A boundary describes state after qualifying rows through its timestamp in canonical
+ * cursor order. Every root in a generation is valid at its normalized base seqTxn.
+ * Files reach their final names before publication; readers pin a generation before
+ * resolving references. Published or pinned files cannot be deleted, and current roots
+ * cannot reference temporary, mutable or retired objects.
+ * <p>
+ * Strictly forward inserts cannot affect older roots. O3 repair replaces state roots
+ * in {@code [C, H)} and preserves roots outside it, but re-emits durable output over
+ * {@code [R, H)}. Reused suffix roots must keep correct effective row positions.
+ * Recovery rebuilds {@code (B, F]} from a selected root B, bounded by base seqTxn;
+ * F alone cannot exclude apply-ahead corrections.
+ * <p>
+ * Startup validates the superblock, root metadata and segment catalogue without a
+ * full timeline walk. Deep pages validate lazily; their corruption invalidates the
+ * individual root version, not the pinned generation.
  *
- * <h2>Three contracts the file schemas depend on</h2>
- * <ol>
- *     <li><b>Dual recovery model.</b> Recovery reconciles into two coordinates:
- *     the authoritative base-{@code seqTxn} inclusion boundary (which base
- *     transaction <i>versions</i> may be incorporated) and the durable
- *     designated-timestamp frontier {@code F} plus the selected root's
- *     effective {@code lvRowPosition} (which output is already durable). The
- *     {@code (B, F]} runtime rebuild is bounded by the base-{@code seqTxn}
- *     boundary, never by {@code F}, so an apply-ahead O3 correction below
- *     {@code F} is deferred to post-restore classification rather than double
- *     counted.</li>
- *     <li><b>Output-floor split.</b> Durable output is replaced over
- *     {@code [R, H)}; logical state roots are versioned only over
- *     {@code [C, H)}. When {@code R < C}, roots in {@code [R, C)} are
- *     re-emitted by the timestamp-global replacement but keep their existing
- *     state version - re-emitted, not re-versioned.</li>
- *     <li><b>Bounded startup validation / lazy corruption.</b> Startup selects
- *     the highest superblock slot that passes <i>bounded</i> validation (its
- *     own checksum, its root metadata pages, and the checksummed
- *     segment/completeness catalogue it references) without walking the whole
- *     timeline. Deep tree paths and state pages are validated lazily on first
- *     access; a structurally invalid page invalidates only that one root
- *     version, never the pinned generation.</li>
- * </ol>
- *
- * <h2>Failure ordering</h2>
- * A localized repair advances through {@link RepairPublicationStage} in strict
- * ordinal order. The inactive superblock slot is the sole commit point: recovery
- * selects either the complete old generation {@code G} or the complete new
- * generation {@code G + 1}, and never exposes a partial root splice. Before the
- * live-view WAL replacement commits, failure discards the candidate; after it
- * commits, refresh blocks behind reconciliation until the replacement is known
- * applied or not applied.
+ * <h2>Publication ordering</h2>
+ * {@link RepairPublicationStage} advances in ordinal order. The inactive superblock
+ * slot is the commit point: recovery sees the complete old or new generation.
+ * Before WAL replacement commits, failure discards the candidate. After commit,
+ * refresh blocks on reconciliation until application of the replacement is known.
  */
 public final class LiveViewCheckpointContracts {
 

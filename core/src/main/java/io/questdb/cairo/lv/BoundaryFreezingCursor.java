@@ -33,29 +33,13 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Wraps a repair replay's source cursor and freezes every logical checkpoint
- * boundary the replay crosses, one row before the window functions see that row.
+ * Freezes each repair boundary B after all rows at or below B and before any row above
+ * it reaches the window functions. This cursor must sit below {@link AnchorDispatchingCursor}
+ * so the crossing row's anchor reset also happens after the freeze. Freezing in the
+ * replay loop is too late: the window cursor's hasNext() has already folded that row.
  * <p>
- * A checkpoint root at boundary {@code B} must describe the window state after
- * every qualifying row with designated timestamp {@code <= B} has been folded,
- * and no row above it. The replay reads rows in ascending timestamp order, so
- * that moment is the instant before the first row with {@code ts > B} reaches the
- * window functions - which is exactly where this cursor sits.
- * <p>
- * Freezing from the replay's own row loop instead cannot reach that instant:
- * {@code WindowRecordCursorFactory.WindowRecordCursor.hasNext()} folds the row
- * into every function before it returns, so a boundary frozen from the loop body
- * carries the crossing row as well. For a bounded RANGE frame that row is
- * physically in the frozen ring, and a later resume that restores the root and
- * replays from {@code B + 1} folds it a second time - a partition's sum then
- * counts it twice. The same wrapping order the anchor dispatch relies on is what
- * makes the boundary land between two rows rather than inside one; see
- * {@link AnchorDispatchingCursor}, which must stay ABOVE this cursor so a row's
- * anchor reset also lands after the boundary it crosses.
- * <p>
- * The cursor carries the freeze cursor ({@link #getCaptured()}) across the turns
- * a yielding repair takes, so a resumed turn continues where the previous one
- * stopped.
+ * The capture position survives yielding turns so a resumed repair continues at the
+ * next uncaptured boundary.
  */
 final class BoundaryFreezingCursor implements RecordCursor {
     private LiveViewWindow anchorWindow;

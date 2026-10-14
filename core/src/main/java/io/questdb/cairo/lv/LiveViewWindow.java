@@ -1683,51 +1683,11 @@ public class LiveViewWindow implements QuietCloseable {
             value.putByte(SLOT_TOMBSTONE, (byte) 0);
             value.putShort(SLOT_DIRTY_EPOCH, EPOCH_NONE);
         }
-        // The dirty map only has to name each key once per cadence, and the anchor value
-        // in hand already says whether this key was named. Skipping on a match is what
-        // keeps a repeat row from serializing the partition key a second time through the
-        // sink, hashing it again and probing a second map for an entry that is already
-        // there. isNewPartition short-circuits ahead of the load: the block above has just
-        // seeded a new entry's stamp with EPOCH_NONE, which no cadence matches, so the load
-        // would only pay for an answer the flag already has. That is also what keeps the
-        // sweep's eviction-and-revival path honest: eviction takes the anchor entry out, so
-        // a revived key arrives new and re-enters the dirty map, clearing the eviction
-        // marker it left behind.
-        //
-        // Every dirty set the plan leaves standing answers to this same stamp - see the
-        // flag handed to markPartitionAlive below - so this one anchor-value load stands
-        // in for the view's whole per-row dirty marking rather than for the anchor's
-        // alone. A function whose component this window adopted keeps no set of its own
-        // and marks nothing (BasePartitionedWindowFunction.markPartitionAlive returns on
-        // isWindowStateOwned); a residual one keeps the set it always had. A view with R
-        // residual functions used to serialize the partition key and probe a second map
-        // R + 1 times per row; it now does so R + 1 times per key per cadence, and a view
-        // the plan adopted whole still saves the anchor's own mark.
-        //
-        // What one stamp can stand for R + 1 sets is that no row is processed between a
-        // function's dirty set being emptied and this counter moving on. Every path that
-        // empties a function's set either moves this counter on in the same synchronous
-        // block or latches that function onto a complete freeze. The seal
-        // (LiveViewCheckpointTimelineStoreWriter) hands onCheckpointPersisted to the anchor
-        // and to each checkpoint-capable function, and this window's own
-        // clearCheckpointDirtyAnchorMap moves the counter on there. The checkpoint restore
-        // (LiveViewCheckpointTimelineStoreReader) and the repair overlay
-        // (LiveViewCheckpointScratchOverlay, through LiveViewFunctionSnapshot) each hand
-        // every checkpoint-capable function onCheckpointRestoreBegin, which latches the full
-        // scan, and rewind this window through beginCheckpointRestore / restore, which move
-        // the counter on; the reader alone then lifts that latch again with
-        // onCheckpointPersisted, on the anchor and on each function other than the
-        // ring-shaped and scalar ones, and only when it read this generation's timeline
-        // head. The head-miss replay (LiveViewRefreshJob.clearWindowState) rewinds each
-        // function through toTop() and this window through toTop(), which does the same. The
-        // cursor-stack toTop() empties every function's set and leaves this map, its stamps
-        // and this counter standing - AnchorDispatchingCursor routes it to onCursorReopen -
-        // but BasePartitionedWindowFunction.toTop() latches isCheckpointFullScanRequired and
-        // drops the baseline generation there, and freezeFunction reads both before it takes
-        // a dirty map, so the seal full-scans that function instead. A function rebound on
-        // its own - reset() frees its dirty set without reaching this window at all -
-        // latches the same flag, so the set it builds before the next onCheckpointPersisted
-        // is one the seal never reads.
+        // A key needs dirty marking once per cadence. All residual functions share the
+        // anchor's epoch: clearing a dirty set must advance the epoch before another row
+        // is processed, or force that function's next checkpoint to scan all state.
+        // Cursor reopen and independent function reset use the full-scan fallback.
+        // New or revived partitions always mark dirty, clearing any eviction marker.
         final boolean isFirstCadenceTouch = isNewPartition
                 || value.getShort(SLOT_DIRTY_EPOCH) != checkpointDirtyEpoch;
         final byte initialized = isNewPartition ? 0 : value.getByte(SLOT_INITIALIZED);
@@ -1750,29 +1710,11 @@ public class LiveViewWindow implements QuietCloseable {
         }
         trackFrontier(currentAnchor);
 
-        // The branch takes a row that crossed to a new anchor value, and - through
-        // initialized == 0 - every new partition. Resetting a new partition is deliberate:
-        // its functions either have no per-partition state yet (in which case
-        // resetPartition is a no-op) or carry stale state from a prior partition the sweep
-        // evicted, and resetting it is the safe default.
-        //
-        // Inequality rather than an increase, and that is load-bearing rather than
-        // incidental. A zoned anchor is not monotone through a DST transition: under
-        // ANCHOR DAILY '02:30' 'Europe/Berlin' the rows of 2026-10-25 carry
-        // 2026-10-24T00:30Z, then 2026-10-25T00:30Z from 00:30Z, then 2026-10-24T00:30Z
-        // AGAIN from the 01:00Z fall-back instant - the row reads 02:00 local under CET,
-        // below the day's own 02:30 - and finally 2026-10-25T01:30Z. A segment is one
-        // maximal RUN of rows sharing an anchor value rather than one bucket per value
-        // (see LiveViewCheckpointAnchorPlan), so the second run of a repeated value opens
-        // its own accumulator here.
-        //
-        // The repair path bounds a localized repair at LiveViewCheckpointAnchorPlan's
-        // segment end, and that is a BUCKET boundary: it advances the local grid by one
-        // period and converts back, wherever the rows happen to sit. It therefore lands
-        // BELOW the second run of a repeated value, and would leave that run holding
-        // pre-correction output. The plan refuses to report a finite end for a segment a
-        // fall-back splits this way, which widens the repair to the unbounded rebuild;
-        // LiveViewAnchorResetScopeTest pins the forward reading and that agreement.
+        // Reset on any anchor change, including a decrease, and for every new partition
+        // whose functions may still hold state from an evicted key. A DST fallback can
+        // split one anchor value into separate runs; each run gets its own accumulator.
+        // The repair planner refuses a finite bucket end when it would exclude a later
+        // run of the same value.
         if (shouldReset) {
             // Grouped functions no-op here; their component is zeroed in the loaded
             // value instead. Residual ones keep the dispatch they have always had.

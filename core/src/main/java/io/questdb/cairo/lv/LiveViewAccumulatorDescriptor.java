@@ -36,54 +36,18 @@ import org.jetbrains.annotations.TestOnly;
 import java.util.Arrays;
 
 /**
- * The <b>durable</b> half of one accumulator component: what a fused live-view window
- * state writes to disk about the {@link WindowAccumulatorDescriptor runtime component} it
- * wraps.
+ * Durable codec and identity for a {@link WindowAccumulatorDescriptor}. Runtime
+ * slot widths and contribution rules come from that descriptor; this class adds
+ * the codec version, encoded identity, byte offsets and freeze/restore operations.
  * <p>
- * The split is deliberate and one-directional. Which rows contribute, how many map value
- * slots the state occupies, which slot holds which field and whether one family's state
- * contains another's are runtime facts, and this class asks the runtime descriptor for all
- * of them rather than restating any: two family tables would drift, and a drift here is a
- * persisted layout that no longer describes the state it was written from. What this class
- * owns is everything that only exists because the state is persisted - the component codec
- * version, the encoded identity a manifest carries, the byte offsets inside a leaf's
- * scalar payload, and the freeze/restore codec itself.
- *
- * <h2>What the encoded identity is for</h2>
- * A component's identity is the whole of the sharing proof, and the persisted form of it
- * is what a predecessor root is compared against. It carries the runtime identity - family,
- * contribution predicate, and the argument as a {@code (base column index, column type)}
- * pair - plus the component <b>codec version</b>, so a layout change across a binary
- * upgrade produces a different identity rather than a silent reinterpretation of bytes an
- * older build wrote.
+ * The encoded identity includes family, contribution predicate, argument column and
+ * type, and codec version. Window, frame and anchor identity belong to the enclosing
+ * root. Codec changes must change the identity before old bytes can be reused.
  * <p>
- * The window, frame and anchor identity are <b>not</b> repeated here: a component lives
- * under exactly one window-state root, and the root carries them, so a component identity
- * is only ever compared against another under the same root.
- *
- * <h2>The image is one 64-bit field per runtime slot</h2>
- * {@link #freezeStateInto} writes each of the component's slots as one little-endian
- * 64-bit field, in slot order, which is exactly what the contributing function's own
- * {@code freezeCheckpointState} produces through {@code MemoryA}. The durable width and
- * every field offset therefore follow the runtime slot model rather than being tabulated a
- * second time. A family whose image is not that shape - a DECIMAL accumulator, say - needs
- * a codec of its own and must not be described by this one.
- * <p>
- * {@link #familyCodecVersion} is the list of families this codec covers, and a family joins
- * it only once its contributing implementation writes that exact image: the accumulating
- * families a live view has fused since the first slice, the compensated total, and the four
- * fixed scalar extrema, whose implementations keep the running extremum in one slot and read
- * the family's own identity - {@code LONG_NULL} or NaN - as "no row has contributed".
- * Getting the extrema there took their own value layout down to that one slot: the redundant
- * "initialized" byte they used to keep beside it was a field the group's value has no room
- * for and a byte the component image would have had to carry.
- *
- * <h2>Containment is a claim about two codecs</h2>
- * {@link WindowAccumulatorDescriptor#derivedSlotOffset} names the family pairs whose state
- * one contains the other's; {@link #derivedStateOffset} is the same claim in bytes, and it
- * additionally requires both sides to be at the codec version the claim was proved at. A
- * bump on either side withdraws the fold instead of silently carrying it onto a layout
- * nobody checked.
+ * Each supported runtime slot encodes as one little-endian 64-bit field in slot order.
+ * {@link #familyCodecVersion} admits only families with that layout. Containment via
+ * {@link #derivedStateOffset} additionally requires both codecs at their proven
+ * versions; changing either version withdraws the fold.
  */
 public final class LiveViewAccumulatorDescriptor {
     /**

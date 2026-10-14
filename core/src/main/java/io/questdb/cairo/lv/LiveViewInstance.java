@@ -453,14 +453,8 @@ public class LiveViewInstance implements QuietCloseable {
     // under the refresh latch; volatile so the catalogue thread can read
     // the latest value without additional synchronisation.
     private volatile boolean checkpointRestoreAttempted;
-    // Which route that one attempt took, as a LiveViewCheckpointRecoveryPhase.ROUTE_*
-    // constant, and the root a ROUTE_TIMELINE_RESTORE selected. The route replaces the
-    // boolean "did the restart resolve its derived state" flag this class used to
-    // carry: both the restore and the applied-base rebuild resolve it, so the
-    // boolean named the outcome without naming the operation, and a restore
-    // regression could hide behind the fallback that covered for it. Each route is
-    // recorded by the branch that finished the operation it names. Mutated only
-    // under the refresh latch; volatile for the catalogue thread.
+    // Recovery route and selected root. Mutated under the refresh latch; volatile
+    // for cross-thread observation.
     private volatile int checkpointRestoreRoute = LiveViewCheckpointRecoveryPhase.ROUTE_NONE;
     private volatile long checkpointRestoreCheckpointId = Numbers.LONG_NULL;
     private volatile long checkpointRestoreGeneration = Numbers.LONG_NULL;
@@ -1278,10 +1272,7 @@ public class LiveViewInstance implements QuietCloseable {
      */
     public @Nullable String findFirstMissingOrRetypedColumn(@NotNull RecordMetadata baseMetadata) {
         ObjList<String> deps = definition.getDependencyColumnNames();
-        // unreachable in practice for a normally-created view: a real view always
-        // records its referenced base columns (locked by
-        // LiveViewBaseDdlTest#testDependencyColumnSetIsNonEmpty). Defensive: with no
-        // known deps we leave invalidation to the broader base-DROP/RENAME path.
+        // Without known column dependencies, defer invalidation to the base DROP/RENAME path.
         if (deps.size() == 0) {
             return null;
         }

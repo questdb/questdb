@@ -31,120 +31,28 @@ import io.questdb.std.str.CharSink;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Whether a whole-view rebuild from the applied base would change output the live view
- * already retains, decided before the rebuild's replacement commits.
+ * Rejects a whole-view rebuild that would drop retained output, before replacement
+ * commits. Incremental refresh preserves output for ordinary base TTL, partition loss
+ * and TRUNCATE; recomputing from surviving rows can silently restate that history.
  * <p>
- * Seven routes reach {@code LiveViewRefreshJob}'s whole-view rebuild: a restart that finds
- * the timeline absent (a directory reset for its format, a history-epoch replacement, a
- * timeline an earlier failure retired), a restore that fails, a surviving repair marker, a
- * base schema change the view survives, a refresh that failed mid-drain, and a lost base WAL
- * segment. The two running routes - the schema change and the mid-drain failure - try the
- * restart's own recovery in place first and reach the rebuild only when it cannot restore the
- * accumulators from the view's timeline.
- * The rebuild recomputes the view from the rows its pinned base snapshot holds and replaces
- * the view's whole output, from its lower bound up, with the result. Incremental refresh does
- * not treat base history that way. TTL, DROP/DETACH PARTITION and TRUNCATE are non-DATA
- * operations it walks past: the view keeps the rows it derived from the removed history and
- * its accumulators keep counting them. So once any of them has run, the rebuild drops rows the
- * view has published and restarts accumulations the view had carried forward - a restatement,
- * and a silent one.
- *
- * <h2>The checks</h2>
- * They rest on two properties every live view has: its output's designated timestamp is the
- * base's designated timestamp column, passed through unchanged, and every base row its filter
- * admits produces exactly one output row.
- * <ul>
- *     <li><b>History floor</b>, before the rebuild touches anything: the view holds a row
- *     below the earliest row the pinned base snapshot holds, or holds rows while the base
- *     holds none. That row came from a base row that no longer exists, so the recompute cannot
- *     emit it, and the replacement - which starts at the view's lower bound - deletes it. It
- *     reads two row counts and two minimum timestamps off the transaction files, so a view the
- *     base's TTL has overtaken, which is the common case, is refused without a scan.</li>
- *     <li><b>Row shortfall</b>, after the scan and before the commit: the recompute emits fewer
- *     rows at or below the view's durable frontier than the view's table holds. Every durable
- *     row sits at or below that frontier by definition, so the difference is rows the
- *     replacement would delete and not put back. This is the check that sees a partition
- *     dropped or detached from the middle of the view's range, which leaves the base's
- *     earliest row where it was.</li>
- *     <li><b>Lost partition</b>, before the rebuild touches anything, and only where the row
- *     shortfall stands down (see below): the view holds a row in a range of timestamps no
- *     partition of the pinned base snapshot covers. The base partition that held the row's
- *     source is gone, so the recompute cannot emit it. It reads the base's partition list off
- *     its transaction file and asks the view's table about each range between those partitions
- *     that the view's rows span, opening a partition of the view's table only where the range
- *     cuts through it.</li>
- * </ul>
- *
- * <h2>When it compares less, or nothing</h2>
- * The checks read the view's table as the output of the base transactions the view has
- * consumed, while the rebuild runs at a pinned snapshot that may hold more. The snapshot never
- * holds less: a view draining raw base WAL flushes ahead of the base's own apply, so the rebuild
- * waits for the apply to reach the highest transaction whose output the view's table may hold
- * before it pins, deferring the recovery that asked for it rather than blocking where it cannot.
- * A snapshot behind that point would read the output of the commits it lacks as a loss, which
- * could only refuse a rebuild that restates nothing. The view's un-flushed lead does not count:
- * it is not in the table, and the rebuild drops it. What remains is sound only while every
- * transaction the snapshot holds beyond the view's durable coordinate either adds base rows or
- * removes them the way incremental refresh would have frozen. The guard therefore abstains -
- * lets the rebuild run exactly as it did before the guard existed - when:
- * <ul>
- *     <li>there is nothing to protect: the view's table is empty, or the operator turned the
- *     guard off ({@link #ABSTAIN_DISABLED}, {@link #ABSTAIN_NOTHING_RETAINED});</li>
- *     <li>the view was carried over from an older checkpoint format and rebuilds on upgrade,
- *     where a refusal would leave nothing to resume from ({@link #ABSTAIN_FORMAT_UPGRADE});</li>
- *     <li>a backlog transaction can legitimately lower the output at or below the frontier,
- *     because incremental refresh propagates it and the rebuild restates nothing by following
- *     it: a REPLACE_RANGE commit whose delete band reaches the frontier (a materialized-view
- *     base) or a materialized view's TRUNCATE ({@link #ABSTAIN_BACKLOG_MAY_REMOVE});</li>
- *     <li>a backlog transaction cannot be read, which is what a lost or purged base WAL segment
- *     leaves, and the base is a materialized view, which can produce such a commit
- *     ({@link #ABSTAIN_BACKLOG_UNREADABLE});</li>
- *     <li>the rebuild stands in for a restore from the timeline whose replay of the raw base WAL
- *     disagreed with the view's table, over a deduplicating base. That replay feeds both copies
- *     of a duplicate the base collapsed, which the view drained as one row, so a refusal here
- *     would stop a view on a routine restart; the rebuild follows the base instead and drops
- *     whatever the base lost ({@link #ABSTAIN_DEDUP_RESTORE_MISMATCH}).</li>
- * </ul>
- * For a view with a filter, a third kind of commit lowers the output legitimately: one that
- * reaches the frontier and that the base applied under dedup, whose replacement row may fail
- * the filter the replaced row passed. The snapshot's dedup flag says whether the base applied a
- * commit under dedup unless an {@code ALTER TABLE ... DEDUP ENABLE} or {@code DEDUP DISABLE}
- * follows the commit, and no other schema change can switch dedup on or off. Such a backlog -
- * a commit read, or an unreadable one over a base whose snapshot deduplicates or whose sequencer
- * records a DEDUP change after it - stands down the row shortfall alone
- * ({@link #disarmRowShortfall}, with the same two abstentions). The history floor still
- * compares, and the lost partition check compares in the row shortfall's place: every dedup
- * key set holds the designated timestamp, so a replacement leaves a base row at each timestamp
- * it replaced, in the partition that held the row it replaced. No such commit can move the
- * base's earliest row past a row the view holds, or take away the partition a row the view
- * holds came from. A DEDUP ENABLE or DISABLE after a commit that ran without dedup reads the
- * same on the sequencer as one after a replacement - the dedup state at a commit is not
- * recoverable - so the row shortfall stands down behind it too, and a loss only the row
- * shortfall sees goes unseen: a base partition lost and then re-created by later commits into
- * its range. Any other base has no such commit to hide, so an unreadable backlog does not stop
- * the checks there. Neither does a DEDUP change the sequencer's metadata change log cannot
- * name: the checks compare, and a refusal that follows is one a restart retries.
- *
- * <h2>What it cannot see</h2>
- * The checks detect restatements; they do not prove there are none. Proving the negative would
- * take a record of every row the base ever removed, and QuestDB keeps none: WAL segments are
- * purged once applied, dropped and detached partitions are not archived, and TTL eviction
- * keeps no journal. What passes the checks and still restates:
- * <ul>
- *     <li>a loss that keeps the row count - the base and the view's own table lost the same
- *     prefix, as a TTL on the view matched to the base's leaves them, so the retained rows'
- *     accumulated values change and their count does not;</li>
- *     <li>a loss the backlog masks - base rows inserted at or below the frontier after the
- *     view's durable coordinate add to the recompute what the loss took from it;</li>
- *     <li>a loss only the row shortfall sees, behind a backlog that stood it down: a base
- *     partition lost and then re-created by later commits into its range;</li>
- *     <li>anything in a backlog the guard abstained over;</li>
- *     <li>the rebuild a deduplicating base's restore falls back to when its replay disagrees
- *     with the view's table, which the guard does not check at all.</li>
- * </ul>
+ * The checks rely on unchanged designated timestamps and one output per qualifying
+ * base row. Before replay, reject a view prefix below the base's earliest row. Before
+ * commit, reject fewer recomputed rows through the durable frontier. When shortfall
+ * cannot be compared, check for view rows in timestamp ranges with no base partition.
+ * The pinned base must include every transaction represented by durable view output;
+ * an unflushed lead is outside this comparison.
  * <p>
- * One instance per refresh job, armed per whole-view rebuild and left holding that rebuild's
- * evidence afterwards, which is what the job's caller reads to explain a refusal.
+ * Abstain for disabled checking, empty output, older-format upgrades, dedup-restore
+ * mismatch, or a materialized-view backlog that legitimately removes output. Unreadable
+ * backlog weakens checks only when the base can hide such removals. Filtered dedup
+ * replacement disables shortfall alone: timestamps and partitions remain protected.
+ * Use the snapshot dedup flag and subsequent DEDUP changes; other schema changes do
+ * not prove replacement. Earlier dedup state may be unknowable after a later change.
+ * <p>
+ * These checks detect loss but cannot prove equivalence. Equal-count loss, surplus
+ * backlog masking removed rows, recreated partitions with shortfall disabled, and
+ * abstained rebuilds can still restate output. One worker arms this guard per rebuild
+ * and retains the evidence afterward for the refusal reason.
  */
 public final class LiveViewRebuildRestatementGuard implements Mutable {
     /**

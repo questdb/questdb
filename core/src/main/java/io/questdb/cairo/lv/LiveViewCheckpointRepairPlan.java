@@ -34,160 +34,32 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Everything one out-of-order repair decides before it touches anything: the
- * pinned base snapshot it works against, the change-set coordinates derived
- * from that snapshot, and which executor runs. This is the pin-and-classify
- * half of a repair, split out of the execution so both repair executors read
- * one decision instead of re-deriving their own.
+ * Repair coordinates and disposition derived from one caller-pinned base snapshot E.
+ * Planning and execution must use that same reader so bounds describe the rows replay
+ * will read. {@link LiveViewCheckpointContracts} defines the coordinate spaces.
  * <p>
- * The caller pins exactly one applied base reader for the whole repair and hands
- * its {@code seqTxn} in as {@code pinnedSeqTxn} ({@code E}). Planning against one
- * pinned snapshot is what makes the coordinates below mutually consistent: a
- * second reader opened later could sit at a different {@code seqTxn}, and the
- * bounds derived here would no longer describe the data the replay reads.
+ * C is the DATA correction floor clamped to START FROM S; LONG_NULL gives no deletion
+ * authority. retireLowTs additionally includes apply-ahead changes, or retires everything
+ * when they are unclassifiable. Replay scans from L, warms without output in [L, R),
+ * and replaces [R, H). EOF is a separate tag: Long.MAX_VALUE remains a valid timestamp.
  * <p>
- * The coordinates:
- * <ul>
- *     <li>{@code C} - {@link #getCorrectionTs() correctionTs}, the earliest
- *     timestamp whose existing live-view output may have changed: the triggering
- *     commit's lowest touched timestamp clamped up to the view's {@code START
- *     FROM} boundary {@code S}. {@link Numbers#LONG_NULL} for a non-DATA or
- *     recovery trigger, which authorises no deletion at all.</li>
- *     <li>{@code E} - {@link #getPinnedSeqTxn() pinnedSeqTxn}, the applied base
- *     {@code seqTxn} the repair materialises and commits at.</li>
- *     <li>{@link #getRetireLowTs() retireLowTs} - the floor at or above which
- *     this repair unseals retained checkpoints. Equal to {@code C} on the common
- *     path; lowered to the apply-ahead range's minimum in-view timestamp when
- *     {@code ApplyWal2TableJob} raced the reader past the trigger, and
- *     {@code LONG_NULL} (retire everything) when that range is unclassifiable.</li>
- *     <li>{@code L} - {@link #getReplayLowTs() replayLowTs}, the inclusive
- *     timestamp the replay <b>scans</b> from: the earliest row needed to
- *     reconstruct state immediately before the output floor. A resume floors it at
- *     the anchor's {@code maxTs + 1}; a boundary rebuild floors it at whatever the
- *     view's finite dependency proves - {@code max(S, R - W)} for a bounded RANGE
- *     view, a discovered per-key floor for a bounded ROWS one, the start of
- *     {@code R}'s segment for an anchored one - and at {@code S} when the view
- *     carries none.</li>
- *     <li>{@code R} - {@link #getOutputLowTs() outputLowTs}, the inclusive
- *     timestamp the replay <b>emits and replaces</b> from. Never below {@code L}:
- *     rows in {@code [L, R)} are fed to warm the window state up and produce no
- *     output, because their durable output is already correct.</li>
- *     <li>{@code H} - {@link #getHighBoundTag() highBoundTag} plus
- *     {@link #getHighTsExclusive() highTsExclusive}, the tagged exclusive bound
- *     after which every eligible function has converged. Finite for a view whose
- *     dependency proves one and whose pre-repair runtime state survives the repair -
- *     {@code changeMaxTs + W + 1} for a bounded RANGE view, the discovered
- *     convergence timestamp for a bounded ROWS one, the end of
- *     {@code changeMaxTs}'s segment for an anchored one - and
- *     {@link HighBoundTag#EOF} otherwise.</li>
- * </ul>
- * The high bound is tagged rather than a bare {@code long} because no timestamp
- * value can also mean infinity: an exclusive bound one past
- * {@code Long.MAX_VALUE} is not representable, and spelling it
- * {@code Long.MAX_VALUE} would exclude a row sitting there. Its one consumer
- * today is {@link #getScanHighTsInclusive()}, which both executors hand to the
- * bounded forward page-frame cursor; an {@code EOF} plan therefore scans
- * through positive infinity exactly as an unbounded scan did.
+ * Finite dependencies prove bounds without a checkpoint: RANGE uses timestamp width,
+ * ROWS discovers per-key predecessor and convergence positions, and a fixed anchor
+ * uses reset boundaries. Every function must be covered. Mixed shapes take minimum L
+ * and maximum H; any EOF arm makes the union EOF.
  * <p>
- * The {@code L}/{@code R} split is what makes a correction older than every
- * sealed anchor local. A boundary rebuild has no anchor to restore from, but a
- * bounded {@code RANGE W PRECEDING ... CURRENT ROW} view needs none: the state
- * a row at {@code R} sees is exactly the rows in {@code [R - W, R]}, so
- * replaying from {@code L = R - W} reconstructs it without reading a single row
- * below that. The finite dependency, rather than checkpoint availability,
- * provides the lower bound. {@link #isLocalized()} reports when that applies;
- * without it the two floors collapse to {@code S} and the rebuild reads the
- * whole view history as before.
+ * ROWS discovery requires insert-only changes because deleted keys can disappear from
+ * the post-change snapshot. It also requires finite H and preserved runtime: unlike
+ * RANGE or anchor state, an inactive key's ROWS state never expires by time and cannot
+ * be recovered by promoting a replay that starts at L.
  * <p>
- * The same width bounds the repair from above. A row at {@code m} sits in the frame
- * of every row in {@code [m, m + W]} and in no other, so a change whose highest
- * touched timestamp is {@code changeMaxTs} cannot reach output at or above
- * {@code changeMaxTs + W + 1}. That is {@code H}, and because every incorporated
- * change sits in {@code [R, H)} by construction, the durable output above {@code H}
- * stays correct while the watermark advances over the whole pinned snapshot.
+ * Resume scans above the selected root through EOF. Compare its price with localized
+ * rebuild against the same snapshot; ties, unavailable prices and unlocalized rebuilds
+ * keep a usable resume. ROWS discovery must precede pricing and has its own budget.
  * <p>
- * A bounded {@code ROWS N PRECEDING ... CURRENT ROW} view reaches the same two
- * bounds by a different route. {@code Nmax} counts rows of one partition key, so
- * neither bound has a closed form: how far back a key's {@code Nmax} predecessors
- * sit, and how far above the change its output stops moving, are properties of
- * where that key's rows actually are. The plan therefore hands the floor {@code R}
- * to a {@link RowsBoundSource} and reads {@code L} and {@code H} off the discovery
- * it runs over the same pinned snapshot. Two conditions the RANGE path does not
- * carry gate that call:
- * <ul>
- *     <li>the incorporated change set must be provably insert-only. The discovery
- *     reads the affected key domain {@code A} off the post-change snapshot, so a
- *     deletion that emptied a key out of the change interval would leave it
- *     invisible there while its later rows still pull older history into their
- *     frames. RANGE needs no such proof - its bound is key-independent arithmetic
- *     over an interval a deletion cannot escape.</li>
- *     <li>{@code H} must come back {@link HighBoundTag#FINITE}. A ROWS frame never
- *     expires by time, so a key whose rows all sit below {@code L} holds state a
- *     replay from {@code L} cannot reconstruct. A finite {@code H} keeps the
- *     pre-repair runtime state (see {@link #isRuntimeStatePreserved()}) and the
- *     question does not arise; an {@code EOF} one would promote what the replay
- *     ends on, losing exactly those keys. RANGE promotes safely because its frame
- *     at any row at or above {@code R} spans no further back than {@code L}.</li>
- * </ul>
- * <p>
- * An anchored view reaches the same two bounds without a frame at all. Its anchor
- * resets every function on it the moment the anchor value changes, so one segment -
- * a maximal run of rows sharing an anchor value - is a wall in both directions, and
- * {@link LiveViewCheckpointAnchorPlan} puts both walls where timestamp arithmetic
- * alone says they are: {@code L} is the start of the segment holding {@code R} and
- * {@code H} the end of the segment holding {@code changeMaxTs}. Both are
- * key-independent, so the anchor path needs no insert-only proof - it is the RANGE
- * path's shape with the segment standing in for the width, down to localizing
- * behind an {@code EOF} bound when the anchor names no segment end at all. The one
- * thing it does need is that every window function on the view is actually reset by
- * that anchor, which the compiler decides before it hands the plan over.
- * <p>
- * A factory may carry more than one of the three shapes, and then the plan takes
- * their <b>union</b>: the earliest {@code L} and the latest {@code H} any of them
- * proves. Both directions are safe to widen. A warm-up that starts below a
- * function's own {@code L} feeds it rows that leave the frame again - or that a
- * later anchor reset throws away - before the output floor is reached, so its
- * state at {@code R} is what a whole-history replay would hold; and output above
- * a function's own {@code H} has converged, so re-emitting it reproduces what is
- * already stored there. What may not be widened is the <i>tag</i>. {@code EOF}
- * sits above every timestamp, so one arm that proves no finite bound sinks the
- * union to {@code EOF} - and a ROWS function cannot survive that (see
- * {@link #isRuntimeStatePreserved()}), so a factory holding one declines the whole
- * localization rather than promoting a runtime that has lost its keys. RANGE and
- * the anchor both survive it, because both expire by time: the state a promotion
- * drops belongs to keys whose frame - or whose segment - has already thrown it
- * away. The caller is responsible for handing over a complete set: every window
- * function must be covered by one of the three, or none of them describes the
- * view.
- * <p>
- * Which of the two dispositions runs is decided on price, not on availability. A
- * resume reads {@code [anchorMaxTs + 1, EOF)} - its high bound is end-of-frame, so
- * nothing stops it below the end of the base table - while a localized rebuild
- * reads {@code [L, H)}. Neither dominates: a change near the head leaves the resume
- * a short tail that no warm-up can beat, and a change deep in history leaves it the
- * whole view above the correction while the dependency interval stays the width of
- * one frame. The plan therefore derives the rebuild bounds even when an anchor is
- * available, prices both intervals through {@link ScanCostSource} against the same
- * pinned snapshot, and takes the cheaper; a tie, an unpriceable repair and a rebuild
- * that could not localize all keep the resume, which needs no warm-up and stages
- * nothing. This is what stops a dense checkpoint cadence from defeating the
- * localization: the anchor a cadence leaves just below an old correction is exactly
- * the anchor whose resume replays every row above it.
- * <p>
- * A later extension adds the affected/output key domains {@code A}/{@code Q} to
- * the plan itself. For the timestamp-global RANGE replacement they are degenerate:
- * {@code Q} is every key with a qualifying row in {@code [R, H)}, which is exactly
- * what the replay emits when it re-evaluates the whole interval, and {@code A} does
- * not enter the bounds at all because {@code L} and {@code H} are key-independent
- * timestamp arithmetic. Both are load-bearing for the ROWS shapes, and the
- * discovery behind {@link RowsBoundSource} already derives them; only the bounds
- * they produce cross back into the plan.
- * <p>
- * One instance per refresh job, reused across repairs - {@link #of} overwrites
- * every field, so no reset is needed between plans. The output key domain it derives
- * lives in native memory the plan owns, which the refresh job frees when it closes. A
- * repair session holds a copy of the plan that carries no domain (see {@link #copyFrom}),
- * and closes it when it ends.
+ * One worker reuses this plan; of() overwrites its decisions. The plan owns its native
+ * output-key domain. Parked sessions copy the plan without that domain and close the
+ * copy when the session ends.
  */
 public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
     /**
@@ -795,111 +667,30 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
     }
 
     /**
-     * Classifies one out-of-order change against one pinned base snapshot and
-     * selects the executor.
+     * Classifies the change and chooses resume or boundary rebuild. Search below the raw
+     * trigger timestamp, then below apply-ahead changes; START FROM clamps deletion
+     * authority, not anchor trust. Derive rebuild bounds even with a usable anchor so
+     * pricing can select the smaller interval. Resume wins ties or missing prices.
      * <p>
-     * Anchor selection runs in two steps, mirroring the two ways a resume can be
-     * defeated:
-     * <ol>
-     *     <li>The anchor must sit strictly below the late row: a boundary at or
-     *     above it already incorporates rows the change invalidates. The search
-     *     runs on the raw trigger timestamp - the {@code START FROM} clamp governs
-     *     deletion authority, not which state a resume may trust - and returns the
-     *     newest qualifying boundary, which on the common path is the newest
-     *     boundary the timeline holds.</li>
-     *     <li>When apply raced ahead, the anchor must additionally sit below every
-     *     timestamp those un-examined transactions hold: the resume only re-reads
-     *     base above the anchor, so a back-dated row below it would be dropped and
-     *     advancing the watermark over it would lose it permanently. The plan
-     *     therefore re-searches below {@code min(C, applyAheadMinTs)} and rebuilds
-     *     from the boundary when nothing qualifies.</li>
-     * </ol>
-     * A repair with no usable anchor rebuilds from the boundary. That rebuild is
-     * localized to {@code [L, ...)} when the view carries a finite RANGE dependency
-     * and the trigger carries a timestamp; otherwise it reads the whole view
-     * history, which needs no such guarantee either.
-     * <p>
-     * A qualifying anchor does not settle the question. The rebuild bounds are derived
-     * either way and both intervals priced through {@code scanCostSource}, because an
-     * anchor sitting just below an old correction buys a resume that still replays
-     * every row above it - the very cost the dependency interval bounds. The resume
-     * takes a tie and every repair the comparison cannot reach: a rebuild that did not
-     * localize reads the whole view history and can never be the cheaper of the two.
+     * RANGE, ROWS and anchor inputs must jointly cover every function. A partial dependency
+     * set cannot safely bound the replay.
      *
-     * @param anchors                 the versioned timeline's predecessor lookup
-     *                                over the logical boundaries a resume may roll
-     *                                back to
-     * @param lateRowTs               lowest timestamp the triggering DATA commit
-     *                                touched, or {@link Numbers#LONG_NULL} for a
-     *                                non-DATA / recovery trigger
-     * @param viewLowerBoundTimestamp the view's {@code START FROM} boundary
-     *                                {@code S}
-     * @param triggerSeqTxn           base {@code seqTxn} that triggered the repair
-     * @param pinnedSeqTxn            {@code seqTxn} of the pinned base reader
-     *                                ({@code E}); never below
-     *                                {@code triggerSeqTxn}
-     * @param applyAheadMinTs         minimum in-view timestamp of the apply-ahead
-     *                                range, or {@link Numbers#LONG_NULL} when that
-     *                                range is unclassifiable; ignored unless
-     *                                {@link #isApplyAheadClassificationRequired}
-     *                                holds
-     * @param rangeFrameWidth         the widest finite RANGE look-behind {@code W} among
-     *                                the view's RANGE window functions, in
-     *                                designated-timestamp units, or
-     *                                {@link Numbers#LONG_NULL} when the view has none
-     * @param rowsBoundSource         the view's finite ROWS discovery, or null when the
-     *                                view has no ROWS window function
-     * @param anchorPlan              the view's fixed anchor segment, or null when the view
-     *                                is unanchored, the anchor has no closed-form segment
-     *                                boundary, or an anchored window function is not reset
-     *                                by that anchor
-     *                                <p>
-     *                                The three describe disjoint sets of window functions
-     *                                and a factory may carry several at once, in which case
-     *                                the bounds are their union. The caller must hand over a
-     *                                set that covers every window function in the view -
-     *                                {@code LiveViewCheckpointFunctionCompiler.isDependencyComplete}
-     *                                is what proves it - because a function outside the
-     *                                union is one the replay cannot reconstruct
-     * @param insertOnlyChangeSet     whether every change this repair incorporates only
-     *                                added rows. Gates the ROWS discovery, whose affected
-     *                                key domain is read off the post-change snapshot and
-     *                                would miss a key a deletion emptied out of the change
-     *                                interval. Ignored by the RANGE path, whose bounds a
-     *                                deletion cannot escape
-     * @param durableOutputMaxTs      the highest designated timestamp the live-view
-     *                                table durably holds, or
-     *                                {@link Numbers#LONG_NULL} when it holds no row
-     *                                at all; a lower bound on {@code D}, the
-     *                                earliest output the runtime incorporated but
-     *                                has not made durable
-     * @param changeMaxTs             the highest designated timestamp any change
-     *                                this repair incorporates touched - the
-     *                                triggering commit, everything the drain rolled
-     *                                back with it, and the apply-ahead range - or
-     *                                {@link Numbers#LONG_NULL} when the caller
-     *                                cannot bound it (a non-DATA or structural entry
-     *                                in the incorporated range, an unclassified
-     *                                apply-ahead range, or a caller that does not
-     *                                track it)
-     * @param runtimeFrontierTs       the highest designated timestamp the runtime
-     *                                window state has incorporated, or
-     *                                {@link Numbers#LONG_NULL} when the repair
-     *                                cannot or must not put that state back
-     *                                afterwards: the view has no checkpoint-state
-     *                                support (a window function without it, or an
-     *                                anchored view whose partition key types the
-     *                                anchor state cannot encode), or the newest
-     *                                root's timestamp group has grown since its
-     *                                seal, which a converging repair would keep
-     *                                without the tie. A ROWS view reports either as
-     *                                {@link #DENIAL_NO_RUNTIME_FRONTIER}, and the
-     *                                caller replaces that with
-     *                                {@link #DENIAL_GROWN_HEAD_GROUP} for the second
-     * @param scanCostSource          prices a candidate scan interval against the pinned
-     *                                snapshot, or null to leave the choice between a
-     *                                qualifying anchor and a localized rebuild
-     *                                unpriced - which keeps the anchor
+     * @param anchors                 predecessor lookup for resume roots
+     * @param lateRowTs               lowest touched DATA timestamp, or LONG_NULL for recovery/non-DATA
+     * @param viewLowerBoundTimestamp START FROM boundary S
+     * @param triggerSeqTxn           triggering base seqTxn
+     * @param pinnedSeqTxn            pinned reader seqTxn E, at least triggerSeqTxn
+     * @param applyAheadMinTs         lowest in-view apply-ahead timestamp, or LONG_NULL if unclassifiable
+     * @param rangeFrameWidth         widest finite RANGE look-behind in timestamp units, or LONG_NULL
+     * @param rowsBoundSource         finite ROWS discovery, or null
+     * @param anchorPlan              fixed segment plan resetting all covered functions, or null
+     * @param insertOnlyChangeSet     whether all incorporated changes only added rows; required for ROWS
+     * @param durableOutputMaxTs      durable output frontier, or LONG_NULL for an empty view
+     * @param changeMaxTs             ceiling of all incorporated changes, including discarded draft and
+     *                                apply-ahead rows, or LONG_NULL if unknown
+     * @param runtimeFrontierTs       runtime frontier, or LONG_NULL when it cannot be preserved; the caller
+     *                                distinguishes a grown head group from missing checkpoint support
+     * @param scanCostSource          pinned-snapshot pricing, or null to keep a usable anchor
      */
     public void of(
             @NotNull AnchorSource anchors,
@@ -1058,62 +849,20 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
     }
 
     /**
-     * Classifies one <b>closed anchor segment</b> of an already-decomposed change set,
-     * rather than the change set as a whole.
-     * <p>
-     * The union range a whole-change-set plan derives is what makes a deep correction
-     * expensive: {@code changeMaxTs} is the highest timestamp anything in the change set
-     * touched, so a commit carrying rows at the head and rows a month back puts {@code H}
-     * at the end of <i>today's</i> segment - above the runtime frontier, which denies the
-     * localization outright - and the resume that replaces it replays and rewrites the
-     * whole month. Neither is a property of the correction: under a pure fixed-anchor plan
-     * the anchor resets every stateful function at the segment boundary, so the rows in
-     * one old segment reach that segment's output and nothing else.
-     * <p>
-     * So the bounds come out of the same derivation with the segment's own extremes
-     * standing in for the change set's: {@code L} at the segment's start, {@code H} at its
-     * end, and a replacement covering that range alone. Two inputs are deliberately
-     * withheld:
-     * <ul>
-     *     <li><b>the anchor source.</b> A resume reads {@code [anchorMaxTs + 1, EOF)} -
-     *     its high bound is end-of-frame - so winning the price comparison would put the
-     *     union range back. A segment repair is the localized rebuild or it is nothing;
-     *     the caller falls back to the whole-change-set plan when this returns false.</li>
-     *     <li><b>the apply-ahead range.</b> The caller classified the whole range
-     *     {@code (fromSeqTxn, E]} row by row to produce the decomposition, so the ahead
-     *     range's rows are already in the segment they belong to. Re-deriving its scalar
-     *     minimum here would drop the retire floor back to the deepest row in the whole
-     *     change set and widen every segment's bounds into the union again.</li>
-     * </ul>
-     * {@code viewLowerBoundTimestamp} still clamps the correction floor, but the
-     * {@code DENIAL_VIEW_START_FLOOR} guard behind it cannot fire the way it does for a
-     * RANGE or ROWS shape: a floor landing on {@code S} leaves those reading the whole view
-     * history, while a segment repair still reads one segment. It is left in place because
-     * a floor at {@code S} also means the segment arithmetic and the view's boundary
-     * disagree about where this repair starts, and the caller's fallback is cheap.
+     * Plans one already-classified closed anchor segment. Withhold both predecessor
+     * resume and scalar apply-ahead classification: either could widen this segment back
+     * to the change set's union range. The decomposition already assigned apply-ahead rows
+     * to their segments. Only a localized rebuild with finite H is admissible.
      *
-     * @param segmentMinTs            the lowest in-view timestamp the change set touched
-     *                                inside this segment, already clamped above the view's
-     *                                {@code START FROM} boundary by the decomposition
-     * @param segmentMaxTs            the highest in-view timestamp the change set touched
-     *                                inside this segment
-     * @param viewLowerBoundTimestamp the view's {@code START FROM} boundary {@code S}
-     * @param pinnedSeqTxn            {@code seqTxn} of the pinned base reader ({@code E}),
-     *                                the snapshot the replay reads from
-     * @param commitSeqTxn            the watermark this repair commits at - the pre-repair
-     *                                value, since the rest of the change set stays
-     *                                unconsumed. See {@link #getCommitSeqTxn()}
-     * @param anchorPlan              the view's fixed anchor segment; never null, because a
-     *                                change set only decomposes for a view that has one
-     * @param durableOutputMaxTs      the highest designated timestamp the live-view table
-     *                                durably holds
-     * @param runtimeFrontierTs       the highest designated timestamp the runtime window
-     *                                state has incorporated
-     * @return true when the segment came back localized behind a finite convergence
-     * boundary, which is the only shape a per-segment repair may run in. A segment that
-     * localized behind an {@code EOF} bound - which a whole-change-set anchored repair
-     * runs in, but this one may not - comes back false carrying the denial the missing
-     * finite bound implies
+     * @param segmentMinTs            lowest touched timestamp in the segment, clamped to START FROM
+     * @param segmentMaxTs            highest touched timestamp in the segment
+     * @param viewLowerBoundTimestamp START FROM boundary S
+     * @param pinnedSeqTxn            pinned base snapshot E
+     * @param commitSeqTxn            pre-repair watermark, keeping remaining segments unconsumed
+     * @param anchorPlan              non-null fixed anchor plan
+     * @param durableOutputMaxTs      durable output frontier
+     * @param runtimeFrontierTs       runtime window frontier
+     * @return true for a localized finite segment; otherwise the caller must plan the union
      */
     public boolean ofSegment(
             long segmentMinTs,
@@ -1178,132 +927,26 @@ public final class LiveViewCheckpointRepairPlan implements QuietCloseable {
     }
 
     /**
-     * Derives the boundary rebuild's floors and its tagged high bound: the output floor
-     * {@code R} every dependency shape shares, then the union of the {@code L}/{@code H}
-     * pairs the shapes this view carries prove.
+     * Derives R and the union of each dependency's [L, H). Use retireLowTs rather than C
+     * so apply-ahead rows are included before advancing the watermark. R is clamped down
+     * to durableOutputMaxTs, a lower bound on non-durable output, and up to START FROM S.
      * <p>
-     * The change floor is {@link #getRetireLowTs() retireLowTs}, not {@code C}. The
-     * two differ only under apply-ahead, and there the difference is load-bearing:
-     * the rebuild materialises the whole pinned snapshot and then advances the
-     * watermark past it, so a back-dated row in the range {@code ApplyWal2TableJob}
-     * raced past the trigger would be dropped for good if the floors stopped at
-     * {@code C}. {@code retireLowTs} already carries {@code min(C, applyAheadMinTs)}
-     * for exactly this reason, and is {@link Numbers#LONG_NULL} when that range
-     * cannot be classified - which refuses localization outright, since nothing then
-     * bounds what changed.
+     * RANGE contributes L = max(S, R - W), H = changeMaxTs + W + 1. Anchors contribute
+     * segmentStart(R) and segmentEndExclusive(changeMaxTs); R can precede the change's
+     * segment when a discarded lead needs re-emission. ROWS contributes discovered bounds.
+     * Widening either end is safe, but EOF dominates all finite high bounds.
      * <p>
-     * {@code R = max(S, min(changeFloor, D))}. The change floor alone would be wrong:
-     * output the runtime has already incorporated but not made durable - a discarded
-     * in-RAM lead, a rolled-back current-turn draft - exists nowhere else, so a floor
-     * above it would drop those rows permanently. {@code durableOutputMaxTs} is the
-     * live-view table's own frontier and therefore a lower bound on {@code D}: every
-     * such row was produced after the last flush, so it sits at or above that
-     * frontier. Clamping {@code R} down to it re-emits at worst the topmost durable
-     * timestamp group, which the replay reproduces identically. A floor that lands back
-     * on {@code S} localizes nothing - the rebuild reads and re-emits the whole view
-     * history either way - so the executor keeps its established
-     * {@code replayMinTs}-clamped replacement boundary instead.
+     * Finite H requires a known change ceiling and runtime frontier, durable output through
+     * that frontier, and frontier >= H. The supplied frontier may conservatively lag state;
+     * the ceiling must still include every row already fed in the discarded draft.
+     * ROWS additionally requires insert-only changes and finite H to preserve inactive
+     * keys' state. RANGE and anchors can promote an EOF replay because their state expires
+     * by time; the anchor path nevertheless refuses non-durable frontier output.
      * <p>
-     * Each shape then contributes its own pair, and the plan keeps the lowest {@code L}
-     * and the highest {@code H}:
-     * <ul>
-     *     <li><b>finite RANGE:</b> {@code L = max(S, R - W)} and
-     *     {@code H = changeMaxTs + W + 1}. A {@code RANGE W PRECEDING ... CURRENT ROW}
-     *     frame at {@code t} spans {@code [t - W, t]}, so feeding {@code [L, R)} leaves
-     *     every such function holding exactly the state a whole-history replay would
-     *     hold at {@code R} - the frame contents, not an accumulated prefix - and a row
-     *     at {@code m} sits in the frame of every row in {@code [m, m + W]} and no
-     *     other.</li>
-     *     <li><b>fixed anchor segment:</b> {@code L = max(S, segmentStart(R))} and
-     *     {@code H = segmentEndExclusive(changeMaxTs)}. The anchor is a wall in both
-     *     directions: a row at {@code t} reads state only from rows at or above
-     *     {@code segmentStart(t)}, because the reset there put every function on the
-     *     anchor back to identity, and a row at {@code m} reaches output only within
-     *     {@code m}'s own segment. Both are pure timestamp arithmetic - no key domain
-     *     enters either. Both also rest on the segment being an interval of the
-     *     timestamp, which a zone floor need not make it: a DST fall-back can hand one
-     *     anchor value two disjoint intervals, and an {@code H} at the end of the lower
-     *     one would leave the upper one holding stale output. That is the plan's to
-     *     refuse rather than this arm's to reason about, and
-     *     {@link LiveViewCheckpointAnchorPlan#getSegmentEndExclusive} does refuse it,
-     *     which reaches this arm as {@code H = EOF}. The floor is deliberately not
-     *     {@code segmentStart(changeMaxTs)}: the replacement re-emits from {@code R},
-     *     and when a non-durable lead dropped {@code R} into an earlier segment the
-     *     replay has to reconstruct that segment's state too.</li>
-     *     <li><b>finite ROWS:</b> both bounds come back from the per-key discovery,
-     *     because {@code Nmax} counts rows of one partition key and where those rows
-     *     sit is a property of the data rather than of the frame.</li>
-     * </ul>
-     * Widening either end of the union is safe. A warm-up starting below a function's
-     * own {@code L} feeds it rows that leave the frame again - or that a later anchor
-     * reset discards - before {@code R}, and output above a function's own {@code H}
-     * has converged, so re-emitting it reproduces what is already stored.
-     * <p>
-     * The guards, and which shapes they bind:
-     * <ul>
-     *     <li>the ROWS discovery reads the affected key domain {@code A} off the
-     *     post-change snapshot, so a deletion that emptied a key's rows out of the
-     *     change interval leaves it invisible there while its later rows still pull
-     *     older history into their frames. A change set that is not provably
-     *     insert-only therefore declines a view holding a ROWS function outright.
-     *     RANGE and the anchor need no such proof - their bounds are key-independent
-     *     arithmetic over an interval a deletion cannot escape.</li>
-     *     <li>a finite {@code H} needs a known {@code changeMaxTs} (a non-DATA or
-     *     structural entry in the incorporated range can change rows anywhere), a known
-     *     runtime frontier, and every output row the runtime produced already durable.
-     *     The last closes the direction the frontier does not: output that exists only
-     *     in an un-flushed lead or a rolled-back draft sits above the durable frontier,
-     *     and a replacement stopping at {@code H} would neither re-emit it nor leave it
-     *     on disk. Only the ROWS arm turns a missing input into a denial; the RANGE and
-     *     anchor arms read all three as an {@code EOF} tag and localize behind it. The
-     *     anchor arm keeps the durability term as a denial of its own even so. The
-     *     {@code EOF} repair it would otherwise take is not unsafe - it clamps {@code R}
-     *     at {@code durableOutputMaxTs}, re-emits the whole tail and promotes what the
-     *     replay ends on - but a repair runs against a quiesced runtime whose output is
-     *     already flushed, so keeping the term costs the ordinary repair nothing and
-     *     leaves the un-flushed lead a case the anchor path never has to reason
-     *     about.</li>
-     *     <li>the frontier must sit at or above the union's {@code H}, which proves the
-     *     change is outside the frame the runtime currently holds - so the pre-repair
-     *     state is correct and must be restored rather than replaced by the state the
-     *     replay ends on. The frontier the caller supplies may be a lower bound on where
-     *     the runtime's state actually stands - a drain that fed in-order commits through
-     *     the window cursor and then rolled the hand-off back leaves the watermark behind
-     *     the state. That direction is safe (a lower bound only makes the comparison
-     *     stricter), and the case does not slip through in disguise either: those same
-     *     commits are in the change set, so they raise {@code changeMaxTs}, {@code H}
-     *     lands above them, and the comparison refuses. Which is why the caller's ceiling
-     *     has to cover the whole incorporated range rather than the triggering commit
-     *     alone.</li>
-     *     <li>a ROWS function cannot be localized behind an {@code EOF} bound. A ROWS
-     *     frame never expires by time - it holds a key's last {@code Nmax} rows however
-     *     old they are - so a key with no row at or above {@code R} keeps state a replay
-     *     from {@code L} never sees. Only a finite {@code H} puts the pre-repair runtime
-     *     state back over the replay's (see {@link #isRuntimeStatePreserved()}); an
-     *     {@code EOF} one would promote the replay's state and lose exactly those keys.
-     *     RANGE and the anchor localize their floors behind either tag, and for the same
-     *     reason: both expire by time. A RANGE frame at any row at or above {@code R}
-     *     reaches no further back than {@code L}; and for an anchor, {@code L} is the
-     *     start of {@code R}'s segment, so a key with no row at or above {@code L} has
-     *     no row in that segment at all - the anchor resets its accumulator the moment
-     *     its next row arrives, and it emits nothing at or above {@code R} in the
-     *     meantime. The promotion loses only state the anchor was going to discard.</li>
-     * </ul>
-     * Everything collapses to the whole-history rebuild - both floors at {@code S} and
-     * {@code H} left at end-of-frame - when there is no change floor, when the live-view
-     * table holds no durable row at all, or when the view carries no finite dependency
-     * of any shape. The caller has already written that rebuild into the floors, so
-     * every guard below returns rather than restating it.
-     * <p>
-     * No cost guard stands in front of the ROWS discovery, and none can. The rebuild
-     * beats the resume exactly when the rows it adds below the anchor's floor are fewer
-     * than the rows the resume adds above {@code H}, and both quantities need the very
-     * bounds the discovery returns: the interval every shape is known to read without
-     * asking - {@code [R, changeMaxTs]} - sits inside the resume's tail whenever the
-     * anchor is below {@code R}, which the anchor search guarantees on the common path.
-     * So an anchored repair over a view holding a bounded ROWS function pays the
-     * discovery even when the resume goes on to win. The discovery's own scan budget is
-     * what bounds that, and the alternative it buys is an unbounded tail replay.
+     * Unknown change floor, empty durable output or incomplete dependencies leave the
+     * whole-history defaults intact. ROWS discovery precedes pricing: only its bounds can
+     * show whether the localized interval is cheaper than resume, so its scan budget must
+     * bound the discovery itself.
      */
     private void deriveRebuildBounds(
             long viewLowerBoundTimestamp,

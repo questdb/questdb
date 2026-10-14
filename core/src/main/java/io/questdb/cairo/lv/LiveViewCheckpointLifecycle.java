@@ -41,72 +41,22 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Primary-owned lifecycle operations for the versioned checkpoint timeline.
- *
- * <p>Startup reconciliation is bounded by physical segment count. It discards
- * the candidate of every crashed repair through
- * {@link LiveViewCheckpointRepairState#sweep}, removes recognized temporary
- * files, removes every final name the generation it adopts does not catalogue,
- * and records the final-name files above both valid A/B slot id ceilings that it
- * had no catalogue to ask about. Those last are removed only after a new slot
- * advances past them, preserving monotonic allocation. Reconciliation walks the
- * segment catalogue but never the logical checkpoint leaves below it.
- * Zero-reference deletion delegates to {@link LiveViewCheckpointDataStore},
- * retaining its old-slot, reader-pin, candidate-ownership, and retry guards.</p>
- *
- * <p>That id-ceiling rule needs a reconciliation to read the ceiling before the
- * next publication moves it, which only a restart and a failed {@code append}
- * give it. {@link #purgeUncataloguedSegments} states the same disposition
- * against the catalogue instead, so it holds whatever the ceiling has since done.
- * Reconciliation applies it to every generation it adopts and the purge cadence
- * applies it on every sweep, so the two rules no longer overlap: the ceiling
- * decides only what no catalogue can speak for, which is a directory carrying no
- * valid generation at all. There every final name is an orphan by definition, and
- * no publication is there to have moved the ceiling off it.</p>
- *
- * <p>Ahead of all of that, reconciliation classifies the directory as a whole. A
- * top-level entry outside the current layout, or a {@code _timeline} whose magic
- * this build does not recognize, means a build with a different on-disk format
- * owned this directory and left nothing behind that says what it holds. Such a
- * directory is removed rather than migrated or partially recovered: the primary
- * rebuilds the timeline from the base table on its next refresh, and no
- * reconciliation rule ever meets a mix of two formats.</p>
- *
- * <p>A {@code _timeline} that does declare a format version, and declares one
- * this build does not implement, is the exception. That is the format boundary
- * rather than damage: another build's generation, announcing itself. The
- * reconciliation touches nothing and reports {@link ReconcileResult#isFormatBlocked()},
- * and the direction of the declared version decides what the caller does next.</p>
- *
- * <p>A newer version is a rollback: this build meets a directory a later build owns.
- * Removing it would rebuild the view's whole output from whatever source rows survive
- * today, which TTL, DROP/DETACH PARTITION and TRUNCATE can have moved on from, and it
- * would destroy what a return to that build needs. So the caller stops the view's
- * refresh and holds the directory for it; see {@link LiveViewCheckpointRecoveryPhase}.</p>
- *
- * <p>An older version is an upgrade, and the result also reports
- * {@link ReconcileResult#isFormatUpgrade()}. Live views were beta in the builds that
- * wrote those layouts, and this build rebuilds such a view from its base table on its
- * first refresh rather than asking the operator to re-create it. The reconciliation
- * still leaves the directory whole: while the older superblock exists, every restart
- * re-derives the pending rebuild from it, so a crash anywhere before the rebuild
- * retires the directory repeats the rebuild instead of losing it.</p>
- *
- * <p>Neither disposition takes a {@code _timeline} whose one foreign-looking slot
- * is damaged beside an intact one. A slot declares a format by naming its version
- * twice, in the version field and in the magic's nibble; a slot where the two
- * disagree is what one flipped bit leaves behind. While the other slot is one this
- * build can select, reconciliation adopts that slot's generation exactly as it
- * would after a torn write, and the next publication overwrites the damaged slot.
- * See {@link LiveViewCheckpointSuperblock#foreignFormatVersion} and
- * {@link LiveViewCheckpointSuperblock#isForeignFormat}.</p>
- *
- * <p>Callers serialize reconciliation, epoch replacement, and retirement with
- * timeline publication, repair descriptor writes, and pin acquisition. The
- * live-view integration does so with the refresh latch (and fences DROP before
- * retirement), so the repair sweep only ever meets descriptors of repairs that
- * are not running. Tests may pass an open metadata store to
- * {@link #retireTimeline} to assert that a live pin defers deletion.</p>
+ * Reconciles and retires node-owned checkpoint timelines under the refresh latch,
+ * serialized with publication, repair descriptors and pin acquisition. DROP fences
+ * readers before retirement; reconciliation cannot race a live repair.
+ * <p>
+ * Reconciliation scales with physical segments, never logical checkpoint leaves.
+ * It sweeps crashed repairs, temporary files and uncatalogued final segments. With
+ * no valid catalogue, final ids above both slot ceilings remain until a new slot
+ * advances past them. Deletion retains slot, reader-pin, candidate and retry guards.
+ * <p>
+ * An unrecognized layout with no declared format version is removed for rebuilding.
+ * A declared unsupported version leaves the directory intact: newer versions block
+ * refresh on rollback, while older versions request an upgrade rebuild. Keeping the
+ * old superblock makes that rebuild requirement survive a crash until retirement.
+ * <p>
+ * A damaged foreign-looking slot cannot override a selectable current-format slot.
+ * Version field and magic nibble must agree before a slot declares a foreign format.
  */
 public final class LiveViewCheckpointLifecycle {
 
@@ -364,48 +314,15 @@ public final class LiveViewCheckpointLifecycle {
     }
 
     /**
-     * Removes every final-name segment file the newest durable generation neither
-     * catalogues nor names as its pending directory segment.
+     * Removes final-name segments absent from both the newest generation's catalogue and
+     * its pending directory segment. The directory cannot catalogue its own file, so the
+     * superblock names that exception explicitly. Reachability remains authoritative even
+     * when later allocations advance past an orphan's id.
      * <p>
-     * Since Phase 2a/2b the catalogue holds an entry for every segment a published
-     * root can reach - data, tree metadata and boundary metadata alike - and the
-     * one documented exception is the segment carrying the directory root itself,
-     * which the superblock names as pending because a tree cannot list the file it
-     * is being written into. A final-name file outside both sets is therefore
-     * reachable from nothing, whatever its id: it is what a publication that
-     * renamed its segments into place and then failed left behind.
-     * <p>
-     * The rule this applies is strictly stronger than
-     * {@link #purgeFinalOrphans}'s, and it is stronger in the direction that
-     * matters. The id ceiling decays - {@code skipPublishedSegmentIds} steps the
-     * next publication's allocation over an orphan, the ceiling rises past it, and
-     * no later reconciliation can tell it from a live segment again - while a
-     * catalogue that never held the id keeps saying so. That is why a failed
-     * compaction or repair publication used to leak its segments for the life of
-     * the directory: neither re-runs a reconciliation, so nothing read the ceiling
-     * before the next seal moved it.
-     * <p>
-     * Both collectors apply it. The purge cadence runs it beside every sweep, so a
-     * running process collects without waiting; {@link #reconcile} runs it over
-     * every generation it adopts, so a process that swept nothing - the cadence
-     * disabled, or a view that never sealed again after the failure - collects at
-     * its next restart rather than never.
-     * <p>
-     * Nothing has to advance past these ids first, because the monotonic
-     * {@code nextSegmentId} is what preserves allocation order on its own -
-     * unlinking a file never lowers it, and the id skip only ever moves forward.
-     * The pass publishes no generation, so a fault costs one deferred collection.
-     * <p>
-     * It is fail-closed at every step it cannot complete: a catalogue this build
-     * cannot read, a directory root the superblock does not name, or a slot that
-     * lost the newest-generation race all leave every file where it is. Keeping a
-     * dead file costs disk; unlinking a live one costs the timeline.
-     * <p>
-     * Temporary files are not this pass's business. A {@code .tmp} belongs to
-     * whichever writer is holding it open - a repair capture spans several
-     * {@code capture} calls before it commits - so ownership rather than
-     * reachability decides its fate, and reconciliation, which runs where no
-     * writer can own one, is where that decision belongs.
+     * Purge and startup reconciliation both run this pass. It publishes no generation and
+     * never lowers nextSegmentId. An unreadable catalogue, unnamed directory root or lost
+     * generation race leaves files untouched. Temporary files require writer-ownership
+     * checks and are handled only by reconciliation, where no writer can own them.
      */
     public static CleanupStats purgeUncataloguedSegments(
             @NotNull CairoConfiguration configuration,

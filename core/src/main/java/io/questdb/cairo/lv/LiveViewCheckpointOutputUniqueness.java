@@ -34,64 +34,19 @@ import io.questdb.std.Numbers;
 import org.jetbrains.annotations.NotNull;
 
 /**
- * Whether one repair's qualifying output holds two rows carrying the same
- * {@code (designated timestamp, projected partition key)} pair.
+ * Checks uniqueness of corrected (timestamp, projected key) pairs before sparse
+ * upsert. Duplicate output would collapse rows and invalidate checkpoint positions.
+ * Stored-row pairing is a separate obligation of {@link LiveViewCheckpointKeyedReplay}:
+ * uniqueness alone does not prove an upsert removes every superseded row.
  * <p>
- * That pair is the identity a <b>sparse</b> publication would have to stand on. A repair
- * publishes with {@code WAL_DEDUP_MODE_REPLACE_RANGE}, which deletes the replaced interval
- * wholesale and so has to carry every row of it - including, for a keyed repair, the rows
- * {@link LiveViewCheckpointKeyedReplay}'s merge copies forward untouched. Publishing only
- * the affected keys' rows instead needs {@code WAL_DEDUP_MODE_UPSERT_NEW} over dedup keys,
- * and dedup collapses rows that share those keys. So the pair has to be proved unique over
- * the corrected output before anything is published on it: a pair admitted twice would be
- * silently collapsed to one row, and the cadence boundaries - whose
- * {@link LiveViewCheckpointTimelineEntry#baseLvRowPosition} counts live-view rows - would
- * then describe a row set nothing wrote.
+ * Replay is timestamp-ordered, but equal keys within a timestamp need not be adjacent.
+ * A per-group set detects duplicates; singleton groups stay scalar, and clearing
+ * costs the number of occupied entries rather than the retained table capacity.
  * <p>
- * This check covers the <i>new</i> output only. The <i>durable</i> rows it replaces are
- * {@link LiveViewCheckpointKeyedReplay}'s to pair: the repair envelope's insert-only verdict
- * covers the change set alone, and a view keeps the rows it derived from base rows removed
- * before that - a dropped partition, a TTL eviction - so a stored row can have no pair in
- * the corrected output at all. The merge abandons the sparse attempt over such a row.
- *
- * <h2>Who reads the verdict</h2>
- * A keyed repair of a view whose own table carries the dedup keys - and only such a
- * repair - acts on it: {@link #isUnique()} decides between the sparse upsert and the
- * whole-segment {@code REPLACE_RANGE} the repair falls back to, and it decides it before
- * anything is committed. Every other repair publishes the whole replaced range exactly as
- * it did before this existed, and what the detector produces there is the rate at which a
- * sparse publication would have to fall back - the measurement the keyed-publication
- * stage is decided on, and the one that needs a running view to take.
- *
- * <h2>Why a set rather than an adjacency test</h2>
- * A replay emits rows in ascending designated-timestamp order, so all the rows of one
- * timestamp are contiguous - but their keys arrive in whatever order the base holds them,
- * so two rows sharing a key need not be adjacent. The scratch is therefore a set scoped to
- * one timestamp group, cleared as the group closes, and never holding more keys than the
- * widest group the output holds ({@link #getMaxGroupRows()} reports it). Its table is sized
- * by the widest group the worker has ever walked, though, so clearing it costs in proportion
- * to the keys the closing group put in rather than to that table - see {@link GroupKeySet}.
- * <p>
- * A group of one - which is every group of a view whose keys report distinct timestamps -
- * never touches the set at all: the first row of a group is held in a scalar and only
- * copied in when a second row of the same timestamp arrives. That is what keeps an exact
- * check affordable on the shape a whole-segment replay walks, which is millions of rows.
- *
- * <h2>The key is the reader's symbol integer</h2>
- * A symbol map is a bijection over one reader's lifetime, so equal integers name equal
- * strings and distinct integers name distinct ones. One repair replays against one pinned
- * snapshot, which is exactly the scope a group is compared in - and a repair that parks
- * keeps that snapshot, so the integers a resumed turn compares against are the ones its
- * predecessor recorded. {@code -1} - the set's own empty-slot marker - is not a symbol key:
- * values number from zero and the null symbol is {@link SymbolTable#VALUE_IS_NULL}, which
- * is {@link Numbers#INT_NULL}.
- *
- * <h2>Ownership</h2>
- * One instance per refresh job, armed per repair through {@link #of(int)}. A repair that
- * parks mid-replay hands its state to {@link LiveViewCheckpointRepairSession}, which
- * {@link #copyFrom} puts back on the turn that resumes: a duplicate whose two rows sit on
- * either side of a park is still a duplicate, and a detector re-armed from scratch would
- * not see it.
+ * Keys are SYMBOL integers from the pinned reader, whose mapping remains stable
+ * across parked turns. -1 is the set's empty marker; SQL null is INT_NULL.
+ * The session saves and restores the detector, including the current group, so a
+ * park between duplicate rows cannot hide the collision.
  */
 public final class LiveViewCheckpointOutputUniqueness implements Mutable {
     /**

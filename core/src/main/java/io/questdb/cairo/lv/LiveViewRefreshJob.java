@@ -1061,9 +1061,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-            // Compaction repacks a timeline this node published, so it runs on whichever role
-            // that node currently holds - see appendCheckpointTimelineRoot for why the role
-            // read lock outlives the read-only refusal it used to carry.
+            // Compaction may run after demotion; the role read lock serializes it with promotion.
             final Lock roleLock = engine.getRoleSwitchReadLock();
             roleLock.lock();
             try {
@@ -1125,9 +1123,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             checkpointsDir.of(engine.getConfiguration().getDbRoot())
                     .concat(instance.getLiveViewToken())
                     .concat(LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME);
-            // The sweep collects under a timeline this node published, so it runs on
-            // whichever role that node currently holds - see appendCheckpointTimelineRoot
-            // for why the role read lock outlives the read-only refusal it used to carry.
+            // Purge may run after demotion; the role read lock serializes it with promotion.
             final Lock roleLock = engine.getRoleSwitchReadLock();
             roleLock.lock();
             final LiveViewCheckpointTimelineStoreWriter.SweepResult result;
@@ -2405,23 +2401,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         long o3LateRowTs = drainResult.o3LateRowTs;
         long o3SeqTxn = drainResult.o3SeqTxn;
         if (o3Detected) {
-            // Gate on base apply before the replay: o3Replay reads the applied
-            // base at o3SeqTxn, so if ApplyWal2TableJob has not caught up,
-            // ensureBaseApplied unwinds cooperatively (no watermark advance) and
-            // the next tick retries once apply lands, rather than block-spinning in
-            // the downstream waitForApply (which deadlocks the single-threaded
-            // drain). drainBaseWal already rolled back this cycle's draft on O3
-            // detect, so the unwind leaves no durable or reader-visible change.
-            //
-            // Defense-in-depth: unlike the lead-path twin (finishLeadRefresh, covered
-            // by testO3ReplayDefersOnBaseApplyLagInsteadOfDeadlocking), the deferral
-            // here is not deterministically reachable. The only routes into this
-            // leadMode==false drain are a dedup-clean cycle - which isRangeProvablyClean
-            // admits only when apply has already covered toSeqTxn (>= o3SeqTxn), so the
-            // gate passes - and a tier-unstorable output type, which is INTERVAL alone
-            // and cannot be persisted into an LV table. The gate stays for symmetry and
-            // to cover a narrow apply-signal race; its logic is identical to the tested
-            // lead path.
+            // Replay requires the base applied through o3SeqTxn. Defer cooperatively on lag:
+            // blocking here can deadlock a single-threaded drain. drainBaseWal has already
+            // rolled back this cycle's draft, so deferral advances no durable watermark.
             ensureBaseApplied(baseToken, o3SeqTxn);
             // The replay path opens its own WalWriter and TableReader on the
             // base, drives the ts-sorted re-execution, commits a single
@@ -2437,14 +2419,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
 
         if (advanceTo > instance.getLastProcessedSeqTxn()) {
-            // Advance the in-memory lastProcessedSeqTxn before apply / persist.
-            // A stranded LV WAL block (commit succeeded, apply or persist
-            // failed) cannot drive a duplicate emit because the next cycle
-            // reads the advanced in-memory value and resumes from
-            // advanceTo + 1. testRefreshPersistFailureKeepsInMemoryAdvanced
-            // pins this invariant. The remaining restart-edge-case where
-            // _lv.s is stale on the next process boot is covered by the
-            // forward-scan recovery of the consumed floor from the live-view WAL.
+            // Advance the in-memory cursor before apply or persist can fail, so a committed
+            // WAL block cannot be emitted again. Restart recovers a stale _lv.s consumed
+            // floor by scanning the live-view WAL.
             instance.setLastProcessedSeqTxn(advanceTo);
             // This path applies every cycle, so appliedWatermark tracks
             // lastProcessed and the in-mem tier stays a subset of disk (no
@@ -3024,73 +3001,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         ) {
             // Whether this drain goes straight to disk past stranded symbol ids; see below.
             boolean isStrandedIdDiskRoute = false;
-            // A lead drain keeps its rows from readers while the view's WAL holds a block its table
-            // has not applied. An inline apply that landed nothing (a busy writer, a memory-pressure
-            // back-off, a failure that suspended the table) leaves such a block behind, and a
-            // restage behind it stamps the slot with the table's applied seqTxn, below the block. A
-            // lead published on that stamp passes the read fence, so a read serves the table, the
-            // slot and the lead, and none of the pending block's rows between them: later rows
-            // without the earlier ones, with running totals that count rows the read does not show.
-            // Kept, the lead leaves every read on the table as it stands, a prefix of the view's
-            // output, until the cadence flush lands the block with the lead and restages the slot
-            // (refreshInstance). A drain that joins a lead kept from readers, for this reason or
-            // over stranded symbol ids (below), keeps its rows from readers too. Neither kind
-            // attempts the symbol-id rewind below: none can run under a lead, and one with a block
-            // pending would stand down anyway. The check reads the two seqTxns of the view's WAL
-            // tracker.
-            // See LiveViewRuntimeRestoreTest.testAReaderPinnedOnALeadTheTableNeverCommitsShowsNoDrainAboveAFlushThatLandedNothing,
-            // testAReaderPinnedOnALeadTheTableNeverCommitsShowsNoDrainAboveADrainToDiskThatLandedNothing
-            // and LiveViewSmokeTest.testFlushLeadUnappliedBacklogKeepsLaterDrainsFromReaders.
+            // Keep the lead hidden while the view has unapplied WAL: a restaged slot's stamp
+            // can pass the read fence while the pending block leaves a gap below the lead.
+            // Later drains stay hidden until a cadence flush applies the block and restages
+            // the slot. Neither a pending block nor an existing lead permits a symbol rewind.
             if (walWriter == null
                     && populateTier
                     && (isPublishedLeadKeptFromReaders(instance) || !isLiveViewWalFullyApplied(instance))) {
                 isLeadKeptFromReaders = true;
             }
             if (internSymbols) {
-                // Take back ids a discarded pass left above the committed count before
-                // this pass interns past them. Only a drain that starts with an empty lead
-                // may: a lead's own ids sit above the committed count legitimately.
-                //
-                // A lead drain (no walWriter) whose rewind left the stranded ids in place
-                // must not publish this pass's rows as a lead readers can see. The pass
-                // interns them above the stranded ids, so the lead's slot would be stamped
-                // with a symbol horizon past those ids too, and a read of it would list each
-                // value the view's table has since committed, or this pass interned again,
-                // under a stranded key as well as its own: a keyed WINDOW JOIN from the view
-                // maps the base's key for such a value to the last of those keys, which no
-                // row carries, and finds no match for the rows that carry the other. A
-                // disk-subset drain publishes only ids its in-step check proved committed, so
-                // it needs neither of the two answers below.
-                //
-                // Only a reader pinning a slot whose horizon reaches past the committed
-                // counts refuses the rewind (LiveViewInMemoryTier.tryRewindSymbolCache): in
-                // practice a slot that still holds a lead published before the recovery,
-                // until the table commits as many values as that lead lists. The first
-                // such drain marks the tier stale, which sends its rows straight to disk
-                // (finishLeadRefresh); the rebuild behind them stages a slot that stops its
-                // horizon at the committed counts and retries the rewind, which that commit
-                // usually lets through. A further drain goes to disk at once while these
-                // drains converge on the pinned slot's horizon - the last one committed
-                // values toward it, or stopped on the turn budget before the cursor reached
-                // the last base commit a pinned lead can cover - so the table commits what
-                // the pinned lead lists at the view's normal rate.
-                //
-                // Otherwise sending every drain to disk would make each pay an LV commit and
-                // an IN MEMORY restage for as long as the pin lasts, which may be for good
-                // when the table never commits a value the pinned lead lists. So the drain
-                // keeps its rows from readers instead: it drains as a lead always does, at the
-                // view's normal rate, and finishLeadRefresh publishes the lead unstamped,
-                // which routes every read to disk. Later drains join that lead until the
-                // cadence flush lands it, and the restage behind that flush retries the rewind
-                // (refreshInstance). A pin that keeps refusing it then costs one restage per
-                // FLUSH EVERY interval on top of the flush the view makes anyway, and reads
-                // trail the base by up to an interval, as a coupled view's do; the drains do
-                // not fall behind the base however long the pin lasts.
-                // See LiveViewRuntimeRestoreTest.testAReaderPinnedAcrossARestoredHandOffKeepsEachAccountUnderOneSymbolKey,
-                // testAReaderPinnedAcrossARestoredHandOffLeavesLaterDrainsInTheUnflushedLead,
-                // testAReaderPinnedOnALeadTheRetryHasNotCommittedSendsDrainsToDiskBackToBackWhileTheyConverge,
-                // testAReaderPinnedOnALeadTheTableNeverCommitsKeepsLaterDrainsFromReadersUntilTheCadenceFlush
-                // and testAReaderPinnedOnALeadTheTableNeverCommitsKeepsTheViewWithinAFlushIntervalOfTheBase.
+                // Reclaim stranded symbol ids only with an empty lead; a live lead owns its ids.
+                // A refused rewind leaves duplicate symbol values at different ids, so subsequent
+                // lead rows must stay hidden from readers. While disk drains converge on a pinned
+                // slot's symbol horizon, send them to disk and restage from committed symbols.
+                // Once progress stops, keep an unstamped lead until the cadence flush instead of
+                // forcing a commit and restage on every drain.
                 if (!isLeadKeptFromReaders
                         && isSymbolRewindCandidate(instance)
                         && rewindStrandedSymbolIds(instance, committedSymbolReader)
@@ -3718,10 +3644,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // future path that could leave a stale non-zero count while tierStale.
                     instance.setLeadRowCount(0);
                     flushLead(instance, windowFactory, advanceTo, appendedRows);
-                    // flushLead moved the refresh cursor over this turn's commits at its own
-                    // commit, so neither a throw behind that commit nor one from the rebuild
-                    // below leaves them for the next turn to drain a second time.
-                    // See LiveViewRuntimeRestoreTest.testALeadFlushOverAStaleTierWhoseRebuildFailsIsNotDrainedAgain.
+                    // flushLead advances the refresh cursor at commit, so a failure here cannot
+                    // make the next turn drain these commits again.
                     rebuildInMemoryTier(instance);
                     instance.setRefreshedUpToSeqTxn(advanceTo);
                     return;
@@ -3894,47 +3818,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
 
         instance.setLastProcessedSeqTxn(advanceTo);
         instance.setAppliedWatermark(advanceTo);
-        // The block is committed: the view's WAL holds every row this flush materialised,
-        // whatever the rest of this method does. The apply, the slot decisions and the watermark
-        // persist below can each fail, and the persist commonly does: persistState writes the
-        // very _lv.s file whose failed write routes the flush to it. So settle here, ahead of
-        // all of them, the two in-RAM coordinates that would otherwise let a later turn emit
-        // those rows a second time.
-        // The refresh cursor first. finishLeadRefresh flushes a turn's rows from here before it
-        // has moved the cursor over the base commits they came from - the tier is stale, or the
-        // lead publish stalled or failed - and moves it once this method returns. A flush that
-        // threw behind its commit used to leave the cursor under the flushed point, and the next
-        // turn drained those commits again: a row on the frontier went into the LV table a
-        // second time, carrying window values that counted it twice, with no fault raised. The
-        // cadence flush passes the cursor itself as advanceTo, so nothing moves there, and a
-        // flush that throws ahead of its commit never gets here, so its retry still drains the
-        // commits, under the window-state recovery.
-        // See LiveViewRuntimeRestoreTest.testALeadFlushStalledByPinsOnBothSlotsThatCannotWriteItsStateIsNotDrainedAgain
-        // and testALeadFlushOverAStaleTierThatCannotWriteItsStateIsNotDrainedAgain.
+        // Commit made these rows durable. Advance the refresh cursor before apply, slot
+        // updates or watermark persistence can throw and leave them eligible for re-emission.
         if (instance.getRefreshedUpToSeqTxn() < advanceTo) {
             instance.setRefreshedUpToSeqTxn(advanceTo);
         }
-        // Then the lead count. The slot's lead rows are durable now, so stop counting them as
-        // un-flushed: a count that survived a throw below would have the next lead publish add
-        // to it, and the flush after that materialise those rows a second time. The LV table
-        // would then durably hold duplicate rows, which the record path's seam hid (seamTs sat
-        // at or below them, so disk served nothing) while count(*) and every page-frame read
-        // exposed it.
-        // See LiveViewSmokeTest.testFlushPersistFailureDoesNotReflushDurableLead for a persist
-        // that throws, and LiveViewRuntimeRestoreTest.testALeadFlushWhoseSlotUnstampFailsIsNotFlushedAgain
-        // for a slot decision that does.
+        // Clear the lead count before any fallible work: a later flush must not materialize
+        // these committed rows again.
         instance.setLeadRowCount(0);
-        // applyWalDirect never propagates: ApplyWal2TableJob.applyWal suspends the table via
-        // handleWalApplyFailure and returns, and it can also no-op silently (the LV writer is
-        // busy, or the table backed off under memory pressure). A failed inline apply thus
-        // leaves the block committed-but-unapplied behind the setLeadRowCount(0)
-        // above, so the next flush cannot re-materialise the slot rows; the view
-        // serves disk-only behind the seqTxn fence, under-reporting the committed rows, until
-        // the block lands once. Nothing else applies it - ApplyWal2TableJob.doRun drops
-        // live-view notifications while refresh is enabled - so scanForLaggingViews re-drives
-        // it (hasPendingLiveViewApply / retryPendingLiveViewApply) rather than leaving the view
-        // stale until the next base commit happens to flush again.
-        // See LiveViewSmokeTest.testFlushLeadInlineApplyFailureRecoversWithoutDuplication.
+        // Inline apply can return with this block still pending. The cleared lead count
+        // prevents re-emission; the seqTxn fence keeps reads on disk until apply succeeds.
+        // scanForLaggingViews retries the block even when no new base commit arrives.
         final SeqTxnTracker lvTracker = engine.getTableSequencerAPI().getTxnTracker(token);
         // Captured before the apply so the restamp below can tell a real apply from a no-op /
         // suspend: only when the writer txn advanced did the flushed lead reach disk. The restamp
@@ -3950,23 +3844,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // the slot/disk seam, falling back to stale disk-only content (see
         // LiveViewRecordCursor.isSlotNewerThanDisk).
         final long lvAppliedSeqTxn = lvTracker.getWriterTxn();
-        // Decide what the apply left of the published slot here, ahead of the watermark persist
-        // below, not behind it. Every decision reads only what the commit and the apply did, and
-        // a flush that cannot persist needs them all the same: its block is committed either
-        // way, the lead count is zero by now, and the next lead publish stamps
-        // whatever the slot then holds as the LV table's trailing rows. Behind the persist, one
-        // failed write of _lv.s skipped these decisions and a second left this method by
-        // exception before them, so the slot kept its stamp, its rows and its lead count in
-        // every shape below: rows the table lacks counted as overlap, or a gap under the band.
-        // See LiveViewRuntimeRestoreTest.testAReadTrailsALeadFlushThatLandedNothingAndPersistedNoWatermark,
-        // testALeadFlushThatLandsABacklogAndPersistsNoWatermarkLeavesNoGapInTheTier,
-        // testALeadFlushThatLandsABacklogAndCannotWriteItsStateLeavesNoGapInTheTier and
-        // testALeadFlushStalledByPinsOnBothSlotsThatPersistsNoWatermarkLeavesNoGapInTheTier.
-        // A branch that un-stamps marks the tier stale first. restampSlot releases the slot's
-        // writer sentinel, and that release can throw while it prunes the symbol cache's reverse
-        // index; a marking behind it would be skipped, and the next lead publish would append
-        // onto the very slot the branch meant to retire.
-        // See LiveViewRuntimeRestoreTest.testALeadFlushThatLandsABacklogAndWhoseSlotUnstampFailsLeavesNoGapInTheTier.
+        // Settle the slot before watermark persistence: a failed _lv.s write does not
+        // undo the committed block. Mark the tier stale before unstamping, because releasing
+        // the slot's writer sentinel can throw while pruning the symbol reverse index.
         final boolean isSlotSubsetOfDisk;
         if (stagingRowsToInclude > 0) {
             // Emergency flush: the published slot never received the staging
@@ -3990,33 +3870,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             restampSlot(instance, Numbers.LONG_NULL, 0);
             isSlotSubsetOfDisk = false;
         } else if (lvAppliedSeqTxn != lvAppliedBefore + 1 || lvTracker.getSeqTxn() != lvAppliedSeqTxn) {
-            // The apply landed something other than exactly this flush's own block, in one of
-            // two shapes. The first half catches an advance of more than one transaction: an
-            // earlier flush left a committed-but-unapplied backlog (its inline apply hit a busy
-            // LV writer) and this apply drained that backlog together with the block above. The
-            // second half catches an apply that stopped part-way - it spent its per-table time
-            // quota, or a shutdown terminated it - and left transactions outstanding. It drains
-            // the OLDEST block first, so the block still outstanding is the one committed above.
-            // Re-stamping asserts that the slot's overlap band IS the LV table's trailing rows
-            // at lvAppliedSeqTxn - the identity the read path's seam cuts on - and neither shape
-            // holds it: a drained backlog puts its rows UNDER that band on disk, and a part-way
-            // apply leaves the band's own rows off disk altogether. The seam would then serve
-            // diskSize - leadStart disk rows and the slot on top, re-emitting the slot's rows in
-            // place of rows the LV table really holds, at an unchanged row count and with no
-            // fault raised. Un-stamp so the fence disengages and reads run disk-only, and let
-            // the next cycle rebuild the slot from disk. Disk stays a correct prefix of the LV
-            // table in both shapes - fully current when the apply drained everything, trailing
-            // the still-outstanding blocks when it did not - so those reads are behind at worst,
-            // never wrong.
-            // See LiveViewSmokeTest.testFlushLeadOwnApplyDrainingBacklogDoesNotStrandStaleTierRows
-            // for the first half and
-            // LiveViewSmokeTest.testFlushLeadPartialApplyLeavingOwnBlockPendingDoesNotRestampSlot
-            // for the second.
-            // Both halves are load-bearing. A one-transaction advance alone does not prove the
-            // applied block is ours: an apply that backs off part-way lands the OLDEST
-            // outstanding block, so a backlog of two could advance by one and leave this flush's
-            // block pending. Requiring the LV WAL to be fully applied as well pins it - exactly
-            // one transaction was outstanding, and it is the one committed above.
+            // Restamping requires exactly this flush's block to have applied. A larger advance
+            // includes backlog missing from the slot; a partial apply can leave this block
+            // pending even after a one-transaction advance. Unstamp and rebuild from disk to
+            // restore the invariant that the slot is the table's trailing rows.
             instance.setTierStale(true);
             restampSlot(instance, Numbers.LONG_NULL, 0);
             isSlotSubsetOfDisk = false;
@@ -4032,23 +3889,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             instance.setTierStale(true);
             isSlotSubsetOfDisk = false;
         } else if (hasSymbols && !isSymbolCacheInStepWithDisk(instance, tier.getSymbolCache())) {
-            // The apply landed exactly this flush's block, but the lead's symbol ids are
-            // not the ones it committed: a recovery discarded a pass whose interned ids
-            // nothing has taken back yet (a reader pinned the tier at every rewind
-            // attempt), so this lead was interned above them; or the view's WAL writer,
-            // rolled back with a discarded pass and pooled, still held a value that pass
-            // appended, and this commit assigned it ahead of the lead's values. Re-stamping
-            // would make the disk symbol table resolve those ids, and they name other
-            // values there.
-            // Un-stamp so reads run disk-only, where every id is the committed one; the
-            // stale marking makes the next drain with rows rebuild the slot from disk,
-            // and that rebuild retries the rewind (rebuildInMemoryTier).
-            // See LiveViewRuntimeRestoreTest.testAReaderPinnedAcrossAMidDrainRestoreDefersTheSymbolRewind,
-            // and testALeadFlushThatCannotPersistItsWatermarkKeepsOutOfStepSymbolIdsOutOfTheTier
-            // for a flush that then cannot persist its watermark: with no re-stamp to keep away,
-            // the next lead publish would still stamp the slot at the current disk seqTxn and
-            // turn these flushed rows into overlap, which reads resolve against the disk symbol
-            // table.
+            // The lead's symbol ids differ from those committed by the writer. Unstamp and
+            // rebuild from disk before publishing more lead rows; otherwise reads would resolve
+            // these ids through a symbol table that assigns them different values.
             LOG.info().$("live view symbol ids are out of step with the committed symbols, serving flushed rows from disk [view=")
                     .$(instance.getDefinition().getViewName()).I$();
             instance.setTierStale(true);
@@ -4801,32 +4644,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Reports whether the view is in a state a symbol-id rewind may run from, judged on the
-     * worker's own bookkeeping alone, before any reader is opened: a tier with SYMBOL
-     * columns, no un-flushed lead (whose ids would sit above the committed count
-     * legitimately), no parked repair (whose uncommitted replacement has yet to add its
-     * values to the committed count), and a tier that is not stale. A stale published slot
-     * may still hold rows interned at the ids the rewind would take back - the dropped lead
-     * of a recovery whose restage both slots' pins skipped, or the rows of a flush the
-     * in-step check un-stamped - and its fence can still pass, so a rewind must wait for the
-     * rebuild that replaces it. A disk-subset publish whose apply left its block pending
-     * marks the tier stale too ({@link #publishSubsetToInMemoryTier}): that block owns the
-     * ids above the committed count until it lands. So does a lead drain whose rewind a
-     * reader's pin refused ({@link #drainBaseWal}): the stale tier sends its rows straight
-     * to disk, and the rebuild behind them stages a slot that carries no stranded id.
+     * Checks the worker-side prerequisites for reclaiming stranded symbol ids: a SYMBOL
+     * tier, no lead in either the instance or the published slot, no parked repair,
+     * and a non-stale tier. Each excluded state can still own ids above the committed
+     * count. In particular, an O3 handoff clears the instance's lead count before a
+     * successful repair replaces the slot's lead.
      * <p>
-     * The lead has to be gone from both places that count it: the instance and the
-     * published slot. An out-of-order hand-off zeroes the instance's count ahead of its
-     * repair ({@link #finishLeadRefresh}, {@link #drainAppliedBase}), and only a repair that
-     * completes restages the slot. One that fails before it records any window-state debt
-     * runs no recovery either, so the slot keeps the lead it was published with under a
-     * stamp the fence still passes, and readers resolve that lead's ids through the cache.
-     * A rewind there would drop them, and the lead's SYMBOL values would read as NULL until
-     * a repair completed.
-     * See LiveViewRuntimeRestoreTest.testALateRowHandOffThatFindsNoBaseReaderKeepsTheLeadsNewAccountLabel
-     * and its WhileItsRetryIsParked twin.
-     * <p>
-     * {@link #rewindStrandedSymbolIds(LiveViewInstance, TableReader)} checks the rest.
+     * {@link #rewindStrandedSymbolIds(LiveViewInstance, TableReader)} checks reader state.
      */
     private boolean isSymbolRewindCandidate(LiveViewInstance instance) {
         final LiveViewInMemoryTier tier = instance.getInMemoryTier();
@@ -5759,56 +5583,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Repairs each <b>closed</b> anchor segment the change set touches over its own range,
-     * ahead of the ordinary repair that handles what is left.
+     * Repairs closed anchor segments oldest first under the segment-scope gate. Later
+     * segments' cumulative positions depend on earlier replacements. Every intermediate
+     * commit keeps the pre-repair watermark; only the completed change set advances it.
+     * Replaying the same idempotent replacements therefore recovers a crash mid-loop.
      * <p>
-     * Today one repair takes one union range running from the anchor below the lowest
-     * correction to the frontier, and pays for it twice: the replay reads every base row in
-     * the range, and the apply rewrites every live-view partition it covers, whole. Neither
-     * is a property of the correction. Under a pure fixed-anchor plan the anchor resets
-     * every stateful function at the segment boundary, so a row in a closed segment reaches
-     * that segment's output and nothing else - which is exactly what
-     * {@link LiveViewSegmentRepairEnvelope#segmentScopeGate} proves, and why this path is
-     * gated on it rather than on a predicate of its own.
-     * <p>
-     * The segments run oldest first, because a later segment's cumulative row positions
-     * depend on how many rows the earlier ones added, and each publishes its own
-     * {@code REPLACE_RANGE} over its own segment. What is left - the residual, everything
-     * at or above the runtime's own segment - takes the ordinary plan, which Fix 2 already
-     * bounds to one checkpoint cadence.
-     * <p>
-     * <b>Watermarks.</b> Every segment repair but the last commits at the <i>pre-repair</i>
-     * watermark, so the change set stays unconsumed until the residual repair finishes it.
-     * That is what makes the sequence crash-safe without a marker of its own: a repair that
-     * recomputes a whole segment from the base and replaces it is idempotent, so a crash
-     * anywhere in the sequence leaves the same base range to be re-drained, re-decomposed
-     * and re-repaired to the same output. Advancing per segment instead would declare base
-     * transactions whose head rows the view does not hold.
-     * <p>
-     * Anything the decomposition or a segment's own plan declines falls back to the union
-     * range for the whole change set. Segments already repaired are not a problem for that
-     * fallback - the union range covers them and recomputes them identically.
-     * <p>
-     * <b>The loop can park.</b> One segment is a bounded replay, but the bound is the anchor
-     * period's own base rows - up to a day of them for {@code ANCHOR DAILY} - so a segment
-     * replay may still stop on the refresh turn's budget. It takes the pinned snapshot with
-     * it, and the segments the loop has not reached go with it in
-     * {@link LiveViewCheckpointSegmentLoop}, along with the residual bounds the loop still
-     * owes; the turn that resumes the replay is the turn that finishes the loop. Nothing
-     * durable moves in between, so the caller commits nothing and leaves the reader alone.
+     * A declined segment falls back to a union repair, including already repaired ranges.
+     * A yielding segment hands its pinned reader, remaining segments and residual bounds
+     * to the session; the caller must neither close that reader nor advance progress.
      *
-     * @param hasDiscardedLead whether the hand-off discarded an un-flushed lead holding
-     *                         output rows. See {@link #o3Replay}
-     * @param advanceTo        the base {@code seqTxn} the whole change consumes, carried so a
-     *                         parked loop's residual can be planned from a later turn
-     * @return {@link #SEGMENT_REPAIR_COMPLETE} when the segments were the whole change set
-     * and the watermark has advanced over it, {@link #SEGMENT_REPAIR_DEFERRED} when a
-     * segment's replacement did not apply and the turn must stop,
-     * {@link #SEGMENT_REPAIR_SUSPENDED} when a segment's replay parked with the rest of the
-     * loop and now owns the pinned reader, {@link #SEGMENT_REPAIR_RESIDUAL} when the caller
-     * must still repair the residual from {@link #segmentChangeSet}'s bounds, and
-     * {@link #SEGMENT_REPAIR_NOT_TAKEN} when the caller must plan the whole change set as
-     * one union range
+     * @param hasDiscardedLead whether the handoff discarded output the repair must re-emit
+     * @param advanceTo        base seqTxn consumed by the completed change set
+     * @return COMPLETE after watermark advancement, DEFERRED after an unapplied replacement,
+     * SUSPENDED when the session owns the reader, RESIDUAL when open-segment work remains,
+     * or NOT_TAKEN when the caller must repair the union range
      */
     private int repairChangeSetSegments(
             LiveViewInstance instance,
@@ -7071,67 +6859,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Out-of-order replay. Called from {@code incrementalRefresh}
-     * after detection rolls back the in-WAL-order draft for the offending
-     * cycle. Pins one applied base reader, plans the repair against that single
-     * snapshot ({@link #planO3Repair}), and hands the plan to one of the two
-     * executors: {@link #replayFromAnchor} when a sealed checkpoint sits strictly
-     * below the change, {@link #o3HeadMissReplay} otherwise. Either executor reads
-     * the base table via the pinned {@code TableReader} in ts-ascending order
-     * through the compiled SELECT's filter / anchor / window cursor stack, commits
-     * via {@link WalWriter#commitLiveViewWithReplaceRange(long, long, long)},
-     * applies inline, and seals a fresh boundary post-replay.
-     * <p>
-     * Planning and replay share one pinned reader. The executors neither open
-     * nor close it: this method owns it for the whole repair, so a plan that
-     * rejects a resume can rebuild from the same snapshot its bounds were
-     * derived against instead of reopening at a newer one.
-     * <p>
-     * Replay only fires for snapshot-capable LVs - the per-function state
-     * resets used here rely on every WindowFunction exposing its partition
-     * Map via {@link WindowFunction#getPartitionMap()}. Non-capable LVs fall
-     * back to head invalidation only (the prior Option 1 disposition); their
-     * live output for the O3 batch is wrong until the next refresh cycle,
-     * matching the fallback behaviour for any LV whose SELECT contains a
-     * function still on the default-throw snapshot path.
+     * Plans and executes O3 repair against one pinned applied-base snapshot after the
+     * forward draft rolls back. A covering checkpoint permits resume; otherwise replay
+     * rebuilds from the planned floor. The caller retains the reader unless repair parks.
+     * Views without snapshot-capable functions can only invalidate their head here.
      *
-     * @param instance         live view being replayed
-     * @param windowFactory    the LV's compiled SELECT (window cursor stack)
-     * @param lateRowTs        {@code dataInfo.getMinTimestamp()} that triggered
-     *                         O3 detection
-     * @param changeMaxTs      highest designated timestamp the commits this replay
-     *                         re-materialises touched, or {@link Numbers#LONG_NULL}
-     *                         when the caller cannot bound it. Only an upper bound on
-     *                         the change lets the repair converge below the end of the
-     *                         base table; without one it reads the whole tail, which is
-     *                         what every caller did before the bound existed
-     * @param insertOnly       whether every commit the caller walked only ADDED base rows.
-     *                         A ROWS repair discovers which partition keys the change
-     *                         touched by reading them back out of the post-change snapshot,
-     *                         so a deletion anywhere in the change set denies it that bound;
-     *                         a caller that does not track the question passes false
-     * @param baseToken        base table token (passed in so the replay path
-     *                         doesn't re-look-it-up from the definition)
-     * @param advanceTo        base seqTxn the replay must cover; also the value
-     *                         passed to {@code commitLiveViewWithReplaceRange}
-     *                         so the LV's lvConsumedSeqTxn advances after apply
-     * @param fromSeqTxn       the exclusive floor of the base range the caller rolled back,
-     *                         or {@link Numbers#LONG_NULL} when it cannot name one. The
-     *                         per-segment decomposition re-reads that range row by row to
-     *                         place each row in its own anchor segment; without it the
-     *                         repair keeps the union range
-     * @param hasDiscardedLead whether the caller discarded an un-flushed lead holding
-     *                         output rows. The lead's commits sit at or below
-     *                         {@code fromSeqTxn}, and its rows are output the repair must
-     *                         re-emit. They can tie the durable maximum, and no timestamp
-     *                         comparison tells a tied row from durable output. Only the
-     *                         per-segment decomposition reads it, and only when the caller
-     *                         names both {@code fromSeqTxn} and {@code changeMaxTs}; a
-     *                         caller passing {@link Numbers#LONG_NULL} for either takes
-     *                         the union range with the flag unread.
-     *                         {@link #drainAppliedBase} drops a lead and still passes
-     *                         false, because it names neither, and with no change ceiling
-     *                         its repair reads the whole tail
+     * @param instance         view being repaired
+     * @param windowFactory    compiled filter/anchor/window cursor stack
+     * @param lateRowTs        correction floor from the triggering commit
+     * @param changeMaxTs      change ceiling, or LONG_NULL to require an unbounded tail
+     * @param insertOnly       true only if all observed commits added rows; ROWS discovery
+     *                         cannot recover deleted keys from the post-change snapshot
+     * @param baseToken        base table token
+     * @param advanceTo        minimum base seqTxn the repair must cover
+     * @param fromSeqTxn       exclusive start of the discarded commit range, or LONG_NULL
+     *                         to disable per-segment decomposition
+     * @param hasDiscardedLead whether output from commits at or below fromSeqTxn needs
+     *                         re-emission, including rows tied with the durable maximum;
+     *                         used only when both commit floor and change ceiling are known
      */
     private void o3Replay(
             LiveViewInstance instance,
@@ -7509,72 +7254,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Fills {@link #repairPlan} with the coordinates one out-of-order repair
-     * works from: the pinned snapshot's {@code seqTxn}, the correction floor
-     * {@code C}, the retire floor, and the executor the change qualifies for.
-     * This is the pin-and-classify half of a repair, with the pin itself owned
-     * by the caller.
+     * Plans against the caller's pinned reader and an atomic head-checkpoint snapshot.
+     * Apply-ahead transactions join both correction bounds: advancing the watermark past
+     * them without repairing their range would lose their output. A preclassified segment
+     * residual already includes them and must not regain the original union minimum.
      * <p>
-     * The one classification this needs from disk is the apply-ahead range: when
-     * {@code ApplyWal2TableJob} raced the reader past {@code advanceTo}, the pinned
-     * snapshot already holds transactions the forward drain never examined, and the
-     * lowest in-view timestamp among them decides both how far the retire floor
-     * drops and whether any sealed anchor can still be trusted.
-     * {@link #computeApplyAheadBounds} reads the base WAL-E files to answer that, so
-     * it runs only when {@link LiveViewCheckpointRepairPlan#isApplyAheadClassificationRequired}
-     * says the answer can change the plan. It can throw on a torn or purged WAL-E,
-     * which the caller's pin ownership turns into a returned reader rather than a
-     * leaked one. Its upper bound joins the caller's {@code changeMaxTs} for the same
-     * reason the lower one joins the correction floor: the repair re-materialises the
-     * ahead range too, so a convergence boundary that does not clear it would leave
-     * those rows unemitted while the watermark walked past them.
-     * <p>
-     * The head pair is read atomically: without that, a concurrent
-     * {@code setHeadCheckpoint} could pair a fresh {@code lvSeqTxn} with the prior
-     * {@code maxTs} and drive the anchor decision off a torn read.
-     * <p>
-     * The second thing it reads from disk is the live-view table's own frontier, the
-     * lower bound on {@code D} the output floor {@code R} is clamped to. Only a
-     * DATA-triggered repair over a view whose window functions are <b>all</b> covered by
-     * a finite RANGE, ROWS or anchor-segment dependency can localize, so the reader opens
-     * only for that case: a non-DATA trigger rebuilds the whole view, and one uncovered
-     * function leaves the repair with no floor it may raise. A view carrying more than one
-     * shape - a bounded ROWS window declared beside an anchored one, say - hands all of
-     * them over together and the plan takes their union.
-     * <p>
-     * A finite ROWS dependency costs one more read than a RANGE one. Its bounds are
-     * per-key row counts rather than timestamp arithmetic, so the plan calls back into
-     * {@link RowsBoundDiscovery} to find them in the base data - which is why the
-     * discovery is prepared here, against the same pinned reader, and why this method
-     * can now throw the way a scan can. The insert-only proof the ROWS path needs is
-     * assembled from three independent observations: the caller's walk over the commits
-     * it drained, this method's walk over the apply-ahead range, and the base table's
-     * dedup configuration, which is the one deletion source neither walk can see (both
-     * read the raw WAL, and dedup happens at apply time).
-     * <p>
-     * The runtime frontier it passes is the view's own {@code latestSeenTs}, but only
-     * when the repair could actually put the runtime window state back: the state
-     * travels through the checkpoint freeze/restore contract, so a view without
-     * checkpoint-state support has no way to save it. An anchored view's anchor map
-     * rides on that same contract - {@link LiveViewCheckpointScratchOverlay} carries it
-     * beside the function state - so an anchored view quotes its frontier here too.
-     * <p>
-     * The third disk read is {@link LiveViewCheckpointScanCost}, which prices the two
-     * dispositions off the pinned reader's partition metadata so the plan takes the
-     * cheaper rather than whichever exists. It opens no partition and reads no column,
-     * and it is what stops a sealed anchor sitting just below an old correction from
-     * turning a bounded repair back into a replay of the whole view above it. The cost
-     * it does add is the ROWS discovery: an anchored repair over a view holding a
-     * bounded ROWS function discovers its bounds even when the resume goes on to win,
-     * because those bounds are the only thing that could answer the question. The
-     * discovery's own scan budget bounds what that costs.
-     * <p>
-     * {@code isChangeSetPreclassified} says the caller has already walked the whole range
-     * {@code (fromSeqTxn, E]} row by row and is handing over the bounds of what is left
-     * after the closed anchor segments were repaired on their own. The ahead range's rows
-     * are then already inside those bounds, so re-deriving its scalar minimum here would
-     * drop the retire floor back to the deepest row in the whole change set and put the
-     * union range back.
+     * The durable view frontier bounds the non-durable output floor. Finite ROWS discovery
+     * uses the same pinned base and needs insert-only evidence from the drained commits,
+     * apply-ahead commits and the base dedup setting. Runtime preservation additionally
+     * requires checkpoint-state support. Scan pricing compares checkpoint resume with a
+     * localized rebuild; ROWS discovery remains subject to its own scan budget.
      */
     private void planO3Repair(
             LiveViewInstance instance,
@@ -8215,67 +7904,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Resume replay from a logical checkpoint boundary: rolls window state back to
-     * that root's snapshot moment (clear per-function maps, then restore the root),
-     * scans the base table from {@code anchorMaxTs + 1} forward (never below
-     * {@code viewLowerBoundTimestamp}), and emits a single REPLACE_RANGE commit
-     * covering that same range through positive infinity. Cheaper than the
-     * whole-history rebuild because the root's state already reflects everything in
-     * {@code [viewLowerBoundTimestamp, anchorMaxTs]} - the replay only re-evaluates
-     * the tail above it. Not cheaper than a <i>localized</i> rebuild by
-     * construction, though: that one stops at a finite convergence boundary while
-     * this reads to the end of the base table, so the plan prices the two and this
-     * path runs only when it wins.
+     * Restores the planned checkpoint and replays above its timestamp, clamped to START
+     * FROM, against the caller-owned pinned reader. The plan proves the anchor is below
+     * both the change and the apply-ahead range; the route fixes keyed scan and runtime use.
      * <p>
-     * Pure execution: {@link LiveViewCheckpointRepairPlan} has already chosen the
-     * anchor through the timeline's predecessor lookup, along with the commit point
-     * and the retire floor, all against the pinned snapshot; it has proven the
-     * anchor sits strictly below both the change and anything apply raced past the
-     * trigger.
+     * With a capture, keep the timeline intact until writing the repair marker immediately
+     * before the replacement commit. Publish the splice only after apply; failed marker
+     * creation instead drops the capture and retires the timeline before commit.
+     * Without a capture, truncate immediately before commit and move the provisional
+     * baseline to the truncated generation for an incremental closing seal.
      * <p>
-     * The caller owns {@code reader} and closes it; this method only detaches it
-     * for the execution context and re-attaches it on the way out.
-     * <p>
-     * This replay rewrites durable output above the anchor, so every root above it
-     * describes a materialization the replacement commit replaces, and invariant 2
-     * admits no generation mixing corrected and stale roots. The two routes deal with
-     * those roots differently, and place the repair marker accordingly:
-     * <ul>
-     *     <li>a resume holding a timeline <b>capture</b> re-versions them. It keeps the
-     *     timeline intact through the restore and the replay, writes the marker
-     *     immediately before the replacement commit - the first statement that moves
-     *     durable output under those roots - and publishes the splice once that commit is
-     *     applied. A fault or a crash ahead of the commit leaves no marker, so the in-place
-     *     recovery and a restart restore from the intact timeline. A published splice
-     *     resolves the marker; one that does not publish retires the timeline, which takes
-     *     the marker with it. A marker that cannot be written drops the capture and
-     *     retires the timeline ahead of the commit instead;</li>
-     *     <li>a resume holding <b>no capture</b> truncates the timeline at the same
-     *     point, immediately before the replacement commit, keeping the roots below the
-     *     output floor with the anchor among them, and writes the marker with the
-     *     truncate. A fault, a circuit-breaker trip or a crash during the replay therefore
-     *     leaves no marker either. The restore takes the provisional repair baseline, and
-     *     the truncate moves it to the generation it publishes, so the closing seal still
-     *     freezes incrementally. Once the post-replay seal appends a fresh head onto the
-     *     preserved prefix, the resume clears the marker; a resume that seals no head
-     *     retires the truncated timeline instead.</li>
-     * </ul>
-     * <p>
-     * A restore failure retires the whole timeline and abandons the replay without
-     * advancing the watermark, so the trigger re-fires on a later cycle and takes
-     * the rebuild rather than re-selecting the root it could not read. A
-     * compatibility break (version mismatch) instead stashes a pending invalidation
-     * reason.
-     * <p>
-     * A replay that produces no row seals nothing: the truncating commit leaves the
-     * LV holding exactly the rows the anchor covered, and the restore left the
-     * window state at that same moment. A truncated timeline is then retired and
-     * re-opened by the next in-order seal, while a published splice needs no seal
-     * above it.
-     * <p>
-     * Whether the resume follows the open segment's keys, and the runtime it folds into,
-     * come off {@code route}: {@link #decideRepairRoute} settled both before this runs and
-     * bound the stored-row cursor a keyed resume falls back on.
+     * A published splice or successful closing seal resolves the marker. Otherwise retire
+     * the timeline, including an empty replay that cannot seal. An unreadable restore
+     * retires the timeline and leaves the watermark unchanged for a later rebuild;
+     * a compatibility break records a pending invalidation.
      */
     private void replayFromAnchor(
             LiveViewInstance instance,
@@ -8856,13 +8498,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // cursor; its counter is already read back into capturedBoundaries. The merge
                 // keeps the counts it ended on, which the tail below still reads.
                 boundaryFreezingCursor.clear();
-                // A close that fails does not skip the releases below; it propagates once they
-                // have run. Closing the cursor hands a pooled reader of the view's own table
-                // back, and a reader close can fail for any remap or I/O reason: a reader whose
-                // table moved on while it was held, for one, reloads the txn file as it goes
-                // passive. Its throw used to leave the pinned reader detached and the capture
-                // unfreed, since the publication tail that frees the capture after a completed
-                // replay never runs behind a throw.
+                // Return the stored-row cursor and release the capture and pinned reader even
+                // if closing the cursor fails; propagate the first cleanup failure afterward.
                 Throwable failure = closeStoredRowsBestEffort(null, keyedReplay);
                 if (readerAttached) {
                     executionContext.clearReader();
@@ -9269,111 +8906,28 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Head-miss replay path: discards every window-function
-     * partition map and the anchor map, drives the compiled SELECT's
-     * filter / anchor / window cursor stack over the pinned {@code TableReader}'s
-     * ts-sorted view starting from the plan's scan floor {@code L}, emits
-     * a single REPLACE_RANGE commit covering the plan's replacement interval
-     * {@code [R, H)}, and applies inline.
+     * Rebuilds window state from the pinned snapshot over [L, H), warming without output
+     * in [L, R) and replacing output in [R, H). A finite H requires runtime preservation:
+     * scan cutoff, replacement cutoff and restoration of frontier state must agree.
      * <p>
-     * {@code L} and {@code R} are both {@code viewLowerBoundTimestamp} unless
-     * the plan localized the rebuild, in which case the two split: rows in
-     * {@code [L, R)} are fed through the window stack to warm its state up and
-     * emit nothing, because their durable output is already correct, and the
-     * replacement starts at {@code R}. A localized rebuild reads no base row
-     * below {@code L} at all, which is the whole point - its cost stops
-     * tracking the view's age. See
-     * {@link LiveViewCheckpointRepairPlan#isLocalized()} for when that applies.
+     * Commit at the pinned snapshot's seqTxn, including apply-ahead transactions, so forward
+     * drain cannot emit them again. The plan includes their timestamps in its floors.
+     * The caller owns the reader unless a yielding turn transfers it to the session.
      * <p>
-     * {@code H} closes the interval from above. It is end-of-frame - the whole
-     * tail, as every rebuild read before the bound existed - unless the plan
-     * proved a finite convergence boundary, which it does only for a localized
-     * rebuild whose change set has a known ceiling and whose runtime state
-     * provably survives the repair. A finite {@code H} changes three things at
-     * once, and they stand or fall together: the scan stops there, the
-     * replacement's high bound is that value rather than positive infinity so
-     * the durable output above it is left alone, and the runtime window state -
-     * correct on entry, and describing {@code H - 1} rather than the frontier
-     * once the replay has run over it - is taken out of the way beforehand and
-     * put back after. See
-     * {@link LiveViewCheckpointRepairPlan#isRuntimeStatePreserved()}.
+     * Whole-view rebuild replaces [START FROM, +inf), including stale rows below the first
+     * surviving output. Incremental non-DATA handling preserves its frozen prefix instead.
+     * The restatement guard checks a full rebuild before timeline retirement or commit.
+     * An older-format upgrade bypasses that guard and retires its directory after commit.
      * <p>
-     * Cost of the unlocalized rebuild is O(retained_rows x n_window_functions) of
-     * {@code computeNext} plus the partition-rewrite I/O - acceptable for short-lived
-     * views but several seconds to minutes for long-lived ones per the cost model.
-     * {@link #replayFromAnchor} avoids the worst of this when a sealed anchor below the
-     * change reads fewer base rows than the interval this rebuild would localize to;
-     * the plan compares the two and routes here when it does not.
-     * <p>
-     * Pure execution: {@code plan} carries the pinned snapshot's {@code seqTxn}
-     * (the commit and watermark point), the correction floor {@code C}, the scan and
-     * output floors {@code L}/{@code R}, and the retire floor, all derived once in
-     * {@link #planO3Repair}. The caller owns {@code reader} and closes it; this
-     * method only detaches it for the execution context and re-attaches it on the way
-     * out.
-     * <p>
-     * The rebuild commits at the pinned {@code seqTxn} rather than at the trigger.
-     * The scan materialises everything the snapshot holds at or above {@code L},
-     * including transactions {@code ApplyWal2TableJob} raced past the trigger;
-     * leaving the watermarks at the trigger would make the forward path re-read those
-     * already-materialised seqTxns, and a trailing in-order commit (a lone row at the
-     * global max, say) would re-append a duplicate row. That is also why the plan
-     * derives {@code L}/{@code R} from the retire floor rather than from {@code C}:
-     * the watermark advances past the whole snapshot, so a floor above a back-dated
-     * apply-ahead row would drop it permanently.
-     * <p>
-     * The view-rebuild route ({@code fullRebuild} below) distinguishes a wholesale rebuild
-     * (restart restore, corrupt-checkpoint restore, base-metadata-drift / mid-drain
-     * recovery, WAL-loss re-derive) from an incremental O3 trigger. A full rebuild recomputes the entire
-     * view from the applied base, so its REPLACE_RANGE must cover the whole view range
-     * ({@code [viewLowerBoundTimestamp, +inf)}) to purge ANY stale on-disk row - notably
-     * a below-frontier dedup replacement that dropped a row out of the {@code WHERE}
-     * filter, whose stale pre-replacement row sits below the recompute's lowest surviving
-     * ts and would otherwise survive the {@code replayMinTs}-floored replace. The
-     * incremental routes keep the trigger-clamped floor so a
-     * non-DATA removal (DROP PARTITION / TTL / TRUNCATE) still freezes its prefix. A full
-     * rebuild never localizes - every one of its callers passes a non-DATA trigger, which
-     * the plan refuses to derive floors from.
-     * <p>
-     * That whole-range replacement is also what makes a full rebuild dangerous: the prefix
-     * the incremental path froze is exactly what it deletes, and what the recompute cannot
-     * put back. So a full rebuild runs behind {@link LiveViewRebuildRestatementGuard}, which
-     * refuses it - by throwing {@link RebuildRefusedException} before anything durable
-     * moves - when the view retains rows the snapshot has no history for, or when the
-     * recompute reproduces fewer rows below the durable frontier than the view holds. A full
-     * rebuild also retires its timeline only after that second check, just before it commits,
-     * rather than before its scan, so a refusal leaves the timeline standing. The upgrade
-     * rebuild of a view carried over from an older checkpoint format is the exception to both:
-     * the guard stands down for it, and its older directory goes only after the commit.
-     * <p>
-     * A localized rebuild runs one turn at a time. Its interval is finite but can
-     * still be dense enough to hold more rows than one refresh turn should carry,
-     * so the replay stops once it crosses the per-turn budget, parks everything the
-     * next turn continues from in a {@link LiveViewCheckpointRepairSession}, and
-     * returns true. It stops after a row rather than before one - the window cursor
-     * folds a row into the state as it yields it - so the resume point is that
-     * row's timestamp plus the count of its timestamp group already folded, which
-     * the next turn skips past. Nothing durable moves at that point: the
-     * replacement is still uncommitted in the writer the session holds and no
-     * generation names the roots it has staged, so a reader sees the pre-repair
-     * view until the final turn publishes the lot. Only the worker that suspended a
-     * repair resumes it, through {@code resumed}; the pinned snapshot {@code E} it
-     * holds cannot be reopened once lost, which is why a crash discards the
-     * candidate and replans instead.
-     * <p>
-     * Pure execution of a route as well as a plan: {@link #decideRepairRoute} has already
-     * chosen the keyed scan, the cold open-segment route, the runtime and whether the
-     * timeline can be spliced, and this method reads those off {@code route} without
-     * re-deriving them. The one route change it makes is
-     * {@link LiveViewCheckpointRepairRoute#declineKeyedScan}, for the stored-row check only
-     * its live-view writer can answer.
+     * Yield after a row has folded, recording its timestamp and ordinal within that group.
+     * The parked writer, capture and pinned snapshot remain unpublished until completion.
+     * A crash loses that snapshot and must discard the candidate and replan. Route choices
+     * come from decideRepairRoute; only the writer's stored-row check may decline keyed scan.
      *
-     * @param route    the route {@link #decideRepairRoute} decided for {@code plan}
-     * @param resumed  the session a prior turn parked, or null to start a repair
-     * @param mayYield whether this caller can hand the pinned reader over to a
-     *                 parked repair. False for the callers that own the reader for
-     *                 one call and close it on the way out
-     * @return true when the replay yielded and the repair is parked on the instance
+     * @param route    the selected repair route
+     * @param resumed  prior parked session, or null for a new repair
+     * @param mayYield whether this caller permits transfer of its pinned reader to a session
+     * @return true when the replay yielded and parked on the instance
      */
     private boolean o3HeadMissReplay(
             LiveViewInstance instance,
@@ -9435,11 +8989,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             final WindowRecordCursorFactory replayWindowFactory = isIsolated ? repairRuntime.getWindowFactory() : windowFactory;
             final LiveViewWindow replayAnchorWindow = isIsolated ? repairRuntime.getAnchorWindow() : anchorWindow;
-            // The publication ordering this rebuild walks. It owns the two decisions the
-            // rest of the method used to spread across local flags: what happens to the
-            // runtime once the repair publishes, and whether the replacement is
-            // materialised enough for a generation, a watermark or a head seal to
-            // describe it.
+            // Publication tracks runtime settlement and whether the replacement is applied
+            // enough for a generation, watermark or head seal to describe it.
             repairPublication.clear();
             repairPublication.plan();
             // Everything one localized repair carries across the turns it may take. A
@@ -10502,23 +10053,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     // handed the freeze cursor. Its freeze counter is already read back
                     // into capturedBoundaries, and a resumed turn re-arms it from there.
                     boundaryFreezingCursor.clear();
-                    // The view's own rows the merge read, and the writer it appended them
-                    // through. The counts survive - the publication above reads them - and the
-                    // caller disarms the key domain once the repair it armed returns.
-                    //
-                    // Attributed to whichever publication the repair reached: a replacement
-                    // rewrote every row the merge accounted for and this counts them, while a
-                    // sparse upsert wrote none of them and the commit site above counted what it
-                    // kept. Rolling the two together would report a copy-forward cost the sparse
-                    // route does not pay.
-                    //
-                    // A close that fails does not skip the releases below; it propagates once they
-                    // have run. Closing the cursor hands a pooled reader of the view's own table
-                    // back, and a reader close can fail for any remap or I/O reason: a reader whose
-                    // table moved on while it was held, for one, reloads the txn file as it goes
-                    // passive. Its throw used to leave this block before the capture free and the
-                    // pinned reader's return, and on a completed replay before the publication
-                    // tail that frees the capture otherwise.
+                    // Count copied rows only for range replacement; sparse upsert counts retained rows
+                    // at commit. Closing the stored-row cursor must not skip capture or pinned-reader
+                    // release, even when the reader's transition to passive fails.
                     Throwable failure = null;
                     if (!yielded) {
                         if (!repairKeyedReplay.isSparse()) {
@@ -10572,10 +10109,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                             // avoid.
                             hooks.onRepairUnwindCleanup();
                         } catch (Throwable t) {
-                            // The rethrow below propagates the first failure, as elsewhere in
-                            // this cleanup. A throw here used to leave the block on its own and
-                            // drop a stored-row close failure, the one that names the cause.
-                            // With no earlier failure, t propagates exactly as before.
+                            // Preserve the first cleanup failure, including an earlier stored-row close failure.
                             failure = Misc.foldCleanupFailure(failure, t);
                         }
                     }
@@ -10884,24 +10418,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     }
                 }
             } finally {
-                // The session goes back from a finally of its own, so the statements above it
-                // cannot take it with them. They retire a timeline, free the staged capture and
-                // rewind the keyed runtime - files and native memory - so any of them can throw,
-                // and this tail is the last release a COMPLETED turn has: the replay cleanup above
-                // ran to its end and therefore released nothing, the outermost finally below is
-                // gated on the replay never having started, and a turn that did not park is not
-                // attached to the instance, so handleRefreshFailure's discardSuspendedRepair finds
-                // nothing to free either. A throw from the list used to strand the session, its
-                // descriptor mapping and its Paths for the life of the process.
-                //
-                // Unguarded on purpose, and it must stay that way. The release is already
-                // unconditional here, so nesting it changes nothing on the healthy path and cannot
-                // free a session in any state the healthy path does not free it in - which is what
-                // separates this site from the replay cleanup above, whose release is conditional
-                // and had to be bounded by !yielded to keep it off a parked session. A park returns
-                // before this point, so !yielded holds here by construction, and none of the
-                // statements in the try hands the session a borrowed handle. There is nothing here
-                // another owner could close a second time.
+                // Release the session even if timeline retirement, capture release or runtime
+                // rewind throws. A parked turn returns before this point; a completed turn has no
+                // other owner to release its session.
                 try {
                     if (!repairPublication.isRuntimeSettled()) {
                         // The block above unwound before the exchange. Settle anyway: the
@@ -10979,38 +10498,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return false;
         } finally {
             if (!isReplayEntered) {
-                // The prologue unwound, so the replay's finally never ran and everything the
-                // prologue acquired is still ours. The refresh's own catch releases none of
-                // it: a view that keeps faulting here drains the reader pool a tenant per
-                // fault and strands a repair descriptor per fault for a startup sweep to
-                // find. The merge's hold on the cursor goes with the cursor - a bind left
-                // pointing at a freed cursor would turn the leak into a use-after-free - and
-                // the session goes out the same way the replay's own unwind ends it.
-                //
-                // The session goes back from a finally of its own for the reason the publication
-                // tail's does: the three statements ahead of it close a pooled reader and free
-                // native memory, so any of them can throw, and a throw used to take the release
-                // with it. This arm is reached only while the prologue is unwinding, so nothing
-                // behind it would have run either - and on a FIRST turn the session is attached to
-                // nothing (the park that attaches it lives inside the replay this arm proves never
-                // started), so handleRefreshFailure's discardSuspendedRepair has nothing to find
-                // and the session is lost for the life of the process.
-                //
-                // The release stays unconditional, exactly as it was, so it frees a session in no
-                // state it did not already free one in: !isReplayEntered means the park never ran, so
-                // this turn handed the session nothing, and none of the three statements above hands
-                // it anything either. What a RESUMED turn's session does still hold - the live-view
-                // writer, whose handover to the turn sits inside the replay that never started - it
-                // is the sole owner of; its pinned reader went to resumeSuspendedRepair before the
-                // call, and that method's own finally closes it. Nothing here is closed twice.
-                //
-                // The three statements run best effort for the same reason, and the first failure
-                // is the one that propagates. Closing the stored-row cursor hands a pooled reader
-                // of the view's own table back, and a reader whose table moved on while it was held
-                // reloads the txn file as it goes passive, which can fail to remap. The capture
-                // behind it has no other owner on a FIRST turn: the session takes it only when a
-                // park hands it over, and this arm proves the park never ran. A throw that skipped
-                // the free used to strand its Paths, its copy of Q and its staged data segment.
+                // The replay never started, so its cleanup and park handoff never ran. Release
+                // prologue resources best effort, preserve the first failure and always return the
+                // session. Clear the merge's cursor reference before freeing that cursor. A resumed
+                // session still owns its writer; resumeSuspendedRepair owns its pinned reader.
                 try {
                     Throwable failure = null;
                     if (resumed == null) {
@@ -12045,57 +11536,24 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Reconstructs the logical checkpoint roots the restore reader had to skip
-     * because their data pages were structurally invalid, re-versioning each one in
-     * place: the same {@code (maxTimestamp, checkpointId)} logical key, fresh state
-     * derived from the current base, and the identical row position it always had.
-     * The corrupt roots are healed rather than deleted, so every unrelated root
-     * survives and a later restore or historical repair addresses the repaired ids
-     * directly.
+     * Reconstructs unreadable roots from a safe predecessor, preserving logical ids and
+     * row positions. Replay writes no view rows; it freezes corrected boundaries and
+     * publishes one splice. Failure returns false for an applied-base rebuild.
      * <p>
-     * The heal restores the safe predecessor the reader landed on, folds the base
-     * rows above it back through the window pipeline - writing nothing to the
-     * live-view table, which is already correct - freezes each corrupt boundary as
-     * the replay crosses it, and publishes the lot as one timeline range splice with
-     * no row-count change. It is best-effort: any failure leaves the timeline
-     * untouched (the temporary capture segment removes itself) and returns
-     * {@code false}, and the caller rebuilds the derived state from the applied base
-     * instead.
+     * If the ceiling's timestamp group grew, publish at durableBaseSeqTxn to prevent
+     * restore from folding those ties twice. When the durable frontier is higher, continue
+     * replay and seal there at the same seqTxn. A crash between splice and seal leaves a
+     * row-count mismatch that restore rejects.
      * <p>
-     * A ceiling whose timestamp group grew after its seal - an in-order row on its
-     * timestamp that the view materialized later - takes a second route. The base table
-     * holds that row, so the healed ceiling folds it, and the generation's own base
-     * seqTxn then no longer describes the root: the restore replays the commits above
-     * that seqTxn from the ceiling's timestamp up, and would fold the row a second time.
-     * The heal publishes at {@code durableBaseSeqTxn} instead, above which the restore
-     * finds no commit to replay. That alone would also skip every row above the ceiling,
-     * so when the durable frontier runs past the ceiling the replay folds on through the
-     * frontier, and the heal seals a root there at the same base seqTxn - the root a
-     * cadence seal would have left at that point. The splice and the seal are two
-     * publications. A crash between them leaves a generation whose newest root sits
-     * below the frontier at a base seqTxn nothing above it replays from; the restore's
-     * row-count check refuses it, and the caller rebuilds, as it does for a declined heal.
-     * <p>
-     * Either route folds the base table as it stands now, which can hold commits the view
-     * has not consumed yet, or have lost rows the view keeps. A lost row would leave every
-     * root above it short of a row its position counts, so the heal declines when, at any
-     * designated timestamp it folds, the base holds fewer rows than the view's table does. It
-     * counts the rows per interval between two boundaries first, and in the one up to the
-     * frontier on the route that seals it, and walks the timestamps of an interval only when
-     * its count could hide a lost row behind a surplus. A row the view has not consumed is a
-     * surplus the heal keeps when it sits below the durable frontier, where the drain meets
-     * its commit as out of order and repairs it from a root strictly below the commit. On the
-     * frontier the drain folds that commit in order instead, so the heal declines unless the
-     * frontier's own timestamp holds exactly the rows the view's table does. A lost row and a
-     * row the view has not consumed on the very same timestamp still cancel, and the heal does
-     * not see them. Below the frontier the drain's repair of that row's commit re-derives what
-     * depends on the timestamp from the base, so the view converges on the base as a rebuild
-     * would. On the frontier the drain folds that commit in order, over the heal's own fold of
-     * the row, and the row counts twice.
+     * Decline when the base has fewer rows than the view at any folded timestamp. Interval
+     * counts avoid timestamp walks unless a surplus could conceal a loss. Below the
+     * frontier, surplus rows are corrected by later O3 classification; at the frontier,
+     * require exact counts because a later commit folds in order. Same-timestamp loss and
+     * surplus can cancel in this check; at the frontier this remains a double-fold risk.
      *
-     * @param durableBaseSeqTxn        the base seqTxn the view's table has applied
-     * @param durableFrontierTimestamp the newest designated timestamp the view's table holds
-     * @return true when the corrupt roots were reconstructed and republished
+     * @param durableBaseSeqTxn        base seqTxn applied to the view table
+     * @param durableFrontierTimestamp newest timestamp held by the view table
+     * @return true when the roots were reconstructed and republished
      */
     private boolean reconstructCorruptCheckpointRoots(
             LiveViewInstance instance,
@@ -13857,68 +13315,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Classifies the base transactions a whole-view rebuild at {@code toSeqTxn} folds in beyond
-     * the ones the view's table is known to hold - {@code (fromSeqTxn, toSeqTxn]} - by whether
-     * any of them can legitimately lower the view's output at or below {@code frontierTs}.
+     * Classifies backlog (fromSeqTxn, toSeqTxn] for legitimate output removal below the
+     * frontier. REPLACE_RANGE and a materialized-view base's TRUNCATE disable the whole
+     * restatement guard. Filtered dedup replacement disables only the row-shortfall check:
+     * it preserves timestamps and partitions, so history-floor and lost-partition checks
+     * still apply. Ordinary TRUNCATE, partition removal and TTL must not disable the guard.
      * <p>
-     * Three kinds can, because incremental refresh propagates each of them rather than freezing
-     * the rows it takes: a REPLACE_RANGE commit whose delete band reaches the frontier, a
-     * materialized view's TRUNCATE - its full refresh, which the apply side answers by
-     * invalidating the view anyway - and, for a view with a filter, any commit on a
-     * deduplicating base that reaches the frontier, since its replacement row may fail the
-     * filter the row it replaced passed. Everything else only adds rows or removes them the way
-     * the incremental path freezes: TRUNCATE, DROP/DETACH PARTITION and the TTL eviction that
-     * rides on a DATA commit. Following one of those is exactly the restatement the guard is
-     * for. UPDATE invalidates the view on the apply side and never reaches a rebuild, and a
-     * structural entry ({@code walId <= 0}) changes the schema and removes no row.
+     * Unreadable WAL weakens only checks the base could confound: all checks for a
+     * materialized-view base, or shortfall for a filtered base that may have deduplicated.
+     * Only DEDUP ENABLE/DISABLE can change that property. Classify commits using the
+     * snapshot flag and subsequent DEDUP changes in the sequencer metadata log; other
+     * structural changes and unreadable metadata changes provide no such evidence.
      * <p>
-     * The first two can move the base's earliest row as well, so either stands the whole guard
-     * down ({@code BACKLOG_MAY_REMOVE}). The third cannot: every dedup key set holds the
-     * designated timestamp, so a replacement leaves a base row at each timestamp it replaced.
-     * It stands down only the row shortfall, which it would confound, keeps the history floor, and
-     * runs the lost partition check in the row shortfall's place: a replacement never takes away
-     * the base partition a row the view holds came from ({@code BACKLOG_MAY_DEDUP_REPLACE}). The
-     * walk therefore goes on past a possible replacement, so a later commit of either of the
-     * first two kinds still stands the whole guard down.
-     * <p>
-     * The walk reads commit metadata only, off the WAL-E event files, as
-     * {@link #computeApplyAheadBounds} does. A lost base WAL segment - which one of the
-     * rebuild's routes recovers from - leaves it unreadable, and that stops a check only for
-     * a base that can produce one of the three kinds at all. REPLACE_RANGE reaches a table only
-     * through a materialized view's refresh; a live view's own table, the only other one that
-     * takes it, cannot be a live view's base. So an unreadable commit stands the whole guard down
-     * over a materialized view ({@code BACKLOG_UNREADABLE}), and only the row shortfall over a
-     * base whose unreadable commit may be a replacement the filter rejects
-     * ({@code BACKLOG_UNREADABLE_MAY_DEDUP_REPLACE}), which needs a base that deduplicated some
-     * commit of the backlog. Any other base's backlog can only add rows or remove them the frozen
-     * way, read or not.
-     * <p>
-     * The apply job deduplicated each commit under the dedup configuration in force when it
-     * applied that commit, and only two structural changes move that configuration:
-     * {@code ALTER TABLE ... DEDUP ENABLE} and {@code DEDUP DISABLE}. No other schema change can
-     * switch dedup on or off - dedup is on exactly while the designated timestamp is a key, and
-     * a WAL table's rename, retype and drop all refuse that column. So the snapshot's dedup flag
-     * speaks for every commit after the last DEDUP change at or below {@code toSeqTxn}. A filtered
-     * commit that reaches the frontier over a snapshot without dedup keys counts once a DEDUP
-     * change follows it within the backlog, and an unreadable commit counts once the sequencer
-     * records one after it, up to the snapshot. The sequencer's metadata change log names the
-     * change each structural entry made, and a lost or purged WAL segment leaves it readable, as
-     * it leaves the transaction log. An entry whose change cannot be read counts as no DEDUP
-     * change: the guard compares, and the refusal that may follow is one a restart retries.
-     * Counting every structural entry instead would let an ADD COLUMN after a commit stand the
-     * guard down over history the base has lost; reading the snapshot's flag for every commit
-     * would refuse the rebuild over a replacement that ran under dedup, on every restart, and
-     * stop a view that has lost nothing.
-     * <p>
-     * What stays imprecise is a DEDUP change after a commit that ran without dedup: a no-op
-     * {@code DEDUP DISABLE} on a base that never deduplicated, or an ENABLE and a DISABLE, reads
-     * on the sequencer exactly like the DISABLE that ended the dedup a replacement ran under. The
-     * change log records no dedup state before its first entry and ENABLE and DISABLE each set
-     * the state outright, so the state at the commit is not recoverable. Such a backlog stands the
-     * row shortfall down: the history floor and the lost partition check still refuse a rebuild
-     * over a base partition lost anywhere in the view's range, and what goes unseen is a loss
-     * neither can tell apart from a replacement, such as a partition lost and then re-created by
-     * later commits into its range.
+     * The log cannot recover dedup state before its first change. A later no-op DISABLE
+     * can therefore look like the end of dedup and suppress shortfall conservatively.
+     * History and partition checks remain, but cannot detect a lost partition recreated
+     * by later commits into its range.
      */
     private int classifyRebuildBacklog(
             LiveViewInstance instance,
@@ -14381,51 +13793,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Publishes this cycle's staging rows into the tier as a subset of disk
-     * ({@link #publishToInMemoryTier} in subset mode), once it has established what that
-     * publish asserts: the slot, with these rows on top, is the LV table's trailing rows at
-     * {@code lvAppliedSeqTxn}. The read path's seam cuts the disk scan on that identity, and
-     * the fence passes on the stamp alone, so a slot stamped without it serves the wrong
-     * rows at an unchanged row count, or fails the read when it outgrows the table. The
-     * cycle's inline apply reports nothing, so this decides from the applied seqTxn on
-     * either side of it, and publishes only when all of the following hold.
-     * <ul>
-     *   <li>The table holds every block the view's WAL committed. Otherwise the apply did
-     *   nothing (a busy LV writer, a memory-pressure back-off, a failure that suspended the
-     *   table) or stopped part-way, and this cycle's block is still pending: disk lacks the
-     *   staged rows. This then un-stamps the slot and marks the tier stale, as
-     *   {@link #flushLead} does for a flush whose apply did not land, so reads run disk-only
-     *   and return the applied table until the block lands. The stale marking also keeps
-     *   the symbol-id rewind away ({@link #isSymbolRewindCandidate}): the pending block owns
-     *   the ids its values were interned at.</li>
-     *   <li>The apply landed one block, which is then this cycle's own. An advance of more
-     *   than one drained an older backlog with it, and those rows belong under the staged
-     *   ones, where the slot does not hold them. A tracker nothing has initialised yet
-     *   reads as such an advance too.</li>
-     *   <li>The published slot carries {@code lvAppliedBefore} as its stamp, the applied
-     *   seqTxn the apply started from, or the tier is stale, in which case the publish drops
-     *   the slot's rows first. A slot stamped behind that trails the table by rows an earlier
-     *   cycle applied and could not publish (a reader on each slot, or a consumed-watermark
-     *   persist failure), and the staged rows would land on top of the gap.</li>
-     *   <li>The symbol ids the drain interned the rows at are the ids the apply committed.
-     *   They are not when a recovery discarded a pass whose interned ids no rewind has taken
-     *   back yet, or whose appended values the view's WAL writer kept through its rollback
-     *   and committed ahead of this pass's; the slot would then serve these rows under ids
-     *   the disk symbol table resolves as other values. The commit leaves the writer
-     *   holding nothing, so the pass after it is in step again.
-     *   See LiveViewRuntimeRestoreTest.testAnAppliedScanRestoreKeepsAccountsOnTheirIdsWhenALaterAccountSortsBelowTheDiscardedRow.</li>
-     * </ul>
-     * When the table is current and one of the last three fails, this rebuilds the tier from
-     * disk instead, which re-establishes the identity by construction and retries the
-     * symbol-id rewind - a disk-subset view has no lead flush and no stale-tier rebuild of
-     * its own to do either from. The next cycle's apply lands a block this one left pending
-     * and takes that rebuild; on a quiet base {@link #retryPendingLiveViewApply} lands it,
-     * and rebuilds as well.
-     * See LiveViewRuntimeRestoreTest.testAReadOfADedupViewTrailsAnUnappliedBlockThatWouldOutgrowTheTable
-     * and the cases after it.
+     * Publishes staging as a disk subset only when the resulting slot equals the table's
+     * trailing rows at {@code lvAppliedSeqTxn}. This requires all committed WAL applied,
+     * exactly one transaction applied this cycle, a slot stamped at {@code lvAppliedBefore}
+     * (or a stale slot whose rows will be dropped), and symbol ids matching disk.
+     * <p>
+     * Pending WAL leaves the slot unstamped and stale; it still owns its uncommitted
+     * symbol ids. When WAL is fully applied but another prerequisite fails, rebuild from
+     * disk and retry the symbol rewind to restore the seam's row and symbol identity.
      *
-     * @param lvAppliedBefore the LV table's applied seqTxn right before the cycle's inline apply
-     * @param lvAppliedSeqTxn the LV table's applied seqTxn right after it
+     * @param lvAppliedBefore the LV table's applied seqTxn before inline apply
+     * @param lvAppliedSeqTxn the LV table's applied seqTxn after inline apply
      */
     private void publishSubsetToInMemoryTier(
             LiveViewInstance instance,
@@ -14480,54 +13858,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Publishes this cycle's staging rows into the LV's in-memory tier
-     * (fast-path + slow-path swap), returning {@code true} on success and
-     * {@code false} only when both slots are reader-pinned in lead mode.
+     * Publishes staging under the slot's writer-sentinel CAS. Lead mode extends unflushed
+     * rows over a slot stamped at the last flushed seqTxn; subset mode requires rows
+     * already on disk and keeps leadRowCount zero.
      * <p>
-     * In lead mode ({@code leadMode == true}) the staged rows are the un-flushed
-     * lead: the slot's {@code leadRowCount} grows by {@code appendedRows} and the
-     * slot is stamped with {@code lvSeqTxn} = the last-flushed LV-table seqTxn, so
-     * the overlap agrees with disk while the lead sits on top. In subset mode the
-     * staged rows are already on disk (apply preceded this publish), so
-     * {@code leadRowCount} stays 0.
-     * <p>
-     * Two paths share the same {@code 0 -> -1} CAS primitive on a slot's
-     * refcount:
-     * <ul>
-     *   <li><b>Fast-path</b> — try to acquire the writer sentinel on the
-     *     <em>published</em> slot. On success (no readers currently pin it
-     *     and the slot's footprint is still under the growth budget),
-     *     append staging rows in place and release the sentinel via
-     *     {@link LiveViewInMemoryTier#releaseWriteWithoutPublish(int)}
-     *     without flipping the published index. No per-cycle memcpy of
-     *     retained rows; {@code seamTs} stays at the published slot's
-     *     existing minimum.</li>
-     *   <li><b>Slow-path</b> — acquire the non-published slot, copy
-     *     retained rows (those still inside the {@code IN MEMORY} window
-     *     relative to {@code stagingMaxTs}), append staging on top, and
-     *     publish the swap. The {@code IN MEMORY} eviction runs here; the
-     *     fast-path defers it to the next slow-path edge.</li>
-     * </ul>
-     * Slow-path triggers when (a) a reader holds a pin on the published
-     * slot (fast-path CAS fails), or (b) the published slot's footprint
-     * already meets or exceeds
-     * {@code cairo.live.view.in.memory.buffer.growth.bytes} (growth
-     * backstop), or (c) the fast-path acquire fails despite no reader pin
-     * — which can only happen if the writer sentinel was somehow left
-     * dangling, a contract violation that falls through cleanly.
-     * <p>
-     * If both slow-path acquire attempts fail (both slots reader-pinned),
-     * {@code writerStallStartUs} is set so {@code live_views().writer_stall_micros}
-     * surfaces the stall. In subset mode the disk tier is current so the trail is
-     * harmless and the method returns {@code true}: the slot's stamp stays behind
-     * the table, and {@link #publishSubsetToInMemoryTier} rebuilds the slot before
-     * a later cycle appends over the gap. In lead mode the lead has
-     * nowhere durable to live, so it returns {@code false} and the caller flushes
-     * the lead straight to disk.
+     * The fast path appends to an unpinned published slot below its growth budget. The
+     * slow path copies retained rows into the other slot, evicts outside IN MEMORY and
+     * publishes a swap. Both slots pinned records a stall: subset mode can serve disk and
+     * rebuild later, while lead mode returns false so the caller flushes to disk.
      *
-     * @param symbolHorizonCaps the cap on the symbol horizon the published slot is stamped
-     *                          with, per output column, as {@link LiveViewInMemoryTier#publishSwap(int, IntList)}
-     *                          takes it; {@code null} stamps the cache's whole band
+     * @param symbolHorizonCaps per-column horizon caps for publishSwap, or null for the
+     *                          cache's whole band
      */
     private boolean publishToInMemoryTier(
             LiveViewInstance instance,
@@ -15167,63 +14508,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Decides what a lead drain does with its rows when the symbol-id rewind left stranded
-     * ids in the cache, so that a lead published now would list them to readers. Returns
-     * {@code true} after marking the tier stale, which sends this drain's rows straight to the
-     * LV table and rebuilds the slot behind them ({@link #finishLeadRefresh}); {@code false}
-     * when the drain keeps its rows from readers instead: it drains as any lead drain does,
-     * {@link #finishLeadRefresh} publishes the lead unstamped, so reads run disk-only, and the
-     * cadence flush lands the lead and restages the slot ({@link #refreshInstance}).
+     * Routes a drain with stranded symbol ids to disk only while it can advance toward
+     * a pinned slot's horizon, or once per FLUSH EVERY interval. Otherwise keep the lead
+     * unstamped until cadence flush so readers cannot resolve duplicate symbol values.
      * <p>
-     * Each drain sent to disk costs an LV commit and a restage of the IN MEMORY window. The rewind
-     * waits until the LV table has committed as many values per SYMBOL column as a reader's
-     * pinned slot lists. The drains converge on that while the last one either brought the
-     * table closer to it, or stopped on its turn budget ({@link #drainBaseWal}) with the
-     * refresh cursor still below S_pin, the tier's
-     * {@link LiveViewInMemoryTier#getStrandedIdLeadSeqTxn() lead seqTxn}. The symbol horizon
-     * deficit measures the first: how far the committed counts {@code lvReader} reports stand
-     * below the higher of the two slots' horizons, summed over the SYMBOL columns, which the
-     * last drain must have shrunk since it started. S_pin bounds the second: the highest
-     * cursor {@link #rebuildInMemoryTier} has found. A recovery that discards an un-flushed
-     * lead rebuilds the tier before any drain runs below the commits that lead covered, so no
-     * lead a reader can still pin was built from a base commit above S_pin, and below S_pin a
-     * drain stopped on its budget may still leave commits that derive what the pinned lead
-     * lists. The bound fails for an out-of-order hand-off whose parked repair is discarded
-     * later, on a fault during its turn or a runtime change under it. Then no rebuild records
-     * S_pin for the lead the hand-off dropped, drains run below that lead's top, and S_pin can
-     * stand below it. That errs the safe way: a drain that stops on its turn budget between
-     * S_pin and that top does not count as converging, so such a deferral keeps its drains
-     * from readers unless the last drain to disk shrank the symbol horizon deficit. While the
-     * drains converge, the next one goes at once, so the table commits what the pinned lead
-     * lists at the view's normal rate. Otherwise a drain goes to disk at most once per FLUSH
-     * EVERY interval, timed on the tier ({@link LiveViewInMemoryTier#getStrandedIdDiskRouteUs}),
-     * and in practice only the first drain of a deferral does - none went within the interval.
-     * The cadence flush that lands a lead kept from readers stands as its interval's drain to
-     * disk. Every other drain keeps its rows from readers with no LV commit or restage of its
-     * own, for as long as a pin lasts on a slot whose values the table does not commit again: the
-     * view then pays one restage per FLUSH EVERY interval on top of the flush it makes anyway,
-     * and its drains keep pace with the base, so neither its durable output nor the base WAL
-     * it lets go of falls more than about an interval behind.
+     * Progress means a smaller summed symbol-count deficit, or a budget-limited drain
+     * whose cursor remains below S_pin, the highest cursor recorded by tier rebuild.
+     * The pinned horizon is fixed and the other slot rebuilds from committed counts, so
+     * the deficit cannot grow. Cursor progress below S_pin also permits only finitely
+     * many immediate drains. A cadence flush counts as the interval's disk drain.
      * <p>
-     * The drains that go at once are bounded however long a pin lasts and however fast the
-     * base commits. Let S_start be the cursor when the deferral starts.
-     * <ul>
-     *   <li>The slot a pin holds the rewind up on keeps its horizon, and the rebuild behind
-     *   each drain stages the other from the table, which stops its horizon at the committed
-     *   counts. So the deficit never grows while the pin lasts, and a shrinking deficit lets
-     *   through at most as many drains as the deficit the deferral started with.</li>
-     *   <li>A drain stopped on its turn budget moved the cursor forward by up to
-     *   {@code turn.max.commits} base commits, and by at least one unless a recovery's replay
-     *   used up the turn's budget before it. Only one that leaves the cursor below S_pin lets
-     *   the next through. So the budget lets through at most about S_pin - S_start drains,
-     *   ceil((S_pin - S_start) / turn.max.commits) when the commit count stops them, and none
-     *   once the cursor has reached S_pin, where a deficit that stays is a value the table
-     *   does not commit again.</li>
-     * </ul>
-     * Outside the parked-repair case above, S_pin is where the cursor stood when the recovery
-     * discarded the lead, so it can stand above the last commit a pinned lead was built from,
-     * by the commits the view drained into its lead after the reader pinned that slot: no more
-     * than the discarded lead covered, and the drains below S_pin derive that lead again.
+     * Discarding a parked repair can leave S_pin below the discarded lead's actual top.
+     * That conservatively slows disk routing; deficit reduction still admits progress.
+     *
+     * @return true after marking the tier stale for disk routing, false to keep the lead hidden
      */
     private boolean tryRouteStrandedIdDrainToDisk(LiveViewInstance instance, TableReader lvReader) {
         final LiveViewInMemoryTier tier = instance.getInMemoryTier();
@@ -15308,20 +14606,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             return;
         }
 
-        // Stage the recent IN MEMORY window from the applied LV table.
-        // The reader's getSeqTxn() is the same coordinate a query's disk reader
-        // reports, so stamping the slot with it makes the fence pass for an
-        // immediately-following cursor (no intervening apply).
-        //
-        // The staged rows carry only ids the table committed, so the slot's symbol horizons
-        // stop at the reader's committed counts: a read of the slot then sees no lead band at
-        // all. The cache can hold ids at or above those counts that no staged row carries -
-        // the ids of a pass a recovery discarded, which a pinned reader keeps the rewind
-        // below from taking back - and the table may since have committed the same values at
-        // its own ids. A horizon over the cache's whole band would list each such value under
-        // two keys, and a keyed WINDOW JOIN from the view, which maps every key its symbol
-        // table lists, would match the rows that carry the committed key against nothing.
-        // See LiveViewRuntimeRestoreTest.testAReaderPinnedOnALeadTheRetryHasNotCommittedSendsDrainsToDiskBackToBackWhileTheyConverge.
+        // Stamp with the disk reader's seqTxn and cap symbol horizons at its committed
+        // counts. Cached provisional ids may duplicate values committed at other ids;
+        // including them would break keyed joins even though no staged row carries them.
         final long lvSeqTxn;
         final IntList horizonCaps = restagedSymbolCounts;
         horizonCaps.clear();
@@ -16208,20 +15495,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // waits for the operator; hasPendingLiveViewApply skips it meanwhile.
                 return false;
             }
-            // Always rebuild the slot from the now-current disk; never re-stamp it.
-            // A re-stamp asserts the seam's identity - that the slot's band IS the LV table's
-            // trailing rows at appliedAfter - and this site cannot establish it. It knows only
-            // that the applied seqTxn advanced; it does not know which disk image staged the
-            // published slot. An earlier cycle's rebuildInMemoryTier stages the slot from the disk
-            // of its own moment, so when this apply lands a backlog the slot holds an OLDER tail
-            // and the rows this apply just landed sit ABOVE it. The seam would then serve
-            // diskSize - leadStart disk rows and the slot on top, dropping the newest rows of the
-            // LV table and re-emitting the slot's older ones in their place, at an unchanged row
-            // count and with no fault raised. isTierStale() does not separate the two shapes
-            // either: that same earlier rebuild clears the marking while the backlog is still
-            // pending. A rebuild re-establishes the identity by construction, and it costs nothing
-            // on the common path - this site runs only when an apply that had failed finally lands.
-            // See LiveViewSmokeTest.testFlushLeadMultiCycleUnappliedBacklogDoesNotStrandStaleTierRows.
+            // Rebuild from current disk: an applied-seqTxn advance does not prove that the
+            // existing slot holds the table's trailing rows. Restamping an older tail would
+            // replace newly applied rows with older ones at an unchanged row count.
             rebuildInMemoryTier(instance);
             return true;
         } catch (Throwable t) {
@@ -16488,76 +15764,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
-     * Rebuilds the view from the applied base TABLE after a base WAL segment it needs turned out to
-     * be gone for good - an enterprise backup captures the applied base, not its WAL, so a restored
-     * view that still owed itself commits cannot read them anywhere else. {@link #o3HeadMissReplay}
-     * re-seeds the window from identity (so {@code row_number()} stays 1..N), rewrites the tier with
-     * one REPLACE_RANGE and advances the watermarks: self-contained on the base table, needing
-     * neither the WAL nor a checkpoint. The primary-side analog of the replica's applied-base lead
-     * reconstruction. Runs under the refresh latch, like every other refresh path.
+     * Re-derives from the applied base after required WAL is permanently unavailable.
+     * The replay resets runtime state, replaces the whole view and advances only through
+     * applied base transactions. It runs under the refresh latch and the restatement
+     * guard, after apply reaches every transaction represented in durable view output.
      * <p>
-     * Only carries the view as far as the base has APPLIED, because that is all the base table
-     * holds; a base still applying WAL of its own keeps its remaining commits for the next drain,
-     * which reads them from WAL if it can and comes back here if it cannot.
+     * Referenced columns must retain their names and types. Check before replay and again
+     * before recompilation on metadata drift; allow one recompile/retry because the outer
+     * failure budget is already exhausted. Capacity-only metadata changes need no recompile.
      * <p>
-     * Two guards bracket the rebuild, because it is the last thing standing between a recoverable
-     * fault and a permanent invalidation - and, for the same reason, the last place a silent schema
-     * adoption could hide.
-     * <p>
-     * The rebuild refuses outright when the base's applied metadata no longer resolves every column
-     * the view REFERENCES under the same name AND type
-     * ({@link #isRederiveRefusedForBrokenDependency}). A restart makes that reachable with no drift
-     * exception to stop it: a reloaded view has no compiled factory, so
-     * {@code ensureCompiledFactory} compiles it against the base's CURRENT metadata and the replay
-     * runs clean.
-     * <p>
-     * That question is asked TWICE, against freshly read metadata each time: once before the replay,
-     * and again inside the drift catch below, before the recompile. The second ask earns its keep
-     * because {@code ApplyWal2TableJob} applies a structural change to the base writer BEFORE it
-     * calls {@code invalidateLiveViewsForBaseSchemaChange}, so an {@code ALTER TABLE base ALTER
-     * COLUMN <referenced> TYPE ...} landing between the first read and the replay's reader open
-     * passes the entry check on the OLD metadata and surfaces only as the drift - by which point the
-     * first answer has decided nothing about the schema the recompile is about to adopt.
-     * <p>
-     * Neither ask CLOSES that window; both only narrow it. The check reads the base metadata under
-     * its own guarded read and closes it before returning, and the recompile re-reads the
-     * metadata independently - {@code ensureCompiledFactory} opens its own base reader - so nothing
-     * pins a metadata version across the gap. A structural change landing inside that gap (one
-     * {@code prepareForRecompile} plus one compile wide) still passes the second check,
-     * and the recompile still adopts the NEW schema and republishes the whole tier from it. Pinning
-     * the metadata open across the whole recovery would close the gap, at the cost of holding a
-     * pooled metadata tenant across a long call. What bounds the residue today is the apply side:
-     * {@code invalidateLiveViewsForBaseSchemaChange} marks the registered instance invalid
-     * microseconds later, and an invalid view stays queryable - so the worst surviving outcome is an
-     * already-invalid view holding rows recomputed from the new schema rather than the stale
-     * old-schema ones.
-     * <p>
-     * When every referenced column survives but the base metadata version moved anyway, the cached
-     * plan is stale and {@code LiveViewRefreshSqlExecutionContext.getReader} refuses the reader with
-     * {@link TableReferenceOutOfDateException}: an unreferenced column added, dropped or renamed, an
-     * index, a symbol cache flag or a table parameter. A symbol-capacity rebuild alone does not
-     * count, since the context serves a reader that moved by capacity alone, but it is what strands
-     * the WAL symbol dictionary that brings a lagging view here, and any other change in the same
-     * backlog leaves the plan stale. So the recovery is recompiled through
-     * {@link #recoverFromBaseMetadataDrift} and retried EXACTLY ONCE. Once, because the flush-retry
-     * budget is already exhausted by the time this method runs, so nothing outside it would bound a
-     * loop; and the retry cannot re-enter here, because
-     * {@code rebuildActiveWindowStateFromAppliedBase} catches its own throwables and returns them.
-     * <p>
-     * The re-derive is a whole-view rebuild, so {@link LiveViewRebuildRestatementGuard} stands in
-     * front of its commit like any other. A base that has since lost rows the view retains is
-     * where a restored backup most often leaves one, and there the rebuild is refused and the
-     * view stopped rather than recomputed from what survives. It never pins a snapshot behind the
-     * view, because it runs only once the base has applied past everything the view's table may
-     * hold ({@link #rebuildSnapshotFloor}). A lead the view drained from raw WAL may still sit past
-     * the base's apply; the replay drops it, and the guard never reads it.
-     * <p>
-     * The drift retry's rebuild stands on the same precondition, so its own apply-lag gate
-     * ({@link #ensureBaseAppliedForRebuild}) always finds the base applied far enough: the floor
-     * does not move in between, and the table's applied seqTxn only grows.
+     * These checks do not pin metadata across compilation. A structural change in that
+     * gap can still be adopted before apply-side invalidation reaches the instance,
+     * leaving an invalid but queryable view recomputed under the new schema.
      *
-     * @return true when the view recovered, or was stopped by a refused rebuild, and must not be
-     * invalidated
+     * @return true if recovery or a refused-rebuild stop handled the failure
      */
     private boolean rederiveFromAppliedBaseAfterWalLoss(LiveViewInstance instance, CairoException cause) {
         final TableToken baseToken = instance.getDefinition().getBaseTableToken();
@@ -17077,29 +16297,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         flushLead(instance, getWindowFactory(instance), instance.getRefreshedUpToSeqTxn(), 0);
                         final long flushedUs = engine.getConfiguration().getMicrosecondClock().getTicks();
                         instance.setLastFlushTimeUs(flushedUs);
-                        // The flush of a lead kept from readers (drainBaseWal) leaves the tier stale.
-                        // When its apply left the view's table holding every block the view's WAL
-                        // committed, restage the slot from the table now, which retries the
-                        // rewind, rather than leave the next drain to flush its own rows straight to
-                        // disk first. A lead kept past symbol ids a reader's pin keeps stranded
-                        // carries ids the table committed to other values. This flush and restage
-                        // stand as the interval's drain to disk (tryRouteStrandedIdDrainToDisk): the
-                        // next drain keeps its rows from readers again unless the flush brought the
-                        // table closer to the pinned slot's horizon.
-                        //
-                        // A flush whose apply landed nothing, or stopped with a block still pending,
-                        // restages nothing and records no drain to disk. It left the slot unstamped,
-                        // so reads return the table as it stands, and the next lead drain takes the
-                        // stale branch of finishLeadRefresh, which flushes its rows, drives the apply
-                        // again and restages the slot behind them. While a block stays pending, the
-                        // drains after that keep their rows from readers (drainBaseWal). A restage
-                        // here would stage that same table, below the pending block, for the next
-                        // drain to keep its rows from readers over anyway. With the base committing
-                        // at most once per FLUSH EVERY interval, every drain finds this flush due,
-                        // so each drain would pay for a restage.
-                        // See LiveViewRuntimeRestoreTest.testAReaderPinnedOnALeadTheTableNeverCommitsKeepsTheViewWithinAFlushIntervalOfTheBase,
-                        // testAReaderPinnedOnALeadTheTableNeverCommitsShowsNoDrainAboveAFlushThatLandedNothing
-                        // and LiveViewSmokeTest.testFlushLeadUnappliedBacklogUnderSparseBaseCommitsRestagesTheSlotEveryOtherDrain.
+                        // Restage a stale tier after the flush only when all view WAL is applied. This
+                        // retries the symbol rewind and records progress toward a pinned slot's horizon.
+                        // A pending block leaves reads on disk; restaging below it cannot expose the lead
+                        // and would repeat the same work on every sparse drain.
                         if (isLeadKeptFromReaders && isLiveViewWalFullyApplied(instance)) {
                             rebuildInMemoryTier(instance);
                             final LiveViewInMemoryTier tier = instance.getInMemoryTier();
@@ -17164,32 +16365,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     instance.recordRefreshSuccess();
                 }
             } catch (LiveViewApplyLagException e) {
-                // Cooperative apply-lag handoff: this cycle's O3 replay, or the whole-view
-                // rebuild the window-state gate fell back to, needs the base applied to a
-                // seqTxn ApplyWal2TableJob has not reached yet. ensureBaseApplied and
-                // ensureBaseAppliedForRebuild throw before any destructive replay work, so
-                // the view's DURABLE output is untouched - no watermark advance, no
-                // failure accounting, no invalidation. Leave invalidationReason null and
-                // return through the finally; the next fallback scan retries this
-                // view (head > processedTo still holds) once the apply catches up.
-                // Not counting this toward the flush-retry budget is deliberate:
-                // apply lag is transient and self-heals, unlike a refresh fault.
-                //
-                // The compiled factory's accumulators are NOT untouched. The drain that
-                // raised this had already fed every commit below the offending one through
-                // the window cursor, and its O3 detect rolled back only the WAL draft and
-                // latestSeenTs - the accumulators keep every row they counted. So carry the
-                // debt onto the instance: windowStateDirty is a per-turn field that
-                // refreshInstance re-seeds from the instance at every entry, so without this
-                // the next turn starts from a clean slate and drains those same commits
-                // again over accumulators that already counted them. The re-fed rows then
-                // carry cumulative values continuing from the abandoned cycle - a running
-                // count(*) emits N+1.. for what is the view's FIRST row - and the lead
-                // publish makes them reader-visible without any commit at all. The
-                // instance.isWindowStateDirty() gate rebuilds from the applied base before
-                // that drain instead. Gated on the flag rather than raised unconditionally:
-                // a cycle that deferred before feeding a single row owes no rebuild.
-                // See LiveViewConcurrencyTest.testApplyLagDeferralRebuildsAdvancedWindowState.
+                // Apply lag defers without advancing durable output or spending the failure budget.
+                // The drain may already have fed rows into the accumulators before rolling back its
+                // WAL draft. Carry that state debt across turns so recovery rebuilds before those
+                // rows are fed again; a deferral before any row was fed owes no rebuild.
                 if (windowStateDirty) {
                     markWindowStateDirty(instance);
                 }
@@ -17933,57 +17112,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         }
 
         /**
-         * Whether the candidate boundary still means what a resume reads it to mean:
-         * the window state after <i>every</i> qualifying row at or below its
-         * {@code maxTimestamp}.
-         * <p>
-         * A root can stop meaning that after it is written. The cadence seal refuses
-         * to append a second boundary at the head's own timestamp, so when a later
-         * in-order commit adds more rows at that timestamp the existing root is left
-         * describing only part of the group. A resume anchored there restores the
-         * partial state and replays from {@code maxTimestamp + 1}, which reads back
-         * neither the missing rows nor their contribution - every value it computes
-         * from then on is short by them, durably.
-         * <p>
-         * Three checks, because the evidence differs either side of a head transition:
-         * <ul>
-         *     <li><b>Every root</b> first answers from the runtime.
-         *     {@code minSeenTsSinceCheckpoint} is reset by the seal and lowered by
-         *     every row the runtime consumes since, and immediately after a seal the
-         *     frontier sits at the boundary - so a row at or below it is exactly the
-         *     tie growing. The rows behind that minimum may be durable nowhere: an
-         *     un-flushed lead the out-of-order hand-off discarded held them, and only a
-         *     replay that starts below them re-emits them. So the check holds whatever
-         *     identity the head carries. A seal that appends no root - the one closing
-         *     a repair whose splice kept or re-versioned the root at the frontier -
-         *     leaves the head on that root without naming it, and the durable count
-         *     below cannot see a tie that only the lead ever held. An in-order row
-         *     never sits below the newest seal's boundary, so for an older root this
-         *     check stays silent unless a replay whose seal did not land left the
-         *     minimum lower. A rejection costs work, never correctness. The repair
-         *     plan takes a deeper anchor, whose resume reads more of the base and may
-         *     lose on price to the localized rebuild, or, with no covering root left,
-         *     the boundary rebuild over [L, H) or from the view's boundary. Neither
-         *     arms the restatement guard, which only a whole-view rebuild arms, and
-         *     no whole-view rebuild runs this check. A closed segment's keyed
-         *     repair reads the segment whole. The segment loop, whose check vets the
-         *     newest root, the one at the frontier, gives way to the union range.</li>
-         *     <li><b>The head's own root</b>, named by the seal that wrote or
-         *     restored it, covers its group once the runtime check passes. This
-         *     costs nothing and covers the common resume, whose anchor is the
-         *     head.</li>
-         *     <li><b>Every other root</b> answers from the durable live-view table,
-         *     which is authoritative for a root's position (the corrupt-root heal
-         *     positions its repaired roots the same way). The table can lag a root -
-         *     a live-view block committed but not yet applied - and never leads it,
-         *     so holding strictly more rows at or below the boundary than the root
-         *     claims as its whole prefix proves rows landed there after it was
-         *     sealed. The head's in-memory answer does not survive the head moving
-         *     on, and this one does, including across a restart.</li>
-         * </ul>
-         * A boundary partition the live-view table does not hold natively has no
-         * searchable prefix, so it yields no evidence either way and the anchor
-         * stands.
+         * Checks that a root covers its whole timestamp group before resuming above it.
+         * The runtime minimum rejects roots at or above a row consumed since the last seal,
+         * including a tie held only in a discarded lead. The named head then needs no disk
+         * check. Other roots are rejected if durable view rows through their timestamp
+         * exceed the recorded prefix position. A non-native boundary partition provides no
+         * searchable prefix and therefore no additional evidence.
          */
         private boolean coversOwnTimestampGroup(LiveViewCheckpointTimelineEntry entry, long lvRowPosition) {
             if (instance.getMinSeenTsSinceCheckpoint() <= entry.maxTimestamp) {

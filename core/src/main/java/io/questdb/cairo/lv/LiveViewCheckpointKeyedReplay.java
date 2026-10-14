@@ -49,108 +49,29 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * One closed anchor segment's keyed repair: the keys its correction touched, and the
- * merge that supplies every other key's row from the view's own stored output.
+ * Keyed repair domain and merge of unaffected stored rows. A range replacement must
+ * emit the interval's full row set, so indexed replay of affected keys merges with
+ * stored output for every other key. Those copied rows preserve stored state instead
+ * of recomputing it from the base.
  * <p>
- * A whole-segment repair reads every base row of the segment, evaluates the window over
- * all of them and re-emits the segment's whole output. Only the keys the correction
- * carried have changed output, so a keyed repair reads only those keys' rows - through
- * the base's posting index, which
- * {@code PageFrameRecordCursorFactory.getCursorInTimestampRangeForwardIndexed} follows -
- * and evaluates the window over those alone. {@link LiveViewCheckpointKeyedScanCost}
- * prices that read against the whole-segment one and decides which route a segment takes.
- *
- * <h2>Why the merge exists</h2>
- * The read localizes; the <b>publication</b> does not. A repair publishes with
- * {@code WalWriter.commitLiveViewWithReplaceRange}, which deletes {@code [lowTs, hiTs)}
- * wholesale, so a commit carrying only the affected keys' rows would delete every
- * unaffected key's stored row inside the segment. The block therefore has to carry the
- * segment's full row set - unless the view's own table carries the dedup keys a sparse
- * publication upserts on, which is what the section below is about - and this supplies
- * the half the keyed replay did not compute: it reads the view's own durable rows over
- * that range, drops the ones whose key the replay is recomputing, and appends the rest
- * into the same commit in timestamp order.
+ * Drain stored rows through each replay row and checkpoint boundary before emitting
+ * or freezing it. Boundary positions must count all rows at or below that timestamp.
+ * Sparse upsert still accounts for every stored row but skips writing unaffected rows.
+ * If sparse output is not unique, {@link #materializeMerge} rewinds and writes the
+ * accounted rows, verifying their count; WAL accepts their resulting O3 order.
  * <p>
- * So a keyed repair publishing a replacement writes exactly what a whole-segment repair
- * writes. What it saves is the window evaluation and the base column reads for the keys
- * the correction did not touch; what it costs is one sequential read of the view's own
- * output for the segment.
- *
- * <h2>What it changes about a repair</h2>
- * A copied-forward row is no longer recomputed from the base. A whole-segment repair is a
- * from-base recompute of its range and corrects any divergence it finds there; a keyed
- * one preserves the stored row for every key outside {@code Q}. That is a property change
- * rather than an optimization, which is why
- * {@code cairo.live.view.checkpoint.repair.keyed.replay.enabled} exists at all. It defaults
- * to true, so an operator who wants a from-base recompute of the whole range sets it to
- * false; the route reaches only views whose key column is an indexed SYMBOL, so an
- * unindexed view keeps exactly what it had either way.
- *
- * <h2>Ordering</h2>
- * The merged rows are appended in timestamp order against the replay's own, because the
- * repair's cadence boundaries carry cumulative live-view row positions and a boundary's
- * position is the count of emitted rows at or below it. The replay drains this up to each
- * boundary before freezing it, and up to each replayed row before appending that row, so
- * at every freeze the emitted set is exactly the rows at or below the boundary. See
- * {@link #drainUpTo}.
- *
- * <h2>The sparse attempt, and what the merge does instead of writing</h2>
- * A view whose own table carries the {@code (designated timestamp, projected partition
- * key)} dedup keys can publish the repair as an <b>upsert</b> on that pair rather than as
- * a replacement of the interval, and then the block carries only the rows the replay
- * recomputed - every other key's stored row stays where it stands rather than being
- * rewritten as itself. {@link #bindOutput} takes that decision, and what it changes here
- * is one thing: the merge still walks every stored row and still <b>accounts</b> for it,
- * it just does not write it. The accounting is what the boundary positions are made of -
- * a cadence boundary records the count of live-view rows at or below it, and a row this
- * merge leaves alone is still a row below that boundary - so a sparse publication's
- * ladder is the merged publication's ladder, to the row.
+ * Sparse publication also requires every superseded stored (timestamp, key) pair in
+ * the replay output. Base row loss, including TTL with no sequencer transaction, can
+ * break this condition. The merge pairs keys within one timestamp and counts missing
+ * or duplicate stored pairs as unpaired; any unpaired row requires range replacement.
  * <p>
- * That is also why the fallback is not a rollback. A repair whose output turns out to
- * repeat a pair cannot be published sparsely at all - the upsert would collapse the
- * repeat - and the whole-segment replacement it falls back to needs the rows this merge
- * accounted for and skipped. {@link #materializeMerge} is what supplies them: it rewinds
- * the stored cursor and writes the same row set it counted, which it then proves it
- * re-read to the row. The rows come out after the replay's own rather than interleaved
- * with them, which the WAL carries as any other out-of-order block.
- *
- * <h2>Every superseded row has to find its pair</h2>
- * An upsert replaces a stored row only through a block row carrying the same pair, so a
- * sparse publication stands on every stored row of a recomputed key reappearing in the
- * replay's output. A base that only ever gained rows guarantees that. A base that lost
- * rows does not, because the view keeps what it derived from them: a dropped, detached or
- * TTL-evicted partition, or a TRUNCATE. None of those has to sit in the change set this
- * repair covers - the view walked past it on an earlier turn - and TTL eviction reaches
- * the sequencer log as no transaction at all. The replay then emits no row carrying such
- * a stored row's pair, an upsert leaves the row standing beside the recomputed ones, and
- * the row arithmetic, which counts it as superseded, describes a table nothing wrote.
+ * An insert-only open-segment resume derives positions from durable counts plus
+ * inserted rows without walking stored output. Its fallback uses
+ * {@link #materializeUnaccountedMerge} to account for and write that output once.
  * <p>
- * So the sparse merge pairs every stored row of a recomputed key with the replay's output
- * before it counts it, and a row left without a pair abandons the attempt the way a
- * repeated pair does: {@link #getUnpairedSupersededRows()} turns non-zero and the
- * replacement deletes the row outright. The pairing rides on the order both sides already
- * share. The replay drains this merge up to each row before appending that row, so every
- * stored row at a timestamp is walked before the first replayed row there, and a stored
- * row the drain meets below its own bound has no replayed row left to pair with. The rows
- * at the bound wait in a set scoped to that one timestamp, and each replayed row there
- * takes its own key out of it, resolved from the base's integer to the view's once per key.
- * A stored row whose pair already waits there counts as unpaired on the spot: the upsert
- * would turn each stored row of the pair into a copy of the one row the replay emits there.
- * <p>
- * An open-segment resume walks nothing to begin with: its boundary positions come from
- * the durable ones plus the exact count of inserted rows, so it accounts for no stored
- * row and does not advance this cursor at all. Its fallback is
- * {@link #materializeUnaccountedMerge}, which writes the whole stored merge in the one
- * pass that would otherwise only have counted it.
- *
- * <h2>Why the two key spaces</h2>
- * The base table and the view keep separate symbol maps over the same strings, so
- * neither's integers name a key in the other, and the checkpoint roots name keys in a
- * third encoding again. {@code Q} arrives in the base reader's own integers, which the
- * change-set decomposition resolved against the same pinned reader, and {@link #arm}
- * resolves it into the other two through the value each integer names. It refuses the
- * route rather than dropping a key the base reader cannot name: a key missing from a keyed
- * scan is a key whose rows the repair would not correct.
+ * Base and view SYMBOL ids are separate key spaces. {@link #arm} resolves the pinned
+ * base reader's keys into view ids and checkpoint encoding through their strings;
+ * an unresolved key refuses the route rather than leaving its rows uncorrected.
  */
 public final class LiveViewCheckpointKeyedReplay implements BoundaryFreezingCursor.RowDrain, QuietCloseable {
     // IntIntHashMap's answer for a key it does not hold. No symbol integer is -1: values

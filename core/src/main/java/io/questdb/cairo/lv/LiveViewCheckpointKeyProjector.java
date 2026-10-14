@@ -40,45 +40,17 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * The partition identity every window function in one live view shares, compiled once
- * against the window's input metadata and read by everything that has to name a key.
+ * Shared partition identity compiled against the window input metadata. Functions
+ * with different PARTITION BY keys cannot share a projector. The indexed SYMBOL
+ * column identifies the base posting index used by keyed repair.
  * <p>
- * A live view whose functions disagree on their PARTITION BY has no such identity and
- * gets no projector; {@link LiveViewSegmentRepairEnvelope#GATE_MIXED_PARTITION_KEYS} is the
- * static form of the same question. Where one identity does exist it is the only key
- * schema the view has - the anchor window, the checkpoint roots and every repair speak
- * it - so deriving it twice would be two chances to disagree.
+ * The runtime key sink uses reader-local SYMBOL integers, valid for the pinned
+ * reader's lifetime. The checkpoint sink resolves SYMBOL values to strings; without
+ * SYMBOL columns both sinks are the same object. Byte encoding belongs to
+ * {@link LiveViewSnapshotKeyCodec} and caller-owned buffers, not this shared projector.
  * <p>
- * Two consumers today, and they need different halves of it:
- * <ul>
- *     <li>{@link LiveViewCheckpointRowsPlan} projects a base record into a map key, to
- *     count rows per key while discovering a ROWS dependency's bounds. That is what the
- *     two sinks are for, and the plan held them itself until an anchor-only view - which
- *     compiles no ROWS plan at all - needed the same identity.</li>
- *     <li>A keyed repair names the keys a correction touched, so its replay can follow
- *     those keys' rows through the base's posting index rather than reading every row of
- *     the segment. That needs one thing the sinks do not carry: <b>which base column the
- *     index is on</b>, which is {@link #getIndexedSymbolColumnIndex()}.</li>
- * </ul>
- *
- * <h2>The two sinks</h2>
- * {@link #getKeySink()} writes a SYMBOL key column as the reader's table-local integer,
- * which is stable for one reader's lifetime - exactly the scope one repair plans and
- * replays in. {@link #getCheckpointKeySink()} writes it as the resolved string instead,
- * because that is what a window function's own partition map holds and what a checkpoint
- * partition map keys an entry by. On a projector with no SYMBOL key column the two are
- * one object.
- *
- * <h2>What it deliberately does not do</h2>
- * It encodes no checkpoint key bytes. {@link LiveViewSnapshotKeyCodec} does that, off a
- * map record and into a caller-owned buffer, and a projector shared by every worker
- * draining the view may own no such buffer. A keyed <i>publication</i> - which is the
- * first thing that needs the bytes rather than the identity - is Stage 3's, and it will
- * encode through the codec exactly as {@link LiveViewCheckpointRowsBounds} already does.
- *
- * <h2>Ownership</h2>
- * An expression-keyed projector owns its key functions, which the compiling factory frees
- * with the projector. Consumers hold non-owning references and must not close it.
+ * The compiling factory owns the projector and its expression functions. Consumers
+ * borrow it and must not close it.
  */
 public final class LiveViewCheckpointKeyProjector implements QuietCloseable {
     private final ColumnTypes checkpointKeyColumnTypes;

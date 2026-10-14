@@ -238,38 +238,13 @@ public final class LiveViewCheckpointLayout {
     }
 
     /**
-     * Publishes a staged {@code .tmp} file over a final name that may already
-     * hold a previous version of the same record, and returns the
-     * {@link Files} rename result.
+     * Publishes a staged file over a rewritable final name, returning the rename result.
+     * On Windows only a destination-collision errno permits unlinking the old name and
+     * retrying once. That fallback is not atomic: readers must tolerate a temporarily
+     * absent record. Other errors preserve the old record. Callers close mappings first.
      * <p>
-     * POSIX {@code rename} replaces the destination atomically, so the first
-     * attempt succeeds and this never takes a second step. Windows
-     * {@code MoveFileW} instead refuses an existing destination, so on a
-     * collision errno - and only on one of those - the destination is unlinked
-     * and the rename retried once.
-     * <p>
-     * The retry is not atomic: a Windows reader can observe the final name
-     * missing between the unlink and the rename. That state is <em>not</em> the
-     * one a crash between staging and publication leaves - a crash there keeps
-     * the previous record and adds a {@code .tmp} sibling, whereas this window
-     * has no record at all - so a caller that distinguishes "record absent" from
-     * "record present" must tolerate the former appearing spuriously on Windows.
-     * Restoring atomicity needs a replace-capable native rename
-     * ({@code MoveFileExW} with {@code MOVEFILE_REPLACE_EXISTING}); until then
-     * this is the closest behaviour that keeps the caller working at all, since
-     * today every such re-publication simply fails on Windows.
-     * <p>
-     * Gating on the errno rather than on the destination existing matters: a
-     * rename that failed for any other reason leaves the previously published
-     * record in place, exactly as it did before this method existed. Closing the
-     * mapping before publishing is the caller's job on both platforms.
-     * <p>
-     * Only for names a caller deliberately rewrites: the {@code _repairing}
-     * prefix-preservation marker, the repair descriptor and the
-     * {@code _retirements} work set. Published metadata and data segments never
-     * reach an existing final name - their ids are allocated past every published one -
-     * so those paths rename directly and rely on that invariant rather than on
-     * replace semantics.
+     * Use only for rewritable markers, repair descriptors and retirement queues.
+     * Immutable metadata and data segments allocate fresh ids and rename directly.
      */
     public static int publishOverwrite(@NotNull FilesFacade ff, @NotNull LPSZ tmpPath, @NotNull LPSZ finalPath) {
         final int result = ff.rename(tmpPath, finalPath);

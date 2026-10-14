@@ -39,77 +39,21 @@ import org.jetbrains.annotations.Nullable;
 import java.util.Arrays;
 
 /**
- * The compiled description of one live view's fused window state: which accumulator
- * components its durable state is made of, where each sits in the leaf's scalar
- * payload, and which SELECT-list outputs read them.
+ * Durable layout of a live view's fused window state, rendered from its
+ * {@link WindowAccumulatorPlan}. Component sharing and containment follow the runtime
+ * plan; persistence adds codec compatibility, canonical order and an inline budget.
+ * A partition-key count projection never contributes to the shared row-count state.
  * <p>
- * The plan is the single owner of that answer for a live view. Sharing is decided once, from
- * proven component identities - never inferred ad hoc in the checkpoint writer, and
- * never from SELECT-list order, which a recompile may change without changing a byte
- * of state. A function the plan does not bind is a <b>residual</b> and keeps the
- * legacy per-function root it has today; the two lists together are always the whole
- * factory.
+ * The scalar payload starts with an eight-byte anchor, followed by components in
+ * encoded-identity order, with no state page references. This order survives projection
+ * reordering. The prefix fitting {@link LiveViewCheckpointContracts#MAX_INLINE_LEAF_STATE_BYTES}
+ * is durable in the fused root; the remaining components share the runtime map but
+ * persist through their functions' own roots. Residual functions keep their own map
+ * and root. Together these categories cover the entire factory.
  * <p>
- * Sharing itself is not a durable question, so this plan does not decide it: its
- * {@link Builder} composes a {@link WindowAccumulatorPlan} and renders that plan's
- * components into a persisted layout. Sharing comes in two strengths
- * there, applied in that order. Two projections whose components are <b>identical</b> merge
- * outright - {@code sum(x)} beside {@code avg(x)}. A projection whose component's whole image
- * sits <b>inside</b> another's is folded onto that host and reads its own bytes out of the
- * wider slice - {@code count(x)} beside either of them, which
- * {@link LiveViewAccumulatorDescriptor#derivedStateOffset} is what proves. The second
- * is what takes {@code sum(x) + avg(x) + count(x)} to one component and a 24-byte
- * fused entry. Neither ever applies across arguments or contribution predicates, so
- * the target shape's {@code sum(amt)} and {@code count(acct)} remain two components.
- * <p>
- * One projection joins on neither strength but on an argument the window itself pins:
- * a {@code count(k)} over the very column the window partitions by reads the row-count
- * component {@code count(*)} maintains and corrects it per row - see
- * {@link WindowAccumulatorProjection#PROJECTION_COUNT_PARTITION_KEY}. Such a
- * projection never becomes its component's contributor, because the counter it would
- * keep alone is not the one the component holds.
- *
- * <h2>Scalar layout</h2>
- * <pre>
- *   offset 0: anchor value, 8 bytes
- *   then:     components in canonical identity order
- *   refs:     empty
- * </pre>
- * Components are ordered by their encoded identity, so two nodes compiling the same
- * view - and one node recompiling it after the projections were reordered - lay the
- * state out identically. The payload must fit
- * {@link LiveViewCheckpointContracts#MAX_INLINE_LEAF_STATE_BYTES}: the B-tree splits
- * on entry count rather than encoded size, so an unbounded "fixed width means inline"
- * rule would build very large 64-entry leaves and make every CRC and decode along the
- * path more expensive. A group that overflows keeps the prefix of that order which
- * fits, and every component past it stays in the group's map value while its projecting
- * function keeps the function root it has today - see below.
- *
- * <h2>Durable and runtime-only members</h2>
- * The budget is a fact about a persisted leaf and not about a map, so the two questions it
- * used to answer at once are separate:
- * <ul>
- *     <li>a <b>durable member</b> is a component in {@link #getManifest() the manifest}.
- *     Its bytes are in every fused leaf and its function has no root of its own;</li>
- *     <li>a <b>runtime-only member</b> is a component past the budget. Its slots are in the
- *     window's one map value exactly like a durable member's - one map, one probe, one
- *     accumulator update - and its bytes go to the function root its projection keeps, read
- *     out of the group's value at {@link LiveViewAccumulatorProjection#getFunctionSlotBase()}
- *     through the same component codec the manifest would have used.</li>
- * </ul>
- * The durable members are a prefix of the canonical order and the runtime-only ones the
- * tail, so {@link #getDurableComponentCount()} splits one list rather than naming a subset.
- * A <b>residual</b> is neither: a function the compiler never offered, or one the runtime
- * builder turned away, which keeps both its own map and its own root.
- *
- * <h2>What reads it</h2>
- * The plan is durable, not advisory. {@code LiveViewCheckpointWindowRoot} persists
- * {@link #getManifest()} as the layout every fused leaf is sliced by, and compares it
- * byte-for-byte against a predecessor root's before a seal may build on that
- * predecessor's leaves; {@link #getWindowIdentity()} and the key schema are the other
- * two halves of that compatibility test. {@code LiveViewWindow} builds its fused map
- * value from the same component order, so a component's runtime slot base and its
- * durable state offset are two readings of one decision.
+ * The manifest, window identity and key schema must match a predecessor before its
+ * leaves can be reused. Runtime slot bases and durable offsets derive from the same
+ * component order.
  */
 public final class LiveViewWindowStatePlan {
     /**
@@ -475,21 +419,9 @@ public final class LiveViewWindowStatePlan {
     }
 
     /**
-     * Collects the compiler's candidate projections and, on {@link #build()}, renders the
-     * layout a {@link WindowAccumulatorPlanBuilder} decides into the durable one: the fused
-     * byte offsets, the manifest, and the leaf budget that may hand the tail of the group
-     * back as residuals.
-     * <p>
-     * Which components a group has, which of them merge, which fold onto a wider host, what
-     * order they sit in and which projection maintains each is <b>not</b> decided here. All
-     * of that is a fact about the accumulators rather than about persisting them, so it is
-     * the runtime builder's, and this class composes one rather than repeating it - the two
-     * used to be the same three hundred lines twice, which is how a layout and the manifest
-     * describing it come to disagree. What is added on top is exactly what only exists
-     * because the state is written down.
-     * <p>
-     * Every rejection is an ordinary answer rather than an error: the caller adds the
-     * function to the residual list and it keeps the legacy root it has today.
+     * Renders the runtime plan's sharing decisions into durable offsets, a manifest and
+     * an inline-budget prefix. Rejected candidates remain residual functions with their
+     * own state and roots.
      */
     public static final class Builder {
         /**

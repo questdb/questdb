@@ -34,32 +34,14 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.TestOnly;
 
 /**
- * Native open-addressed index from {@code (namespace, version, partition key)} to a
- * non-negative int, over the keys of one {@link LiveViewCheckpointRecordArena}. The two
- * primitive qualifiers let one flat table serve several function ordinals and state
- * versions without joining them to the key.
+ * Native index from (namespace, version, encoded key) to a non-negative int. Keys are
+ * arena handles and become invalid when that arena clears, releases or closes. Probe
+ * addresses are valid only for the call; insertion takes an existing arena handle.
  * <p>
- * The index stores each key as its arena handle, never its bytes, so it is only as valid
- * as the arena it was built over: a handle goes stale when that arena is cleared,
- * released or closed. A probe passes its key as an {@code (address, length)} pair valid
- * for the call; a put passes the handle of a key already in the arena.
- * <p>
- * One slot is {@code [long handle + 1][int hash][int namespace][int version][int value]},
- * 24 bytes, zero marking an empty slot. The table is a power of two of slots, probed
- * linearly, and holds entries in up to {@link #LOAD_FACTOR} of them, the load factor
- * QuestDB's native SQL hash maps default to. It doubles the moment its entries reach that
- * share, so it stays between about a third and seven tenths full: 34 to 69 bytes an entry.
- * A probe rejects a slot on its stored hash and qualifiers before it reads the slot's key,
- * so a longer run of occupied slots costs slot reads rather than key reads. A rehash
- * re-places slots by their stored hash and never re-reads key bytes, and
- * {@link #reserve(long)} sizes the table for a known key count in one allocation.
- * <p>
- * Allocation is lazy: the constructor reserves nothing, so a field initializer never
- * strands native memory when its owner's constructor throws. The memory is tagged
- * {@link MemoryTag#NATIVE_LIVE_VIEW_IN_MEM}, which the process totals count, and no
- * view's refresh tracker counts it: the index replaced a heap table that
- * {@code cairo.live.view.refresh.memory.limit.bytes} never covered, so every allocation
- * and free here is untracked.
+ * Slots contain [long handle + 1][int hash][int namespace][int version][int value],
+ * with zero denoting empty. Linear probing rejects hashes and qualifiers before
+ * reading keys; growth reuses stored hashes. Allocation is lazy and tagged as live-view
+ * native memory, but is outside the per-view refresh tracker.
  */
 final class LiveViewCheckpointKeyIndex implements Mutable, QuietCloseable {
     private static final double LOAD_FACTOR = 0.7;

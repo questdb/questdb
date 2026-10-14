@@ -25,6 +25,7 @@
 package io.questdb.cairo.lv;
 
 import io.questdb.std.ObjList;
+import io.questdb.std.ObjectPool;
 
 /**
  * Heap-only high-water scratch shared by short-lived partition-map writers.
@@ -32,26 +33,26 @@ import io.questdb.std.ObjList;
  * the next {@link #reset()}.
  */
 final class LiveViewCheckpointPartitionMapObjectPool {
-    private final LiveViewCheckpointPageRefPool decodedPageRefs = new LiveViewCheckpointPageRefPool();
+    private final ObjectPool<LiveViewCheckpointPageRef> decodedPageRefs = new ObjectPool<>(LiveViewCheckpointPageRef::new, 1);
     private final ObjList<LiveViewCheckpointPartitionMapNode> nodes = new ObjList<>();
     private final ObjList<LiveViewCheckpointPageRef> outputPageRefs = new ObjList<>();
     private int nodeCursor;
     private int outputPageRefCursor;
 
     void clear() {
-        decodedPageRefs.clear();
+        decodedPageRefs.resetCapacity();
         nodes.clear();
         outputPageRefs.clear();
         nodeCursor = 0;
         outputPageRefCursor = 0;
     }
 
-    LiveViewCheckpointPageRefPool decodedPageRefs() {
+    ObjectPool<LiveViewCheckpointPageRef> decodedPageRefs() {
         return decodedPageRefs;
     }
 
     int getRetainedObjectCount() {
-        return decodedPageRefs.size() + nodes.size() + outputPageRefs.size();
+        return decodedPageRefs.getCapacity() + nodes.size() + outputPageRefs.size();
     }
 
     int getFirstRetainedNodeIdentityForTest() {
@@ -69,11 +70,13 @@ final class LiveViewCheckpointPartitionMapObjectPool {
         if (outputPageRefCursor == outputPageRefs.size()) {
             outputPageRefs.add(new LiveViewCheckpointPageRef());
         }
-        return outputPageRefs.getQuick(outputPageRefCursor++).clear();
+        final LiveViewCheckpointPageRef ref = outputPageRefs.getQuick(outputPageRefCursor++);
+        ref.clear();
+        return ref;
     }
 
     void reset() {
-        decodedPageRefs.reset();
+        decodedPageRefs.clear();
         nodeCursor = 0;
         outputPageRefCursor = 0;
     }
