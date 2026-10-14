@@ -64,8 +64,9 @@ import org.jetbrains.annotations.Nullable;
  * a table directory, and a filter on the table name walks only the directories of the tables
  * that pass it.
  * <p>
- * A table dropped or renamed after the cursor listed it keeps its row, with NULL in the columns
- * derived from its files.
+ * The cursor lists only the tables whose names resolve: a table that CREATE or RENAME has not
+ * finished registering shows up on the next call. A table dropped or renamed after the cursor
+ * listed it keeps its row, with NULL in the columns derived from its files.
  */
 public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory {
     private static final int DISK_SIZE = 5;
@@ -175,11 +176,16 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
         private TableStorageRecordCursor of(SqlExecutionCircuitBreaker circuitBreaker) {
             this.circuitBreaker = circuitBreaker;
             engine.getTableTokens(tableBucket, false);
-            // drop system tables up front, so that size() matches the rows hasNext() returns
+            // Drops system tables up front, so that size() matches the rows hasNext() returns. Drops
+            // also every table whose name does not resolve to the listed token: CREATE and RENAME
+            // publish a table to the listing before its name resolves (see
+            // TableNameRegistryRW.registerName()), and the record verifies the table through its
+            // name. Once the listing and the name agree on a table, only a DROP or RENAME can
+            // change that, and the record turns either into NULLs.
             tables.clear();
             for (int i = 0, n = tableBucket.size(); i < n; i++) {
                 final TableToken token = tableBucket.get(i);
-                if (!token.isSystem()) {
+                if (!token.isSystem() && token.equals(engine.getTableTokenIfExists(token.getTableName()))) {
                     tables.add(token);
                 }
             }
@@ -247,7 +253,23 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                 return TableUtils.lengthOf(getStrA(col));
             }
 
-            // Checks whether the table was dropped or renamed after the cursor listed it.
+            // Checks whether the table was dropped or renamed after the cursor listed it. A non-WAL
+            // DROP or RENAME deletes or moves the table directory before it retires the table name,
+            // so the token of such a table stays current for a while after its files are gone. A
+            // live non-WAL table always has its _txn file, so a missing one means the table is gone.
+            private boolean hasTableVanished() {
+                if (isTokenStale()) {
+                    return true;
+                }
+                if (token.isWal()) {
+                    return false;
+                }
+                path.of(configuration.getDbRoot()).concat(token.getDirName()).concat(TableUtils.TXN_FILE_NAME);
+                // A new table can bring a _txn file back to the same directory, but only after the
+                // engine retired the name of this one, which the second token check then sees.
+                return !configuration.getFilesFacade().exists(path.$()) || isTokenStale();
+            }
+
             private boolean isTokenStale() {
                 final TableToken current = engine.getTableTokenIfExists(token.getTableName());
                 return current == null || !current.equals(token);
@@ -276,7 +298,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                         partitionBy = metadata.getPartitionBy();
                         timestampType = metadata.getTimestampType();
                     } catch (CairoException | TableReferenceOutOfDateException e) {
-                        if (!isTokenStale()) {
+                        if (!hasTableVanished()) {
                             throw e;
                         }
                         setTableGone();
@@ -295,7 +317,7 @@ public class TableStorageRecordCursorFactory extends AbstractRecordCursorFactory
                         rowCount = txReader.getRowCount();
                         partitionCount = txReader.getPartitionCount();
                     } catch (CairoException e) {
-                        if (!isTokenStale()) {
+                        if (!hasTableVanished()) {
                             throw e;
                         }
                         setTableGone();

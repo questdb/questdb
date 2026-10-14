@@ -112,11 +112,10 @@ public class TableDiskSizeCacheTest extends AbstractCairoTest {
                                 }
                                 completedPolls.incrementAndGet();
                             } catch (CairoException e) {
-                                // Non-WAL DDL locks the table, and a non-WAL rename moves the directory
-                                // before it retires the old name: table_storage() fails the poll in both
-                                // cases, with or without the cache. The test checks the cache state.
-                                final CharSequence message = e.getFlyweightMessage();
-                                if (!Chars.contains(message, "table busy") && !Chars.contains(message, "table does not exist")) {
+                                // Non-WAL DDL locks the table, so table_storage() fails the poll while the
+                                // DDL holds the lock and the table files still exist, with or without the
+                                // cache. The test checks the cache state.
+                                if (!Chars.contains(e.getFlyweightMessage(), "table busy")) {
                                     throw e;
                                 }
                             }
