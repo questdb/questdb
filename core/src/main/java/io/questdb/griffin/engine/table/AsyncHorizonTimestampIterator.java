@@ -24,7 +24,6 @@
 
 package io.questdb.griffin.engine.table;
 
-import io.questdb.cairo.CairoException;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
@@ -128,7 +127,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         long nextPos = pos + 1;
         if (nextPos < masterRowCount) {
             long nextRowIdx = isFiltered ? filteredRows.get(nextPos) : (frameRowLo + nextPos);
-            long nextHorizonTs = addTimestampAndOffset(readTimestamp(nextRowIdx), offsets[offsetIdx]);
+            long nextHorizonTs = HorizonTimestampIterator.addTimestampAndOffset(readTimestamp(nextRowIdx), offsets[offsetIdx]);
             // Replace root and restore heap property
             heapTs[0] = nextHorizonTs;
             heapPos[0] = nextPos;
@@ -181,17 +180,6 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         initHeap(filteredRows.size() > 0 ? filteredRows.get(0) : -1, filteredRows.size() > 0);
     }
 
-    // Translates the overflow into a CairoException with a stable message. On JDK 25, C2 may
-    // replace a hot Math.addExact overflow with a preallocated ArithmeticException that has
-    // neither message nor stack trace (OmitStackTraceInFastThrow), so callers must not rely on it.
-    private static long addTimestampAndOffset(long timestamp, long offset) {
-        try {
-            return Math.addExact(timestamp, offset);
-        } catch (ArithmeticException e) {
-            throw CairoException.nonCritical().put("horizon timestamp overflow [timestamp=").put(timestamp).put(", offset=").put(offset).put(']');
-        }
-    }
-
     private void heapInsert(long ts, int offsetIdx) {
         int i = heapSize++;
         heapTs[i] = ts;
@@ -205,7 +193,7 @@ public class AsyncHorizonTimestampIterator implements QuietCloseable {
         if (hasRows) {
             long firstMasterTs = readTimestamp(firstRowIdx);
             for (int k = 0, n = offsets.length; k < n; k++) {
-                long horizonTs = addTimestampAndOffset(firstMasterTs, offsets[k]);
+                long horizonTs = HorizonTimestampIterator.addTimestampAndOffset(firstMasterTs, offsets[k]);
                 heapInsert(horizonTs, k);
             }
         }
