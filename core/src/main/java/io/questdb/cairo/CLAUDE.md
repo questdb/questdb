@@ -170,6 +170,11 @@ a merge whose O3 rows are all duplicates reproduces the existing rows as they ar
   partition sink reports it as unchanged as the native path does (`updatePartitionSink(...,
   newPartitionSize = -1, partitionMutates = 0)`). Other commits open the output upfront.
 
+`TableWriter` applies nothing for a partition reported unchanged (`isO3PartitionUnchanged()`):
+`o3ConsumePartitionUpdateSink()` leaves its `_txn` entry as it is, and the posting index seal
+(`sealPostingIndexesForO3Partitions()`) does not rebuild its index, which would read and re-index
+the whole partition column on every commit that re-sends rows the table has.
+
 UPSERT has no such shortcut on parquet partitions: a merge writes the row group even when the O3
 rows carry the values the partition has.
 

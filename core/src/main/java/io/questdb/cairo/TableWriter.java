@@ -170,7 +170,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // Oversized partitionUpdateSink (offset, description):
     // 0, partitionTimestamp
     // 1, timestampMin
-    // 2, newPartitionSize
+    // 2, newPartitionSize, -1 when the O3 task left the partition as it was, see isO3PartitionUnchanged()
     // 3, oldPartitionSize
     // 4, flags (partitionMutates INT, isLastWrittenPartition INT)
     // 5. o3SplitPartitionSize size of "split" partition, new partition that branches out of the old one
@@ -4102,6 +4102,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     nullers.add(NOOP);
             }
         }
+    }
+
+    /**
+     * Returns true when the partition update sink block reports a partition that the O3 task left as it was,
+     * e.g. because the dedup dropped every O3 row of the partition. The task changed no file of the partition,
+     * neither column data nor index, and reports it with {@code newPartitionSize = -1} and
+     * {@code partitionMutates = 0}. There is nothing to apply for such a partition.
+     */
+    private static boolean isO3PartitionUnchanged(long partitionUpdateSinkBlockAddress) {
+        return Unsafe.getLong(partitionUpdateSinkBlockAddress + 2 * Long.BYTES) < 0
+                && Numbers.decodeLowInt(Unsafe.getLong(partitionUpdateSinkBlockAddress + 4 * Long.BYTES)) == 0;
     }
 
     private static boolean linkFile(FilesFacade ff, LPSZ from, LPSZ to) {
@@ -8906,8 +8917,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final boolean partitionMutates = Numbers.decodeLowInt(flags) != 0;
                 final boolean isLastWrittenPartition = o3PartitionUpdateSink.nextBlockIndex(blockIndex) == -1;
                 final long o3SplitPartitionSize = Unsafe.getLong(blockAddress + 5 * Long.BYTES);
-                if (!partitionMutates && srcDataNewPartitionSize < 0) {
-                    // noop
+                if (isO3PartitionUnchanged(blockAddress)) {
                     continue;
                 }
 
@@ -14193,6 +14203,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long blockIndex = -1;
         while ((blockIndex = o3PartitionUpdateSink.nextBlockIndex(blockIndex)) > -1L) {
             long blockAddress = o3PartitionUpdateSink.getBlockAddress(blockIndex);
+            if (isO3PartitionUnchanged(blockAddress)) {
+                // The O3 task changed no file of the partition, so its committed posting index still matches
+                // the partition data. A reseal would rebuild the index from the whole column, on every commit
+                // that re-sends rows the table has. o3ConsumePartitionUpdateSink() skips the block, too.
+                continue;
+            }
             long partitionTimestamp = Unsafe.getLong(blockAddress);
             long newPartitionSize = Unsafe.getLong(blockAddress + 2 * Long.BYTES);
             long oldPartitionSize = Unsafe.getLong(blockAddress + 3 * Long.BYTES);
