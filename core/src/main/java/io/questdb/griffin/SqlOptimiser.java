@@ -683,16 +683,27 @@ public class SqlOptimiser implements Mutable {
     }
 
     // rewriteSampleBy treats a literal as the sampled timestamp when it is the spelling it
-    // chose for the bucket (timestampColumn) or another spelling of the same column, bare or
-    // qualified with the FROM model's alias or table name. Without the second check,
-    // SELECT t.ts AS x, ts AS b keeps t.ts as a raw group-by key next to the bucket.
+    // chose for the bucket (timestampColumn) or another spelling of the same column: the
+    // timestamp qualified with the FROM model's alias or table name, or the bare name when
+    // the FROM has a single join model. Without the qualified match, SELECT t.ts AS x, ts AS b
+    // keeps t.ts as a raw group-by key next to the bucket. A bare name in a join is left
+    // alone: it stays a missing token, and rewriteSelectClause0 resolves it against every
+    // join model, sub-queries included, reporting "Ambiguous column" as it does on master.
     private static boolean isSampleByTimestampLiteral(
             CharSequence token,
             CharSequence timestampColumn,
             CharSequence sourceTimestamp,
             IQueryModel fromModel
     ) {
-        return Chars.equalsIgnoreCase(token, timestampColumn) || isDesignatedTimestampReference(token, sourceTimestamp, fromModel);
+        if (Chars.equalsIgnoreCase(token, timestampColumn)) {
+            return true;
+        }
+        if (!isDesignatedTimestampReference(token, sourceTimestamp, fromModel)) {
+            return false;
+        }
+        // isDesignatedTimestampReference accepts the bare name regardless of join
+        // ambiguity; only the qualified spelling names the sampled side on its own.
+        return Chars.indexOfLastUnquoted(token, '.') > -1 || fromModel.getJoinModels().size() == 1;
     }
 
     /**

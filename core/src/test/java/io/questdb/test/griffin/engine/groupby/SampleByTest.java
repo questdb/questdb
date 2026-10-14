@@ -17259,6 +17259,75 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampColumnAmbiguousBareInJoinFunction() throws Exception {
+        // The bucket is spelled t.ts and the bare ts inside to_str() names both join sides.
+        // Without the guard rewriteSampleBy took it for a copy of the bucket (3 rows); master
+        // leaves it a missing token and the group-by rewrite reports the ambiguity at the
+        // hidden key's position. A sub-query side must behave like a plain table.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            execute("CREATE TABLE u (k SYMBOL, uv DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO u VALUES ('a', 10.0, '2023-12-31T00:00:00.000000Z'), ('b', 20.0, '2023-12-31T01:00:00.000000Z')");
+            assertExceptionNoLeakCheck(
+                    "SELECT t.ts AS x, to_str(ts, 'HH') AS h, avg(t.val) AS v FROM t JOIN (SELECT k, ts FROM u) uu ON (k) SAMPLE BY 1h",
+                    0,
+                    "Ambiguous column [name=ts]"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT t.ts AS x, to_str(ts, 'HH') AS h, avg(t.val) AS v FROM t JOIN u ON (k) SAMPLE BY 1h",
+                    0,
+                    "Ambiguous column [name=ts]"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT a.ts AS x, to_str(ts, 'HH') AS h, avg(a.val) AS v FROM t a JOIN t b ON (k) SAMPLE BY 1h",
+                    0,
+                    "Ambiguous column [name=ts]"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT a.ts AS x, ts AS y, avg(a.val) AS v FROM t a JOIN t b ON (k) SAMPLE BY 1h",
+                    18,
+                    "Ambiguous column [name=ts]"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnAmbiguousBareBucketBesideQualifiedCopy() throws Exception {
+        // The bare ts is the chosen bucket spelling and names both ASOF JOIN sides; t.ts is
+        // a copy of it. The bucket argument must still fail as ambiguous, as on master.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            execute("CREATE TABLE q (k SYMBOL, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO q VALUES ('a', 0.5, '2023-12-31T23:59:00.000000Z'), ('b', 1.5, '2024-01-01T01:10:00.000000Z')");
+            assertExceptionNoLeakCheck(
+                    "SELECT t.ts AS x, ts AS b, avg(t.val) AS v FROM t ASOF JOIN q ON (k) SAMPLE BY 1h",
+                    18,
+                    "Ambiguous column [name=ts]"
+            );
+        });
+    }
+
+    @Test
+    public void testTimestampColumnBareInFunctionWithQualifiedBucket() throws Exception {
+        // Single-table FROM: the bare ts inside to_str() is another spelling of the bucket
+        // t.ts, so the function runs over the bucket. Master kept ts as a raw key and split
+        // the 03:00 bucket into two rows.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            assertQuery("SELECT t.ts AS x, to_str(ts, 'HH') AS h, avg(val) AS v FROM t SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("x")
+                    .returns("""
+                            x\th\tv
+                            2024-01-01T00:00:00.000000Z\t00\t1.0
+                            2024-01-01T01:00:00.000000Z\t01\t2.0
+                            2024-01-01T03:00:00.000000Z\t03\t3.5
+                            """);
+        });
+    }
+
+    @Test
     public void testTimestampColumnJoinTableAliasFirst() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -17398,6 +17467,26 @@ public class SampleByTest extends AbstractCairoTest {
                             2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
                             """);
             assertQuery("SELECT t.ts AS x, ts AS b, avg(val) AS v FROM t SAMPLE BY 1h ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("x")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testTimestampColumnSubQueryAliasQualifiesBesideBare() throws Exception {
+        // Without FILL a sub-query FROM stays on the calendar path, so s.ts goes through
+        // isSampleByTimestampLiteral with the sub-query alias as the owner. Master kept
+        // s.ts as a raw key and returned 4 rows.
+        assertMemoryLeak(() -> {
+            SampleByFillNullValueTest.createBucketAliasTable();
+            assertQuery("SELECT s.ts AS x, ts AS b, avg(val) AS v FROM (SELECT * FROM t) s SAMPLE BY 1h")
                     .noLeakCheck()
                     .noRandomAccess()
                     .timestamp("x")

@@ -778,6 +778,87 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillNullBucketWhenJoinedTableHasNoTimestampName() throws Exception {
+        // w carries no ts, so the bare ts is the chosen bucket spelling and t.ts is a
+        // qualified copy of it; the join-ambiguity guard must reject neither.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            execute("CREATE TABLE w (k SYMBOL, wv DOUBLE)");
+            execute("INSERT INTO w VALUES ('a', 10.0), ('b', 20.0)");
+            assertQuery("SELECT t.ts AS x, ts AS b, avg(val) AS v FROM t JOIN w ON (k) SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillPrevBucketWhenQualifiedTimestampPrecedesBareTimestamp() throws Exception {
+        // The gap row carries the bucket in both x and b and the previous value in v.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT t.ts AS x, ts AS b, avg(val) AS v FROM t SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\t2.0
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullFromToBucketWhenQualifiedTimestampPrecedesBareTimestamp() throws Exception {
+        // FROM/TO pads the range to 04:00; the padded buckets copy into x as well.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT t.ts AS x, ts AS b, avg(val) AS v FROM t SAMPLE BY 1h FROM '2024-01-01' TO '2024-01-01T05:00:00Z' FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            2024-01-01T04:00:00.000000Z\t2024-01-01T04:00:00.000000Z\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullBucketCopyUnderOuterFilter() throws Exception {
+        // x equals b on every row, filled or not; master kept the raw t.ts in x and the
+        // filter dropped the 01:15 and 03:30 rows.
+        assertMemoryLeak(() -> {
+            createBucketAliasTable();
+            assertQuery("SELECT * FROM (SELECT t.ts AS x, ts AS b, avg(val) AS v FROM t SAMPLE BY 1h FILL(NULL)) WHERE x = b")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000Z\t2024-01-01T00:00:00.000000Z\t1.0
+                            2024-01-01T01:00:00.000000Z\t2024-01-01T01:00:00.000000Z\t2.0
+                            2024-01-01T02:00:00.000000Z\t2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t2024-01-01T03:00:00.000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
     public void testFillNoneTwiceRejectedBeforeOwnershipCheck() throws Exception {
         // An all-NONE fill list carries no ownership signal on the group-by model, so
         // generateFill runs its FILL(NONE) validation before the ownership check. This

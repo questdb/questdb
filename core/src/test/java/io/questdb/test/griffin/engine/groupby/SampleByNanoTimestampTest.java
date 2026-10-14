@@ -190,6 +190,31 @@ public class SampleByNanoTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampColumnQualifiedBesideBareNano() throws Exception {
+        // Nanosecond variant without FILL: tn.ts is a copy of the bucket b, so the 03:00
+        // bucket holds one averaged row.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tn (k SYMBOL, val DOUBLE, ets TIMESTAMP_NS, ts TIMESTAMP_NS) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tn VALUES
+                        ('a', 1.0, '2024-01-01T05:00:00.000000000Z', '2024-01-01T00:00:00.000000000Z'),
+                        ('b', 2.0, '2024-01-01T04:00:00.000000000Z', '2024-01-01T01:15:00.000000000Z'),
+                        ('a', 3.0, '2024-01-01T03:00:00.000000000Z', '2024-01-01T03:00:00.000000000Z'),
+                        ('b', 4.0, '2024-01-01T02:00:00.000000000Z', '2024-01-01T03:30:00.000000000Z')""");
+            assertQuery("SELECT tn.ts AS x, ts AS b, avg(val) AS v FROM tn SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("b")
+                    .returns("""
+                            x\tb\tv
+                            2024-01-01T00:00:00.000000000Z\t2024-01-01T00:00:00.000000000Z\t1.0
+                            2024-01-01T01:00:00.000000000Z\t2024-01-01T01:00:00.000000000Z\t2.0
+                            2024-01-01T03:00:00.000000000Z\t2024-01-01T03:00:00.000000000Z\t3.5
+                            """);
+        });
+    }
+
+    @Test
     public void testFillPrevConsistency() throws Exception {
         execute("create table telem (created timestamp_ns, event_type int, table_id int, latency double) timestamp(created) partition by DAY");
 
