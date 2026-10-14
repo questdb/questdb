@@ -847,6 +847,8 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             assertUntypedBind("SELECT $1 b, SUM(x * $1::INT) a FROM t", ColumnType.DOUBLE, "2.5", "b\ta\n2.5\t60000\n");
             assertUntypedBind("SELECT SUM(x - $1::SHORT) s, MIN(x * $1) m FROM t", ColumnType.DOUBLE, "2.5", "s\tm\n29998\t75000.0\n");
             assertUntypedBind("SELECT SUM($1::INT * x) s FROM t", ColumnType.DOUBLE, "927094", "s\n2043016224\n");
+            assertUntypedBind("SELECT SUM((-$1)::INT * x) s FROM t", ColumnType.DOUBLE, "927094", "s\n-2043016224\n");
+            assertUntypedBind("SELECT SUM(x - ($1 + 0)::SHORT) s, MIN(x * $1) m FROM t", ColumnType.INT, "927094", "s\tm\n20410\t2043016224\n");
             // A recompilation sees the inferred type and moves the multiplication outside the aggregate.
             try (RecordCursorFactory factory = select("SELECT SUM($1::INT * x) s FROM t")) {
                 new QueryAssertion(engine, factory).withContext(sqlExecutionContext)
