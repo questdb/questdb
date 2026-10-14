@@ -4552,8 +4552,8 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: sym
-                                  filter: sym=2
+                                Index forward scan on: sym deferred: true
+                                  filter: sym='eurusd'
                                 Frame forward scan on: price_1h
                             """);
 
@@ -4600,8 +4600,8 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: sym
-                                  filter: sym=2
+                                Index forward scan on: sym deferred: true
+                                  filter: sym='eurusd'
                                 Frame forward scan on: price_1h
                             """);
         });
@@ -4658,8 +4658,8 @@ public class MatViewTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: sym
-                                  filter: sym=2
+                                Index forward scan on: sym deferred: true
+                                  filter: sym='eurusd'
                                 Frame forward scan on: price_1h
                             """);
 

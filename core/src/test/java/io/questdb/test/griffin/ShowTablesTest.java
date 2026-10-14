@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.CompiledQuery;
 import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Before;
 import org.junit.Test;
@@ -70,6 +71,35 @@ public class ShowTablesTest extends AbstractCairoTest {
                                 2	x	ts	DAY	false	false	0	HOUR	false	x~	1000	300000000	false	T	null				null	null	0	0.0	0.0	0.0	0.0	0	0	0	0	0	0	0	null		0	0	0	0	0	0	0	0	0	0	false\t\t
                                 """
                 );
+    }
+
+    @Test
+    public void testShowColumnsInParallelFilterSubQuery() throws Exception {
+        // A filter that is not thread-safe compiles again for each worker of the shared query pool, and
+        // so does the SHOW statement in its sub-query. Every compile needs a cursor of its own.
+        assertMemoryLeak(() -> {
+            createShowColumnsSubQueryTables();
+            assertQuery("SELECT name FROM t_names WHERE name IN (SELECT \"column\" FROM (SHOW COLUMNS FROM t_none))")
+                    .returns("""
+                            name
+                            a
+                            """);
+        });
+    }
+
+    @Test
+    public void testShowColumnsInParallelGroupByKeySubQuery() throws Exception {
+        // like a filter, a GROUP BY key that is not thread-safe compiles again for each worker
+        assertMemoryLeak(() -> {
+            createShowColumnsSubQueryTables();
+            assertQuery("SELECT name IN (SELECT \"column\" FROM (SHOW COLUMNS FROM t_none)) k, count() FROM t_names ORDER BY k")
+                    .expectSize()
+                    .returns("""
+                            k\tcount
+                            false\t1
+                            true\t1
+                            """);
+        });
     }
 
     @Test
@@ -141,6 +171,22 @@ public class ShowTablesTest extends AbstractCairoTest {
                         standard_conforming_strings
                         on
                         """));
+    }
+
+    @Test
+    public void testShowTablesInParallelFilterSubQuery() throws Exception {
+        // A filter that is not thread-safe compiles again for each worker of the shared query pool, and
+        // so does the SHOW statement in its sub-query. Every compile needs a cursor of its own.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_names (ts TIMESTAMP, name SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO t_names VALUES ('2024-01-01', 't_names'), ('2024-01-01', 'zz')");
+            drainWalQueue();
+            assertQuery("SELECT name FROM t_names WHERE name IN (SELECT table_name FROM (SHOW TABLES))")
+                    .returns("""
+                            name
+                            t_names
+                            """);
+        });
     }
 
     @Test
@@ -305,4 +351,10 @@ public class ShowTablesTest extends AbstractCairoTest {
         });
     }
 
+    private static void createShowColumnsSubQueryTables() throws SqlException {
+        execute("CREATE TABLE t_none (ts TIMESTAMP, a INT, b INT) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE t_names (ts TIMESTAMP, name SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("INSERT INTO t_names VALUES ('2024-01-01', 'a'), ('2024-01-01', 'zz')");
+        drainWalQueue();
+    }
 }

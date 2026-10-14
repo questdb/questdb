@@ -55,6 +55,7 @@ import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.test.TestLatchedCounterFunctionFactory;
 import io.questdb.griffin.engine.functions.test.TestThrowingFilterFunctionFactory;
+import io.questdb.griffin.engine.join.AsyncWindowJoinFastRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
@@ -123,6 +124,51 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
                 JitUtil.isJitSupported() ? SqlJitMode.toString(SqlJitMode.JIT_MODE_ENABLED) : SqlJitMode.toString(SqlJitMode.JIT_MODE_FORCE_SCALAR)
         );
         super.setUp();
+    }
+
+    @Test
+    public void testCalculateSizeThrowsWhenReducerCancelsSingleFrame() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x AS (SELECT x FROM long_sequence(7))");
+            execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("CREATE TABLE prices (sym SYMBOL, px DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO trades VALUES ('a', 100.0, '2022-01-01T00:00:00.000000Z'), ('b', 200.0, '2022-01-01T00:01:00.000000Z')");
+            execute("INSERT INTO prices VALUES ('a', 1.0, '2022-01-01T00:00:00.000000Z'), ('b', 2.0, '2022-01-01T00:01:00.000000Z')");
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+            final SqlExecutionCircuitBreaker circuitBreaker = new AtomicBooleanCircuitBreaker(engine) {
+                @Override
+                public int getStateOrYield(long millis, long fd) {
+                    return SqlExecutionCircuitBreaker.STATE_CANCELLED;
+                }
+            };
+            final SqlExecutionContext context = new DelegatingSqlExecutionContext() {
+                @Override
+                public @NotNull SqlExecutionCircuitBreaker getCircuitBreaker() {
+                    return circuitBreaker;
+                }
+
+                @Override
+                public int getSharedQueryWorkerCount() {
+                    return 1;
+                }
+
+                @Override
+                public boolean isParallelWindowJoinEnabled() {
+                    return true;
+                }
+            };
+            assertCalculateSizeCancelled(context, "SELECT * FROM x WHERE x > 0", AsyncFilteredRecordCursorFactory.class);
+            assertCalculateSizeCancelled(
+                    context,
+                    """
+                            SELECT t.ts, t.price, sum(p.px)
+                            FROM (SELECT * FROM trades WHERE price > 10) t
+                            WINDOW JOIN prices p ON (t.sym = p.sym)
+                            RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING EXCLUDE PREVAILING
+                            """,
+                    AsyncWindowJoinFastRecordCursorFactory.class
+            );
+        });
     }
 
     @Test
@@ -1019,6 +1065,22 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
     private static void assertAsyncFilter(RecordCursorFactory factory) {
         Assert.assertTrue(containsFactory(factory, AsyncFilteredRecordCursorFactory.class));
         Assert.assertFalse(containsFactory(factory, AsyncJitFilteredRecordCursorFactory.class));
+    }
+
+    private static void assertCalculateSizeCancelled(SqlExecutionContext context, String query, Class<?> factoryClass) throws Exception {
+        try (
+                SqlCompiler compiler = engine.getSqlCompiler();
+                RecordCursorFactory factory = compiler.compile(query, context).getRecordCursorFactory();
+                RecordCursor cursor = factory.getCursor(context)
+        ) {
+            Assert.assertTrue(containsFactory(factory, factoryClass));
+            try {
+                cursor.calculateSize(context.getCircuitBreaker(), new RecordCursor.Counter());
+                Assert.fail("a cancelled frame must not count as an empty one [query=" + query + ']');
+            } catch (CairoException e) {
+                Assert.assertEquals(SqlExecutionCircuitBreaker.STATE_CANCELLED, e.getInterruptionReason());
+            }
+        }
     }
 
     private static boolean containsFactory(RecordCursorFactory factory, Class<?> factoryClass) {

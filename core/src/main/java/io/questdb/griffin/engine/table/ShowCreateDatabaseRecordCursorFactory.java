@@ -80,9 +80,9 @@ import java.util.Comparator;
  * <p>
  * Each object's DDL is produced by delegating to the matching per-object
  * {@code SHOW CREATE ...} factory, so the dump stays in lock-step with those
- * commands without duplicating their formatting logic. Objects the caller is not
- * authorized to read are skipped, so the dump never discloses DDL the caller
- * could not otherwise see. The token set is snapshotted up front, but each object's
+ * commands without duplicating their formatting logic. Objects the caller may not
+ * see (see {@link SecurityContext#isTableVisible(TableToken)}) are skipped, so the
+ * dump never discloses DDL the caller could not otherwise see. The token set is snapshotted up front, but each object's
  * liveness is re-checked just before its DDL is produced: an object dropped, renamed
  * or recreated in that window is skipped (with a logged warning) for every object
  * type alike, so the dump reflects the schema as of emit time rather than failing or
@@ -164,20 +164,21 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
     // the per-object SHOW CREATE factories take a token position for error reporting; a database dump
     // has no per-object source position, so it passes 0. An object dropped between collection and emit
     // is skipped by appendObjectDdl, so this 0 surfaces only for a genuine error that aborts the dump.
+    // The dump reads every object as the caller, not through a view, so it passes no view either.
     protected RecordCursorFactory liveViewFactory(TableToken token) {
-        return new ShowCreateLiveViewRecordCursorFactory(token, 0);
+        return new ShowCreateLiveViewRecordCursorFactory(token, 0, null);
     }
 
     protected RecordCursorFactory matViewFactory(TableToken token) {
-        return new ShowCreateMatViewRecordCursorFactory(token, 0);
+        return new ShowCreateMatViewRecordCursorFactory(token, 0, null);
     }
 
     protected RecordCursorFactory tableFactory(TableToken token) {
-        return new ShowCreateTableRecordCursorFactory(token, 0);
+        return new ShowCreateTableRecordCursorFactory(token, 0, null);
     }
 
     protected RecordCursorFactory viewFactory(TableToken token) {
-        return new ShowCreateViewRecordCursorFactory(token, 0);
+        return new ShowCreateViewRecordCursorFactory(token, 0, null);
     }
 
     private static int categoryBit(TableToken token) {
@@ -205,20 +206,6 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         final TableToken base = engine.getTableTokenIfExists(definition.getBaseTableName());
         if (base != null) {
             out.add(base);
-        }
-    }
-
-    // returns false only when the caller is explicitly denied read access to the object;
-    // under AllowAllSecurityContext (open-source builds) this never denies
-    private static boolean isVisible(SecurityContext securityContext, TableToken token) {
-        try {
-            securityContext.authorizeSelectOnAnyColumn(token);
-            return true;
-        } catch (CairoException e) {
-            if (e.isAuthorizationError()) {
-                return false;
-            }
-            throw e;
         }
     }
 
@@ -301,7 +288,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
         final ObjHashSet<TableToken> visible = new ObjHashSet<>();
         for (int i = 0, n = tokens.size(); i < n; i++) {
             final TableToken token = tokens.get(i);
-            if (token.isSystem() || (includeMask & categoryBit(token)) == 0 || !isVisible(securityContext, token)) {
+            if (token.isSystem() || (includeMask & categoryBit(token)) == 0 || !securityContext.isTableVisible(token)) {
                 continue;
             }
             objects.add(token);
@@ -491,7 +478,7 @@ public class ShowCreateDatabaseRecordCursorFactory extends AbstractRecordCursorF
                 topoEmit(dependency, engine, executionContext, visible, emitted, ordered);
             } else {
                 // the dependency was filtered out of this dump (a different INCLUDE/EXCLUDE category,
-                // a system object, or one the caller is not authorized to read), so this object's DDL
+                // a system object, or one the caller may not see), so this object's DDL
                 // references something the dump does not contain; warn that it may not replay as-is
                 logUnreplayableDependency(token, dependency);
             }
