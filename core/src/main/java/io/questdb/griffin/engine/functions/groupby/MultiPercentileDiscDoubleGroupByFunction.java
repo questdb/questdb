@@ -29,7 +29,6 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
@@ -132,32 +131,26 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
         }
 
         ArrayView percentiles = percentileFunc.getArray(record);
-        FlatArrayView view = percentiles.flatView();
-        int viewLength = view.length();
+        int percentileCount = SqlUtil.getPercentileCount(percentiles, percentilePos);
 
         if (out == null) {
             out = new DirectArray();
         }
         out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
-        out.setDimLen(0, viewLength);
+        out.setDimLen(0, percentileCount);
         out.applyShape();
 
         // Calculate all required indices and validate percentiles
-        if (indices.length < viewLength) {
-            indices = new int[viewLength];
+        if (indices.length < percentileCount) {
+            indices = new int[percentileCount];
         }
-        for (int i = 0, len = view.length(); i < len; i++) {
-            double percentile = view.getDoubleAtAbsIndex(i);
-            double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
-            int N = (int) Math.ceil(size * multiplier) - 1;
-            if (N < 0) {
-                N = 0;
-            }
-            indices[i] = N;
+        for (int i = 0; i < percentileCount; i++) {
+            double percentile = SqlUtil.getPercentile(percentiles, i, percentilePos);
+            indices[i] = (int) SqlUtil.getPercentileDiscIndex(percentile, size);
         }
 
         // Insertion sort - the array is typically very small (2-10 elements)
-        for (int i = 1; i < viewLength; i++) {
+        for (int i = 1; i < percentileCount; i++) {
             int key = indices[i];
             int j = i - 1;
             while (j >= 0 && indices[j] > key) {
@@ -168,17 +161,12 @@ public class MultiPercentileDiscDoubleGroupByFunction extends ArrayFunction impl
         }
 
         // Use optimized multi-select instead of full sorting - much faster for sparse percentiles
-        listA.quickSelectMultiple(0, size - 1, indices, 0, viewLength);
+        listA.quickSelectMultiple(0, size - 1, indices, 0, percentileCount);
 
         // Now retrieve the values (they're already in the correct positions)
-        for (int i = 0, len = view.length(); i < len; i++) {
-            double percentile = view.getDoubleAtAbsIndex(i);
-            double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
-            int N = (int) Math.ceil(size * multiplier) - 1;
-            if (N < 0) {
-                N = 0;
-            }
-            out.putDouble(i, listA.getQuick(N));
+        for (int i = 0; i < percentileCount; i++) {
+            double percentile = SqlUtil.getPercentile(percentiles, i, percentilePos);
+            out.putDouble(i, listA.getQuick((int) SqlUtil.getPercentileDiscIndex(percentile, size)));
         }
         return out;
     }

@@ -24,6 +24,8 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
@@ -35,6 +37,7 @@ import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.arr.DirectArray;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordBlock;
@@ -45,6 +48,7 @@ import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.griffin.engine.functions.StrFunction;
+import io.questdb.std.BinarySequence;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.Decimal128;
 import io.questdb.std.Decimal256;
@@ -54,8 +58,10 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8Sequence;
+import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.CreateTableTestUtils;
+import io.questdb.test.griffin.engine.TestBinarySequence;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -436,6 +442,96 @@ public class RecordChainTest extends AbstractCairoTest {
                         """;
 
                 TestUtils.assertEquals(expected, AbstractCairoTest.sink);
+            }
+        });
+    }
+
+    @Test
+    public void testSkipAndRefillVarSize() throws Exception {
+        // The var-size counterpart of testSkipAndRefill, on the linked chain, whose row
+        // header starts with the next-row pointer: a skipped var-size column takes its own
+        // slot, reads NULL until refilled, and putArray() refills the right one.
+        TestUtils.assertMemoryLeak(() -> {
+            final int arrayType = ColumnType.encodeArrayType(ColumnType.DOUBLE, 1);
+            GenericRecordMetadata metadata = new GenericRecordMetadata();
+            metadata.add(new TableColumnMetadata("a", ColumnType.VARCHAR));
+            metadata.add(new TableColumnMetadata("w", arrayType));
+            metadata.add(new TableColumnMetadata("b", ColumnType.STRING));
+            metadata.add(new TableColumnMetadata("v", ColumnType.VARCHAR));
+            metadata.add(new TableColumnMetadata("d", ColumnType.BINARY));
+
+            ListColumnFilter filter = new ListColumnFilter();
+            filter.add(1);
+            filter.add(-2);
+            filter.add(3);
+            filter.add(-4);
+            filter.add(5);
+
+            // values of columns a and b, at record indexes 0 and 2, and of column d
+            final String[] values = new String[2];
+            final TestBinarySequence[] bin = new TestBinarySequence[1];
+            final Record rec = new Record() {
+                @Override
+                public BinarySequence getBin(int col) {
+                    return bin[0];
+                }
+
+                @Override
+                public CharSequence getStrA(int col) {
+                    return values[col / 2];
+                }
+
+                @Override
+                public Utf8Sequence getVarcharA(int col) {
+                    final String value = values[col / 2];
+                    return value != null ? new Utf8String(value) : null;
+                }
+            };
+
+            for (int copierType : new int[]{RecordSinkFactory.SINK_TYPE_SINGLE_METHOD, RecordSinkFactory.SINK_TYPE_LOOPING}) {
+                final CairoConfiguration copierConfiguration = new CairoConfigurationWrapper(configuration) {
+                    @Override
+                    public int getCopierType() {
+                        return copierType;
+                    }
+                };
+                RecordSink sink = RecordSinkFactory.getInstance(copierConfiguration, asm, metadata, filter);
+                try (
+                        RecordChain chain = new RecordChain(metadata, sink, SIZE_4M, Integer.MAX_VALUE);
+                        DirectArray array = new DirectArray(configuration)
+                ) {
+                    values[0] = "a0";
+                    values[1] = "b0";
+                    bin[0] = new TestBinarySequence().of(new byte[]{1, 2, 3});
+                    final long row0 = chain.put(rec, -1);
+                    values[0] = null;
+                    values[1] = "b1";
+                    bin[0] = null;
+                    final long row1 = chain.put(rec, row0);
+
+                    array.setType(arrayType);
+                    array.setDimLen(0, 2);
+                    array.applyShape();
+                    array.putDouble(0, 1.5);
+                    array.putDouble(1, 2.5);
+                    chain.putArray(row0, 1, array);
+                    array.putDouble(0, 3.5);
+                    chain.putArray(row1, 1, array);
+
+                    AbstractCairoTest.sink.clear();
+                    chain.toTop();
+                    final Record r = chain.getRecord();
+                    while (chain.hasNext()) {
+                        TestUtils.println(r, metadata, AbstractCairoTest.sink);
+                    }
+                    TestUtils.assertEquals(
+                            """
+                                    a0\t[1.5,2.5]\tb0\t\t00000000 01 02 03
+                                    \t[3.5,2.5]\tb1\t\t
+                                    """,
+                            AbstractCairoTest.sink
+                    );
+                }
             }
         });
     }

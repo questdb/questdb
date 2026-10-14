@@ -561,6 +561,14 @@ public class RecordChain implements Closeable, RecordCursor, RecordSinkSPI, Wind
     }
 
     @Override
+    public void skipVarSize() {
+        // The column's owner, such as a window function's pass 2, writes the slot later.
+        // Until then it holds NULL rather than whatever the freshly allocated memory held,
+        // which a reader would dereference as a pointer.
+        putNull();
+    }
+
+    @Override
     public void toTop() {
         if (mem.getAppendOffset() == 0) {
             nextRecordOffset = -1L;

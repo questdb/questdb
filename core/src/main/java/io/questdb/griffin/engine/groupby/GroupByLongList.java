@@ -24,8 +24,10 @@
 
 package io.questdb.griffin.engine.groupby;
 
+import io.questdb.std.LongSort;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.TestOnly;
 
 /**
  * Specialized flyweight long list used in {@link io.questdb.griffin.engine.functions.GroupByFunction}s.
@@ -57,6 +59,18 @@ public class GroupByLongList {
     public GroupByLongList(int initialCapacity, long noEntryValue) {
         this.initialCapacity = Math.max(initialCapacity, MIN_INITIAL_CAPACITY);
         this.noEntryValue = noEntryValue;
+    }
+
+    /**
+     * Returns the number of quickselect heapsort-fallback activations since class load,
+     * counted by {@link LongSort}, which runs the selection.
+     * The counter is monotonic: capture it before a selection and assert on the delta afterwards.
+     *
+     * @return count of heapsort-fallback activations
+     */
+    @TestOnly
+    public static long getHeapSortCallCountForTesting() {
+        return LongSort.getHeapSortCallCountForTesting();
     }
 
     /**
@@ -154,7 +168,7 @@ public class GroupByLongList {
      * will be greater than or equal to it.
      * <p>
      * This is more efficient than full sorting when only specific elements are needed.
-     * Time complexity: O(n) average case, O(n^2) worst case.
+     * Time complexity: O(n) average case, O(n log n) worst case, see {@link LongSort}.
      *
      * @param lo the index of the first element, inclusive
      * @param hi the index of the last element, inclusive
@@ -165,7 +179,7 @@ public class GroupByLongList {
             throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", k=" + k + ", size=" + size());
         }
         if (lo < hi) {
-            quickSelectImpl(lo, hi, k);
+            LongSort.quickSelect(dataPtr(), lo, hi, k);
         }
     }
 
@@ -188,46 +202,7 @@ public class GroupByLongList {
         if (lo < 0 || hi >= size()) {
             throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", size=" + size());
         }
-        while (from < to && lo < hi) {
-            long packed = partition3Way(lo, hi);
-            int lt = (int) (packed >>> 32);
-            int gt = (int) packed;
-
-            // Find which indices fall into each region: <lt, [lt..gt], >gt
-            int splitLeft = from;
-            while (splitLeft < to && indices[splitLeft] < lt) {
-                splitLeft++;
-            }
-
-            // Skip indices in the equal partition [lt..gt]
-            int splitRight = splitLeft;
-            while (splitRight < to && indices[splitRight] <= gt) {
-                splitRight++;
-            }
-
-            boolean hasLeft = splitLeft > from;
-            boolean hasRight = splitRight < to;
-
-            if (hasLeft && hasRight) {
-                if ((lt - lo) <= (hi - gt)) {
-                    quickSelectMultiple(lo, lt - 1, indices, from, splitLeft);
-                    lo = gt + 1;
-                    from = splitRight;
-                } else {
-                    quickSelectMultiple(gt + 1, hi, indices, splitRight, to);
-                    hi = lt - 1;
-                    to = splitLeft;
-                }
-            } else if (hasLeft) {
-                hi = lt - 1;
-                to = splitLeft;
-            } else if (hasRight) {
-                lo = gt + 1;
-                from = splitRight;
-            } else {
-                break;
-            }
-        }
+        LongSort.quickSelectMultiple(dataPtr(), lo, hi, indices, from, to);
     }
 
     public void resetPtr() {
@@ -263,62 +238,6 @@ public class GroupByLongList {
         } else {
             for (long p = address, lim = address + 8L * count; p < lim; p += 8L) {
                 Unsafe.putLong(p, noEntryValue);
-            }
-        }
-    }
-
-    /**
-     * DNF three-way partition for quickSelectMultiple.
-     * Returns packed lt|gt as a long: lt in upper 32 bits, gt in lower 32 bits.
-     */
-    private long partition3Way(int lo, int hi) {
-        int mid = lo + (hi - lo) / 2;
-        if (getQuick(mid) < getQuick(lo)) {
-            swap(lo, mid);
-        }
-        if (getQuick(hi) < getQuick(lo)) {
-            swap(lo, hi);
-        }
-        if (getQuick(mid) < getQuick(hi)) {
-            swap(mid, hi);
-        }
-        long pivot = getQuick(hi);
-        int lt = lo;
-        int gt = hi;
-        int i = lo;
-        while (i <= gt) {
-            long v = getQuick(i);
-            if (v < pivot) {
-                swap(lt, i);
-                lt++;
-                i++;
-            } else if (v > pivot) {
-                swap(i, gt);
-                gt--;
-            } else {
-                i++;
-            }
-        }
-        return ((long) lt << 32) | (gt & 0xFFFFFFFFL);
-    }
-
-    /**
-     * Internal QuickSelect implementation using DNF three-way partition.
-     * Iterative to avoid StackOverflowError on degenerate inputs.
-     * Handles all-equal data in O(n) because the equal partition is skipped entirely.
-     */
-    private void quickSelectImpl(int lo, int hi, int k) {
-        while (lo < hi) {
-            long packed = partition3Way(lo, hi);
-            int lt = (int) (packed >>> 32);
-            int gt = (int) packed;
-
-            if (k < lt) {
-                hi = lt - 1;
-            } else if (k > gt) {
-                lo = gt + 1;
-            } else {
-                break; // k is in the equal partition
             }
         }
     }

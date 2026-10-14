@@ -130,7 +130,7 @@ public class ApproxPercentileParallelTest extends AbstractCairoTest {
                     """
                             Async Group By workers: 1
                               keys: [g]
-                              values: [approx_percentile(i)]
+                              values: [approx_percentile(i,ARRAY[0.5,0.9])]
                               filter: null
                                 PageFrame
                                     Row forward scan

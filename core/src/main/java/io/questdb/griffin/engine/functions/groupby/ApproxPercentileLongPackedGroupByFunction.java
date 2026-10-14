@@ -95,11 +95,13 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
 
     @Override
     public double getDouble(Record rec) {
-        if (histograms.size() == 0) {
+        // setEmpty() and setNull() store LONG_NULL, which is not a valid histogram index
+        final long index = rec.getLong(valueIndex);
+        if (index < 0 || index >= histograms.size()) {
             return Double.NaN;
         }
 
-        final PackedHistogram histogram = histograms.getQuick(rec.getInt(valueIndex));
+        final PackedHistogram histogram = histograms.getQuick((int) index);
         if (histogram.getTotalCount() == 0) {
             return Double.NaN;
         }
@@ -171,7 +173,7 @@ public class ApproxPercentileLongPackedGroupByFunction extends DoubleFunction im
 
     @Override
     public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
     }
 
     @Override

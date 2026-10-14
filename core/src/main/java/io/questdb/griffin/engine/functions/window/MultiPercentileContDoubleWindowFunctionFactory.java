@@ -32,7 +32,6 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapFactory;
 import io.questdb.cairo.map.MapKey;
@@ -55,10 +54,12 @@ import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.DoubleSort;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -86,6 +87,9 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         if (!percentilesFunc.isConstant()) {
             throw SqlException.$(percentilesPos, "percentile argument must be a constant");
         }
+        if (ColumnType.decodeWeakArrayDimensionality(percentilesFunc.getType()) > 1) {
+            throw SqlException.$(percentilesPos, "array is not one-dimensional");
+        }
 
         WindowContext windowContext = sqlExecutionContext.getWindowContext();
         windowContext.validate(position, false);
@@ -97,7 +101,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         // Percentile functions only support default frame over whole partition
         // Default frame is whole partition when there's no ORDER BY
         if (!windowContext.isDefaultFrame() || windowContext.isOrdered()) {
-            throw SqlException.$(position, "percentile_cont window function only supports whole partition frames");
+            throw SqlException.$(position, name()).put(" window function only supports whole partition frames");
         }
 
         if (partitionByRecord != null) {
@@ -113,11 +117,20 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                     arg,
                     percentilesFunc,
                     percentilesPos,
-                    configuration
+                    configuration,
+                    name()
             );
         } else {
-            return new MultiPercentileContOverWholeResultSetFunction(arg, percentilesFunc, percentilesPos, configuration);
+            return new MultiPercentileContOverWholeResultSetFunction(arg, percentilesFunc, percentilesPos, configuration, name());
         }
+    }
+
+    /**
+     * The name this function reports in errors and in the query plan. The quantile_cont alias
+     * overrides it, so a query that calls the alias sees the name it used.
+     */
+    protected String name() {
+        return NAME;
     }
 
     // Handles percentile_cont() over (partition by x) with multiple percentiles
@@ -128,6 +141,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         private static final long SIZE_OFFSET_BLOCK = 8;
 
         private final MemoryARW listMemory;
+        private final String name;
         private final Function percentilesFunc;
         private final int percentilesPos;
         private final MemoryARW resultMemory;
@@ -141,9 +155,11 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                 Function arg,
                 Function percentilesFunc,
                 int percentilesPos,
-                CairoConfiguration configuration
+                CairoConfiguration configuration,
+                String name
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.name = name;
             this.percentilesFunc = percentilesFunc;
             this.percentilesPos = percentilesPos;
             this.listMemory = Vm.getCARWInstance(
@@ -175,15 +191,17 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
             key.put(partitionByRecord, partitionBySink);
             MapValue value = key.findValue();
 
+            if (result == null) {
+                result = new DirectArray();
+            }
+
             if (value != null) {
                 long resultPtr = value.getLong(0);
                 long resultCount = resultMemory.getLong(resultPtr);
 
-                if (result == null) {
-                    result = new DirectArray();
-                    result.setType(type);
-                }
-
+                // ofNull() for a row of an all-NULL partition resets the type and shape,
+                // so every non-NULL row must set the type again before sizing the array
+                result.setType(type);
                 result.setDimLen(0, (int) resultCount);
                 result.applyShape();
 
@@ -193,17 +211,13 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                 return result;
             }
 
-            if (result == null) {
-                result = new DirectArray();
-                result.setType(type);
-            }
             result.ofNull();
             return result;
         }
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -287,8 +301,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                 if (size > 0) {
                     // Get percentiles array
                     ArrayView percentiles = percentilesFunc.getArray(record);
-                    FlatArrayView view = percentiles.flatView();
-                    int percentileCount = view.length();
+                    int percentileCount = SqlUtil.getPercentileCount(percentiles, percentilesPos);
 
                     // Sort the list (values start at listPtr + DATA_OFFSET)
                     DoubleSort.sort(listMemory.getPageAddress(0) + listPtr + DATA_OFFSET, 0, size - 1);
@@ -299,13 +312,12 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
 
                     // Calculate each percentile with interpolation
                     for (int i = 0; i < percentileCount; i++) {
-                        double percentile = view.getDoubleAtAbsIndex(i);
-                        double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
+                        double percentile = SqlUtil.getPercentile(percentiles, i, percentilesPos);
 
                         // Calculate continuous percentile with interpolation
-                        double position = multiplier * (size - 1);
-                        int lowerIndex = (int) Math.floor(position);
-                        int upperIndex = (int) Math.ceil(position);
+                        double position = percentile * (size - 1);
+                        long lowerIndex = (long) Math.floor(position);
+                        long upperIndex = (long) Math.ceil(position);
 
                         double resultValue;
                         if (lowerIndex == upperIndex) {
@@ -313,8 +325,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
                         } else {
                             double lowerValue = listMemory.getDouble(listPtr + DATA_OFFSET + lowerIndex * 8L);
                             double upperValue = listMemory.getDouble(listPtr + DATA_OFFSET + upperIndex * 8L);
-                            double fraction = position - lowerIndex;
-                            resultValue = lowerValue + (upperValue - lowerValue) * fraction;
+                            resultValue = SqlUtil.interpolatePercentile(lowerValue, upperValue, position - lowerIndex);
                         }
                         resultMemory.putDouble(resultPtr + 8 + i * 8L, resultValue);
                     }
@@ -339,6 +350,13 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
             Misc.free(listMemory);
             Misc.free(resultMemory);
             result = Misc.free(result);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            listMemory.setMemoryTracker(tracker);
+            resultMemory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -383,6 +401,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
     // Handles percentile_cont() over () - whole result set with multiple percentiles
     static class MultiPercentileContOverWholeResultSetFunction extends BaseWindowFunction implements Reopenable, WindowArrayFunction {
         private final MemoryARW listMemory;
+        private final String name;
         private final Function percentilesFunc;
         private final int percentilesPos;
         private final int type;
@@ -391,8 +410,9 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
         private double[] results;
         private long size;
 
-        public MultiPercentileContOverWholeResultSetFunction(Function arg, Function percentilesFunc, int percentilesPos, CairoConfiguration configuration) {
+        public MultiPercentileContOverWholeResultSetFunction(Function arg, Function percentilesFunc, int percentilesPos, CairoConfiguration configuration, String name) {
             super(arg);
+            this.name = name;
             this.percentilesFunc = percentilesFunc;
             this.percentilesPos = percentilesPos;
             this.listMemory = Vm.getCARWInstance(
@@ -434,7 +454,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -476,8 +496,7 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
             }
 
             ArrayView percentiles = percentilesFunc.getArray(null);
-            FlatArrayView view = percentiles.flatView();
-            int percentileCount = view.length();
+            int percentileCount = SqlUtil.getPercentileCount(percentiles, percentilesPos);
 
             // Sort the list
             DoubleSort.sort(listMemory.getPageAddress(0), 0, size - 1);
@@ -488,21 +507,19 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
             }
 
             for (int i = 0; i < percentileCount; i++) {
-                double percentile = view.getDoubleAtAbsIndex(i);
-                double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilesPos);
+                double percentile = SqlUtil.getPercentile(percentiles, i, percentilesPos);
 
                 // Calculate continuous percentile with interpolation
-                double position = multiplier * (size - 1);
-                int lowerIndex = (int) Math.floor(position);
-                int upperIndex = (int) Math.ceil(position);
+                double position = percentile * (size - 1);
+                long lowerIndex = (long) Math.floor(position);
+                long upperIndex = (long) Math.ceil(position);
 
                 if (lowerIndex == upperIndex) {
                     results[i] = listMemory.getDouble(lowerIndex * 8L);
                 } else {
                     double lowerValue = listMemory.getDouble(lowerIndex * 8L);
                     double upperValue = listMemory.getDouble(upperIndex * 8L);
-                    double fraction = position - lowerIndex;
-                    results[i] = lowerValue + (upperValue - lowerValue) * fraction;
+                    results[i] = SqlUtil.interpolatePercentile(lowerValue, upperValue, position - lowerIndex);
                 }
             }
 
@@ -524,6 +541,11 @@ public class MultiPercentileContDoubleWindowFunctionFactory extends AbstractWind
             size = 0;
             result = Misc.free(result);
             isResultValid = false;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            listMemory.setMemoryTracker(tracker);
         }
 
         @Override

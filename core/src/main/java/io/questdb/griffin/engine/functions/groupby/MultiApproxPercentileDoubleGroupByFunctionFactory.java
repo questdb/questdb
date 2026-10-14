@@ -33,6 +33,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
 
 import static io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory.checkAndReturnPrecision;
+import static io.questdb.griffin.engine.functions.groupby.ApproxPercentileDoubleGroupByFunctionFactory.checkPercentileArray;
 
 public class MultiApproxPercentileDoubleGroupByFunctionFactory implements FunctionFactory {
 
@@ -58,6 +59,7 @@ public class MultiApproxPercentileDoubleGroupByFunctionFactory implements Functi
         final Function percentileFunc = args.getQuick(1);
         final Function precisionFunc = args.getQuick(2);
 
+        checkPercentileArray(percentileFunc, argPositions.getQuick(1));
         final int precision = checkAndReturnPrecision(precisionFunc, argPositions.getQuick(2));
 
         final int percentilesPos = argPositions.getQuick(1);

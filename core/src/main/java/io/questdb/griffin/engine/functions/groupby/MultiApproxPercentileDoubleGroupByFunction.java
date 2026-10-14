@@ -28,7 +28,6 @@ import io.questdb.cairo.ArrayColumnTypes;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.arr.ArrayView;
 import io.questdb.cairo.arr.DirectArray;
-import io.questdb.cairo.arr.FlatArrayView;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.ArrayFunction;
 import io.questdb.cairo.sql.Function;
@@ -47,11 +46,12 @@ import io.questdb.std.histogram.org.HdrHistogram.DoubleHistogram;
 
 public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction implements UnaryFunction, GroupByFunction {
     private final Function exprFunc;
-    private final ObjList<DoubleHistogram> histograms = new ObjList<>();
     private final Function percentileFunc;
     private final int percentilesPos;
     private final int precision;
     private int histogramIndex;
+    private ObjList<DoubleHistogram> histograms = new ObjList<>();
+    private boolean isShared;
     private DirectArray out;
     private int valueIndex;
 
@@ -66,8 +66,10 @@ public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction im
 
     @Override
     public void clear() {
-        histograms.clear();
-        histogramIndex = 0;
+        if (!isShared) {
+            histograms.clear();
+            histogramIndex = 0;
+        }
         if (out != null) {
             out.clear();
         }
@@ -114,38 +116,33 @@ public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction im
 
     @Override
     public ArrayView getArray(Record rec) {
-        if (histograms.size() == 0) {
-            if (out == null) {
-                out = new DirectArray();
-            }
+        if (out == null) {
+            out = new DirectArray();
+        }
+
+        // setEmpty() and setNull() store LONG_NULL, which is not a valid histogram index
+        final long index = rec.getLong(valueIndex);
+        if (index < 0 || index >= histograms.size()) {
             out.ofNull();
             return out;
         }
 
-        final DoubleHistogram histogram = histograms.getQuick(rec.getInt(valueIndex));
+        final DoubleHistogram histogram = histograms.getQuick((int) index);
         if (histogram.getTotalCount() == 0) {
-            if (out == null) {
-                out = new DirectArray();
-            }
             out.ofNull();
             return out;
         }
 
         ArrayView percentiles = percentileFunc.getArray(rec);
-        FlatArrayView view = percentiles.flatView();
-        int viewLength = view.length();
+        int percentileCount = SqlUtil.getPercentileCount(percentiles, percentilesPos);
 
-        if (out == null) {
-            out = new DirectArray();
-        }
         out.setType(ColumnType.encodeArrayType(ColumnType.DOUBLE, 1));
-        out.setDimLen(0, viewLength);
+        out.setDimLen(0, percentileCount);
         out.applyShape();
 
-        for (int i = 0; i < viewLength; i++) {
-            double p = view.getDoubleAtAbsIndex(i);
-            double multiplier = SqlUtil.getPercentileMultiplier(p, percentilesPos);
-            out.putDouble(i, histogram.getValueAtPercentile(multiplier * 100));
+        for (int i = 0; i < percentileCount; i++) {
+            double percentile = SqlUtil.getPercentile(percentiles, i, percentilesPos);
+            out.putDouble(i, histogram.getValueAtPercentile(percentile * 100));
         }
         return out;
     }
@@ -170,6 +167,13 @@ public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction im
         super.init(symbolTableSource, sqlExecutionContext);
         exprFunc.init(symbolTableSource, sqlExecutionContext);
         percentileFunc.init(symbolTableSource, sqlExecutionContext);
+    }
+
+    @Override
+    public void initSharedFrom(GroupByFunction primary) {
+        this.valueIndex = primary.getValueIndex();
+        this.histograms = ((MultiApproxPercentileDoubleGroupByFunction) primary).histograms;
+        this.isShared = true;
     }
 
     @Override
@@ -200,7 +204,7 @@ public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction im
 
     @Override
     public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
+        mapValue.putLong(valueIndex, Numbers.LONG_NULL);
     }
 
     @Override
@@ -215,6 +219,6 @@ public class MultiApproxPercentileDoubleGroupByFunction extends ArrayFunction im
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.val("approx_percentile(").val(exprFunc).val(')');
+        sink.val("approx_percentile(").val(exprFunc).val(',').val(percentileFunc).val(')');
     }
 }

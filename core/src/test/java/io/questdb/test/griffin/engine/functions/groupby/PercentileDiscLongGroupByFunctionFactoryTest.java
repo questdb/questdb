@@ -24,7 +24,11 @@
 
 package io.questdb.test.griffin.engine.functions.groupby;
 
+import io.questdb.PropertyKey;
+import io.questdb.mp.WorkerPool;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.mp.TestWorkerPool;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Test;
 
 public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoTest {
@@ -93,7 +97,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
             assertQuery("SELECT percentile_disc(x, 0) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n1\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n1\n");
         });
     }
 
@@ -103,7 +109,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
             assertQuery("SELECT percentile_disc(x, 1.0) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n100\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n100\n");
         });
     }
 
@@ -113,7 +121,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
             execute("CREATE TABLE test AS (SELECT cast(x AS INT) x FROM long_sequence(100))");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n50\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n50\n");
         });
     }
 
@@ -123,7 +133,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n50\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n50\n");
         });
     }
 
@@ -134,7 +146,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(1000))");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n500\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n500\n");
         });
     }
 
@@ -157,35 +171,51 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
     }
 
     @Test
-    public void testNegativeOnePercentile() throws Exception {
-        assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
-            // -1.0 should be equivalent to 1 - 1.0 = 0.0 (0th percentile)
-            assertQuery("SELECT percentile_disc(x, -1.0) FROM test")
-                    .noLeakCheck()
-                    .returnsOnce("percentile_disc\n1\n");
-        });
-    }
-
-    @Test
     public void testNegativePercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
-            // -0.95 should be equivalent to 1 - 0.95 = 0.05
-            assertQuery("SELECT percentile_disc(x, -0.95) FROM test")
-                    .noLeakCheck()
-                    .returnsOnce("percentile_disc\n6\n");
+            assertExceptionNoLeakCheck(
+                    "SELECT percentile_disc(x, -0.5) FROM test",
+                    26,
+                    "invalid percentile [expected=range(0.0, 1.0), actual=-0.5]"
+            );
+            assertExceptionNoLeakCheck(
+                    "SELECT percentile_disc(x, -1.0) FROM test",
+                    26,
+                    "invalid percentile [expected=range(0.0, 1.0), actual=-1.0]"
+            );
         });
     }
 
     @Test
-    public void testNegativePercentileEqualsPositive() throws Exception {
+    public void testNegativeZeroPercentile() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
-            // -0.5 should be equivalent to 1 - 0.5 = 0.5
-            assertQuery("SELECT percentile_disc(x, -0.5) FROM test")
+            assertQuery("SELECT percentile_disc(x, -0.0) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n50\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n1\n");
+        });
+    }
+
+    @Test
+    public void testPercentileAtWholeNumberProduct() throws Exception {
+        // 0.07 * 100 evaluates to 7.000000000000001; the 7th value's cumulative distribution,
+        // 7 / 100, already reaches 0.07, so the result is 7, not 8
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
+            assertQuery(
+                    "SELECT percentile_disc(x, 0.07) p07, percentile_disc(x, 0.14) p14, percentile_disc(x, 0.28) p28, " +
+                            "percentile_disc(x, 0.55) p55, percentile_disc(x, 0.56) p56 FROM test"
+            )
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            p07\tp14\tp28\tp55\tp56
+                            7\t14\t28\t55\t56
+                            """);
         });
     }
 
@@ -196,10 +226,68 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
             execute("INSERT INTO test VALUES (1), (-1)");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_disc
                             -1
                             """);
+        });
+    }
+
+    @Test
+    public void testNonConstantPercentile() throws Exception {
+        // getLong() evaluates the percentile against the GROUP BY output record, which holds
+        // no input columns, so a percentile that varies per row has no meaningful value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (x LONG, p DOUBLE)");
+            assertQuery("SELECT percentile_disc(x, p) FROM test")
+                    .noLeakCheck()
+                    .fails(26, "percentile must be a constant or runtime constant");
+            assertQuery("SELECT quantile_disc(x, p) FROM test")
+                    .noLeakCheck()
+                    .fails(24, "percentile must be a constant or runtime constant");
+        });
+    }
+
+    @Test
+    public void testParallelGroupBy() throws Exception {
+        // Small page frames spread the rows over 40 frames and only every tenth frame holds values,
+        // so the workers regularly hand merge() an empty partial result on either side.
+        setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, _, sqlExecutionContext) -> {
+                engine.execute("""
+                        CREATE TABLE tab AS (
+                            SELECT CASE WHEN ((x - 1) / 100) % 10 = 0 THEN x END v, (x % 4)::INT k
+                            FROM long_sequence(4_000)
+                        )""", sqlExecutionContext);
+                assertQuery("SELECT percentile_disc(v, 0.25) p25, percentile_disc(v, 0.5) p50, percentile_disc(v, 0.75) p75 FROM tab")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .withPlanContaining("Async Group By workers: 4")
+                        .returns("""
+                                p25\tp50\tp75
+                                100\t1100\t2100
+                                """);
+                assertQuery("SELECT k, percentile_disc(v, 0.25) p25, percentile_disc(v, 0.5) p50, percentile_disc(v, 0.75) p75 FROM tab ORDER BY k")
+                        .withEngine(engine)
+                        .withContext(sqlExecutionContext)
+                        .noLeakCheck()
+                        .expectSize()
+                        .withPlanContaining("Async Group By workers: 4")
+                        .returns("""
+                                k\tp25\tp50\tp75
+                                0\t100\t1100\t2100
+                                1\t97\t1097\t2097
+                                2\t98\t1098\t2098
+                                3\t99\t1099\t2099
+                                """);
+            }, configuration, LOG);
         });
     }
 
@@ -210,7 +298,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
             execute("INSERT INTO test VALUES (null), (null), (null)");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_disc
                             null
                             """);
@@ -223,7 +313,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
             execute("CREATE TABLE test AS (SELECT 5L x FROM long_sequence(100))");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n5\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n5\n");
         });
     }
 
@@ -233,7 +325,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
             execute("CREATE TABLE test (x LONG)");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_disc
                             null
                             """);
@@ -247,7 +341,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
             execute("INSERT INTO test VALUES (1), (null), (null), (null)");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_disc
                             1
                             """);
@@ -256,12 +352,15 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
 
     @Test
     public void testPercentileWithPercentileBindVariable() throws Exception {
-        bindVariableService.setDouble(0, 0.5);
+        // 0.07 * 100 rounds up to 7.000000000000001; the 7th value is still the answer
+        bindVariableService.setDouble(0, 0.07);
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE test AS (SELECT 5L x FROM long_sequence(100))");
+            execute("CREATE TABLE test AS (SELECT x FROM long_sequence(100))");
             assertQuery("SELECT percentile_disc(x, $1) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("percentile_disc\n5\n");
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("percentile_disc\n7\n");
         });
     }
 
@@ -272,7 +371,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
             execute("INSERT INTO test VALUES (1), (-1)");
             assertQuery("SELECT percentile_disc(x, 0.5) FROM test")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_disc
                             -1
                             """);
@@ -291,12 +392,93 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
                     """);
             assertQuery("SELECT grp, percentile_disc(val, 0.5) FROM grouped ORDER BY grp")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .expectSize()
+                    .returns("""
                             grp\tpercentile_disc
                             A\t30
                             B\t300
                             C\t1
                             """);
+        });
+    }
+
+    @Test
+    public void testSampleByFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 1, '2024-01-01T00:00:00.000000Z'),
+                    ('a', 3, '2024-01-01T00:20:00.000000Z'),
+                    ('b', 10, '2024-01-01T00:40:00.000000Z'),
+                    ('a', 5, '2024-01-01T03:00:00.000000Z'),
+                    ('b', null, '2024-01-01T03:30:00.000000Z'),
+                    ('c', 7, '2024-01-01T03:45:00.000000Z')
+                    """);
+            assertQuery("SELECT ts, percentile_disc(v, 0.5) p FROM t SAMPLE BY 1h FILL(NULL)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tp
+                            2024-01-01T00:00:00.000000Z\t3
+                            2024-01-01T01:00:00.000000Z\tnull
+                            2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T03:00:00.000000Z\t5
+                            """);
+            assertQuery("SELECT ts, percentile_disc(v, 0.5) p FROM t SAMPLE BY 1h FILL(PREV)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tp
+                            2024-01-01T00:00:00.000000Z\t3
+                            2024-01-01T01:00:00.000000Z\t3
+                            2024-01-01T02:00:00.000000Z\t3
+                            2024-01-01T03:00:00.000000Z\t5
+                            """);
+            assertQuery("SELECT ts, percentile_disc(v, 0.5) p FROM t SAMPLE BY 1h FILL(42)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tp
+                            2024-01-01T00:00:00.000000Z\t3
+                            2024-01-01T01:00:00.000000Z\t42
+                            2024-01-01T02:00:00.000000Z\t42
+                            2024-01-01T03:00:00.000000Z\t5
+                            """);
+            // ALIGN TO FIRST OBSERVATION runs the keyed fill cursors, which seed every key with setNull():
+            // 'c' has no value until 03:00 and must stay null rather than borrow another key's list
+            assertQuery("SELECT ts, k, percentile_disc(v, 0.5) p FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tp
+                            2024-01-01T00:00:00.000000Z\ta\t1
+                            2024-01-01T00:00:00.000000Z\tb\t10
+                            2024-01-01T00:00:00.000000Z\tc\tnull
+                            2024-01-01T01:00:00.000000Z\ta\t1
+                            2024-01-01T01:00:00.000000Z\tb\t10
+                            2024-01-01T01:00:00.000000Z\tc\tnull
+                            2024-01-01T02:00:00.000000Z\ta\t1
+                            2024-01-01T02:00:00.000000Z\tb\t10
+                            2024-01-01T02:00:00.000000Z\tc\tnull
+                            2024-01-01T03:00:00.000000Z\ta\t5
+                            2024-01-01T03:00:00.000000Z\tb\tnull
+                            2024-01-01T03:00:00.000000Z\tc\t7
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByFillLinearNotSupported() throws Exception {
+        // the list pointer in the map value cannot hold an interpolated value
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String sql = "SELECT ts, percentile_disc(v, 0.5) FROM t SAMPLE BY 1h FILL(LINEAR)";
+            assertExceptionNoLeakCheck(sql, sql.indexOf("LINEAR"), "support for LINEAR fill is not yet implemented");
         });
     }
 
@@ -307,7 +489,9 @@ public class PercentileDiscLongGroupByFunctionFactoryTest extends AbstractCairoT
             execute(txDml);
             assertQuery("SELECT percentile_disc(value, 0.95) FROM tx_traffic")
                     .noLeakCheck()
-                    .returnsOnce("""
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
                             percentile_disc
                             289
                             """);

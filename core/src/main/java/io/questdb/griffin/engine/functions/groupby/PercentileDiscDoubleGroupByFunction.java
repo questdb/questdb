@@ -112,9 +112,8 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
         if (size == 0) {
             return Double.NaN;
         }
-        double percentile = percentileFunc.getDouble(record);
-        double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
-        int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
+        double percentile = SqlUtil.validatePercentile(percentileFunc.getDouble(record), percentilePos);
+        int N = (int) SqlUtil.getPercentileDiscIndex(percentile, size);
         // Use QuickSelect instead of full sorting - O(n) vs O(n log n)
         listA.quickSelect(0, size - 1, N);
         return listA.getQuick(N);
@@ -123,11 +122,6 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
     @Override
     public String getName() {
         return "percentile_disc";
-    }
-
-    @Override
-    public int getSampleByFlags() {
-        return GroupByFunction.SAMPLE_BY_FILL_ALL;
     }
 
     @Override

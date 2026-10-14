@@ -53,11 +53,13 @@ import io.questdb.griffin.model.WindowExpression;
 import io.questdb.std.DoubleSort;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
+import org.jetbrains.annotations.Nullable;
 
 public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFunctionFactory {
 
@@ -98,13 +100,13 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
         long rowsHi = windowContext.getRowsHi();
 
         if (rowsHi < rowsLo) {
-            return new DoubleNullFunction(arg, NAME, rowsLo, rowsHi, framingMode == WindowExpression.FRAMING_RANGE, partitionByRecord);
+            return new DoubleNullFunction(arg, name(), rowsLo, rowsHi, framingMode == WindowExpression.FRAMING_RANGE, partitionByRecord);
         }
 
         // Percentile functions only support default frame over whole partition
         // Default frame is whole partition when there's no ORDER BY
         if (!windowContext.isDefaultFrame() || windowContext.isOrdered()) {
-            throw SqlException.$(position, "percentile_disc window function only supports whole partition frames");
+            throw SqlException.$(position, name()).put(" window function only supports whole partition frames");
         }
 
         if (partitionByRecord != null) {
@@ -120,11 +122,20 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
                     arg,
                     percentileFunc,
                     percentilePos,
-                    configuration
+                    configuration,
+                    name()
             );
         } else {
-            return new PercentileDiscOverWholeResultSetFunction(arg, percentileFunc, percentilePos, configuration);
+            return new PercentileDiscOverWholeResultSetFunction(arg, percentileFunc, percentilePos, configuration, name());
         }
+    }
+
+    /**
+     * The name this function reports in errors and in the query plan. The quantile_disc alias
+     * overrides it, so a query that calls the alias sees the name it used.
+     */
+    protected String name() {
+        return NAME;
     }
 
     // Handles percentile_disc() over (partition by x)
@@ -135,6 +146,7 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
         private static final long SIZE_OFFSET_BLOCK = 8;
 
         private final MemoryARW listMemory;
+        private final String name;
         private final Function percentileFunc;
         private final int percentilePos;
         private double result;
@@ -146,9 +158,11 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
                 Function arg,
                 Function percentileFunc,
                 int percentilePos,
-                CairoConfiguration configuration
+                CairoConfiguration configuration,
+                String name
         ) {
             super(map, partitionByRecord, partitionBySink, arg);
+            this.name = name;
             this.percentileFunc = percentileFunc;
             this.percentilePos = percentilePos;
             this.listMemory = Vm.getCARWInstance(
@@ -172,7 +186,7 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -250,7 +264,7 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
 
         @Override
         public void preparePass2() {
-            // Sort all lists and calculate percentiles
+            // Select the percentile of every list
             RecordCursor cursor = map.getCursor();
             MapRecord record = map.getRecord();
 
@@ -261,14 +275,11 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
 
                 if (size > 0) {
                     // Get percentile value
-                    double percentile = percentileFunc.getDouble(record);
-                    double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
+                    double percentile = SqlUtil.validatePercentile(percentileFunc.getDouble(record), percentilePos);
 
-                    // Sort the list (values start at listPtr + DATA_OFFSET)
-                    DoubleSort.sort(listMemory.getPageAddress(0) + listPtr + DATA_OFFSET, 0, size - 1);
-
-                    // Calculate index
-                    int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
+                    // Select the N-th smallest value (values start at listPtr + DATA_OFFSET)
+                    long N = SqlUtil.getPercentileDiscIndex(percentile, size);
+                    DoubleSort.quickSelect(listMemory.getPageAddress(0) + listPtr + DATA_OFFSET, 0, size - 1, N);
                     double result = listMemory.getDouble(listPtr + DATA_OFFSET + N * 8L);
 
                     // Store result back at first value position
@@ -287,6 +298,12 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
         public void reset() {
             super.reset();
             Misc.free(listMemory);
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            super.setMemoryTracker(tracker);
+            listMemory.setMemoryTracker(tracker);
         }
 
         @Override
@@ -329,13 +346,15 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
     // Handles percentile_disc() over () - whole result set
     static class PercentileDiscOverWholeResultSetFunction extends BaseWindowFunction implements Reopenable, WindowDoubleFunction {
         private final MemoryARW listMemory;
+        private final String name;
         private final Function percentileFunc;
         private final int percentilePos;
         private double result;
         private long size;
 
-        public PercentileDiscOverWholeResultSetFunction(Function arg, Function percentileFunc, int percentilePos, CairoConfiguration configuration) {
+        public PercentileDiscOverWholeResultSetFunction(Function arg, Function percentileFunc, int percentilePos, CairoConfiguration configuration, String name) {
             super(arg);
+            this.name = name;
             this.percentileFunc = percentileFunc;
             this.percentilePos = percentilePos;
             this.listMemory = Vm.getCARWInstance(
@@ -359,7 +378,7 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
 
         @Override
         public String getName() {
-            return NAME;
+            return name;
         }
 
         @Override
@@ -394,14 +413,11 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
                 return;
             }
 
-            double percentile = percentileFunc.getDouble(null);
-            double multiplier = SqlUtil.getPercentileMultiplier(percentile, percentilePos);
+            double percentile = SqlUtil.validatePercentile(percentileFunc.getDouble(null), percentilePos);
 
-            // Sort the list
-            DoubleSort.sort(listMemory.getPageAddress(0), 0, size - 1);
-
-            // Calculate index
-            int N = (int) Math.max(0, Math.ceil(size * multiplier) - 1);
+            // Select the N-th smallest value
+            long N = SqlUtil.getPercentileDiscIndex(percentile, size);
+            DoubleSort.quickSelect(listMemory.getPageAddress(0), 0, size - 1, N);
             result = listMemory.getDouble(N * 8L);
         }
 
@@ -418,6 +434,11 @@ public class PercentileDiscDoubleWindowFunctionFactory extends AbstractWindowFun
             Misc.free(listMemory);
             size = 0;
             result = Double.NaN;
+        }
+
+        @Override
+        public void setMemoryTracker(@Nullable MemoryTracker tracker) {
+            listMemory.setMemoryTracker(tracker);
         }
 
         @Override
