@@ -42,10 +42,12 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.NumericException;
+import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.DefaultTestCairoConfiguration;
@@ -57,6 +59,8 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.TreeMap;
 
 public class LineUdpParserImplTest extends AbstractCairoTest {
 
@@ -153,6 +157,12 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         };
 
         assertThat(expected, lines, "x", configuration);
+    }
+
+    @Test
+    public void testAutoCreatedTablesSwitchIntoSameTable() throws Exception {
+        // the parser creates q, p and r from the lines, over two commit cycles
+        assertEveryTableCommitted(false, "q,p,r,p", "q,p,r,p");
     }
 
     @Test
@@ -792,6 +802,25 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFuzzTableSwitchOrder() throws Exception {
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final int tableCount = 3 + rnd.nextInt(5);
+        final String[] cycles = new String[1 + rnd.nextInt(4)];
+        final StringSink sink = new StringSink();
+        for (int c = 0; c < cycles.length; c++) {
+            sink.clear();
+            for (int i = 0, n = 1 + rnd.nextInt(40); i < n; i++) {
+                if (i > 0) {
+                    sink.put(',');
+                }
+                sink.put('t').put(rnd.nextInt(tableCount));
+            }
+            cycles[c] = sink.toString();
+        }
+        assertEveryTableCommitted(rnd.nextBoolean(), cycles);
+    }
+
+    @Test
     public void testInvalidTableName() throws Exception {
         String lines = """
                 ..\\/db,a=b event=12i,id=0x05a9796963abad00001e5f6bbdb38i,ts=1465839830102400i,float1=1.2,int1=23i,date1=1465839830102i,byte1=-7i 1465839830102800000
@@ -927,6 +956,18 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testThreeTablesSwitchIntoSameTable() throws Exception {
+        // https://github.com/questdb/questdb/issues/7847, q and r were not committed
+        assertEveryTableCommitted(true, "q,p,r,p,s,p");
+    }
+
+    @Test
+    public void testTwoTablesSwitchIntoSameTable() throws Exception {
+        // https://github.com/questdb/questdb/issues/7847, q was not committed
+        assertEveryTableCommitted(true, "q,p,r,p");
+    }
+
+    @Test
     public void testTypeMismatch1() throws Exception {
         final String expected1 = """
                 sym2\tdouble\tint\tbool\tstr\ttimestamp\tsym1
@@ -1030,6 +1071,47 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         assertMultiTable(expected1, expected2, lines);
     }
 
+    // Each cycle is a comma-separated list of table names, one line per name, followed by commitAll().
+    // Asserts every table's row count after each commitAll(), and again after the parser closes its
+    // writers, which rolls back anything left uncommitted.
+    private void assertEveryTableCommitted(boolean isPreCreated, String... cycles) throws Exception {
+        assertMemoryLeak(() -> {
+            final TreeMap<String, Integer> counts = new TreeMap<>();
+            if (isPreCreated) {
+                for (String cycle : cycles) {
+                    for (String t : cycle.split(",")) {
+                        if (counts.putIfAbsent(t, 0) == null) {
+                            execute("CREATE TABLE " + t + " (s SYMBOL, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                        }
+                    }
+                }
+                counts.clear();
+            }
+
+            try (
+                    LineUdpParserImpl parser = new LineUdpParserImpl(engine, new DefaultLineUdpReceiverConfiguration());
+                    LineUdpLexer lexer = new LineUdpLexer(4096)
+            ) {
+                lexer.withParser(parser);
+                final StringSink lines = new StringSink();
+                int n = 0;
+                for (String cycle : cycles) {
+                    lines.clear();
+                    for (String t : cycle.split(",")) {
+                        lines.put(t).put(",s=a v=").put(n).put("i ")
+                                .put(1_704_153_600_000_000_000L + n * 3_600_000_000_000L).put('\n');
+                        counts.merge(t, 1, Integer::sum);
+                        n++;
+                    }
+                    parseLines(lexer, lines);
+                    parser.commitAll();
+                    assertTableCounts(counts);
+                }
+            }
+            assertTableCounts(counts);
+        });
+    }
+
     private void assertMultiTable(String expected1, String expected2, String lines) throws Exception {
         CairoConfiguration configuration = new DefaultTestCairoConfiguration(root) {
             @Override
@@ -1054,6 +1136,25 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
         ) {
             assertCursorTwoPass(expected, cursor, reader.getMetadata());
         }
+    }
+
+    // Asserts all tables' row counts in one result set, so a failure shows every table side by side.
+    private void assertTableCounts(TreeMap<String, Integer> counts) throws Exception {
+        final StringSink query = new StringSink();
+        final StringSink expected = new StringSink();
+        expected.put("t\tcount\n");
+        for (var e : counts.entrySet()) {
+            if (query.length() > 0) {
+                query.put(" UNION ALL ");
+            }
+            query.put("SELECT '").put(e.getKey()).put("' t, count() FROM ").put(e.getKey());
+            expected.put(e.getKey()).put('\t').put(e.getValue()).put('\n');
+        }
+        assertQuery(query)
+                .noRandomAccess()
+                .noLeakCheck()
+                .expectSize()
+                .returns(expected);
     }
 
     private void assertThat(String expected, String lines, CharSequence tableName, CairoConfiguration configuration, LineUdpReceiverConfiguration udpConfiguration) throws Exception {
@@ -1088,6 +1189,21 @@ public class LineUdpParserImplTest extends AbstractCairoTest {
 
     private void assertThat(String expected, String lines, CharSequence tableName) throws Exception {
         assertThat(expected, lines, tableName, configuration);
+    }
+
+    private void parseLines(LineUdpLexer lexer, CharSequence lines) {
+        final byte[] bytes = lines.toString().getBytes(Files.UTF_8);
+        final int len = bytes.length;
+        final long mem = Unsafe.malloc(len, MemoryTag.NATIVE_DEFAULT);
+        try {
+            for (int i = 0; i < len; i++) {
+                Unsafe.putByte(mem + i, bytes[i]);
+            }
+            lexer.parse(mem, mem + len);
+            lexer.parseLast();
+        } finally {
+            Unsafe.free(mem, len, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     private void testAddColumnFloat(short colType, String expected) throws Exception {
