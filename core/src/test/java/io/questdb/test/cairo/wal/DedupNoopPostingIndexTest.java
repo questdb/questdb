@@ -253,6 +253,72 @@ public class DedupNoopPostingIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSkipDuplicatesKeepCoveringIndexOfLastPartition() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE t (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (v), tag SYMBOL INDEX TYPE POSTING, v LONG)
+                    TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)
+                    """);
+            // separate commits, so that the indexes of the last partition carry more than one generation
+            execute("INSERT INTO t VALUES ('2024-01-01T01:00:00.000000Z', 'a', 'x', 1), ('2024-01-02T01:00:00.000000Z', 'a', 'x', 2)");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-02T02:00:00.000000Z', 'b', 'y', 3)");
+            drainWalQueue();
+            execute("INSERT INTO t VALUES ('2024-01-02T03:00:00.000000Z', 'a', 'y', 4)");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("t");
+            final String partitions = readTxnToString(tableToken, false, true, true, true);
+            final Set<String> indexFiles = listIndexFiles("2024-01-02");
+
+            // duplicates of rows of the last partition, with other values in the columns that are not keys
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-02T01:00:00.000000Z', 'a', 'z', 20),
+                    ('2024-01-02T03:00:00.000000Z', 'a', 'z', 40)
+                    """);
+            drainWalQueue();
+            final String partitionsAfterCommit = readTxnToString(tableToken, false, true, true, true);
+            final Set<String> indexFilesAfterCommit = listIndexFiles("2024-01-02");
+
+            // both indexes of the last partition keep indexing appended rows, before and after the writer
+            // reopens the partition
+            execute("INSERT INTO t VALUES ('2024-01-02T04:00:00.000000Z', 'a', 'z', 5)");
+            drainWalQueue();
+            engine.releaseAllWriters();
+            execute("INSERT INTO t VALUES ('2024-01-02T05:00:00.000000Z', 'a', 'z', 6)");
+            drainWalQueue();
+
+            assertQuery("SELECT ts, v FROM t WHERE sym = 'a'")
+                    .noLeakCheck()
+                    .withPlanContaining("CoveringIndex on: sym")
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tv
+                            2024-01-01T01:00:00.000000Z\t1
+                            2024-01-02T01:00:00.000000Z\t2
+                            2024-01-02T03:00:00.000000Z\t4
+                            2024-01-02T04:00:00.000000Z\t5
+                            2024-01-02T05:00:00.000000Z\t6
+                            """);
+            assertQuery("SELECT * FROM t WHERE tag = 'z'")
+                    .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: tag")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\ttag\tv
+                            2024-01-02T04:00:00.000000Z\ta\tz\t5
+                            2024-01-02T05:00:00.000000Z\ta\tz\t6
+                            """);
+
+            // the commit of duplicates left the partition and both of its indexes as they were
+            Assert.assertEquals(partitions, partitionsAfterCommit);
+            Assert.assertEquals(indexFiles, indexFilesAfterCommit);
+        });
+    }
+
+    @Test
     public void testSkipDuplicatesKeepParquetCoveringIndex() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING INCLUDE (v), v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
@@ -285,6 +351,41 @@ public class DedupNoopPostingIndexTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\t1
                             2024-01-01T03:00:00.000000Z\t3
                             2024-01-02T01:00:00.000000Z\t4
+                            """);
+        });
+    }
+
+    @Test
+    public void testSkipDuplicatesKeepParquetPostingIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, sym SYMBOL INDEX TYPE POSTING, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T01:00:00.000000Z', 'a', 1),
+                    ('2024-01-01T02:00:00.000000Z', 'b', 2),
+                    ('2024-01-01T03:00:00.000000Z', 'a', 3),
+                    ('2024-01-02T01:00:00.000000Z', 'a', 4)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+
+            for (int i = 0; i < 2; i++) {
+                assertDuplicatesKeepIndex(
+                        "2024-01-01",
+                        "INSERT INTO t VALUES ('2024-01-01T01:00:00.000000Z', 'a', " + (10 + i) + "), ('2024-01-01T03:00:00.000000Z', 'a', " + (20 + i) + ")"
+                );
+            }
+
+            assertQuery("SELECT * FROM t WHERE sym = 'a'")
+                    .noLeakCheck()
+                    .withPlanContaining("Index forward scan on: sym")
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv
+                            2024-01-01T01:00:00.000000Z\ta\t1
+                            2024-01-01T03:00:00.000000Z\ta\t3
+                            2024-01-02T01:00:00.000000Z\ta\t4
                             """);
         });
     }
@@ -425,8 +526,8 @@ public class DedupNoopPostingIndexTest extends AbstractCairoTest {
         Assert.assertEquals(indexFiles, listIndexFiles(partition));
     }
 
-    // Names of the POSTING index files of the column "sym", e.g. sym.pk, sym.pv.0, sym.pci, sym.pc0.0.1, in the
-    // directory of the partition version that the table "t" has
+    // Names of the POSTING index files of every indexed column, e.g. sym.pk, sym.pv.0, sym.pci, sym.pc0.0.1, in
+    // the directory of the partition version that the table "t" has
     private static Set<String> listIndexFiles(String partition) throws NumericException {
         final TableToken tableToken = engine.verifyTableName("t");
         final long partitionTimestamp = MicrosTimestampDriver.floor(partition);
@@ -442,7 +543,9 @@ public class DedupNoopPostingIndexTest extends AbstractCairoTest {
                     partitionTimestamp,
                     txReader.getPartitionNameTxnByPartitionTimestamp(partitionTimestamp)
             );
-            final String[] files = new File(path.toString()).list((dir, name) -> name.startsWith("sym.p"));
+            final String[] files = new File(path.toString()).list(
+                    (dir, name) -> name.contains(".pk") || name.contains(".pv") || name.contains(".pc")
+            );
             Assert.assertNotNull(files);
             return new TreeSet<>(Arrays.asList(files));
         }
