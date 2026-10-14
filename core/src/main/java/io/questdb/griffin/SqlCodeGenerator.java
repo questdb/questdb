@@ -394,6 +394,7 @@ import io.questdb.std.Transient;
 import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateLocaleFactory;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
@@ -512,6 +513,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     private final ListColumnFilter listColumnFilterB = new ListColumnFilter();
     private final MarkoutHorizonContext markoutHorizonContext = new MarkoutHorizonContext();
+    // the compiler's scratch path, which the optimiser uses too, see generateShowQuery()
+    private final Path path;
     private final LongList prefixes = new LongList();
     private final PushdownFilterExtractor pushdownFilterExtractor = new PushdownFilterExtractor();
     private final ObjectPool<QueryColumn> queryColumnPool;
@@ -525,6 +528,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final ObjObjHashMap<QueryModel, RecordCursorFactory> sharedFactoryCache = new ObjObjHashMap<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     private final ArrayDeque<ExpressionNode> sqlNodeStack2 = new ArrayDeque<>();
+    // creates the cursors of the SHOW statements the compiler defines, see generateShowQuery()
+    private final SqlParserCallback sqlParserCallback;
     private final WhereClauseSymbolEstimator symbolEstimator = new WhereClauseSymbolEstimator();
     private final IntList tempAggIndex = new IntList();
     private final ObjList<QueryColumn> tempColumnsList = new ObjList<>();
@@ -573,11 +578,15 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             FunctionParser functionParser,
             PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo,
             ObjectPool<QueryColumn> queryColumnPool,
-            ObjectPool<ExpressionNode> expressionNodePool
+            ObjectPool<ExpressionNode> expressionNodePool,
+            SqlParserCallback sqlParserCallback,
+            Path path
     ) {
         try {
             this.configuration = configuration;
             this.functionParser = functionParser;
+            this.sqlParserCallback = sqlParserCallback;
+            this.path = path;
             this.recordComparatorCompiler = new RecordComparatorCompiler(asm);
             this.enableJitDebug = configuration.isSqlJitDebugEnabled();
             this.traversalAlgo = postOrderTreeTraversalAlgo;
@@ -2569,7 +2578,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     /**
      * Computes the array of offset values from HorizonJoinContext RANGE or LIST configuration.
-     * Offsets are in microseconds (matching QuestDB's default timestamp precision).
+     * Offsets use the master timestamp resolution.
      */
     private long[] computeHorizonOffsets(HorizonJoinContext context, RecordMetadata masterMetadata) throws SqlException {
         final TimestampDriver timestampDriver = getTimestampDriver(masterMetadata.getTimestampType());
@@ -2587,15 +2596,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 throw SqlException.position(context.getRangeFromPosition()).put("FROM must be less than or equal to TO");
             }
 
-            final long count = ((to - from) / step) + 1;
+            // The non-negative span can exceed Long.MAX_VALUE even with very few offsets.
+            final long steps = Long.divideUnsigned(to - from, step);
             final int maxOffsets = configuration.getSqlHorizonJoinMaxOffsets();
-            if (count > maxOffsets) {
+            if (steps < 0 || steps >= maxOffsets) {
+                final boolean isCountOverflow = steps < 0 || steps == Long.MAX_VALUE;
                 throw SqlException.position(context.getRangeFromPosition())
-                        .put("RANGE generates too many offsets [count=").put(count)
+                        .put("RANGE generates too many offsets [count").put(isCountOverflow ? ">" : "=")
+                        .put(isCountOverflow ? Long.MAX_VALUE : steps + 1)
                         .put(", max=").put(maxOffsets)
                         .put(']');
             }
-            final long[] offsets = new long[(int) count];
+            final int count = (int) steps + 1;
+            final long[] offsets = new long[count];
             for (int i = 0; i < count; i++) {
                 offsets[i] = from + i * step;
             }
@@ -9893,7 +9906,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             case IQueryModel.SELECT_MODEL_WINDOW_JOIN -> generateSelectWindowJoin(model, executionContext);
             case IQueryModel.SELECT_MODEL_DISTINCT -> generateSelectDistinct(model, executionContext);
             case IQueryModel.SELECT_MODEL_CURSOR -> generateSelectCursor(model, executionContext);
-            case IQueryModel.SELECT_MODEL_SHOW -> model.getTableNameFunction();
+            case IQueryModel.SELECT_MODEL_SHOW -> generateShowQuery(model, executionContext);
             default -> shouldProcessJoins && model.getJoinModels().size() > 1
                     ? generateJoins(model, executionContext)
                     : generateNoSelect(model, executionContext);
@@ -12194,6 +12207,31 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             Misc.freeObjList(castFunctionsB);
             throw e;
         }
+    }
+
+    /**
+     * Takes over the cursor the optimiser built for a SHOW statement, as
+     * {@link #generateFunctionQuery} takes over a table function's. It clears the model's
+     * reference, so that neither {@link #freeTableNameFunctions} nor
+     * {@code SqlOptimiser#freeUnclaimedTableFactories}, which close the factories still attached to
+     * their model, closes the cursor the plan returns.
+     * <p>
+     * A plan can read a SHOW statement more than once. A filter, GROUP BY key or projection that is
+     * not thread-safe compiles again for each worker of the shared query pool, along with the
+     * sub-queries in it, and a LATERAL join reads its outer source as its left side and as the outer
+     * references of its right side. Each read needs a cursor of its own, because concurrent or
+     * interleaved reads of one cursor would corrupt each other. So once the optimiser's cursor is
+     * taken, this creates another for each further read, as the optimiser created the first, see
+     * {@code SqlOptimiser#createShowFactory}. That needs the compiler's {@link SqlParserCallback},
+     * which creates the SHOW kinds the compiler defines.
+     */
+    private RecordCursorFactory generateShowQuery(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        final RecordCursorFactory factory = model.getTableNameFunction();
+        if (factory != null) {
+            model.setTableNameFunction(null);
+            return factory;
+        }
+        return SqlOptimiser.createShowFactory(functionParser, model, executionContext, sqlParserCallback, path);
     }
 
     private RecordCursorFactory generateSubQuery(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
