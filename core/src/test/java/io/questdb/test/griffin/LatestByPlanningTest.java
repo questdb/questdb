@@ -767,8 +767,8 @@ public class LatestByPlanningTest extends AbstractCairoTest {
                     "id\n3\n6\n", "id\n3\n6\n", "id\n5\n", "id\n",
                     "id\n6\n", "id\n3\n5\n6\n", "id\n6\n");
             bindVariableService.setStr(0, "A");
-            final String[] shapes5 = {"SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByValueFiltered > Row backward scan > Frame backward scan on: lp_latest", "SelectedRecord > Empty table", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByValueFiltered > Row backward scan > Frame backward scan on: lp_latest"};
-            final String[] shapes4 = {"SelectedRecord > Index backward scan on: s > Frame backward scan on: lp_latest", "SelectedRecord > Index backward scan on: s > Frame backward scan on: lp_latest", "SelectedRecord > Index backward scan on: s > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > PageFrame > Index backward scan on: s > Frame backward scan on: lp_latest", "SelectedRecord > Empty table", "SelectedRecord > Index backward scan on: s > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > Index backward scan on: s > Frame backward scan on: lp_latest"};
+            final String[] shapes5 = {"SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByValueDeferredFiltered > Frame backward scan on: lp_latest", "SelectedRecord > Empty table", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByValueDeferredFiltered > Frame backward scan on: lp_latest"};
+            final String[] shapes4 = {"SelectedRecord > Index backward scan on: s > Frame backward scan on: lp_latest", "SelectedRecord > Index backward scan on: s > Frame backward scan on: lp_latest", "SelectedRecord > Index backward scan on: s > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > PageFrame > Index backward scan on: s deferred: true > Frame backward scan on: lp_latest", "SelectedRecord > Empty table", "SelectedRecord > Index backward scan on: s > Frame backward scan on: lp_latest", "SelectedRecord > LatestByDeferredListValuesFiltered > Frame backward scan on: lp_latest", "SelectedRecord > Index backward scan on: s > Frame backward scan on: lp_latest"};
             for (int i = 0, n = predicates.size(); i < n; i++) {
                 assertLatest(
                         "SELECT id FROM lp_latest WHERE " + predicates.getQuick(i) + " LATEST ON ts PARTITION BY s",
@@ -795,14 +795,14 @@ public class LatestByPlanningTest extends AbstractCairoTest {
             keys.add("s");
             keys.add("u");
             final String[] shapes10 = {"SelectedRecord > PageFrame > Index backward scan on: s deferred: true > Frame backward scan on: lp_latest", "SelectedRecord > LatestByValueDeferredFiltered > Frame backward scan on: lp_latest"};
-            final String[] shapes9 = {"SelectedRecord > PageFrame > Index backward scan on: s > Frame backward scan on: lp_latest", "SelectedRecord > LatestByValueFiltered > Row backward scan > Frame backward scan on: lp_latest"};
-            final String[] shapes8 = {"SelectedRecord > PageFrame > Index backward scan on: s > Frame backward scan on: lp_latest", "SelectedRecord > LatestByValueFiltered > Row backward scan > Frame backward scan on: lp_latest"};
-            final String[] shapes7 = {"SelectedRecord > PageFrame > Index backward scan on: s > Frame backward scan on: lp_latest", "SelectedRecord > LatestByValueFiltered > Row backward scan > Frame backward scan on: lp_latest"};
-            final String[] shapes6 = {"SelectedRecord > PageFrame > Index backward scan on: s > Frame backward scan on: lp_latest", "SelectedRecord > LatestByValueFiltered > Row backward scan > Frame backward scan on: lp_latest"};
+            final String[] shapes9 = {"SelectedRecord > PageFrame > Index backward scan on: s deferred: true > Frame backward scan on: lp_latest", "SelectedRecord > LatestByValueDeferredFiltered > Frame backward scan on: lp_latest"};
+            final String[] shapes8 = {"SelectedRecord > PageFrame > Index backward scan on: s deferred: true > Frame backward scan on: lp_latest", "SelectedRecord > LatestByValueDeferredFiltered > Frame backward scan on: lp_latest"};
+            final String[] shapes7 = {"SelectedRecord > PageFrame > Index backward scan on: s deferred: true > Frame backward scan on: lp_latest", "SelectedRecord > LatestByValueDeferredFiltered > Frame backward scan on: lp_latest"};
+            final String[] shapes6 = {"SelectedRecord > PageFrame > Index backward scan on: s deferred: true > Frame backward scan on: lp_latest", "SelectedRecord > LatestByValueDeferredFiltered > Frame backward scan on: lp_latest"};
             for (int i = 0; i < keys.size(); i++) {
                 final String key = keys.getQuick(i);
                 final String value = i == 0 ? "'A'" : "'X'";
-                final String specialization = i == 0 ? "Index backward scan" : "LatestByValueFiltered";
+                final String specialization = i == 0 ? "Index backward scan" : "LatestByValueDeferredFiltered";
                 final String suffix = " LATEST ON ts PARTITION BY " + key;
                 assertLatest(
                         "SELECT id FROM lp_latest WHERE " + key + "=" + value + suffix,
@@ -852,7 +852,7 @@ public class LatestByPlanningTest extends AbstractCairoTest {
             assertLatest(
                     "SELECT id FROM lp_latest WHERE s='''' LATEST ON ts PARTITION BY s",
                     "Index backward scan",
-                    "SelectedRecord > PageFrame > Index backward scan on: s > Frame backward scan on: lp_latest",
+                    "SelectedRecord > PageFrame > Index backward scan on: s deferred: true > Frame backward scan on: lp_latest",
                     """
                             id
                             7
@@ -884,8 +884,8 @@ public class LatestByPlanningTest extends AbstractCairoTest {
             }
             assertLatest(
                     "SELECT id FROM lp_latest WHERE u='X' AND id<5 LATEST ON ts PARTITION BY u",
-                    "LatestByValueFiltered",
-                    "SelectedRecord > LatestByValueFiltered > Row backward scan > Frame backward scan on: lp_latest",
+                    "LatestByValueDeferredFiltered",
+                    "SelectedRecord > LatestByValueDeferredFiltered > Frame backward scan on: lp_latest",
                     """
                             id
                             4
@@ -906,7 +906,7 @@ public class LatestByPlanningTest extends AbstractCairoTest {
             assertLatest(
                     "SELECT count() FROM lp_latest WHERE s='A' LATEST ON ts PARTITION BY s",
                     "Index backward scan",
-                    "Count > PageFrame > Index backward scan on: s > Frame backward scan on: lp_latest",
+                    "Count > PageFrame > Index backward scan on: s deferred: true > Frame backward scan on: lp_latest",
                     """
                             count
                             1

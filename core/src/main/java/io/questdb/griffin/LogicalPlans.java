@@ -416,6 +416,45 @@ public final class LogicalPlans {
     }
 
     /**
+     * The direct reference to the column.
+     */
+    public static boolean isKeyColumn(BoundExpression expression, int columnId) {
+        return expression instanceof ColumnExpression column && column.isDirectReference() && column.getColumnId() == columnId;
+    }
+
+    /**
+     * An equality between the direct reference to the column and a key literal.
+     */
+    public static boolean isKeyEquality(BoundExpression expression, int columnId) {
+        return expression instanceof FunctionExpression call && "=".equals(call.getName()) && call.getArgumentCount() == 2
+                && (isKeyColumn(call.argumentAt(0), columnId) && isKeyLiteral(call.argumentAt(1))
+                || isKeyColumn(call.argumentAt(1), columnId) && isKeyLiteral(call.argumentAt(0)));
+    }
+
+    /**
+     * A key equality, see {@link #isKeyEquality}, or an OR of them on the same column.
+     */
+    public static boolean isKeyEqualityOr(BoundExpression expression, int columnId) {
+        if (expression instanceof FunctionExpression call && call.isOr()) {
+            return isKeyEqualityOr(call.argumentAt(0), columnId) && isKeyEqualityOr(call.argumentAt(1), columnId);
+        }
+        return isKeyEquality(expression, columnId);
+    }
+
+    /**
+     * A NULL, character or string literal spelled in SQL.
+     */
+    public static boolean isKeyLiteral(BoundExpression expression) {
+        if (!(expression instanceof ConstantExpression constant) || !constant.isLiteral()) {
+            return false;
+        }
+        return switch (ColumnType.tagOf(expression.getDataType())) {
+            case ColumnType.NULL, ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
+            default -> false;
+        };
+    }
+
+    /**
      * Whether a join can key a master column of one type on a slave column of the other.
      */
     public static boolean isJoinKeyTypeCompatible(int masterType, int slaveType) {

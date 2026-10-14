@@ -23,6 +23,7 @@
  ******************************************************************************/
 package io.questdb.jit;
 
+import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.ImplicitCastException;
@@ -32,10 +33,9 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.VarcharTypeDriver;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.StaticSymbolTable;
 import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
@@ -137,6 +137,7 @@ public class CompiledFilterIRSerializer implements Mutable {
     // Operand kinds kind() reports for a bound node, named after the parser shapes they replace.
     private static final int BIND_VARIABLE = 1;
     private static final int CONSTANT = 2;
+    private static final int BIND_VAR_SLOT_SIZE = 2 * Long.BYTES;
     private static final int EXEC_HINT_MIXED_SIZE_TYPE = 2;
     private static final int EXEC_HINT_SCALAR = 0;
     private static final int EXEC_HINT_SINGLE_SIZE_TYPE = 1;
@@ -347,7 +348,7 @@ public class CompiledFilterIRSerializer implements Mutable {
     private MemoryCARW memory;
     private OutputSchema input;
     private RecordMetadata metadata;
-    private PageFrameCursor pageFrameCursor;
+    private SymbolTableSource symbolTableSource;
 
     /**
      * The temporary lists are borrowed from the generator: serialize() is a leaf window (it never
@@ -379,7 +380,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         executionContext = null;
         input = null;
         metadata = null;
-        pageFrameCursor = null;
+        symbolTableSource = null;
         bindVarFunctions = null;
         forceScalarMode = false;
         hasEmittedWideLaneConversion = false;
@@ -425,14 +426,14 @@ public class CompiledFilterIRSerializer implements Mutable {
             SqlExecutionContext executionContext,
             RecordMetadata metadata,
             OutputSchema input,
-            PageFrameCursor pageFrameCursor,
+            SymbolTableSource symbolTableSource,
             ObjList<Function> bindVarFunctions
     ) {
         this.memory = memory;
         this.executionContext = executionContext;
         this.metadata = metadata;
         this.input = input;
-        this.pageFrameCursor = pageFrameCursor;
+        this.symbolTableSource = symbolTableSource;
         this.bindVarFunctions = bindVarFunctions;
         typeStack.clear();
         return this;
@@ -1328,6 +1329,19 @@ public class CompiledFilterIRSerializer implements Mutable {
      * @throws SqlException thrown when IR serialization failed.
      */
     public int serialize(BoundExpression predicate, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
+        final int options = serializeFilter(predicate, forceScalar, debug, nullChecks);
+        final CairoConfiguration configuration = executionContext.getCairoEngine().getConfiguration();
+        final long capacity = (long) configuration.getSqlJitBindVarsMemoryPageSize() * configuration.getSqlJitBindVarsMemoryMaxPages();
+        final long required = (long) bindVarFunctions.size() * BIND_VAR_SLOT_SIZE;
+        if (required > capacity) {
+            throw SqlException.position(predicate.getPosition())
+                    .put("bind variables exceed JIT bind variable memory [required=").put(required)
+                    .put(", capacity=").put(capacity).put(']');
+        }
+        return options;
+    }
+
+    private int serializeFilter(BoundExpression predicate, boolean forceScalar, boolean debug, boolean nullChecks) throws SqlException {
         if (!hasJitShape(predicate)) {
             throw SqlException.position(predicate.getPosition()).put("unsupported JIT filter expression");
         }
@@ -5737,21 +5751,6 @@ public class CompiledFilterIRSerializer implements Mutable {
             throw SqlException.position(position).put("reader or column index is missing for symbol constant: ").put(token);
         }
 
-        // Live view incremental refresh runs the JIT-compiled filter against WAL segment
-        // data, whose row int keys are segment-local and do not match the base table's
-        // global keys resolved here. Force the deferred bind-variable path so the key
-        // gets resolved per segment via the WAL cursor's symbol table (see
-        // WalSegmentPageFrameCursor.WalSymbolTable.keyOf).
-        if (!executionContext.isLiveViewCompile()) {
-            final int key = predicateContext.symbolTable.keyOf(symbol);
-            if (key != SymbolTable.VALUE_NOT_FOUND) {
-                // Known symbol constant case
-                putOperand(offset, IMM, I4_TYPE, key);
-                return;
-            }
-        }
-
-        // Unknown symbol constant case. Create a fake bind variable function to handle it.
         final SymbolConstant function = SymbolConstant.fromValue(symbol);
         bindVarFunctions.add(new CompiledFilterSymbolBindVariable(function, predicateContext.symbolColumnIndex));
         int index = bindVarFunctions.size() - 1;
@@ -6361,7 +6360,7 @@ public class CompiledFilterIRSerializer implements Mutable {
         int shortCircuitMode = SC_NONE; // short-circuit evaluation mode
         boolean singleBooleanColumn;
         int symbolColumnIndex; // used for symbol deferred constants and bind variables
-        StaticSymbolTable symbolTable; // used for known symbol constant lookups
+        SymbolTable symbolTable;
         private boolean currentInSerialization = false;
         private boolean handledShortCircuitExit = false; // true if predicate emitted its own AND_SC/OR_SC exit
         private BoundExpression inOperationNode = null;
@@ -6511,7 +6510,7 @@ public class CompiledFilterIRSerializer implements Mutable {
                             .put("operators on different symbol columns are not supported by JIT: ")
                             .put(token(node));
                 }
-                symbolTable = pageFrameCursor.getSymbolTable(columnIndex);
+                symbolTable = symbolTableSource.getSymbolTable(columnIndex);
                 symbolColumnIndex = columnIndex;
             }
 

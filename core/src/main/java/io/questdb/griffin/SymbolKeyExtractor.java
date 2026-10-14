@@ -34,8 +34,10 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
+import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.CharSequenceHashSet;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
@@ -54,6 +56,8 @@ import io.questdb.std.str.Utf8s;
  * single column, combined across conjuncts.
  */
 public final class SymbolKeyExtractor implements Mutable {
+    private static final ExpressionVisitor WITHIN_CALLS = expression -> expression instanceof FunctionExpression call
+            && "within".equals(call.getName()) ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private final KeySet excluded = new KeySet();
     private final ObjList<BoundExpression> excludedConjuncts;
     private final KeySet included = new KeySet();
@@ -116,7 +120,8 @@ public final class SymbolKeyExtractor implements Mutable {
     public BoundExpression extract(BoundExpression predicate, int candidateColumnId, BoundExpressionRewriter rewriter) {
         clear();
         columnId = candidateColumnId;
-        return extractKeys(predicate, rewriter);
+        final boolean isKeyOrRead = columnId >= 0 && predicate != null && predicate.walk(WITHIN_CALLS);
+        return extractKeys(isKeyOrRead ? keyEqualityOrsToIn(predicate, rewriter) : predicate, rewriter);
     }
 
     public BoundExpression extractIndexed(BoundExpression predicate, OutputSchema input, IntList indexes,
@@ -510,6 +515,21 @@ public final class SymbolKeyExtractor implements Mutable {
         final CharSequence leftText = textOf(left, keyText);
         final CharSequence rightText = textOf(right, otherKeyText);
         return leftText == null ? rightText == null : rightText != null && Chars.equals(leftText, rightText);
+    }
+
+    private BoundExpression keyEqualityOrsToIn(BoundExpression predicate, BoundExpressionRewriter rewriter) {
+        if (!(predicate instanceof FunctionExpression call)) {
+            return predicate;
+        }
+        if (call.isAnd()) {
+            return rewriter.replaceConjunction(call, keyEqualityOrsToIn(call.argumentAt(0), rewriter),
+                    keyEqualityOrsToIn(call.argumentAt(1), rewriter));
+        }
+        if (!call.isOr() || !LogicalPlans.isKeyEqualityOr(call, columnId)) {
+            return predicate;
+        }
+        final FunctionExpression in = rewriter.keyEqualityOrToIn(call, columnId);
+        return in != null ? in : predicate;
     }
 
     private void mark(BoundExpression conjunct) {

@@ -29,14 +29,11 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
-import io.questdb.cairo.SymbolMapReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
@@ -49,9 +46,6 @@ import io.questdb.griffin.engine.table.LatestByRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueDeferredFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueDeferredIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValueDeferredIndexedRowCursorFactory;
-import io.questdb.griffin.engine.table.LatestByValueFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.LatestByValueIndexedFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.table.LatestByValueIndexedRowCursorFactory;
 import io.questdb.griffin.engine.table.LatestByValuesIndexedFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 import io.questdb.griffin.plan.logical.LatestByPlan;
@@ -93,31 +87,24 @@ final class LatestByFactoryGenerator {
      * The plain {@code LATEST ON} index scan a covering factory falls back to: the same plan its
      * caller builds when {@code /*+ no_covering *}{@code /} is set.
      * <p>
-     * The returned factory OWNS {@code dfcFactory} and {@code filter}. It owns {@code symbolFunc}
-     * only when the key is deferred -- the resolved-key variants take the key as an {@code int}
-     * and never see the function, so the covering factory keeps owning it in that case. That is
-     * what the covering factory's {@code backupOwnsKeyFunctions} flag records.
+     * The returned factory owns {@code dfcFactory}, {@code filter} and {@code symbolFunc}.
      */
     private static RecordCursorFactory buildLatestByIndexScan(
             CairoConfiguration configuration,
             RecordMetadata metadata,
             PartitionFrameCursorFactory dfcFactory,
             int latestByIndex,
-            int symbolKey,
             Function symbolFunc,
             @Nullable Function filter,
             IntList columnIndexes,
             IntList columnSizeShifts
     ) {
         if (filter == null) {
-            final RowCursorFactory rcf = symbolKey == SymbolTable.VALUE_NOT_FOUND
-                    ? new LatestByValueDeferredIndexedRowCursorFactory(latestByIndex, symbolFunc)
-                    : new LatestByValueIndexedRowCursorFactory(latestByIndex, symbolKey);
             return new PageFrameRecordCursorFactory(
                     configuration,
                     metadata,
                     dfcFactory,
-                    rcf,
+                    new LatestByValueDeferredIndexedRowCursorFactory(latestByIndex, symbolFunc),
                     false,
                     null,
                     false,
@@ -127,24 +114,12 @@ final class LatestByFactoryGenerator {
                     true
             );
         }
-        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-            return new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
-                    configuration,
-                    metadata,
-                    dfcFactory,
-                    latestByIndex,
-                    symbolFunc,
-                    filter,
-                    columnIndexes,
-                    columnSizeShifts
-            );
-        }
-        return new LatestByValueIndexedFilteredRecordCursorFactory(
+        return new LatestByValueDeferredIndexedFilteredRecordCursorFactory(
                 configuration,
                 metadata,
                 dfcFactory,
                 latestByIndex,
-                symbolKey,
+                symbolFunc,
                 filter,
                 columnIndexes,
                 columnSizeShifts
@@ -164,28 +139,26 @@ final class LatestByFactoryGenerator {
             @Nullable IntList symbolCounts,
             boolean hasOnlySymbolKeys
     ) {
-        final ArrayColumnTypes keyTypes = frame.keyTypes;
         final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
+        final IntList partitionByColumnIndexes;
         final RecordSink sink;
-        IntList partitionByColumnIndexes = null;
         try {
-            sink = RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA);
-            if (hasOnlySymbolKeys) {
-                partitionByColumnIndexes = new IntList(listColumnFilterA.size());
-                for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
-                    partitionByColumnIndexes.add(listColumnFilterA.getColumnIndexFactored(i));
-                }
-            }
+            partitionByColumnIndexes = hasOnlySymbolKeys ? new IntList(listColumnFilterA.size()) : null;
+            sink = hasOnlySymbolKeys ? null : RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA);
         } catch (Throwable th) {
             Misc.free(frames, th);
             Misc.free(filter, th);
             throw th;
         }
-        return partitionByColumnIndexes != null
-                ? new LatestByAllSymbolsFilteredRecordCursorFactory(configuration, metadata, frames,
-                sink, keyTypes, partitionByColumnIndexes, symbolCounts, filter, columnIndexes, columnSizeShifts)
-                : new LatestByAllFilteredRecordCursorFactory(configuration, metadata, frames,
-                sink, keyTypes, filter, columnIndexes, columnSizeShifts);
+        if (partitionByColumnIndexes == null) {
+            return new LatestByAllFilteredRecordCursorFactory(configuration, metadata, frames,
+                    sink, frame.keyTypes, filter, columnIndexes, columnSizeShifts);
+        }
+        for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
+            partitionByColumnIndexes.add(listColumnFilterA.getColumnIndexFactored(i));
+        }
+        return new LatestByAllSymbolsFilteredRecordCursorFactory(configuration, metadata, frames,
+                partitionByColumnIndexes, symbolCounts, filter, columnIndexes, columnSizeShifts);
     }
 
     /**
@@ -209,29 +182,26 @@ final class LatestByFactoryGenerator {
             return new LatestByDeferredListValuesFilteredRecordCursorFactory(configuration,
                     metadata, frames, keyIndex, keys, excludedKeys, filter, columnIndexes, columnSizeShifts);
         }
+        if (indexRead == ScanPlan.IndexRead.INDEX) {
+            return new LatestByValuesIndexedFilteredRecordCursorFactory(configuration,
+                    metadata, frames, keyIndex, keys, filter, columnIndexes, columnSizeShifts);
+        }
         final int readerKeyIndex = columnIndexes.getQuick(keyIndex);
-        final SymbolMapReader symbolMapReader;
         final int[] coveringMapping;
         try {
-            symbolMapReader = reader.getSymbolMapReader(readerKeyIndex);
-            coveringMapping = indexRead == ScanPlan.IndexRead.COVERING ? ScanFactoryGenerator.buildCoveringMapping(reader, readerKeyIndex, columnIndexes) : null;
+            coveringMapping = ScanFactoryGenerator.buildCoveringMapping(reader, readerKeyIndex, columnIndexes);
         } catch (Throwable th) {
             Misc.free(frames, th);
             Misc.free(filter, th);
             Misc.freeObjList(keys, th);
             throw th;
         }
-        if (coveringMapping == null) {
-            return new LatestByValuesIndexedFilteredRecordCursorFactory(configuration,
-                    metadata, frames, keyIndex, keys, symbolMapReader, filter, columnIndexes, columnSizeShifts);
-        }
         final RecordCursorFactory backup = !isBackupSuppressed && hasNullableKey
                 ? new LatestByValuesIndexedFilteredRecordCursorFactory(configuration, metadata,
-                frames, keyIndex, keys, symbolMapReader, filter, columnIndexes, columnSizeShifts)
+                frames, keyIndex, keys, filter, columnIndexes, columnSizeShifts)
                 : null;
-        return new CoveringIndexRecordCursorFactory(metadata, frames,
-                readerKeyIndex, SymbolTable.VALUE_NOT_FOUND, null, columnIndexes, coveringMapping, keys,
-                reader, true, filter, null, backup, true, backup == null && hasNullableKey);
+        return new CoveringIndexRecordCursorFactory(metadata, frames, readerKeyIndex, null, columnIndexes,
+                coveringMapping, keys, true, filter, null, backup, backup == null && hasNullableKey);
     }
 
     private RecordCursorFactory generateLatestByPrepared(GenerationFrame frame, RecordCursorFactory factory, int timestampIndex,
@@ -266,55 +236,28 @@ final class LatestByFactoryGenerator {
             boolean canKeyBeNull,
             boolean isBackupSuppressed
     ) {
+        if (indexRead == ScanPlan.IndexRead.NONE) {
+            return new LatestByValueDeferredFilteredRecordCursorFactory(configuration, metadata, frames,
+                    keyIndex, key, filter, columnIndexes, columnSizeShifts);
+        }
+        if (indexRead == ScanPlan.IndexRead.INDEX) {
+            return buildLatestByIndexScan(configuration, metadata, frames, keyIndex, key, filter, columnIndexes, columnSizeShifts);
+        }
         final int readerKeyIndex = columnIndexes.getQuick(keyIndex);
-        final boolean isIndexed = indexRead != ScanPlan.IndexRead.NONE;
-        final int symbolKey;
         final int[] coveringMapping;
         try {
-            final SymbolMapReader symbols = reader.getSymbolMapReader(readerKeyIndex);
-            symbolKey = key.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND : symbols.keyOf(key.getStrA(null));
-            coveringMapping = indexRead == ScanPlan.IndexRead.COVERING ? ScanFactoryGenerator.buildCoveringMapping(reader, readerKeyIndex, columnIndexes) : null;
+            coveringMapping = ScanFactoryGenerator.buildCoveringMapping(reader, readerKeyIndex, columnIndexes);
         } catch (Throwable th) {
             Misc.free(frames, th);
             Misc.free(filter, th);
             Misc.free(key, th);
             throw th;
         }
-        final boolean isDeferred = symbolKey == SymbolTable.VALUE_NOT_FOUND;
-        if (coveringMapping != null) {
-            RecordCursorFactory backup = null;
-            if (!isBackupSuppressed && canKeyBeNull) {
-                try {
-                    backup = buildLatestByIndexScan(configuration, metadata, frames, keyIndex, symbolKey,
-                            key, filter, columnIndexes, columnSizeShifts);
-                } catch (Throwable th) {
-                    if (!isDeferred) {
-                        Misc.free(key, th);
-                    }
-                    throw th;
-                }
-            }
-            return new CoveringIndexRecordCursorFactory(metadata, frames, readerKeyIndex, symbolKey,
-                    key, columnIndexes, coveringMapping, null, null, true, filter, null, backup,
-                    isDeferred, backup == null && canKeyBeNull);
-        }
-        if (isDeferred) {
-            return isIndexed
-                    ? buildLatestByIndexScan(configuration, metadata, frames, keyIndex, symbolKey, key, filter, columnIndexes, columnSizeShifts)
-                    : new LatestByValueDeferredFilteredRecordCursorFactory(configuration, metadata, frames,
-                    keyIndex, key, filter, columnIndexes, columnSizeShifts);
-        }
-        final RecordCursorFactory result;
-        try {
-            result = isIndexed
-                    ? buildLatestByIndexScan(configuration, metadata, frames, keyIndex, symbolKey, key, filter, columnIndexes, columnSizeShifts)
-                    : new LatestByValueFilteredRecordCursorFactory(configuration, metadata, frames,
-                    keyIndex, symbolKey, filter, columnIndexes, columnSizeShifts);
-        } catch (Throwable th) {
-            Misc.free(key, th);
-            throw th;
-        }
-        return SqlCodeGenerator.closeAfter(key, result);
+        final RecordCursorFactory backup = !isBackupSuppressed && canKeyBeNull
+                ? buildLatestByIndexScan(configuration, metadata, frames, keyIndex, key, filter, columnIndexes, columnSizeShifts)
+                : null;
+        return new CoveringIndexRecordCursorFactory(metadata, frames, readerKeyIndex, key, columnIndexes, coveringMapping,
+                null, true, filter, null, backup, backup == null && canKeyBeNull);
     }
 
     /**

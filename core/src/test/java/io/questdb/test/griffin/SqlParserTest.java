@@ -9480,6 +9480,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                             Hash Join Light
                                               condition: xx2.x=t1.x
                                                 LatestByAllFiltered
+                                                  jit: true
                                                     Row backward scan
                                                       filter: 100<x
                                                     Frame backward scan on: tab
@@ -9491,6 +9492,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                                 SelectedRecord
                                                     Filter filter: 0<y
                                                         LatestByAllFiltered
+                                                          jit: true
                                                             Row backward scan
                                                               filter: b<a
                                                             Frame backward scan on: tab4
@@ -11735,6 +11737,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                             SelectedRecord
                                 Filter filter: 0<y
                                     LatestByAllFiltered
+                                      jit: true
                                         Row backward scan
                                           filter: 100<x
                                         Frame backward scan on: tab
@@ -11835,6 +11838,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                             SelectedRecord
                                 Filter filter: 0<y
                                     LatestByAllFiltered
+                                      jit: true
                                         Row backward scan
                                           filter: 100<x
                                         Frame backward scan on: tab
@@ -12326,6 +12330,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                 VirtualRecord
                                   functions: [x,z+x]
                                     LatestByAllFiltered
+                                      jit: true
                                         Row backward scan
                                           filter: 100<x
                                         Frame backward scan on: tab
@@ -12347,6 +12352,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                   keys: [x]
                                   values: [sum(z)]
                                     LatestByAllFiltered
+                                      jit: true
                                         Row backward scan
                                           filter: (a in [x,y] and b=10)
                                         Frame backward scan on: zyzy
@@ -13141,6 +13147,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .timestamp("ts")
                     .withPlan("""
                             LatestByAllFiltered
+                              jit: true
                                 Row backward scan
                                   filter: 100<x
                                 Frame backward scan on: tab
@@ -19035,6 +19042,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .assertsPlan("""
                             Filter filter: 0<y
                                 LatestByAllFiltered
+                                  jit: true
                                     Row backward scan
                                       filter: 100<x
                                     Frame backward scan on: tab

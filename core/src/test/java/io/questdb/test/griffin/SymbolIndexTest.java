@@ -46,7 +46,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
                 assertIndex(
                         "SELECT id FROM lp_index WHERE " + predicates.getQuick(i),
                         "Index forward scan",
-                        "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Frame forward scan on: lp_index",
+                        "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index",
                         predicatesRows.getQuick(i)
                 );
             }
@@ -62,7 +62,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
             createRows(false);
             final ObjList<String> residuals = new ObjList<>("id>1", "length(v)>0", "upper(v)='FOUR'", "true");
             final ObjList<String> residualsRows = new ObjList<>("id\n4\n5\n", "id\n1\n4\n5\n", "id\n4\n", "id\n1\n4\n5\n");
-            final String[] shapes = {"SelectedRecord > PageFrame > Index forward scan on: s > Frame forward scan on: lp_index", "SelectedRecord > PageFrame > Index forward scan on: s > Frame forward scan on: lp_index", "SelectedRecord > PageFrame > Index forward scan on: s > Frame forward scan on: lp_index", "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Frame forward scan on: lp_index"};
+            final String[] shapes = {"SelectedRecord > PageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index", "SelectedRecord > PageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index", "SelectedRecord > PageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index", "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index"};
             for (int i = 0; i < residuals.size(); i++) {
                 assertIndex(
                         "SELECT id FROM lp_index WHERE s='A' AND " + residuals.getQuick(i),
@@ -77,7 +77,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
             assertIndex(
                     sql,
                     "Index forward scan",
-                    "SelectedRecord > PageFrame > Index forward scan on: s > Frame forward scan on: lp_index",
+                    "SelectedRecord > PageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index",
                     """
                             id
                             1
@@ -105,7 +105,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
             assertIndex(
                     "SELECT id FROM lp_unordered WHERE s='A'",
                     "Index forward scan",
-                    "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Frame forward scan on: lp_unordered",
+                    "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_unordered",
                     """
                             id
                             1
@@ -122,8 +122,9 @@ public class SymbolIndexTest extends AbstractCairoTest {
                                   keys: [id]
                                     SelectedRecord
                                         PageFrame
-                                            Index forward scan on: s
-                                              filter: s=1 and 0<length(v)
+                                            Index forward scan on: s deferred: true
+                                              symbolFilter: s='A'
+                                              filter: 0<length(v)
                                             Frame forward scan on: lp_unordered
                             """,
                     """
@@ -144,8 +145,8 @@ public class SymbolIndexTest extends AbstractCairoTest {
             final ObjList<String> orders = new ObjList<>("ts", "ts DESC", "s", "s DESC", "s,ts", "s DESC,ts DESC");
             final ObjList<String> ordersRows = new ObjList<>("id\n1\n4\n5\n", "id\n5\n4\n1\n", "id\n1\n4\n5\n", "id\n1\n4\n5\n", "id\n1\n4\n5\n", "id\n5\n4\n1\n");
             final ObjList<String> ordersRows2 = new ObjList<>("id\n4\n5\n", "id\n5\n4\n", "id\n4\n5\n", "id\n4\n5\n", "id\n4\n5\n", "id\n5\n4\n");
-            final String[] shapes3 = {"SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Interval forward scan on: lp_index", "SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index backward scan on: s > Interval backward scan on: lp_index", "SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Interval forward scan on: lp_index", "SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Interval forward scan on: lp_index", "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Interval forward scan on: lp_index", "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index backward scan on: s > Interval forward scan on: lp_index"};
-            final String[] shapes2 = {"SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Frame forward scan on: lp_index", "SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index backward scan on: s > Frame backward scan on: lp_index", "SelectedRecord > Encode sort light > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Frame forward scan on: lp_index", "SelectedRecord > Encode sort light > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Frame forward scan on: lp_index", "SelectedRecord > Encode sort light > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Frame forward scan on: lp_index", "SelectedRecord > Encode sort light > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Frame forward scan on: lp_index"};
+            final String[] shapes3 = {"SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Interval forward scan on: lp_index", "SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index backward scan on: s deferred: true > Interval backward scan on: lp_index", "SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Interval forward scan on: lp_index", "SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Interval forward scan on: lp_index", "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Interval forward scan on: lp_index", "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index backward scan on: s deferred: true > Interval forward scan on: lp_index"};
+            final String[] shapes2 = {"SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index", "SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index backward scan on: s deferred: true > Frame backward scan on: lp_index", "SelectedRecord > Encode sort light > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index", "SelectedRecord > Encode sort light > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index", "SelectedRecord > Encode sort light > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index", "SelectedRecord > Encode sort light > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index"};
             for (int i = 0; i < orders.size(); i++) {
                 assertIndex(
                         "SELECT id FROM lp_index WHERE s='A' ORDER BY " + orders.getQuick(i),
@@ -164,7 +165,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
             assertIndex(
                     "SELECT id FROM lp_index WHERE s='A' AND ts>=$1 ORDER BY ts DESC",
                     "Index backward scan",
-                    "SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index backward scan on: s > Interval backward scan on: lp_index",
+                    "SelectedRecord > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index backward scan on: s deferred: true > Interval backward scan on: lp_index",
                     """
                             id
                             5
@@ -174,7 +175,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
             assertIndex(
                     "SELECT id FROM lp_index WHERE s='A' AND ts>'2020-01-03' AND ts<'2020-01-01'",
                     "Index ",
-                    "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Interval forward scan on: lp_index",
+                    "SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Interval forward scan on: lp_index",
                     "id\n"
             );
         });
@@ -187,7 +188,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
             assertIndex(
                     "SELECT id FROM lp_index WHERE s='A' AND t='Y'",
                     "on: s",
-                    "SelectedRecord > PageFrame > Index forward scan on: s > Frame forward scan on: lp_index",
+                    "SelectedRecord > PageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index",
                     """
                             id
                             4
@@ -196,7 +197,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
             assertIndex(
                     "SELECT id FROM lp_index WHERE t='Y' AND s='A'",
                     "on: s",
-                    "SelectedRecord > PageFrame > Index forward scan on: s > Frame forward scan on: lp_index",
+                    "SelectedRecord > PageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index",
                     """
                             id
                             4
@@ -207,7 +208,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
             assertIndex(
                     "SELECT id FROM lp_capacity WHERE s='A' AND t='X'",
                     "on: t",
-                    "SelectedRecord > PageFrame > Index forward scan on: t > Frame forward scan on: lp_capacity",
+                    "SelectedRecord > PageFrame > Index forward scan on: t deferred: true > Frame forward scan on: lp_capacity",
                     """
                             id
                             1
@@ -216,7 +217,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
             assertIndex(
                     "SELECT id FROM lp_capacity WHERE t='X' AND s='A'",
                     "on: t",
-                    "SelectedRecord > PageFrame > Index forward scan on: t > Frame forward scan on: lp_capacity",
+                    "SelectedRecord > PageFrame > Index forward scan on: t deferred: true > Frame forward scan on: lp_capacity",
                     """
                             id
                             1
@@ -227,7 +228,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
             assertIndex(
                     "SELECT id FROM lp_tie WHERE s='A' AND t='X'",
                     "on: t",
-                    "SelectedRecord > PageFrame > Index forward scan on: t > Frame forward scan on: lp_tie",
+                    "SelectedRecord > PageFrame > Index forward scan on: t deferred: true > Frame forward scan on: lp_tie",
                     """
                             id
                             1
@@ -236,7 +237,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
             assertIndex(
                     "SELECT id FROM lp_tie WHERE t='X' AND s='A'",
                     "on: s",
-                    "SelectedRecord > PageFrame > Index forward scan on: s > Frame forward scan on: lp_tie",
+                    "SelectedRecord > PageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_tie",
                     """
                             id
                             1
@@ -480,7 +481,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
             assertIndex(
                     "SELECT id FROM (SELECT id,s FROM lp_index WHERE s='A' LIMIT 2) WHERE id>1",
                     "Limit",
-                    "Filter filter: 1<id > Limit value: 2 > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s > Frame forward scan on: lp_index",
+                    "Filter filter: 1<id > Limit value: 2 > SelectedRecord > DeferredSingleSymbolFilterPageFrame > Index forward scan on: s deferred: true > Frame forward scan on: lp_index",
                     """
                             id
                             4
@@ -521,8 +522,8 @@ public class SymbolIndexTest extends AbstractCairoTest {
                     "SELECT * FROM telemetry WHERE s = 'device_42'::VARCHAR",
                     """
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: s
-                                  filter: s=1
+                                Index forward scan on: s deferred: true
+                                  filter: s='device_42'
                                 Frame forward scan on: telemetry
                             """,
                     """
@@ -534,8 +535,8 @@ public class SymbolIndexTest extends AbstractCairoTest {
                     "SELECT * FROM telemetry WHERE s = null::VARCHAR",
                     """
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: s
-                                  filter: s=0
+                                Index forward scan on: s deferred: true
+                                  filter: s=null
                                 Frame forward scan on: telemetry
                             """,
                     """
@@ -547,8 +548,8 @@ public class SymbolIndexTest extends AbstractCairoTest {
                     "SELECT * FROM telemetry WHERE s = 'é'::VARCHAR",
                     """
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: s
-                                  filter: s=3
+                                Index forward scan on: s deferred: true
+                                  filter: s='é'
                                 Frame forward scan on: telemetry
                             """,
                     """
@@ -582,10 +583,10 @@ public class SymbolIndexTest extends AbstractCairoTest {
                     """
                             FilterOnValues
                                 Table-order scan
-                                    Index forward scan on: s
-                                      filter: s=3
-                                    Index forward scan on: s
-                                      filter: s=1
+                                    Index forward scan on: s deferred: true
+                                      filter: s='é'
+                                    Index forward scan on: s deferred: true
+                                      filter: s='device_42'
                                 Frame forward scan on: telemetry
                             """,
                     """
@@ -616,8 +617,8 @@ public class SymbolIndexTest extends AbstractCairoTest {
                     "SELECT * FROM telemetry WHERE s IN ('device_42'::VARCHAR, 'b') AND s != 'b'::VARCHAR",
                     """
                             DeferredSingleSymbolFilterPageFrame
-                                Index forward scan on: s
-                                  filter: s=1
+                                Index forward scan on: s deferred: true
+                                  filter: s='device_42'
                                 Frame forward scan on: telemetry
                             """,
                     """
@@ -629,8 +630,8 @@ public class SymbolIndexTest extends AbstractCairoTest {
                     "SELECT * FROM telemetry WHERE s = 'device_42'::VARCHAR LATEST ON ts PARTITION BY s",
                     """
                             PageFrame
-                                Index backward scan on: s
-                                  filter: s=1
+                                Index backward scan on: s deferred: true
+                                  filter: s='device_42'
                                 Frame backward scan on: telemetry
                             """,
                     """
@@ -642,7 +643,7 @@ public class SymbolIndexTest extends AbstractCairoTest {
                     "SELECT * FROM telemetry WHERE s IN ('device_42'::VARCHAR, 'é'::VARCHAR) LATEST ON ts PARTITION BY s",
                     """
                             Index backward scan on: s
-                              symbolFilter: s in [1,3]
+                              symbolFilter: s in ['device_42','é']
                                 Frame backward scan on: telemetry
                             """,
                     """

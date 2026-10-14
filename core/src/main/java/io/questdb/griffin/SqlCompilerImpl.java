@@ -1009,7 +1009,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * Only a literal source is examined here. {@code SqlParser#parseSelectFrom} records a model's
      * source as either a {@code LITERAL}/{@code CONSTANT} name or a {@code FUNCTION} call and
      * rejects anything else outright, and a function source has to return a cursor
-     * ({@code TableUtils#createCursorFunction}) - so a function source is caught, wherever it
+     * ({@code TableFunctionSources#bind}) - so a function source is caught, wherever it
      * stands, by the cursor-function rejection in {@link #generateUpdate} instead. That split is
      * deliberate: a table name is only comparable to the target in the model, while a function is
      * only classifiable once instantiated.
@@ -2383,7 +2383,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private TableToken authorizeCompileView(SqlExecutionContext executionContext, CompileViewModel model) {
         final CharSequence viewName = unquote(model.getTableName());
-        final TableToken tt = engine.getTableTokenIfExists(viewName);
+        // an object the principal may not see fails exactly like a missing one, before the kind check
+        final TableToken tt = executionContext.getVisibleTableTokenIfExists(viewName);
         if (tt == null) {
             throw CairoException.viewDoesNotExist(viewName);
         }
@@ -2410,6 +2411,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final CharSequence tableName = unquote(model.getTableName());
         final TableToken tt = engine.verifyTableName(tableName);
         if (tt != null) {
+            // a table the principal may not see fails exactly like a missing one does in verifyTableName()
+            if (!executionContext.getSecurityContext().isTableVisible(tt)) {
+                throw CairoException.tableDoesNotExist(tableName);
+            }
             executionContext.getSecurityContext().authorizeSelectOnAnyColumn(tt);
         }
     }
@@ -2458,6 +2463,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } finally {
             functionParser.swapCompiler(previous);
         }
+        if (functionResolver.getExecutionRequirements().checkStoredView(executionContext)) {
+            nonDeterministicCalls.rejectCreated(functionResolver, executionContext);
+        }
     }
 
     private Function bindStatementExpression(ExpressionNode expression, RecordMetadata metadata, int preferredType, SqlExecutionContext executionContext) throws SqlException {
@@ -2486,6 +2494,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    // COPY FROM creates the table when it is missing, so its target collides with any existing object,
+    // visible or not, the way CREATE TABLE does.
     private void checkViewModification(ExecutionModel executionModel) throws SqlException {
         final CharSequence name = executionModel.getTableName();
         final TableToken tableToken = engine.getTableTokenIfExists(name);
@@ -2512,6 +2522,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         return Misc.clearBestEffort(failure, binder);
+    }
+
+    // For statements that modify an existing table: an object the principal may not see is not disclosed
+    // as a view here, and the statement goes on to fail like it does for a missing table.
+    private void checkVisibleViewModification(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(executionModel.getTableName());
+        checkViewModification(tableToken, executionModel.getTableNameExpr().position);
     }
 
     private void clearExceptSqlText() {
@@ -2986,7 +3003,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final CharSequence targetTableName = unquote(tok);
         // Before any resolution, for the same reason as in compileExecutionModel0's UPDATE case.
         executionContext.setStatementTargetTableName(targetTableName);
-        final TableToken tableToken = tableExistsOrFail(tableNamePosition, targetTableName, executionContext);
+        final TableToken tableToken = tableExistsOrFailForWal(tableNamePosition, targetTableName, executionContext);
         checkViewModification(tableToken);
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
@@ -3579,6 +3596,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             if (createMatViewOp != null) {
                 executionContext.setAllowNonDeterministicFunction(false);
+                executionContext.setMatViewCompile(true);
             }
             final QueryModel queryModel;
             final boolean cacheable;
@@ -3590,19 +3608,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                     queryModel = (QueryModel) executionModel;
                     bindQuery(queryModel, executionContext);
-                    if (createMatViewOp != null) {
-                        final SqlExecutionRequirements executionRequirements = functionResolver.getExecutionRequirements();
-                        final int securityContextPosition = executionRequirements.getPosition(
-                                SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
-                        );
-                        if (securityContextPosition > -1) {
-                            throw SqlException.position(securityContextPosition)
-                                    .put("administrative function cannot be used in materialized view: ")
-                                    .put(executionRequirements.getFunctionName(
-                                            SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
-                                    ));
-                        }
-                    }
                 } catch (SqlException e) {
                     e.setPosition(e.getPosition() + selectTextPosition);
                     throw e;
@@ -3649,6 +3654,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw th;
         } finally {
             executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
+            executionContext.setMatViewCompile(false);
         }
     }
 
@@ -3690,8 +3696,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence tableName = unquote(tok);
-                // define operation to make sure we generate correct errors in case of syntax check failure
-                final TableToken tt = executionContext.getTableTokenIfExists(tableName);
+                // define operation to make sure we generate correct errors in case of syntax check failure;
+                // an object the principal may not see must not fail the kind check below and disclose itself
+                final TableToken tt = executionContext.getVisibleTableTokenIfExists(tableName);
                 if (tt != null && (tt.isView() || tt.isMatView() || tt.isLiveView())) {
                     // Live views are rejected here as well as at execute time, so DROP TABLE on
                     // one fails the compile-only /validate endpoint too. Keep the message
@@ -3735,8 +3742,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence viewName = GenericLexer.unquote(tok);
-                // define operation to make sure we generate correct errors in case of syntax check failure
-                final TableToken tt = executionContext.getTableTokenIfExists(viewName);
+                // define operation to make sure we generate correct errors in case of syntax check failure;
+                // an object the principal may not see must not fail the kind check below and disclose itself
+                final TableToken tt = executionContext.getVisibleTableTokenIfExists(viewName);
                 if (tt != null && !tt.isView()) {
                     throw SqlException.$(lexer.lastTokenPosition(), "view name expected, got ").put(tt.getType().keyword()).put(" name");
                 }
@@ -3816,8 +3824,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence matViewName = unquote(tok);
-                // define operation to make sure we generate correct errors in case of syntax check failure
-                final TableToken tt = executionContext.getTableTokenIfExists(matViewName);
+                // define operation to make sure we generate correct errors in case of syntax check failure;
+                // an object the principal may not see must not fail the kind check below and disclose itself
+                final TableToken tt = executionContext.getVisibleTableTokenIfExists(matViewName);
                 if (tt != null && !tt.isMatView()) {
                     throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got ").put(tt.getType().keyword()).put(" name");
                 }
@@ -3883,7 +3892,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     lightlyValidateInsertModel(insertModel);
                 }
-                final TableToken tableToken = engine.getTableTokenIfExists(insertModel.getTableName());
+                // a table the principal may not see authorizes exactly like a missing one
+                final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(insertModel.getTableName());
                 executionContext.getSecurityContext().authorizeInsert(tableToken);
                 break;
             }
@@ -3895,6 +3905,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // table while any other table in the statement resolves normally.
                 executionContext.setStatementTargetTableName(queryModel.getTableName());
                 final TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
+                // a table the principal may not see fails exactly like a missing one does in
+                // getTableToken(), before its metadata is read
+                if (!executionContext.getSecurityContext().isTableVisible(tableToken)) {
+                    throw CairoException.tableDoesNotExist(queryModel.getTableName());
+                }
                 // Before binding, which is what fixes the check to this spot rather than to
                 // generateUpdate() where the WAL join rejection lives: the check reads the
                 // parser's record of which sub-queries the statement contains.
@@ -4356,7 +4371,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
         final CharSequence matViewName = unquote(tok);
-        final TableToken matViewToken = executionContext.getTableTokenIfExists(matViewName);
+        // an object the principal may not see fails exactly like a missing one, before the kind check
+        final TableToken matViewToken = executionContext.getVisibleTableTokenIfExists(matViewName);
         if (matViewToken == null) {
             throw SqlException.matViewDoesNotExist(lexer.lastTokenPosition(), matViewName);
         }
@@ -4604,7 +4620,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = unquote(tok);
                 }
 
-                final TableToken tableToken = executionContext.getTableTokenIfExists(tok);
+                // a table the principal may not see truncates exactly like a missing one, IF EXISTS included
+                final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(tok);
                 if (tableToken == null && !hasIfExists) {
                     throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tok).put(']');
                 }
@@ -4785,7 +4802,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (!executionContext.isValidationOnly()) {
                         sqlId = queryRegistry.register(sqlText, executionContext);
                         QueryProgress.logStart(sqlId, sqlText, executionContext, false);
-                        checkViewModification(executionModel);
+                        checkVisibleViewModification(executionModel, executionContext);
                         final RenameTableModel rtm = (RenameTableModel) executionModel;
                         engine.rename(
                                 executionContext.getSecurityContext(),
@@ -4801,7 +4818,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 case ExecutionModel.UPDATE:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
-                    checkViewModification(executionModel);
+                    checkVisibleViewModification(executionModel, executionContext);
                     compiledQuery.ofUpdate(generateUpdate((QueryModel) executionModel, executionContext));
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     // update is delayed until operation execution (for non-wal tables) or pushed to wal job completely
@@ -4818,7 +4835,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 default:
-                    checkViewModification(executionModel);
+                    checkVisibleViewModification(executionModel, executionContext);
                     final InsertModel insertModel = (InsertModel) executionModel;
                     // we use SQL Compiler state (reusing objects) to generate InsertOperation
                     if (insertModel.getQueryModel() != null) {
@@ -5070,7 +5087,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             //   - a same-kind live-view collision without IF NOT EXISTS reports "live view
             //     already exists" (mirroring "materialized view already exists") instead of
             //     the generic "table exists" createLiveView would otherwise surface.
-            // A same-kind IF NOT EXISTS falls through to createLiveView, which no-ops.
+            // A same-kind IF NOT EXISTS is a no-op, as it is for CREATE MATERIALIZED VIEW. It returns
+            // before createLiveView compiles the body: a live view an earlier release created may use
+            // functions that CREATE now rejects, and replaying its DDL must keep working. The no-op in
+            // createLiveView still covers a live view created concurrently after this check.
             final TableToken existingToken = executionContext.getTableTokenIfExists(op.getViewName());
             if (existingToken != null) {
                 if (!existingToken.isLiveView()) {
@@ -5079,9 +5099,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (!op.isIgnoreIfExists()) {
                     throw SqlException.$(op.getViewNamePosition(), "live view already exists");
                 }
+                QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
+                return false;
             }
-            // validate base table exists and is WAL
-            final TableToken baseTableToken = executionContext.getTableTokenIfExists(op.getBaseTableName());
+            // validate base table exists and is WAL; a base table the principal may not see fails like a
+            // missing one, before the checks below can disclose what kind of object it is
+            final TableToken baseTableToken = executionContext.getVisibleTableTokenIfExists(op.getBaseTableName());
             if (baseTableToken == null) {
                 throw SqlException.$(op.getBaseTableNamePosition(), "base table does not exist [name=").put(op.getBaseTableName()).put(']');
             }
@@ -5369,7 +5392,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     try {
                         if (createTableOp.getLikeTableName() != null) {
-                            TableToken likeTableToken = executionContext.getTableTokenIfExists(createTableOp.getLikeTableName());
+                            // LIKE copies the schema of the table, so a table the principal may not see
+                            // fails exactly like a missing one
+                            final TableToken likeTableToken = executionContext.getVisibleTableTokenIfExists(createTableOp.getLikeTableName());
                             if (likeTableToken == null) {
                                 throw SqlException
                                         .$(createTableOp.getLikeTableNamePosition(), "table does not exist [table=")
@@ -5545,7 +5570,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         boolean hasDroppedAny = false;
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             tableToken = tableTokenBucket.get(i);
-            if (!tableToken.isSystem()) {
+            // An object the principal may not see is left alone like one that does not exist: the
+            // failure report below names every object the drop could not remove.
+            if (!tableToken.isSystem() && securityContext.isTableVisible(tableToken)) {
                 final String tableName = tableToken.getTableName();
                 try {
                     if (tableToken.isLiveView()) {
@@ -5603,7 +5630,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private boolean executeDropLiveView(GenericDropOperation op, SqlExecutionContext executionContext) throws SqlException {
         final String name = op.getEntityName();
-        final TableToken tableToken = executionContext.getTableTokenIfExists(name);
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(name);
         if (tableToken != null && !tableToken.isLiveView()) {
             throw SqlException.$(op.getEntityNamePosition(), "live view name expected [name=").put(name).put(']');
         }
@@ -5631,7 +5659,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = sqlExecutionContext.getVisibleTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
                 return false;
@@ -5666,7 +5695,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = sqlExecutionContext.getVisibleTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
                 return false;
@@ -5702,7 +5732,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = sqlExecutionContext.getVisibleTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
                 return false;
@@ -6222,22 +6253,63 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
     }
 
+    // A table the principal may not see fails exactly like a missing one, before the statement reads
+    // any of its metadata, e.g. validates the column names of an INSERT against it. ALTER TABLE uses
+    // tableExistsOrFailForWal(), which also lets WAL recovery name such a table.
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);
         }
-        TableToken token = executionContext.getTableTokenIfExists(tableName);
+        final TableToken token = executionContext.getVisibleTableTokenIfExists(tableName);
         if (token == null) {
             throw SqlException.tableDoesNotExist(position, tableName);
         }
         return token;
     }
 
+    private TableToken tableExistsOrFailForWal(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
+        if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
+            throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        final TableToken token = executionContext.getTableTokenIfExists(tableName);
+        if (token == null) {
+            throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        final SecurityContext securityContext = executionContext.getSecurityContext();
+        if (!securityContext.isTableVisible(token)) {
+            // Only WAL recovery can name an otherwise invisible table. Check permission before
+            // reading its kind or metadata; an unauthorized caller still sees a missing table.
+            final CharSequence action = SqlUtil.fetchNext(lexer);
+            try {
+                if (action != null && isResumeKeyword(action)) {
+                    securityContext.authorizeResumeWal(token);
+                } else if (action != null && isRebaseKeyword(action)) {
+                    securityContext.authorizeRebaseWal(token);
+                } else if (action != null && isSuspendKeyword(action)) {
+                    securityContext.authorizeSuspendWal(token);
+                } else {
+                    throw SqlException.tableDoesNotExist(position, tableName);
+                }
+            } catch (CairoException e) {
+                if (!e.isAuthorizationError()) {
+                    throw e;
+                }
+                throw SqlException.tableDoesNotExist(position, tableName);
+            } finally {
+                if (action != null) {
+                    lexer.unparseLast();
+                }
+            }
+        }
+        return token;
+    }
+
+    // A view the principal may not see fails exactly like a missing one, see tableExistsOrFail().
     private TableToken viewExistsOrFail(CharSequence viewName, SqlExecutionContext executionContext, SqlException notExistException) throws SqlException {
         if (executionContext.getTableStatus(path, viewName) != TableUtils.TABLE_EXISTS) {
             throw notExistException;
         }
-        TableToken viewToken = executionContext.getTableTokenIfExists(viewName);
+        final TableToken viewToken = executionContext.getVisibleTableTokenIfExists(viewName);
         if (viewToken == null) {
             throw notExistException;
         }
@@ -6417,7 +6489,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         assertNameIsQuotedOrNotAKeyword(tok, viewNamePosition);
         final CharSequence viewName = unquote(tok);
 
-        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+        // a view the principal may not see is left to CREATE VIEW like a missing one, where its name
+        // collides the way any taken name does
+        final TableToken viewToken = executionContext.getVisibleTableTokenIfExists(viewName);
         if (viewToken == null) {
             // view does not exist yet
             // just bail out and let CREATE VIEW handle it

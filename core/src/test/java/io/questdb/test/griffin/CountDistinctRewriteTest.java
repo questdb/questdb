@@ -28,11 +28,13 @@ import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
+import io.questdb.jit.JitUtil;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.Test;
 
 public class CountDistinctRewriteTest extends AbstractCairoTest {
@@ -278,10 +280,9 @@ public class CountDistinctRewriteTest extends AbstractCairoTest {
                     Count
                         GroupBy vectorized: false
                           keys: [x]
-                            LatestByValueFiltered
-                                Row backward scan
-                                  symbolFilter: k=0
-                                  filter: x!=null
+                            LatestByValueDeferredFiltered
+                              filter: x!=null
+                              symbolFilter: k='a'
                                 Frame backward scan on: cd_latest
                     """);
             assertCountDistinct("SELECT count_distinct(x) c FROM cd_latest UNION ALL SELECT count_distinct(x) c FROM cd_latest WHERE x=1",
@@ -331,6 +332,55 @@ public class CountDistinctRewriteTest extends AbstractCairoTest {
                                     Row forward scan
                                     Frame forward scan on: cd_latest
                             """);
+        });
+    }
+
+    @Test
+    public void testRewrittenFilterCompilesAsUserFilter() throws Exception {
+        Assume.assumeTrue(JitUtil.isJitSupported());
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cd_jit (ts TIMESTAMP,k SYMBOL,x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO cd_jit VALUES (0,'a',1),(1,'b',2),(2,'a',null),(3,'b',2)");
+            final int oldMode = sqlExecutionContext.getJitMode();
+            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+            try {
+                final String groupByPlan = """
+                        Count
+                            Async JIT Group By workers: 1
+                              keys: [x]
+                              filter: x!=null
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: cd_jit
+                        """;
+                assertQuery("SELECT count_distinct(x) c FROM cd_jit")
+                        .noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().withPlan(groupByPlan).returns("c\n2\n");
+                assertQuery("SELECT count() c FROM (SELECT x FROM cd_jit WHERE x != null GROUP BY x)")
+                        .noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().withPlan(groupByPlan).returns("c\n2\n");
+                assertQuery("SELECT count_distinct(x) c FROM cd_jit LATEST ON ts PARTITION BY k")
+                        .noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().withPlan("""
+                                Count
+                                    GroupBy vectorized: false
+                                      keys: [x]
+                                        LatestByDeferredListValuesFiltered
+                                          jit: true
+                                          filter: x!=null
+                                            Frame backward scan on: cd_jit
+                                """).returns("c\n2\n");
+                assertQuery("SELECT count_distinct(x) c FROM cd_jit WHERE k='a' LATEST ON ts PARTITION BY k")
+                        .noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().withPlan("""
+                                Count
+                                    GroupBy vectorized: false
+                                      keys: [x]
+                                        LatestByValueDeferredFiltered
+                                          jit: true
+                                          filter: x!=null
+                                          symbolFilter: k='a'
+                                            Frame backward scan on: cd_jit
+                                """).returns("c\n1\n");
+            } finally {
+                sqlExecutionContext.setJitMode(oldMode);
+            }
         });
     }
 

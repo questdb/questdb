@@ -41,8 +41,6 @@ import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
-import io.questdb.cairo.sql.RowCursorFactory;
-import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.sql.TableAccessInfo;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
@@ -78,8 +76,6 @@ import io.questdb.griffin.engine.table.PostingIndexDistinctRecordCursorFactory;
 import io.questdb.griffin.engine.table.PushdownFilterExtractor;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.engine.table.SortedSymbolIndexRecordCursorFactory;
-import io.questdb.griffin.engine.table.SymbolIndexFilteredRowCursorFactory;
-import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.model.RuntimeIntrinsicIntervalModel;
 import io.questdb.griffin.plan.logical.AggregatePlan;
@@ -160,21 +156,17 @@ final class ScanFactoryGenerator {
             RecordMetadata queryMeta,
             PartitionFrameCursorFactory dfcFactory,
             int keyColumnIndex,
-            int symbolKey,
             Function symbolFunc,
             int indexDirection,
             boolean followsOrderByAdvice,
             IntList columnIndexes,
             IntList columnSizeShifts
     ) {
-        final RowCursorFactory rcf = symbolKey == SymbolTable.VALUE_NOT_FOUND
-                ? new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, symbolFunc, indexDirection)
-                : new SymbolIndexRowCursorFactory(keyColumnIndex, symbolKey, indexDirection, null);
         return new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
                 configuration,
                 keyColumnIndex,
                 symbolFunc,
-                rcf,
+                new DeferredSymbolIndexRowCursorFactory(keyColumnIndex, symbolFunc, indexDirection),
                 queryMeta,
                 dfcFactory,
                 followsOrderByAdvice,
@@ -345,7 +337,6 @@ final class ScanFactoryGenerator {
         final BoundExpression residual = scan.getResidual();
         final int orderByMnemonic = orderMnemonic(scan);
         final int keyIndex = scan.getOutput().getColumnIndexById(scan.getIndexColumnId());
-        final int readerKeyIndex = indexes.getQuick(keyIndex);
         final boolean isExcluded = scan.getAccessPath() == ScanPlan.AccessPath.EXCLUDED_SYMBOL_INDEX;
         final ObjList<BoundExpression> values = isExcluded ? scan.getExcludedKeys() : scan.getIndexKeys();
         final int keyCount = values.size();
@@ -357,7 +348,6 @@ final class ScanFactoryGenerator {
         final boolean isOrderByTimestamp = scan.getIndexOrder() == ScanPlan.IndexOrder.TIMESTAMP;
         final int indexDirection = indexDirection(scan);
         final boolean isCovering = scan.getIndexRead() == ScanPlan.IndexRead.COVERING;
-        int symbolKey = SymbolTable.VALUE_NOT_FOUND;
         int[] coveringMapping = null;
         try {
             filter = residual == null ? null : functionInstantiator.instantiate(residual, scan.getOutput(), metadata, executionContext);
@@ -365,11 +355,8 @@ final class ScanFactoryGenerator {
                 throw new AssertionError("index access path residual folds to a constant");
             }
             instantiateKeys(frame, values, keys, scan, metadata, executionContext);
-            if (!isExcluded) {
-                final Function firstKey = keys.getQuick(0);
-                symbolKey = keyCount > 1 || firstKey.isRuntimeConstant() ? SymbolTable.VALUE_NOT_FOUND
-                        : reader.getSymbolMapReader(readerKeyIndex).keyOf(firstKey.getStrA(null));
-                coveringMapping = isCovering ? buildCoveringMapping(reader, readerKeyIndex, indexes) : null;
+            if (!isExcluded && isCovering) {
+                coveringMapping = buildCoveringMapping(reader, indexes.getQuick(keyIndex), indexes);
             }
             final RuntimeIntrinsicIntervalModel frameIntervals = intervalModel;
             intervalModel = null;
@@ -391,11 +378,11 @@ final class ScanFactoryGenerator {
         final RecordCursorFactory factory;
         try {
             if (keyCount == 1) {
-                factory = generateSingleSymbolIndexScan(metadata, frames, keyIndex, symbolKey, keys.getQuick(0),
+                factory = generateSingleSymbolIndexScan(metadata, frames, keyIndex, keys.getQuick(0),
                         coveringMapping == null ? filter : null, indexDirection, isOrderByKey || isOrderByTimestamp,
                         indexes, shifts, coveringMapping, scan.hasNullableKey(), scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING));
             } else {
-                factory = generateSymbolValuesIndexScan(metadata, frames, keys, keyIndex, reader,
+                factory = generateSymbolValuesIndexScan(metadata, frames, keys, keyIndex,
                         coveringMapping == null ? filter : null, orderByMnemonic, isOrderByKey, isOrderByTimestamp,
                         requestedDirection(scan), indexDirection, indexes, shifts, coveringMapping, scan.hasNullableKey(),
                         scan.hasHint(ScanPlan.HINT_FORCE_USE_COVERING));
@@ -431,6 +418,10 @@ final class ScanFactoryGenerator {
         IntList symbolCounts = null;
         try {
             filter = residual == null ? null : functionInstantiator.instantiate(residual, scan.getOutput(), metadata, executionContext);
+            if (filter != null && scan.getIndexRead() == ScanPlan.IndexRead.NONE) {
+                filter = filterGenerator.compileLatestBy(filter, residual, scan.getOutput(), metadata, reader, indexes,
+                        scan.isUpdate(), executionContext);
+            }
             instantiateKeys(frame, scan.getIndexKeys(), keys, scan, metadata, executionContext);
             instantiateKeys(frame, scan.getExcludedKeys(), excludedKeys, scan, metadata, executionContext);
             frames = newFrames(scan, buildIntervals(scanIntervals, reader), readerMetadata, frameOrder(scan));
@@ -926,7 +917,6 @@ final class ScanFactoryGenerator {
             RecordMetadata metadata,
             PartitionFrameCursorFactory frames,
             int keyIndex,
-            int symbolKey,
             Function key,
             @Nullable Function filter,
             int indexDirection,
@@ -940,32 +930,20 @@ final class ScanFactoryGenerator {
         if (coveringMapping != null) {
             assert filter == null;
             final RecordCursorFactory backup = !isBackupSuppressed && canKeyBeNull
-                    ? buildSingleSymbolIndexScan(configuration, metadata, frames, keyIndex, symbolKey,
+                    ? buildSingleSymbolIndexScan(configuration, metadata, frames, keyIndex,
                     key, indexDirection, followsOrderByAdvice, columnIndexes, columnSizeShifts)
                     : null;
             return new CoveringIndexRecordCursorFactory(metadata, frames, columnIndexes.getQuick(keyIndex),
-                    symbolKey, key, columnIndexes, coveringMapping, null, null, false, null, null,
-                    backup, true, backup == null && canKeyBeNull);
+                    key, columnIndexes, coveringMapping, null, false, null, null,
+                    backup, backup == null && canKeyBeNull);
         }
         if (filter == null) {
-            return buildSingleSymbolIndexScan(configuration, metadata, frames, keyIndex, symbolKey,
+            return buildSingleSymbolIndexScan(configuration, metadata, frames, keyIndex,
                     key, indexDirection, followsOrderByAdvice, columnIndexes, columnSizeShifts);
         }
-        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
-            return new PageFrameRecordCursorFactory(configuration, metadata, frames,
-                    new DeferredSymbolIndexFilteredRowCursorFactory(keyIndex, key, filter, indexDirection), followsOrderByAdvice,
-                    filter, false, columnIndexes, columnSizeShifts, true, false);
-        }
-        final RecordCursorFactory result;
-        try {
-            result = new PageFrameRecordCursorFactory(configuration, metadata, frames,
-                    new SymbolIndexFilteredRowCursorFactory(keyIndex, symbolKey, filter, indexDirection, null), followsOrderByAdvice,
-                    filter, false, columnIndexes, columnSizeShifts, true, false);
-        } catch (Throwable th) {
-            Misc.free(key, th);
-            throw th;
-        }
-        return SqlCodeGenerator.closeAfter(key, result);
+        return new PageFrameRecordCursorFactory(configuration, metadata, frames,
+                new DeferredSymbolIndexFilteredRowCursorFactory(keyIndex, key, filter, indexDirection), followsOrderByAdvice,
+                filter, false, columnIndexes, columnSizeShifts, true, false);
     }
 
     /**
@@ -1041,8 +1019,7 @@ final class ScanFactoryGenerator {
             if (isCovering) {
                 final int[] coveringMapping = buildCoveringMapping(reader, columnIndexes.getQuick(keyColumnIndex), columnIndexes);
                 coveringDelegate = new CoveringIndexRecordCursorFactory(metadata, sharedFrames, columnIndexes.getQuick(keyColumnIndex),
-                        SymbolTable.VALUE_NOT_FOUND, null, columnIndexes, coveringMapping, null, reader, false, null,
-                        effectiveKeys, null, false, false);
+                        null, columnIndexes, coveringMapping, null, false, null, effectiveKeys, null, false);
             }
             scanDelegate = new PageFrameRecordCursorFactory(configuration, metadata, sharedFrames,
                     new PageFrameRowCursorFactory(frames.getOrder()), false, null, true, columnIndexes, columnSizeShifts, true, false);
@@ -1099,14 +1076,13 @@ final class ScanFactoryGenerator {
     }
 
     /**
-     * Consumes frames, key functions and filter, including on failure; the key list and reader are borrowed.
+     * Consumes frames, key functions and filter, including on failure; the key list is borrowed.
      */
     RecordCursorFactory generateSymbolValuesIndexScan(
             RecordMetadata metadata,
             PartitionFrameCursorFactory frames,
             ObjList<Function> keys,
             int keyIndex,
-            TableReader reader,
             @Nullable Function filter,
             int orderByMnemonic,
             boolean isOrderByKey,
@@ -1121,18 +1097,17 @@ final class ScanFactoryGenerator {
     ) {
         if (coveringMapping == null) {
             return new FilterOnValuesRecordCursorFactory(configuration, metadata, frames, keys, keyIndex,
-                    reader, filter, orderByMnemonic, isOrderByKey, isOrderByTimestamp, orderDirection,
+                    filter, orderByMnemonic, isOrderByKey, isOrderByTimestamp, orderDirection,
                     indexDirection, columnIndexes, columnSizeShifts);
         }
         assert filter == null;
         final int readerKeyIndex = columnIndexes.getQuick(keyIndex);
         final RecordCursorFactory backup = hasNullableKey && !isBackupSuppressed
                 ? new FilterOnValuesRecordCursorFactory(configuration, metadata, frames, keys, keyIndex,
-                reader, null, orderByMnemonic, isOrderByKey, isOrderByTimestamp, orderDirection,
+                null, orderByMnemonic, isOrderByKey, isOrderByTimestamp, orderDirection,
                 indexDirection, columnIndexes, columnSizeShifts)
                 : null;
         return new CoveringIndexRecordCursorFactory(metadata, frames, readerKeyIndex,
-                SymbolTable.VALUE_NOT_FOUND, null, columnIndexes, coveringMapping, keys, reader,
-                false, null, null, backup, true, hasNullableKey && isBackupSuppressed);
+                null, columnIndexes, coveringMapping, keys, false, null, null, backup, hasNullableKey && isBackupSuppressed);
     }
 }

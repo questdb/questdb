@@ -44,9 +44,18 @@ public class BaseFunctionFactoryTest extends AbstractCairoTest {
     }
 
     protected static Function parseFunction(CharSequence expression, GenericRecordMetadata metadata, FunctionParser functionParser) throws SqlException {
+        return parseFunction(expression, metadata, functionParser, sqlExecutionContext);
+    }
+
+    protected static Function parseFunction(
+            CharSequence expression,
+            GenericRecordMetadata metadata,
+            FunctionParser functionParser,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         queryModel.clear();
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            return functionParser.parseFunction(compiler.testParseExpression(expression, queryModel), metadata, sqlExecutionContext);
+            return functionParser.parseFunction(compiler.testParseExpression(expression, queryModel), metadata, executionContext);
         }
     }
 

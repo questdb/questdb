@@ -1659,8 +1659,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                   keys: [ts,id]
                                   values: [last(val)]
                                     DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: id
-                                          filter: id=1
+                                        Index forward scan on: id deferred: true
+                                          filter: id='XXX'
                                         Frame forward scan on: tab
                             """);
 
@@ -2576,10 +2576,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                       values: [count(*)]
                         FilterOnValues symbolOrder: desc
                             Cursor-order scan
-                                Index forward scan on: venue
-                                  filter: venue=3 and not (referencePriceType in [TYPE1])
-                                Index forward scan on: venue
-                                  filter: venue=1 and not (referencePriceType in [TYPE1])
+                                Index forward scan on: venue deferred: true
+                                  symbolFilter: venue='VENUE2'
+                                  filter: not (referencePriceType in [TYPE1])
+                                Index forward scan on: venue deferred: true
+                                  symbolFilter: venue='VENUE1'
+                                  filter: not (referencePriceType in [TYPE1])
                             Frame forward scan on: reference_prices
                     """;
 
@@ -4340,9 +4342,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
         // withPlanContaining is what proves the optimisation: a plan that forgot to derive the slave
         // filter would still return the right rows (the post-join WHERE k='x' filters correctly either
         // way), so the bkey fragment guards the transitive push, while .returns confirms exactly the
-        // surviving master row is kept and the 'y' row excluded. With data present, 'x' resolves to
-        // symbol key 1, so both filters render by resolved key (akey=1/bkey=1) rather than the
-        // deferred ='x' form the no-data plan-only sibling shows - exercising the resolved-key path.
+        // surviving master row is kept and the 'y' row excluded.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE ta (akey SYMBOL INDEX, av STRING)");
             execute("CREATE TABLE tb (bkey SYMBOL INDEX, bv STRING)");
@@ -4355,7 +4355,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     ) WHERE k = 'x'""")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .withPlanContaining("filter: akey=1", "filter: bkey=1")
+                    .withPlanContaining("filter: akey='x'", "filter: bkey='x'")
                     .returns("""
                             k\tav\tbv
                             x\tax\tbx
@@ -4722,6 +4722,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                                             Lt Join Light
                                               condition: maps.alias=_xQdbA3.alias and maps.cluster=_xQdbA3.cluster
                                                 LatestByAllSymbolsFiltered
+                                                  jit: true
                                                   filter: cluster in [cluster10]
                                                     Row backward scan
                                                       expectedSymbolsCount: 2147483647
@@ -4810,6 +4811,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         SelectedRecord
                             LatestByValueDeferredFiltered
+                              jit: true
                               filter: 0<i
                               symbolFilter: s='ABC'
                                 Frame backward scan on: a
@@ -4826,10 +4828,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                LatestByValueFiltered
-                                    Row backward scan
-                                      symbolFilter: s=0
-                                      filter: 0<i
+                                LatestByValueDeferredFiltered
+                                  jit: true
+                                  filter: 0<i
+                                  symbolFilter: s='a1'
                                     Frame backward scan on: a
                             """);
         });
@@ -4845,9 +4847,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                LatestByValueFiltered
-                                    Row backward scan
-                                      symbolFilter: s=0
+                                LatestByValueDeferredFiltered
+                                  symbolFilter: s='a1'
                                     Frame backward scan on: a
                             """);
         });
@@ -4864,7 +4865,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Index backward scan on: s
                               filter: 0<i
-                              symbolFilter: s=1
+                              symbolFilter: s='a1'
                                 Frame backward scan on: a
                             """);
         });
@@ -4881,13 +4882,13 @@ public class ExplainPlanTest extends AbstractCairoTest {
                         """);
     }
 
-    @Test // TODO: should use index
+    @Test
     public void testLatestOn10() throws Exception {
         assertQuery("select s, i, ts from a where s = 'S1' or s = 'S2' latest on ts partition by s")
                 .ddl("create table a ( i int, s symbol index, ts timestamp) timestamp(ts);")
                 .assertsPlan("""
-                        LatestByDeferredListValuesFiltered
-                          filter: (s='S1' or s='S2')
+                        Index backward scan on: s
+                          symbolFilter: s in ['S1','S2']
                             Frame backward scan on: a
                         """);
     }
@@ -4983,6 +4984,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
                 .assertsPlan("""
                         LatestByAllSymbolsFiltered
+                          jit: true
                           filter: (s1 in [S1,S2] and s2='S3' and 0<i)
                             Row backward scan
                               expectedSymbolsCount: 2
@@ -4996,6 +4998,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
                 .assertsPlan("""
                         LatestByAllSymbolsFiltered
+                          jit: true
                           filter: (s1 in [S1,S2] and s2='S3')
                             Row backward scan
                               expectedSymbolsCount: 2
@@ -5009,6 +5012,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .ddl("create table a ( i int, s1 symbol index, s2 symbol index,  ts timestamp) timestamp(ts);")
                 .assertsPlan("""
                         LatestByAllSymbolsFiltered
+                          jit: true
                           filter: s1='S1'
                             Row backward scan
                               expectedSymbolsCount: 2147483647
@@ -5039,6 +5043,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                 .assertsPlan("""
                         SelectedRecord
                             LatestByAllFiltered
+                              jit: true
                                 Row backward scan
                                   filter: (0<i and i<10)
                                 Frame backward scan on: a
@@ -5106,7 +5111,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Index backward scan on: s
-                              symbolFilter: s in [1] or s in ['deferred']
+                              symbolFilter: s in ['1','deferred']
                                 Frame backward scan on: a
                             """);
         });
@@ -5122,7 +5127,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Index backward scan on: s
-                              symbolFilter: s in [1,2]
+                              symbolFilter: s in ['1','2']
                                 Frame backward scan on: a
                             """);
         });
@@ -5162,8 +5167,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             PageFrame
-                                Index backward scan on: s
-                                  filter: s=1
+                                Index backward scan on: s deferred: true
+                                  filter: s='s1'
                                 Frame backward scan on: a
                             """);
         });
@@ -5221,7 +5226,7 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Index backward scan on: s
                               filter: length(s)=10
-                              symbolFilter: s=1
+                              symbolFilter: s='S1'
                                 Frame backward scan on: a
                             """);
         });
@@ -10426,10 +10431,12 @@ public class ExplainPlanTest extends AbstractCairoTest {
                             Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                                 FilterOnValues
                                     Table-order scan
-                                        Index forward scan on: s
-                                          filter: s=2 and length(s)=2
-                                        Index forward scan on: s
-                                          filter: s=1 and length(s)=2
+                                        Index forward scan on: s deferred: true
+                                          symbolFilter: s='S2'
+                                          filter: length(s)=2
+                                        Index forward scan on: s deferred: true
+                                          symbolFilter: s='S1'
+                                          filter: length(s)=2
                                     Frame forward scan on: a
                             """);
         });
@@ -10445,8 +10452,9 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             Limit value: 1 skip-rows-max: 0 take-rows-max: 1
                                 PageFrame
-                                    Index forward scan on: s2
-                                      filter: s2=2 and s1 in [S1,S2]
+                                    Index forward scan on: s2 deferred: true
+                                      symbolFilter: s2='S2'
+                                      filter: s1 in [S1,S2]
                                     Frame forward scan on: a
                             """);
         });
@@ -10461,8 +10469,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s1
-                                  filter: s1=1
+                                Index backward scan on: s1 deferred: true
+                                  filter: s1='S1'
                                 Frame backward scan on: a
                             """);
         });
@@ -10477,8 +10485,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s1
-                                  filter: s1=1
+                                Index backward scan on: s1 deferred: true
+                                  filter: s1='S1'
                                 Frame backward scan on: a
                             """);
         });
@@ -10493,8 +10501,8 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             DeferredSingleSymbolFilterPageFrame
-                                Index backward scan on: s1
-                                  filter: s1=1
+                                Index backward scan on: s1 deferred: true
+                                  filter: s1='S1'
                                 Interval forward scan on: a
                                   intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
                             """);
@@ -10511,10 +10519,10 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .assertsPlan("""
                             FilterOnValues symbolOrder: asc
                                 Cursor-order scan
-                                    Index backward scan on: s1
-                                      filter: s1=1
-                                    Index backward scan on: s1
-                                      filter: s1=2
+                                    Index backward scan on: s1 deferred: true
+                                      filter: s1='S1'
+                                    Index backward scan on: s1 deferred: true
+                                      filter: s1='S2'
                                 Interval forward scan on: a
                                   intervals: [("1970-01-01T00:00:00.000001Z","1970-01-01T00:00:00.000008Z")]
                             """);

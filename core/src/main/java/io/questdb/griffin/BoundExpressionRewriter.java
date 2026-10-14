@@ -193,6 +193,37 @@ public final class BoundExpressionRewriter implements Mutable {
     }
 
     /**
+     * Returns an OR of key equalities, see {@link LogicalPlans#isKeyEqualityOr}, as {@code column IN (keys)} bound to
+     * the SYMBOL overload, or null when none is registered.
+     */
+    public FunctionExpression keyEqualityOrToIn(FunctionExpression or, int columnId) {
+        final ObjList<FunctionFactoryDescriptor> overloads = functionFactoryCache.getOverloadList("in");
+        if (overloads == null) {
+            return null;
+        }
+        for (int i = 0, n = overloads.size(); i < n; i++) {
+            final FunctionFactoryDescriptor overload = overloads.getQuick(i);
+            if (overload.getSigArgCount() == 2
+                    && FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(0)) == ColumnType.SYMBOL
+                    && FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(1)) == ColumnType.VAR_ARG) {
+                tmpArguments.clear();
+                tmpPositions.clear();
+                try {
+                    tmpArguments.add(null);
+                    tmpPositions.add(0);
+                    collectKeyEqualities(or, columnId);
+                    return functions.next().of(overload, tmpArguments, tmpPositions,
+                            ColumnType.BOOLEAN, or.getFunctionFlags(), or.getPosition());
+                } finally {
+                    tmpArguments.clear();
+                    tmpPositions.clear();
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
      * Copies the expression with the value itself at the first reference to the column, so its preparation is
      * adopted there, and its own copy at every further reference; preparations of rewritten calls stay with the
      * original.
@@ -345,37 +376,6 @@ public final class BoundExpressionRewriter implements Mutable {
         return expression;
     }
 
-    /**
-     * Returns {@code key IN (values)} bound to the SYMBOL overload, or null when none is registered.
-     */
-    public FunctionExpression symbolIn(BoundExpression key, ObjList<BoundExpression> values, IntList valuePositions, int functionFlags, int position) {
-        final ObjList<FunctionFactoryDescriptor> overloads = functionFactoryCache.getOverloadList("in");
-        if (overloads == null) {
-            return null;
-        }
-        for (int i = 0, n = overloads.size(); i < n; i++) {
-            final FunctionFactoryDescriptor overload = overloads.getQuick(i);
-            if (overload.getSigArgCount() == 2
-                    && FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(0)) == ColumnType.SYMBOL
-                    && FunctionFactoryDescriptor.toTypeTag(overload.getArgTypeWithFlags(1)) == ColumnType.VAR_ARG) {
-                tmpArguments.clear();
-                tmpPositions.clear();
-                try {
-                    tmpArguments.add(key);
-                    tmpArguments.addAll(values);
-                    tmpPositions.add(key.getPosition());
-                    tmpPositions.addAll(valuePositions);
-                    return functions.next().of(overload, tmpArguments, tmpPositions,
-                            ColumnType.BOOLEAN, functionFlags, position);
-                } finally {
-                    tmpArguments.clear();
-                    tmpPositions.clear();
-                }
-            }
-        }
-        return null;
-    }
-
     private static int conjunctionFlags(BoundExpression left, BoundExpression right) {
         final int leftFlags = left.getFunctionFlags();
         final int rightFlags = right.getFunctionFlags();
@@ -402,6 +402,26 @@ public final class BoundExpressionRewriter implements Mutable {
             flags &= argumentFlags | ~BoundExpression.STABLE_WITHIN_EXECUTION;
         }
         return flags;
+    }
+
+    /**
+     * Adds the column, at the first equality, and the key of every equality of the OR tree to the call arguments.
+     */
+    private void collectKeyEqualities(BoundExpression expression, int columnId) {
+        final FunctionExpression call = (FunctionExpression) expression;
+        if (call.isOr()) {
+            collectKeyEqualities(call.argumentAt(0), columnId);
+            collectKeyEqualities(call.argumentAt(1), columnId);
+            return;
+        }
+        final int keyIndex = LogicalPlans.isKeyColumn(call.argumentAt(0), columnId) ? 1 : 0;
+        if (tmpArguments.getQuick(0) == null) {
+            final BoundExpression column = call.argumentAt(1 - keyIndex);
+            tmpArguments.setQuick(0, column);
+            tmpPositions.setQuick(0, column.getPosition());
+        }
+        tmpArguments.add(call.argumentAt(keyIndex));
+        tmpPositions.add(call.getArgumentPosition(keyIndex));
     }
 
     private BoundExpression conjunction(FunctionFactoryDescriptor overload, BoundExpression left, BoundExpression right, int position) {

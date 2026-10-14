@@ -145,7 +145,7 @@ public final class SqlOptimiser implements Mutable {
         joinOrdering = new JoinOrdering(context, filters, new JoinOrderSolver(planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys, tmpKeys,
                 tmpOrder, tmpPending, readyInputs, joinChildren, joinChildrenPool, joinTypes, stagedDependencies), tmpConjuncts);
         passes.add(new FilterPushdown(context, aggregateInputOrder, tmpExpressions, filters, columns, tmpProjection,
-                tmpColumn, tmpSlaveKeys, tmpIndexes, tmpValues, tmpConjuncts));
+                tmpColumn, tmpSlaveKeys, tmpValues, tmpConjuncts));
         // Window calls merge before pruning drops the columns a merge leaves unread.
         windowCallMerge = new WindowCallMerge(context, columns, tmpProjection, tmpPlans, tmpPlanPath, tmpIndexes, substitution, tmpOrder,
                 tmpPairs, tmpColumnMap);

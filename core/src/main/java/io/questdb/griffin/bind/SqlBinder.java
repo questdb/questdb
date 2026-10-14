@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.GeoHashes;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.BoundExpressionRewriter;
@@ -278,6 +279,15 @@ public final class SqlBinder implements Mutable {
                 && getColumnIndexQuiet(scope, expression.token) >= 0;
     }
 
+    // An object the principal may not see resolves exactly like a missing one. A model expanded from a view reads
+    // the tables the view's definition names through the view, whose own visibility SqlParser checked when it
+    // expanded the view; any other table, e.g. one a caller substitutes into the view, is read as the caller.
+    private static boolean isVisible(QueryModel source, TableToken token, SqlExecutionContext executionContext) throws SqlException {
+        final ExpressionNode view = source.getViewNameExpr();
+        return view != null && TableUtils.getTableFunctionView(view, executionContext).isDependency(token)
+                || executionContext.getSecurityContext().isTableVisible(token);
+    }
+
     private static SetOperationKind setOperationKind(int modelOperation) {
         return switch (modelOperation) {
             case QueryModel.SET_OPERATION_UNION -> SetOperationKind.UNION;
@@ -407,12 +417,18 @@ public final class SqlBinder implements Mutable {
         final ExpressionNode originatingView = model.getOriginatingViewNameExpr();
         final int previousRequirementPosition = originatingView == null ? -1
                 : functionParser.getFunctionResolver().enterExecutionRequirementPosition(originatingView.position);
+        final ExpressionNode view = model.getViewNameExpr();
+        final SqlExecutionContext.TableFunctionView previousView = executionContext.getTableFunctionView();
         scope.currentHints = mergeHints(model, scope.currentHints);
         try {
+            if (view != null) {
+                executionContext.setTableFunctionView(TableUtils.getTableFunctionView(view, executionContext));
+            }
             return bindQueryWithHints(model, executionContext);
         } finally {
             modelDepth--;
             scope.currentHints = previousHints;
+            executionContext.setTableFunctionView(previousView);
             if (originatingView != null) {
                 functionParser.getFunctionResolver().restoreExecutionRequirementPosition(previousRequirementPosition);
             }
@@ -767,7 +783,7 @@ public final class SqlBinder implements Mutable {
                 throw SqlException.$(tableName.position, "come on, where is the table name?");
             }
             final TableToken token = executionContext.getTableTokenIfExists(name);
-            if (token == null) {
+            if (token == null || !isVisible(source, token, executionContext)) {
                 // As in table enumeration, a missing table name can denote a
                 // zero-argument catalogue function. Keep the parser AST unchanged.
                 final ExpressionNode call = ctx.bindingExpressions.next().of(ExpressionNode.FUNCTION, name,
@@ -776,6 +792,9 @@ public final class SqlBinder implements Mutable {
                 try {
                     functionSource = bindFunctionSource(call, executionContext);
                 } catch (SqlException e) {
+                    if (e.isFunctionNotAllowed()) {
+                        throw e;
+                    }
                     throw SqlException.tableDoesNotExist(tableName.position, name);
                 }
                 return bindTimestamp(functionSource, source);

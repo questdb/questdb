@@ -25,6 +25,7 @@
 package io.questdb.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.MillisTimestampDriver;
@@ -384,6 +385,22 @@ public class FunctionResolver implements Mutable {
     }
 
     /**
+     * Does for a SHOW statement that lists objects or reads their metadata what {@link #createFunction} does for a
+     * function that declares {@link SqlExecutionRequirements#DISCLOSES_OBJECTS}: checks the statement when the
+     * compile stores its result in a materialized or live view, or records it for the check that runs once
+     * CREATE MATERIALIZED VIEW bound its SQL. The compiler creates the cursor of a SHOW statement directly, not
+     * through a function factory, so it reports the statement here, before it creates the cursor.
+     *
+     * @param position         the position of the statement in the compiled SQL
+     * @param statement        the statement, e.g. SHOW TABLES
+     * @param executionContext the context of the compile
+     * @throws SqlException when a materialized or live view may not store the result of the statement
+     */
+    public void addObjectDisclosingStatement(int position, CharSequence statement, SqlExecutionContext executionContext) throws SqlException {
+        checkStoredView(SqlExecutionRequirements.DISCLOSES_OBJECTS, position, statement, true, executionContext);
+    }
+
+    /**
      * Applies, in construction order, the checks constructing the overload would for a call the binder types
      * without constructing it: the admission checks, then the factory's checks of its arguments
      * ({@link FunctionFactory#isConstructionDeferrable}), then records the execution requirements. Returns false,
@@ -398,10 +415,7 @@ public class FunctionResolver implements Mutable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final FunctionFactory factory = overload.getFactory();
-        final SqlException rejection = rejectAdministrativeFunction(factory, position, name, executionContext);
-        if (rejection != null) {
-            throw rejection;
-        }
+        checkStoredView(factory.getExecutionRequirements(), position, name, false, executionContext);
         final boolean isDeferrable;
         try {
             isDeferrable = factory.isConstructionDeferrable(position, args, argPositions, configuration);
@@ -414,7 +428,7 @@ public class FunctionResolver implements Mutable {
         if (!isDeferrable) {
             return false;
         }
-        addExecutionRequirements(factory, position, name);
+        executionRequirements.add(factory.getExecutionRequirements(), requirementPosition(position));
         return true;
     }
 
@@ -733,10 +747,11 @@ public class FunctionResolver implements Mutable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final FunctionFactory factory = overload.getFactory();
-        final SqlException rejection = rejectAdministrativeFunction(factory, position, name, executionContext);
-        if (rejection != null) {
-            Misc.freeObjList(args, rejection);
-            throw rejection;
+        try {
+            checkStoredView(factory.getExecutionRequirements(), position, name, false, executionContext);
+        } catch (Throwable th) {
+            Misc.freeObjList(args, th);
+            throw th;
         }
 
         final int declaredType = ASSERTIONS_ENABLED ? declaredResultType(factory, args) : ColumnType.UNDEFINED;
@@ -753,6 +768,13 @@ public class FunctionResolver implements Mutable {
             Misc.freeObjList(args, e);
             throw e;
         } catch (Throwable e) {
+            if (e instanceof CairoException ce && ce.isAuthorizationError()) {
+                // A factory that authorizes the caller, e.g. a table-name function in a view the caller
+                // may see but not read, failed the caller, not itself: keep the authorization error, which
+                // the protocols report as such, and do not log it as an internal error.
+                Misc.freeObjList(args, ce);
+                throw ce;
+            }
             LOG.error().$("exception in function factory: ").$(e).$();
             final SqlException ex = SqlException.position(position).put("exception in function factory: ").put(e.getMessage());
             Misc.freeObjList(args, ex);
@@ -772,8 +794,9 @@ public class FunctionResolver implements Mutable {
         if (nonDeterministicCallPosition < 0 && !executionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
             nonDeterministicCallName = Chars.toString(name);
             nonDeterministicCallPosition = position;
+            executionRequirements.markNonDeterministicCall();
         }
-        addExecutionRequirements(factory, position, name);
+        executionRequirements.add(factory.getExecutionRequirements(), requirementPosition(position));
         if (args != null) {
             args.clear(); // To enforce that args are not used after this point
         }
@@ -1416,30 +1439,17 @@ public class FunctionResolver implements Mutable {
         ex.put(ColumnType.nameOf(arg.getType()));
     }
 
-    private static SqlException rejectAdministrativeFunction(
-            FunctionFactory factory,
-            int position,
-            CharSequence name,
-            SqlExecutionContext executionContext
-    ) {
-        if (executionContext.allowNonDeterministicFunctions()
-                || (factory.getExecutionRequirements() & SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT) == 0) {
-            return null;
+    private void checkStoredView(int requirements, int position, CharSequence name, boolean isStatement, SqlExecutionContext executionContext)
+            throws SqlException {
+        if (requirements == SqlExecutionRequirements.NONE || executionContext.allowNonDeterministicFunctions()) {
+            return;
         }
-        final CharSequence objectKind = executionContext.isLiveViewCompile() ? "live view" : "materialized view";
-        return SqlException.position(position)
-                .put("administrative function cannot be used in ")
-                .put(objectKind)
-                .put(": ")
-                .put(name);
-    }
-
-    private void addExecutionRequirements(FunctionFactory factory, int position, CharSequence name) {
-        executionRequirements.add(
-                factory.getExecutionRequirements(),
-                executionRequirementPosition > -1 ? executionRequirementPosition : position,
-                name
-        );
+        if (executionContext.isMatViewCompile()) {
+            executionRequirements.defer(requirements, requirementPosition(position), name, isStatement, executionContext.getTableFunctionView());
+        } else {
+            SqlExecutionRequirements.checkStoredView(requirements, requirementPosition(position), name, isStatement,
+                    executionContext.getTableFunctionView(), executionContext);
+        }
     }
 
     @Nullable
@@ -1733,6 +1743,10 @@ public class FunctionResolver implements Mutable {
         } catch (NumericException e) {
             throw SqlException.$(position, "invalid bind variable index [value=").put(name).put(']');
         }
+    }
+
+    private int requirementPosition(int position) {
+        return executionRequirementPosition > -1 ? executionRequirementPosition : position;
     }
 
     /**

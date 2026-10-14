@@ -28,9 +28,13 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.sql.RecordMetadata;
+import io.questdb.cairo.sql.SymbolTable;
+import io.questdb.cairo.sql.SymbolTableSource;
 import io.questdb.cairo.sql.async.PageFrameReduceTaskFactory;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -44,6 +48,7 @@ import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.LatestByCompiledFilter;
 import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -97,6 +102,19 @@ final class FilterFactoryGenerator {
         this.enableJitDebug = configuration.isSqlJitDebugEnabled();
     }
 
+    private void clearJitScratch(Throwable failure) {
+        final boolean hasPrimary = failure != null;
+        failure = Misc.clearBestEffort(failure, jitIRSerializer);
+        try {
+            jitIRMem.truncate();
+        } catch (Throwable th) {
+            failure = Misc.foldCleanupFailure(failure, th);
+        }
+        if (!hasPrimary) {
+            CairoException.rethrowCleanupFailure(failure);
+        }
+    }
+
     /**
      * Compiles the predicate over the page frames of the factory into the prepared filter's JIT filters and bind
      * variables. Throws the JIT's decline, leaving what it compiled in the prepared filter.
@@ -124,16 +142,7 @@ final class FilterFactoryGenerator {
                 cleanupFailure = th;
                 throw th;
             } finally {
-                final boolean hasPrimary = cleanupFailure != null;
-                cleanupFailure = Misc.clearBestEffort(cleanupFailure, jitIRSerializer);
-                try {
-                    jitIRMem.truncate();
-                } catch (Throwable th) {
-                    cleanupFailure = Misc.foldCleanupFailure(cleanupFailure, th);
-                }
-                if (!hasPrimary) {
-                    CairoException.rethrowCleanupFailure(cleanupFailure);
-                }
+                clearJitScratch(cleanupFailure);
             }
         } catch (Throwable th) {
             target.setJit(compiledFilter, compiledCountOnlyFilter, null);
@@ -241,6 +250,72 @@ final class FilterFactoryGenerator {
             CairoException.rethrowCleanupFailure(failure);
         }
         return result;
+    }
+
+    /**
+     * Wraps the filter of a LATEST BY scan in a {@link LatestByCompiledFilter}, which adopts it, when the JIT compiles
+     * the predicate over the reader's columns; otherwise returns the filter.
+     */
+    Function compileLatestBy(
+            Function filter,
+            BoundExpression predicate,
+            OutputSchema input,
+            RecordMetadata metadata,
+            TableReader reader,
+            IntList columnIndexes,
+            boolean isUpdate,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (!configuration.isSqlLatestByJitEnabled() || executionContext.getJitMode() == SqlJitMode.JIT_MODE_DISABLED
+                || !JitUtil.isJitSupported() || filter.isConstant() || filter.isRuntimeConstant()
+                || !filter.isStableWithinExecution() || isUpdate && !executionContext.isWalApplication()) {
+            return filter;
+        }
+        CompiledFilter compiledFilter = null;
+        final ObjList<Function> bindVarFunctions = new ObjList<>();
+        try {
+            Throwable cleanupFailure = null;
+            try {
+                final SymbolTableSource symbolTables = new SymbolTableSource() {
+                    @Override
+                    public SymbolTable getSymbolTable(int columnIndex) {
+                        return reader.getSymbolTable(columnIndexes.getQuick(columnIndex));
+                    }
+
+                    @Override
+                    public SymbolTable newSymbolTable(int columnIndex) {
+                        return reader.newSymbolTable(columnIndexes.getQuick(columnIndex));
+                    }
+                };
+                jitIRSerializer.of(jitIRMem, executionContext, metadata, input, symbolTables, bindVarFunctions);
+                final int jitOptions = jitIRSerializer.serialize(predicate,
+                        executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR, enableJitDebug, enableJitNullChecks);
+                compiledFilter = new CompiledFilter();
+                compiledFilter.compile(jitIRMem, jitOptions);
+            } catch (Throwable th) {
+                cleanupFailure = th;
+                throw th;
+            } finally {
+                clearJitScratch(cleanupFailure);
+            }
+            final IntHashSet columns = new IntHashSet();
+            collectColumnIndexes(predicate, input, columns);
+            final IntList filterColumnIndexes = new IntList(columns.size());
+            for (int i = 0, n = columns.size(); i < n; i++) {
+                filterColumnIndexes.add(columns.get(i));
+            }
+            return new LatestByCompiledFilter(configuration, filter, compiledFilter, bindVarFunctions, filterColumnIndexes);
+        } catch (SqlException | LimitOverflowException decline) {
+            Throwable cleanup = Misc.freeBestEffort(null, compiledFilter);
+            cleanup = Misc.freeObjListBestEffort(cleanup, bindVarFunctions);
+            CairoException.rethrowCleanupFailure(cleanup);
+            LOG.debug().$("JIT cannot be applied to LATEST ON [ex=").$safe(decline.getFlyweightMessage()).I$();
+            return filter;
+        } catch (Throwable th) {
+            Misc.free(compiledFilter, th);
+            Misc.freeObjList(bindVarFunctions, th);
+            throw th;
+        }
     }
 
     /**

@@ -52,7 +52,6 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     private final int columnIndex;
     private final Record.CharSequenceFunction func;
     private final boolean indexed;
-    private final IntHashSet symbolKeys;
     private Function filter;
     private RecordCursorFactory recordCursorFactory;
 
@@ -73,26 +72,24 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
         try {
             this.recordCursorFactory = recordCursorFactory;
             this.filter = filter;
-            // this instance is shared between factory and cursor
-            // factory will be resolving symbols for cursor and if successful
-            // symbol keys will be added to this hash set
-            symbolKeys = new IntHashSet();
             this.indexed = indexed;
-            PageFrameRecordCursor cursor;
+            final IntHashSet symbolKeys;
+            final PageFrameRecordCursor cursor;
             if (indexed) {
+                symbolKeys = new IntHashSet();
                 if (filter != null) {
-                    cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null, filter);
+                    cursor = new LatestByValuesIndexedFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, filter);
                 } else {
-                    cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, null, rows);
+                    cursor = new LatestByValuesIndexedRecordCursor(configuration, metadata, columnIndex, symbolKeys, rows);
                 }
             } else {
-                if (filter != null) {
-                    cursor = new LatestByValuesFilteredRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null, filter);
-                } else {
-                    cursor = new LatestByValuesRecordCursor(configuration, metadata, columnIndex, rows, symbolKeys, null);
-                }
+                final LatestByValueListRecordCursor valueListCursor = new LatestByValueListRecordCursor(
+                        configuration, metadata, columnIndex, filter, configuration.getDefaultSymbolCapacity(), true, false
+                );
+                symbolKeys = valueListCursor.getIncludedSymbolKeys();
+                cursor = valueListCursor;
             }
-            this.cursor = new PageFrameRecordCursorWrapper(cursor);
+            this.cursor = new PageFrameRecordCursorWrapper(cursor, symbolKeys);
             this.columnIndex = columnIndex;
             this.func = func;
         } catch (Throwable th) {
@@ -109,9 +106,15 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
     @Override
     public void toPlan(PlanSink sink) {
         sink.type("LatestBySubQuery");
+        LatestByCompiledFilter.addJitAttr(sink, filter);
         sink.child("Subquery", recordCursorFactory);
         sink.child(cursor);
         sink.child(partitionFrameCursorFactory);
+    }
+
+    @Override
+    public boolean usesCompiledFilter() {
+        return filter instanceof LatestByCompiledFilter;
     }
 
     // Holds the LATEST BY key sub-query in a private field and does not expose it through
@@ -144,17 +147,19 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             failure = th;
         }
         failure = Misc.freeBestEffort(failure, recordCursorFactory);
-        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         CairoException.rethrowCleanupFailure(failure);
     }
 
     private class PageFrameRecordCursorWrapper implements PageFrameRecordCursor {
         private final PageFrameRecordCursor delegate;
+        private final IntHashSet symbolKeys;
         private RecordCursor baseCursor;
 
-        private PageFrameRecordCursorWrapper(PageFrameRecordCursor delegate) {
+        private PageFrameRecordCursorWrapper(PageFrameRecordCursor delegate, IntHashSet symbolKeys) {
             this.delegate = delegate;
+            this.symbolKeys = symbolKeys;
         }
 
         @Override
@@ -169,8 +174,11 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
 
         @Override
         public void close() {
-            baseCursor = Misc.free(baseCursor);
-            delegate.close();
+            final RecordCursor baseCursor = this.baseCursor;
+            this.baseCursor = null;
+            Throwable failure = Misc.freeBestEffort(null, baseCursor);
+            failure = Misc.freeBestEffort(failure, delegate);
+            CairoException.rethrowCleanupFailure(failure);
         }
 
         @Override
@@ -268,7 +276,7 @@ public class LatestBySubQueryRecordCursorFactory extends AbstractTreeSetRecordCu
             while (baseCursor.hasNext()) {
                 int symbolKey = symbolTable.keyOf(func.get(record, 0, sink));
                 if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-                    symbolKeys.add(TableUtils.toIndexKey(symbolKey));
+                    symbolKeys.add(indexed ? TableUtils.toIndexKey(symbolKey) : symbolKey);
                 }
             }
         }

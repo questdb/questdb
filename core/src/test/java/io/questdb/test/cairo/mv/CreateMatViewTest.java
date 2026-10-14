@@ -476,8 +476,22 @@ public class CreateMatViewTest extends AbstractCairoTest {
                                 sql.indexOf(functionName + "()"),
                                 "administrative function cannot be used in materialized view: " + functionName
                         );
-                assertEquals(0, factories.size());
+                // The optimiser instantiates a FROM/JOIN cursor function while compileMatViewQuery still
+                // allows non-deterministic functions, so FunctionParser's pre-check - which rejects before
+                // newInstance() - cannot fire here. A constructed factory therefore pins the rejection on the
+                // post-optimise backstop in SqlCompilerImpl.compileMatViewQuery, and the function name in the
+                // message can only come from SqlExecutionRequirements.getFunctionName(). That backstop throws
+                // after optimise() returned and before generation takes ownership of the factory, so the
+                // compile path itself has to close it - exactly once, since a second close would be a
+                // use-after-free.
+                assertEquals(1, factories.size());
+                assertEquals(1, factories.getQuick(0).getCloseCount());
                 assertNull(getMatViewDefinition("test"));
+
+                // The next compile borrows the same pooled compiler and clears its optimiser state. A
+                // reference left behind in that state must not close the factory a second time.
+                execute("create table t2 (ts timestamp, v long) timestamp(ts) partition by day wal");
+                assertEquals(1, factories.getQuick(0).getCloseCount());
             } finally {
                 TableFunctionTestUtils.unregister(engine, functionName);
             }
@@ -510,6 +524,41 @@ public class CreateMatViewTest extends AbstractCairoTest {
                 for (int i = 0, n = factories.size(); i < n; i++) {
                     assertEquals(1, factories.getQuick(i).getCloseCount());
                 }
+            } finally {
+                TableFunctionTestUtils.unregister(engine, functionName);
+            }
+        });
+    }
+
+    @Test
+    public void testCreateMatViewCursorFunctionFromViewClosedOnPostOptimiseRejection() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+
+            final ObjList<CloseCountingRecordCursorFactory> factories = new ObjList<>();
+            final String functionName = "disclosing_cursor";
+            TableFunctionTestUtils.register(engine, functionName, SqlExecutionRequirements.DISCLOSES_OBJECTS, factories);
+            try {
+                execute("create view v as (select * from " + functionName + "())");
+                drainWalAndViewQueues();
+                final int viewFactoryCount = factories.size();
+
+                // A materialized view may use a function that discloses objects only where a SYSTEM ADMIN writes
+                // it, never through a regular view. The optimiser instantiates the function in the view's FROM
+                // clause, so the post-optimise backstop rejects it, and has to close it exactly once.
+                final String sql = "create materialized view test as (select t1.ts, count() from " + TABLE1 +
+                        " t1 cross join v sample by 30s) partition by day";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(
+                                sql.indexOf("v sample"),
+                                "catalogue function from view v cannot be used in materialized view: " + functionName
+                        );
+                assertEquals(viewFactoryCount + 1, factories.size());
+                for (int i = 0, n = factories.size(); i < n; i++) {
+                    assertEquals(1, factories.getQuick(i).getCloseCount());
+                }
+                assertNull(getMatViewDefinition("test"));
             } finally {
                 TableFunctionTestUtils.unregister(engine, functionName);
             }

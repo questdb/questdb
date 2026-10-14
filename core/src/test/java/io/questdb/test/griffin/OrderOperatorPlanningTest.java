@@ -281,8 +281,8 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                                   keys: [ts, sym]
                                   values: [first(i)]
                                     DeferredSingleSymbolFilterPageFrame
-                                        Index forward scan on: sym
-                                          filter: sym=1
+                                        Index forward scan on: sym deferred: true
+                                          filter: sym='S'
                                         Frame forward scan on: a
                             """)
                     .returns("""
@@ -518,8 +518,8 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                               keys: [ts, sym]
                               values: [first(i), last(i)]
                                 DeferredSingleSymbolFilterPageFrame
-                                    Index forward scan on: sym
-                                      filter: sym=1
+                                    Index forward scan on: sym deferred: true
+                                      filter: sym='S'
                                     Frame forward scan on: a
                             """)
                     .returns("""

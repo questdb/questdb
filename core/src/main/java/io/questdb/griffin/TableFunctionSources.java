@@ -60,6 +60,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.Path;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
@@ -74,6 +75,7 @@ public final class TableFunctionSources implements Closeable, Mutable {
     private final ResourceScope resources = new ResourceScope();
     private final ObjList<QueryModel> showModels = new ObjList<>();
     private final IntList slots = new IntList();
+    private final ObjList<SqlExecutionContext.TableFunctionView> views = new ObjList<>();
     private SqlParserCallback callback;
     private Path path;
 
@@ -88,9 +90,10 @@ public final class TableFunctionSources implements Closeable, Mutable {
         final int slot = resources.reserve();
         prepared.add(plan);
         expressions.add(expression);
+        views.add(executionContext.getTableFunctionView());
         slots.add(slot);
         try {
-            final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
+            final Function function = parseSource(expression, executionContext);
             resources.own(slot, function);
             if (!(function instanceof CursorFunction)) {
                 throw SqlException.$(expression.position, "function must return CURSOR");
@@ -113,9 +116,10 @@ public final class TableFunctionSources implements Closeable, Mutable {
         final int slot = resources.reserve();
         prepared.add(plan);
         expressions.add(expression);
+        views.add(executionContext.getTableFunctionView());
         slots.add(slot);
         try {
-            final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
+            final Function function = parseSource(expression, executionContext);
             resources.own(slot, function);
             if (!(function instanceof CursorFunction)) {
                 throw SqlException.$(expression.position, "function must return CURSOR");
@@ -142,10 +146,18 @@ public final class TableFunctionSources implements Closeable, Mutable {
         final int slot = resources.reserve();
         prepared.add(plan);
         expressions.add(null);
+        views.add(executionContext.getTableFunctionView());
         showModels.extendAndSet(prepared.size() - 1, model);
         slots.add(slot);
         this.callback = callback;
         try {
+            final CharSequence statement = objectDisclosingStatement(model.getShowKind());
+            if (statement != null) {
+                final FunctionResolver resolver = parser.getFunctionResolver();
+                final int deferredCount = resolver.getExecutionRequirements().getDeferredCount();
+                resolver.addObjectDisclosingStatement(model.getModelPosition(), statement, executionContext);
+                resolver.getExecutionRequirements().markSources(deferredCount);
+            }
             resources.own(slot, new CursorFunction(createShowFactory(model, executionContext, callback, path())));
             parser.getFunctionResolver().markCursorFunctionInstantiated();
             describe(plan, resources.function(slot).getRecordCursorFactory());
@@ -160,6 +172,7 @@ public final class TableFunctionSources implements Closeable, Mutable {
     public void clear() {
         prepared.clear();
         expressions.clear();
+        views.clear();
         showModels.clear();
         callback = null;
         slots.clear();
@@ -197,6 +210,7 @@ public final class TableFunctionSources implements Closeable, Mutable {
         copy.setRecordName(plan.getRecordName());
         prepared.add(copy);
         expressions.add(expressions.getQuick(index));
+        views.add(views.getQuick(index));
         if (index < showModels.size()) {
             showModels.extendAndSet(prepared.size() - 1, showModels.getQuick(index));
         }
@@ -226,7 +240,8 @@ public final class TableFunctionSources implements Closeable, Mutable {
 
     private static TableToken existingShowTable(QueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken tableToken = executionContext.getTableTokenIfExists(model.getTableNameExpr().token);
-        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
+                || !executionContext.isTableFunctionVisibleAtCompile(tableToken, executionContext.getTableFunctionView())) {
             throw SqlException.tableDoesNotExist(model.getTableNameExpr().position, model.getTableNameExpr().token);
         }
         return tableToken;
@@ -260,10 +275,46 @@ public final class TableFunctionSources implements Closeable, Mutable {
         return true;
     }
 
+    // The SHOW statements that list objects or read their metadata, like the functions that declare
+    // SqlExecutionRequirements.DISCLOSES_OBJECTS do. Returns null for one that lists no objects.
+    private static @Nullable String objectDisclosingStatement(int showKind) {
+        return switch (showKind) {
+            case QueryModel.SHOW_TABLES -> "SHOW TABLES";
+            case QueryModel.SHOW_COLUMNS -> "SHOW COLUMNS";
+            case QueryModel.SHOW_PARTITIONS -> "SHOW PARTITIONS";
+            case QueryModel.SHOW_CREATE_TABLE -> "SHOW CREATE TABLE";
+            case QueryModel.SHOW_CREATE_VIEW -> "SHOW CREATE VIEW";
+            case QueryModel.SHOW_CREATE_MAT_VIEW -> "SHOW CREATE MATERIALIZED VIEW";
+            case QueryModel.SHOW_CREATE_LIVE_VIEW -> "SHOW CREATE LIVE VIEW";
+            case QueryModel.SHOW_CREATE_DATABASE -> "SHOW CREATE DATABASE";
+            default -> null;
+        };
+    }
+
     private void closeSlot(int slot, Throwable primary) {
         if (resources.isOwned(slot)) {
             Misc.free(resources.detach(slot), primary);
         }
+    }
+
+    private RecordCursorFactory createSourceFactory(FunctionSourcePlan plan, int index, SqlExecutionContext executionContext) throws SqlException {
+        final QueryModel show = index < showModels.size() ? showModels.getQuick(index) : null;
+        if (show != null) {
+            return createShowFactory(show, executionContext, callback, path());
+        }
+        final ExpressionNode expression = expressions.getQuick(index);
+        final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
+        if (!(function instanceof CursorFunction)) {
+            final SqlException exception = SqlException.$(plan.getPosition(), "function must return CURSOR");
+            Misc.free(function, exception);
+            throw exception;
+        }
+        if (!hasBoundColumnTypes(plan, function.getRecordCursorFactory().getMetadata())) {
+            final TableReferenceOutOfDateException exception = TableReferenceOutOfDateException.of(expression.token);
+            Misc.free(function, exception);
+            throw exception;
+        }
+        return function.getRecordCursorFactory();
     }
 
     private void describe(FunctionSourcePlan plan, RecordCursorFactory factory) {
@@ -280,6 +331,14 @@ public final class TableFunctionSources implements Closeable, Mutable {
         describeSource(plan, factory);
     }
 
+    private Function parseSource(ExpressionNode expression, SqlExecutionContext executionContext) throws SqlException {
+        final SqlExecutionRequirements requirements = parser.getFunctionResolver().getExecutionRequirements();
+        final int deferredCount = requirements.getDeferredCount();
+        final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
+        requirements.markSources(deferredCount);
+        return function;
+    }
+
     private Path path() {
         if (path == null) {
             path = new Path(255, MemoryTag.NATIVE_SQL_COMPILER);
@@ -294,23 +353,13 @@ public final class TableFunctionSources implements Closeable, Mutable {
         }
         final int slot = slots.getQuick(index);
         if (!resources.isOwned(slot)) {
-            final QueryModel show = index < showModels.size() ? showModels.getQuick(index) : null;
-            if (show != null) {
-                return createShowFactory(show, executionContext, callback, path());
+            final SqlExecutionContext.TableFunctionView previousView = executionContext.getTableFunctionView();
+            executionContext.setTableFunctionView(views.getQuick(index));
+            try {
+                return createSourceFactory(plan, index, executionContext);
+            } finally {
+                executionContext.setTableFunctionView(previousView);
             }
-            final ExpressionNode expression = expressions.getQuick(index);
-            final Function function = parser.parseFunction(expression, AnyRecordMetadata.INSTANCE, executionContext);
-            if (!(function instanceof CursorFunction)) {
-                final SqlException exception = SqlException.$(plan.getPosition(), "function must return CURSOR");
-                Misc.free(function, exception);
-                throw exception;
-            }
-            if (!hasBoundColumnTypes(plan, function.getRecordCursorFactory().getMetadata())) {
-                final TableReferenceOutOfDateException exception = TableReferenceOutOfDateException.of(expression.token);
-                Misc.free(function, exception);
-                throw exception;
-            }
-            return function.getRecordCursorFactory();
         }
         final Function function = (Function) resources.detach(slot);
         return function.getRecordCursorFactory();
@@ -326,14 +375,15 @@ public final class TableFunctionSources implements Closeable, Mutable {
             case QueryModel.SHOW_TABLES ->
                     new AllTablesFunctionFactory.AllTablesCursorFactory(executionContext.getCairoEngine().getConfiguration());
             case QueryModel.SHOW_COLUMNS -> new ShowColumnsRecordCursorFactory(
-                    existingShowTable(model, executionContext, path), model.getTableNameExpr().position);
+                    existingShowTable(model, executionContext, path), model.getTableNameExpr().position, executionContext.getTableFunctionView());
             case QueryModel.SHOW_PARTITIONS -> {
                 final TableToken tableToken = existingShowTable(model, executionContext, path);
                 final int timestampType;
                 try (TableMetadata metadata = executionContext.getCairoEngine().getTableMetadata(tableToken)) {
                     timestampType = metadata.getTimestampType();
                 }
-                yield new ShowPartitionsRecordCursorFactory(tableToken, timestampType);
+                yield new ShowPartitionsRecordCursorFactory(tableToken, timestampType, model.getTableNameExpr().position,
+                        executionContext.getTableFunctionView());
             }
             case QueryModel.SHOW_TRANSACTION, QueryModel.SHOW_TRANSACTION_ISOLATION_LEVEL ->
                     new ShowTransactionIsolationLevelCursorFactory();

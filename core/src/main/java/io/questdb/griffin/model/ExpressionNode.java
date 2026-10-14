@@ -26,6 +26,7 @@ package io.questdb.griffin.model;
 
 import io.questdb.griffin.OperatorExpression;
 import io.questdb.griffin.OperatorRegistry;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.std.Chars;
 import io.questdb.std.IntList;
@@ -93,6 +94,9 @@ public class ExpressionNode implements Mutable, Sinkable {
     public int precedence;
     public QueryModel queryModel;
     public ExpressionNode rhs;
+    // Set by SqlParser on the view name of a model expanded from a view, to the definition the model was
+    // expanded from, see TableUtils.getTableFunctionView().
+    public SqlExecutionContext.TableFunctionView tableFunctionView;
     public CharSequence token;
     public int type;
     public WindowExpression windowExpression;
@@ -240,6 +244,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         constFoldLongValue = 0;
         isConstFoldLongValid = false;
         isConstFoldWidening = false;
+        tableFunctionView = null;
     }
 
     public ExpressionNode copyFrom(final ExpressionNode other) {
@@ -255,6 +260,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         this.rhs = other.rhs;
         this.type = other.type;
         this.paramCount = other.paramCount;
+        this.tableFunctionView = other.tableFunctionView;
         this.isConstantExpression = other.isConstantExpression;
         this.isQuoted = other.isQuoted;
         this.isTimestampOrderInherited = other.isTimestampOrderInherited;
@@ -719,6 +725,7 @@ public class ExpressionNode implements Mutable, Sinkable {
         copy.rhs = deepClone(pool, windowExpressionPool, node.rhs);
         copy.type = node.type;
         copy.paramCount = node.paramCount;
+        copy.tableFunctionView = node.tableFunctionView;
         copy.isConstantExpression = node.isConstantExpression;
         copy.isQuoted = node.isQuoted;
         copy.isTimestampOrderInherited = node.isTimestampOrderInherited;

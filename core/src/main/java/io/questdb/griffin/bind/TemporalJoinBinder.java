@@ -98,12 +98,14 @@ final class TemporalJoinBinder {
             if (from > to) {
                 throw SqlException.position(horizon.getRangeFromPosition()).put("FROM must be less than or equal to TO");
             }
-            final long count = (to - from) / step + 1;
-            if (count > maxOffsets) {
-                throw SqlException.position(horizon.getRangeFromPosition()).put("RANGE generates too many offsets [count=").put(count)
+            final long steps = Long.divideUnsigned(to - from, step);
+            if (steps < 0 || steps >= maxOffsets) {
+                final boolean isCountOverflow = steps < 0 || steps == Long.MAX_VALUE;
+                throw SqlException.position(horizon.getRangeFromPosition()).put("RANGE generates too many offsets [count")
+                        .put(isCountOverflow ? ">" : "=").put(isCountOverflow ? Long.MAX_VALUE : steps + 1)
                         .put(", max=").put(maxOffsets).put(']');
             }
-            for (int i = 0; i < count; i++) {
+            for (int i = 0, count = (int) steps + 1; i < count; i++) {
                 offsets.add(from + i * step);
             }
             return;

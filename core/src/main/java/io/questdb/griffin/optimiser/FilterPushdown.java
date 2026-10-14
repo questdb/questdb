@@ -80,7 +80,6 @@ final class FilterPushdown implements OptimiserPass {
     private final OptimiserContext context;
     private final ObjectPool<FilterPlan> filters;
     private final IntList joinConjunctTargets;
-    private final IntList latestKeyPositions;
     private final ColumnExpression mappingColumn;
     private final ProjectPlan mappingProjection;
     private final ObjectPool<ColumnExpression> narrowingColumns;
@@ -123,7 +122,6 @@ final class FilterPushdown implements OptimiserPass {
             ProjectPlan mappingProjection,
             ColumnExpression mappingColumn,
             IntList joinConjunctTargets,
-            IntList latestKeyPositions,
             IntList transitiveFactOrigins,
             ObjList<BoundExpression> transitiveFacts
     ) {
@@ -135,7 +133,6 @@ final class FilterPushdown implements OptimiserPass {
         this.mappingProjection = mappingProjection;
         this.mappingColumn = mappingColumn;
         this.joinConjunctTargets = joinConjunctTargets;
-        this.latestKeyPositions = latestKeyPositions;
         this.transitiveFactOrigins = transitiveFactOrigins;
         this.transitiveFacts = transitiveFacts;
     }
@@ -185,14 +182,6 @@ final class FilterPushdown implements OptimiserPass {
         final ColumnExpression column = transitiveFilterColumn(fact);
         assert column != null;
         return column.getColumnId();
-    }
-
-    private static BoundExpression firstLatestKeyEquality(FunctionExpression call) {
-        BoundExpression expression = call;
-        while (expression instanceof FunctionExpression or && or.isOr()) {
-            expression = or.argumentAt(0);
-        }
-        return expression;
     }
 
     private static boolean hasInputTimestamp(ProjectPlan project) {
@@ -306,20 +295,6 @@ final class FilterPushdown implements OptimiserPass {
         return true;
     }
 
-    private static boolean isKeyColumn(BoundExpression expression, int keyId) {
-        return expression instanceof ColumnExpression column && column.isDirectReference() && column.getColumnId() == keyId;
-    }
-
-    private static boolean isKeyLiteral(BoundExpression expression) {
-        if (!(expression instanceof ConstantExpression constant) || !constant.isLiteral()) {
-            return false;
-        }
-        return switch (ColumnType.tagOf(expression.getDataType())) {
-            case ColumnType.NULL, ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
-            default -> false;
-        };
-    }
-
     private static boolean isKeyOnly(BoundExpression expression, ProjectPlan keys) {
         if (expression instanceof ColumnExpression column) {
             return keys.getOutput().getColumnIndexById(column.getColumnId()) >= 0 && canPushThroughProjection(column, keys);
@@ -335,27 +310,13 @@ final class FilterPushdown implements OptimiserPass {
         return !(expression instanceof CursorExpression);
     }
 
-    private static boolean isLatestKeyEquality(BoundExpression expression, int keyId) {
-        return expression instanceof FunctionExpression call && "=".equals(call.getName())
-                && call.getArgumentCount() == 2
-                && (isKeyColumn(call.argumentAt(0), keyId) && isKeyLiteral(call.argumentAt(1))
-                || isKeyColumn(call.argumentAt(1), keyId) && isKeyLiteral(call.argumentAt(0)));
-    }
-
-    private static boolean isLatestKeyOr(BoundExpression expression, int keyId) {
-        if (expression instanceof FunctionExpression call && call.isOr()) {
-            return isLatestKeyOr(call.argumentAt(0), keyId) && isLatestKeyOr(call.argumentAt(1), keyId);
-        }
-        return isLatestKeyEquality(expression, keyId);
-    }
-
     private static boolean isLatestKeyParameter(BoundExpression expression, int keyId, ScanPlan scan) {
         if (!(expression instanceof FunctionExpression call) || !"=".equals(call.getName())
                 || call.getArgumentCount() != 2 || scan.getIndexedColumnIds().indexOf(keyId, 0, scan.getIndexedColumnIds().size()) >= 0) {
             return false;
         }
-        final BoundExpression value = isKeyColumn(call.argumentAt(0), keyId) ? call.argumentAt(1)
-                : isKeyColumn(call.argumentAt(1), keyId) ? call.argumentAt(0) : null;
+        final BoundExpression value = LogicalPlans.isKeyColumn(call.argumentAt(0), keyId) ? call.argumentAt(1)
+                : LogicalPlans.isKeyColumn(call.argumentAt(1), keyId) ? call.argumentAt(0) : null;
         return value instanceof BindVariableExpression parameter && parameter.isPredefined()
                 && (value.getDataType() == ColumnType.STRING || value.getDataType() == ColumnType.VARCHAR);
     }
@@ -383,20 +344,17 @@ final class FilterPushdown implements OptimiserPass {
         }
         final String name = call.getName();
         if ("in".equals(name)) {
-            if (call.getArgumentCount() < 2 || !isKeyColumn(call.argumentAt(0), keyId)) {
+            if (call.getArgumentCount() < 2 || !LogicalPlans.isKeyColumn(call.argumentAt(0), keyId)) {
                 return false;
             }
             for (int i = 1, n = call.getArgumentCount(); i < n; i++) {
-                if (!isKeyLiteral(call.argumentAt(i))) {
+                if (!LogicalPlans.isKeyLiteral(call.argumentAt(i))) {
                     return false;
                 }
             }
             return true;
         }
-        if (call.isOr()) {
-            return isLatestKeyOr(call, keyId);
-        }
-        return isLatestKeyEquality(call, keyId);
+        return LogicalPlans.isKeyEqualityOr(call, keyId);
     }
 
     private static boolean isSetBranchSelectionBarrier(LogicalPlan plan) {
@@ -599,18 +557,6 @@ final class FilterPushdown implements OptimiserPass {
             for (int i = 0, n = function.getArgumentCount(); i < n; i++) {
                 unqualifyFilteredKeys(step, function.argumentAt(i));
             }
-        }
-    }
-
-    private void collectLatestKeyValues(BoundExpression expression, int keyId, IntList positions) {
-        final FunctionExpression call = (FunctionExpression) expression;
-        if (call.isOr()) {
-            collectLatestKeyValues(call.argumentAt(0), keyId, positions);
-            collectLatestKeyValues(call.argumentAt(1), keyId, positions);
-        } else {
-            final int valueIndex = isKeyColumn(call.argumentAt(0), keyId) ? 1 : 0;
-            tmpExpressions.add(call.argumentAt(valueIndex));
-            positions.add(call.getArgumentPosition(valueIndex));
         }
     }
 
@@ -869,18 +815,7 @@ final class FilterPushdown implements OptimiserPass {
         if (!(selector instanceof FunctionExpression call) || !call.isOr()) {
             return selector;
         }
-        final int keyId = latest.getKeyColumnIds().getQuick(0);
-        tmpExpressions.clear();
-        latestKeyPositions.clear();
-        try {
-            collectLatestKeyValues(call, keyId, latestKeyPositions);
-            final FunctionExpression first = (FunctionExpression) firstLatestKeyEquality(call);
-            final BoundExpression key = first.argumentAt(isKeyColumn(first.argumentAt(0), keyId) ? 0 : 1);
-            return context.getRewriter().symbolIn(key, tmpExpressions, latestKeyPositions, call.getFunctionFlags(), call.getPosition());
-        } finally {
-            tmpExpressions.clear();
-            latestKeyPositions.clear();
-        }
+        return context.getRewriter().keyEqualityOrToIn(call, latest.getKeyColumnIds().getQuick(0));
     }
 
     /**

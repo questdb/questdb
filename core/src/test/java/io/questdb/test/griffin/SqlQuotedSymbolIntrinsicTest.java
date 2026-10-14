@@ -28,10 +28,49 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Test;
 
 public class SqlQuotedSymbolIntrinsicTest extends AbstractCairoTest {
+    @Test
+    public void testEscapedKeyConstants() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE quoted_keys(id INT,s SYMBOL INDEX,ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO quoted_keys VALUES
+                    (1,'O''Brien',1),(2,'O''''Brien',2),(3,'''start',3),(4,'end''',4),(5,'''',5),(6,'''''',6),
+                    (7,'',7),(8,null,8),(9,'a""b``c',9),(10,'$1',10),(11,':key',11),(12,'other',12)
+                    """);
+            final ObjList<String> literals = new ObjList<>("'O''Brien'", "'O''''Brien'", "'''start'", "'end'''", "''''",
+                    "''''''", "''", "NULL", "'a\"\"b``c'", "'$1'", "':key'");
+            final ObjList<String> predicates = new ObjList<>("s = %s", "s != %s", "s IN (%s)", "s NOT IN (%s)",
+                    "s IN (%s, 'other')", "s NOT IN (%s, 'other')");
+            final StringSink expected = new StringSink();
+            for (int i = 0, n = literals.size(); i < n; i++) {
+                final int id = i + 1;
+                for (int form = 0, m = predicates.size(); form < m; form++) {
+                    final boolean isExcluded = form % 2 == 1;
+                    final boolean isOtherListed = form > 3;
+                    expected.clear();
+                    expected.put("id\n");
+                    for (int row = 1; row <= 12; row++) {
+                        final boolean isListed = row == id || isOtherListed && row == 12;
+                        if (isListed != isExcluded) {
+                            expected.put(row).put('\n');
+                        }
+                    }
+                    assertIndexedAndScalar(String.format(predicates.getQuick(form), literals.getQuick(i)), expected.toString());
+                }
+            }
+            assertIndexedAndScalar("s IN ('O''Brien', 'O''''Brien') AND s != 'O''Brien'", "id\n2\n");
+            assertIndexedAndScalar("s IN ('O''Brien', 'O''''Brien') AND s NOT IN ('O''Brien')", "id\n2\n");
+            assertIndexedAndScalar("s IN ('O''Brien', 'O''''Brien') AND s NOT IN ('O''Brien', 'other')", "id\n2\n");
+            assertIndexedAndScalar("s = 'O''Brien' AND s = concat('O', '''Brien')", "id\n1\n");
+            assertIndexedAndScalar("s = '''start'::SYMBOL", "id\n3\n");
+        });
+    }
+
     @Test
     public void testLiteralKeysDecodeQuotesOnce() throws Exception {
         assertMemoryLeak(() -> {
