@@ -333,7 +333,7 @@ public class ShowPartitionsTest extends AbstractCairoTest {
     @Test
     public void testShowPartitionsDetachedPartitionPlusAttachable() throws Exception {
         Assume.assumeFalse(Os.isWindows()); // no links in windows
-        // Freeze automatic save points so the retained ATTACH sources stay visible until explicit completion.
+        // Freeze automatic save points: the ATTACH itself must remove the sources it attached.
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, Long.MAX_VALUE);
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_MAX_ROWS, 0);
         String tableName = testTableName(testName.getMethodName());
@@ -373,14 +373,13 @@ public class ShowPartitionsTest extends AbstractCairoTest {
             if (isWal) {
                 drainWalQueue();
                 if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
-                    // The older save point still needs the sources to replay ATTACH after a fallback.
+                    // The writer writes into an attached partition's files in place, and they are its source's
+                    // files, so the ATTACH takes the save points that cover it in both generations before it
+                    // returns, and the second deletes the sources it attached.
                     assertQuery("SELECT name FROM table_partitions('" + tableName + "') WHERE attachable ORDER BY name")
                             .noLeakCheck()
                             .sizeMayVary()
-                            .returns("name\n2023-02.attachable\n2023-03.attachable\n2023-04.attachable\n");
-                    try (TableWriter writer = getWriter(tableToken)) {
-                        writer.completeDurableEpochAfter("test attach cleanup");
-                    }
+                            .returns("name\n2023-04.attachable\n");
                 }
             }
             assertShowPartitions(

@@ -233,8 +233,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     continue;
                 }
                 if (history == History.NEWEST_GENERATION_DAMAGED) {
-                    // A fallback replays an ATTACH from the WAL, which must find .attachable again; nothing replays
-                    // a COPY, so both generations must cover it.
+                    // A fallback must not replay an ATTACH from a source the writer has written into since, and
+                    // nothing replays a COPY, so both generations must cover them.
                     if (operation.attaches()) {
                         params.add(new Object[]{history, operation, OperationPath.WAL});
                     } else if (operation == Operation.COPY_INTO_EXISTING_TABLE || operation == Operation.RESUME_WAL_FROM_TXN) {
@@ -656,7 +656,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             try {
                 if (requiresDurableCompletion() && history.failsSavePoint()) {
                     // Required publication failure is no longer a successful best-effort operation. FORCE DROP
-                    // executes directly even on this path; a WAL DETACH fails in apply and suspends instead.
+                    // executes directly even on this path; a WAL DETACH, and a WAL ATTACH that keeps its source,
+                    // fails in apply and suspends instead.
                     if (operation == Operation.FORCE_DROP) {
                         Assert.assertThrows(CairoException.class, () -> e.execute(sql));
                     } else {
@@ -674,9 +675,15 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     // A failing attach or detach fails in the apply job, which skips it.
                     alter(e, sql);
                 }
-                killAfterFailedSavePoint(e);
                 assertSavePointsOfOneStatement();
                 assertSupersededDirsRemoved(e, supersededBefore);
+                if (operation.attaches() && killImageRoot == null && !(requiresDurableCompletion() && history.failsSavePoint())) {
+                    // Rows after the attached partition's maximum, which is not the newest partition: the writer appends
+                    // them in place, into the files the attach linked. A fault on the save point is still active, as a
+                    // persistent manifest error would be. A killed process and a suspended table take no rows.
+                    alter(e, "INSERT INTO t VALUES ('" + PARTITION + "T03:00:00.000000Z', 's14', 14), ('" + PARTITION + "T04:00:00.000000Z', 's15', 15)");
+                }
+                killAfterFailedSavePoint(e);
             } finally {
                 endOperation();
             }
@@ -749,11 +756,17 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         alter(e, "ALTER TABLE t RESUME WAL");
     }
 
-    // One statement takes one save point at most, however many partitions it changes, and none outside ADAPTIVE.
+    // One statement takes one save point at most, however many partitions it changes, and none outside ADAPTIVE. One
+    // that every save point must cover takes two at most, and a WAL ATTACH that keeps its source exactly two, as
+    // neither generation covers it before.
     private void assertSavePointsOfOneStatement() {
         if (!history.failsSavePoint()) {
-            Assert.assertTrue("save points of one statement: " + savePoints.get(),
-                    savePoints.get() <= (history == History.NOSYNC ? 0 : requiresDurableCompletion() ? 2 : 1));
+            if (operation.keepsAttachable() && path == OperationPath.WAL && history != History.NOSYNC) {
+                Assert.assertEquals("save points of one statement", 2, savePoints.get());
+            } else {
+                Assert.assertTrue("save points of one statement: " + savePoints.get(),
+                        savePoints.get() <= (history == History.NOSYNC ? 0 : requiresDurableCompletion() ? 2 : 1));
+            }
         }
     }
 
@@ -765,17 +778,12 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             // Do not hide operation-completion bugs with a helper-only covering publication.
             return;
         }
-        // The ATTACH's save point covers it in one generation; a fallback to the older generation replays the ATTACH
-        // from .attachable, so it stays until a second save point puts the older generation past the attach.
+        // The writer appends into the attached partition's files in place, and they are the source's files, so the
+        // ATTACH takes the second save point, which puts the older generation past the attach, before it returns,
+        // and that save point deletes the source.
         if (operation.keepsAttachable() && path == OperationPath.WAL && !history.failsSavePoint() && !history.killed()
                 && history != History.NOSYNC && history != History.NEWEST_GENERATION_DAMAGED) {
-            Assert.assertTrue("the attach source must stay until the older generation covers the attach", attachableExists(e));
-            if (history == History.ENROLLED_AT_CREATE) {
-                // Reopening must re-queue the source rather than leave it behind after the covering save point.
-                e.releaseAllWriters();
-            }
-            takeSavePoint(e);
-            Assert.assertFalse("the attach source must go once both generations cover the attach", attachableExists(e));
+            Assert.assertFalse("the attach source must go before the statement returns", attachableExists(e));
         }
         switch (operation) {
             case CONVERT_LIST_SECOND_FAILS, CONVERT_TO_NATIVE, CONVERT_TO_PARQUET, DETACH, DETACH_LIST_SECOND_FAILS -> {
@@ -850,7 +858,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     private void prepare(CairoEngine e) throws SqlException {
         switch (operation) {
             case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_LIST_SECOND_FAILS, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK,
-                 ATTACH_WITH_COPY_SETTING -> {
+                 ATTACH_WITHOUT_TXN, ATTACH_WITH_COPY_SETTING -> {
                 alter(e, "ALTER TABLE t DETACH PARTITION LIST '" + PARTITION + "'");
                 final FilesFacade ff = e.getConfiguration().getFilesFacade();
                 final TableToken token = e.verifyTableName("t");
@@ -860,6 +868,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                             .concat(PARTITION + e.getConfiguration().getAttachPartitionSuffix());
                     if (operation == Operation.ATTACH_COPIED_DIR || operation == Operation.ATTACH_CROSS_DEVICE) {
                         Assert.assertEquals(0, ff.copyRecursive(detached, attachable, e.getConfiguration().getMkDirMode()));
+                    } else if (operation == Operation.ATTACH_WITHOUT_TXN) {
+                        Assert.assertEquals(0, ff.copyRecursive(detached, attachable, e.getConfiguration().getMkDirMode()));
+                        Assert.assertTrue(ff.removeQuiet(attachable.concat(TableUtils.TXN_FILE_NAME).$()));
                     } else if (operation == Operation.ATTACH_SOFT_LINK) {
                         try (Path target = new Path()) {
                             target.of(inputWorkRoot).concat(PARTITION);
@@ -888,17 +899,18 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
 
     private boolean requiresDurableCompletion() {
         return operation.detaches() || operation == Operation.DETACH_LIST_SECOND_FAILS || operation == Operation.FORCE_DROP
+                || path == OperationPath.WAL && operation.keepsAttachable()
                 || path != OperationPath.WAL && switch (operation) {
             case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_LIST_SECOND_FAILS, ATTACH_MOVED_DIR,
-                 ATTACH_SOFT_LINK, ATTACH_WITH_COPY_SETTING, DROP, TTL -> true;
+                 ATTACH_SOFT_LINK, ATTACH_WITHOUT_TXN, ATTACH_WITH_COPY_SETTING, DROP, TTL -> true;
             default -> false;
         };
     }
 
     private String sql(CairoEngine e) throws Exception {
         return switch (operation) {
-            case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK, ATTACH_WITH_COPY_SETTING ->
-                    "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "'";
+            case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK, ATTACH_WITHOUT_TXN,
+                 ATTACH_WITH_COPY_SETTING -> "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "'";
             case ATTACH_LIST_SECOND_FAILS -> "ALTER TABLE t ATTACH PARTITION LIST '" + PARTITION + "', '2024-01-01'";
             case CONVERT_LIST_SECOND_FAILS, CONVERT_PARQUET_NO_OP_SECOND_FAILS ->
                     "ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-09'";
@@ -1035,6 +1047,9 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         ATTACH_MOVED_DIR,
         // The .attachable is a soft link to a copy of .detached outside the table directory.
         ATTACH_SOFT_LINK,
+        // As ATTACH_COPIED_DIR without _txn, as a copied partition directory or a backup: the attach sizes the
+        // partition by scanning its timestamps.
+        ATTACH_WITHOUT_TXN,
         // cairo.attach.partition.copy=true: the attach copies and leaves .attachable in place.
         ATTACH_WITH_COPY_SETTING,
         // CONVERT of two partitions whose second does not exist: the statement fails after converting the first.
@@ -1068,7 +1083,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         boolean attaches() {
             return switch (this) {
                 case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_LIST_SECOND_FAILS, ATTACH_MOVED_DIR,
-                     ATTACH_SOFT_LINK,
+                     ATTACH_SOFT_LINK, ATTACH_WITHOUT_TXN,
                      ATTACH_WITH_COPY_SETTING -> true;
                 default -> false;
             };
@@ -1107,9 +1122,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         // The operation moves a partition directory to or from a name the WAL replay needs to find as it was.
         boolean movesDirectory() {
             return switch (this) {
-                case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK, DETACH,
-                     DETACH_AFTER_O3,
-                     DETACH_CROSS_DEVICE -> true;
+                case ATTACH_COPIED_DIR, ATTACH_CROSS_DEVICE, ATTACH_MOVED_DIR, ATTACH_SOFT_LINK, ATTACH_WITHOUT_TXN,
+                     DETACH, DETACH_AFTER_O3, DETACH_CROSS_DEVICE -> true;
                 default -> false;
             };
         }

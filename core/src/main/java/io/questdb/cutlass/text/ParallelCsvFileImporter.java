@@ -759,8 +759,18 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
         // would lose it: both generations must cover the attaches, which takes a second epoch even when the
         // first left no older pin behind. An epoch that is skipped or fails leaves the import to be undone
         // by the next fallback, so COPY fails instead of reporting it done; cleanUp() then truncates the target,
-        // which was empty. Outside an enrolled adaptive table the epochs are no-ops, and so is the check.
-        writer.advanceDurableEpochAfter("attach partition");
+        // which was empty. Outside an enrolled adaptive table the epochs are no-ops, and so is the check. The
+        // attaches keep their sources, so the first call already takes both epochs and fails when it cannot.
+        try {
+            writer.advanceDurableEpochAfter("attach partition");
+        } catch (CairoException e) {
+            if (cairoEngine.isDataSyncFailureFatal(e)) {
+                throw e;
+            }
+            LOG.critical().$("could not take the save points that cover the import [table=").$(tableToken)
+                    .$(", e=").$((Throwable) e).I$();
+            throw importNotDurable();
+        }
         if (writer.getEffectiveCommitMode() == CommitMode.ADAPTIVE
                 && tableToken.isWal()
                 && writer.getMetadata().isWalEnabled()
@@ -771,11 +781,7 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
                 writer.advanceDurableEpochAfter("attach partition, second generation");
             }
             if (tracker.getPinnedEpochTxn() < attachTxn || tracker.getOtherPinnedEpochTxn() < attachTxn) {
-                throw TextImportException.instance(
-                        CopyImportTask.PHASE_ATTACH_PARTITIONS,
-                        "import is not durable against a save point fallback: a save point after the attach was skipped or failed (see the log), "
-                                + "so a start that falls back to the older save point would lose the import; the target table, which was empty, is truncated, run COPY again [table="
-                ).put(tableName).put(']');
+                throw importNotDurable();
             }
         }
 
@@ -920,6 +926,14 @@ public class ParallelCsvFileImporter implements Closeable, Mutable {
 
     private int getTaskCount() {
         return taskDistribution.size() / 3;
+    }
+
+    private TextImportException importNotDurable() {
+        return TextImportException.instance(
+                CopyImportTask.PHASE_ATTACH_PARTITIONS,
+                "import is not durable against a save point fallback: a save point after the attach was skipped or failed (see the log), "
+                        + "so a start that falls back to the older save point would lose the import; the target table, which was empty, is truncated, run COPY again [table="
+        ).put(tableName).put(']');
     }
 
     private void initWriterAndOverrideImportMetadata(

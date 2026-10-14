@@ -16428,12 +16428,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * Takes a durable epoch after a change no WAL replay can redo by itself: an attach, whose .attachable source
      * goes once a save point covers it, or a change made outside the WAL. Recovery rewinds only an enrolled
      * adaptive table to its last epoch, so on any other table this does nothing.
+     * <p>
+     * A kept partition move (an ATTACH's linked source, a DETACH's temporary name) must be covered by every save
+     * point before the writer applies anything else, so then the epoch is required, not best effort, and a failure
+     * fails the operation. The writer writes into an attached partition's files in place, and they are its
+     * source's files: a replay of the ATTACH from a source grown that way would attach the rows written after it,
+     * and the replay would then apply them a second time.
      */
     @Override
     public void advanceDurableEpochAfter(CharSequence operation) {
         if (enrolledAdaptive) {
             if (defersPartitionMoves()) {
-                if (detachesAfterSavePoint.size() > 0) {
+                if (detachesAfterSavePoint.size() > 0 || attachablesAfterSavePoint.size() > 0) {
                     completeDurableEpochAfter(operation);
                 } else {
                     advanceDurableEpochBestEffort(operation);
