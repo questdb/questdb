@@ -285,8 +285,8 @@ public class SampleByFillNullValueTest extends AbstractCairoTest {
 
     @Test
     public void testFillNullBucketWhenSubQueryAliasQualifiesTimestamp() throws Exception {
-        // Guard: rewriteSampleBy takes a different path for a keyed fill over a sub-query,
-        // and s.ts must keep resolving to the bucket there.
+        // Guard: rewriteSampleBy exits to the legacy path over a sub-query for any literal or
+        // function column when the fill is not NONE or FROM-TO is present; s.ts must keep resolving there.
         assertMemoryLeak(() -> {
             createBucketAliasTable();
             assertQuery("SELECT s.ts AS x, ts AS b, avg(val) AS v FROM (SELECT * FROM t) s SAMPLE BY 1h FILL(NULL)")
