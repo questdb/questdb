@@ -32,9 +32,12 @@ import io.questdb.cairo.RecoveryCoordinator;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.DefaultWalDirectoryPolicy;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
+import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.str.Path;
@@ -119,6 +122,9 @@ public class TxnLogV2TornTailCrashTest extends AbstractAdaptiveCrashTest {
         node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 10_000_000L);
         node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, PART_TXN_COUNT);
         node1.setProperty(PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, false);
+        // No save point after the creation baseline, as after a power loss that follows applies past the last save
+        // point: the restart restores the table and replays its WAL, and recovery does not open the sequencer.
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
         runWithCrashFacade(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             // A schema change in the log: reading a torn record's structure version would revert it.
@@ -150,15 +156,49 @@ public class TxnLogV2TornTailCrashTest extends AbstractAdaptiveCrashTest {
             }
             simulateRestart(new TableToken[]{token});
 
+            // CairoEngine.completeInit order: recovery, then the worker pools run the check job before any apply.
+            // Nothing opens the sequencer before the check job's scan, so the scan is the first to read the log.
+            new RecoveryCoordinator(engine).recover();
+            new CheckWalTransactionsJob(engine).run();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            Assert.assertEquals("the scan must seed the txn the log keeps", tornTxn - 1, tracker.getSeqTxn());
+            engine.notifyWalTxnRepublisher(token);
+            try (ApplyWal2TableJob apply = createWalApplyJob()) {
+                // A bounded count, not a drain: a tracker above the log re-queues the table on every run.
+                int runs = 0;
+                while (apply.run()) {
+                    Assert.assertTrue("the apply job must go idle", ++runs < 10);
+                }
+            }
             Assert.assertEquals("the log must end at the last whole record", tornTxn - 1, engine.getTableSequencerAPI().lastTxn(token));
             Assert.assertEquals("version=1 columns=ts,v,c", sequencerSchema(token));
-            new RecoveryCoordinator(engine).recover();
-            engine.notifyWalTxnRepublisher(token);
-            drainWalQueue();
             Assert.assertFalse(
-                    "must not be suspended: " + engine.getTableSequencerAPI().getTxnTracker(token).getErrorMessage(),
+                    "must not be suspended: " + tracker.getErrorMessage(),
                     engine.getTableSequencerAPI().isSuspended(token)
             );
+
+            // The group flush covers the records in the log, not the torn header's count: a commit sequenced after
+            // a flushed one stays non-durable until its own flush.
+            try (WalWriter writer = getWalWriter("t")) {
+                final TableWriter.Row row = writer.newRow(50);
+                row.putLong(1, 50);
+                row.putInt(2, 50);
+                row.append();
+                writer.commit();
+            }
+            try (WalWriter writer = getWalWriter("t")) {
+                final TableWriter.Row row = writer.newRow(51);
+                row.putLong(1, 51);
+                row.putInt(2, 51);
+                row.append();
+                writer.commit();
+                Assert.assertEquals(tornTxn + 1, engine.getTableSequencerAPI().lastTxn(token));
+                Assert.assertTrue(
+                        "a commit pending its flush must not be durable, frontier=" + tracker.getLocalDurableSeqTxn(),
+                        tracker.getLocalDurableSeqTxn() < tornTxn + 1
+                );
+            }
+            drainWalQueue();
 
             // New rows and schema changes follow the kept records.
             execute("INSERT INTO t VALUES (100, 100, 100)");
@@ -174,7 +214,7 @@ public class TxnLogV2TornTailCrashTest extends AbstractAdaptiveCrashTest {
             for (int txn = 2; txn < tornTxn; txn++) {
                 expected.append(txn).append('\t').append(txn).append("\tnull\n");
             }
-            expected.append("100\t100\tnull\n101\t101\t101\n");
+            expected.append("50\t50\tnull\n51\t51\tnull\n100\t100\tnull\n101\t101\t101\n");
             assertQuery("SELECT v, c, d FROM t ORDER BY v").expectSize().returns(expected.toString());
             releaseEngineHandles();
         });

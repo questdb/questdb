@@ -40,11 +40,16 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.ApplyWal2TableJob;
+import io.questdb.cairo.wal.CheckWalTransactionsJob;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cairo.wal.seq.TableTransactionLogFile;
+import io.questdb.cairo.wal.seq.TableTransactionLogV1;
+import io.questdb.std.ObjHashSet;
 import io.questdb.std.datetime.MicrosecondClock;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -117,6 +122,10 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     // Bounds a sweep whose crash point never stops firing.
     private static final int MAX_SWEEP = 200;
     private static final int N = 6;  // rows used by the mid-epoch-fsync corruption scenario
+    private static final long TORN_TAIL_CLOCK_START = 1_000_000L;
+    // The kept records end in the log's first page and the torn ones start in its second: a page boundary apart.
+    private static final int TORN_TAIL_KEPT = 160;
+    private static final long TORN_TAIL_WINDOW_US = 1_000_000L;
     private final List<String> rowFailures = new ArrayList<>();
     private String commitMode;
     private SavePointFaultFacade faultFf;
@@ -817,6 +826,173 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         });
     }
 
+    /**
+     * A power loss leaves the V1 sequencer log's header on the disk ahead of its newest records: the kernel wrote the
+     * header page back, not the page with the three newest records. Recovery restores the table from its save point
+     * and does not open the sequencer, so the check job's scan is the first to read the log. The scan must seed the
+     * tracker with the txn the log keeps, the apply job must go idle, and the group flush must not report a commit
+     * durable before its own flush: the frontier QWP acknowledges from stops at the flushed commit.
+     */
+    @Test
+    public void testTornSequencerTailAfterRestore() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, String.valueOf(TORN_TAIL_WINDOW_US));
+        // Only the explicit save point below, so the restart restores the table and replays the WAL after it.
+        setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        try {
+            runWithCrashFacade(() -> {
+                // A frozen clock: no commit reaches its group window, so only the writers' closes flush.
+                setCurrentMicros(TORN_TAIL_CLOCK_START);
+                execute("create table t (ts timestamp, v long) timestamp(ts) partition by day wal");
+                final TableToken tt = engine.verifyTableName("t");
+                try (WalWriter w = engine.getWalWriter(tt)) {
+                    for (int i = 1; i <= 3; i++) {
+                        commitTornTailRow(w, i);
+                    }
+                }
+                drainWalQueue();
+                try (TableWriter w = getWriter(tt)) {
+                    w.advanceDurableEpoch(1L);
+                }
+                try (WalWriter w = engine.getWalWriter(tt)) {
+                    for (int i = 4; i <= TORN_TAIL_KEPT; i++) {
+                        commitTornTailRow(w, i);
+                    }
+                }
+                drainWalQueue();
+                markDurableBaseline();
+                final WalWriter pending = engine.getWalWriter(tt);
+                try {
+                    for (int i = TORN_TAIL_KEPT + 1; i <= TORN_TAIL_KEPT + 3; i++) {
+                        commitTornTailRow(pending, i);
+                    }
+                    crashFf.markFileDurable(sequencerLogPath(tt));
+                    tearSequencerTail(tt);
+                    powerLossDroppingPending(pending);
+                } finally {
+                    pending.close();
+                }
+                // CairoEngine.completeInit order: recovery, then the worker pools run the check job before any apply.
+                simulateRestart(new TableToken[]{tt});
+                new RecoveryCoordinator(engine).recover();
+                new CheckWalTransactionsJob(engine).run();
+                final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+                Assert.assertEquals("recovery must restore the table", 1, tracker.getRecoveryIncarnation());
+                Assert.assertEquals("the scan must seed the txn the log keeps", TORN_TAIL_KEPT, tracker.getSeqTxn());
+                assertApplyGoesIdle(tt);
+
+                setCurrentMicros(TORN_TAIL_CLOCK_START + 10 * TORN_TAIL_WINDOW_US);
+                try (WalWriter flushed = engine.getWalWriter(tt)) {
+                    commitTornTailRow(flushed, 5001);
+                }
+                final long flushedSeqTxn = engine.getTableSequencerAPI().lastTxn(tt);
+                Assert.assertEquals(TORN_TAIL_KEPT + 1, flushedSeqTxn);
+                try (WalWriter notFlushed = engine.getWalWriter(tt)) {
+                    commitTornTailRow(notFlushed, 5002);
+                    Assert.assertEquals(
+                            "the durable frontier must stop at the flushed commit",
+                            flushedSeqTxn,
+                            engine.getDurableAckRegistry().getLocalDurableSeqTxn(tt.getDirName())
+                    );
+                }
+                drainWalQueue();
+                Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tt));
+                releaseEngineHandles();
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, "0");
+            setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
+            setCurrentMicros(-1);
+        }
+    }
+
+    /**
+     * The NOSYNC form of {@link #testTornSequencerTailAfterRestore}. It lives here, with the adaptive form, because
+     * both cover the WAL table scan every mode shares: NOSYNC flushes nothing, the kernel wrote back every page but the
+     * one with the three newest records, and nothing opens the sequencer before the check job. The scan must seed the
+     * tracker with the txn the log keeps, the table must not be suspended, and the apply job must go idle. Only the
+     * torn log's sequencer is opened, once; an intact log is checked with its own reads, and a later scan reads its
+     * header alone.
+     */
+    @Test
+    public void testTornSequencerTailUnderNosync() throws Exception {
+        assumeCrashHarnessSupported();
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        final SequencerFileCountingFacade ff = new SequencerFileCountingFacade();
+        crashFf = ff;
+        ff.setDbRoot(root);
+        assertMemoryLeak(ff, () -> {
+            execute("create table t (ts timestamp, v long) timestamp(ts) partition by day wal");
+            execute("create table whole (ts timestamp, v long) timestamp(ts) partition by day wal");
+            final TableToken tt = engine.verifyTableName("t");
+            final TableToken whole = engine.verifyTableName("whole");
+            try (WalWriter w = engine.getWalWriter(tt)) {
+                for (int i = 1; i <= TORN_TAIL_KEPT; i++) {
+                    commitTornTailRow(w, i);
+                }
+            }
+            execute("insert into whole values (0, 1)");
+            drainWalQueue();
+            markDurableBaseline();
+            final WalWriter pending = engine.getWalWriter(tt);
+            try {
+                for (int i = TORN_TAIL_KEPT + 1; i <= TORN_TAIL_KEPT + 3; i++) {
+                    commitTornTailRow(pending, i);
+                }
+                markDurableBaseline();
+                tearSequencerTail(tt);
+                crashFf.powerLoss();
+            } finally {
+                pending.close();
+            }
+            // CairoEngine.completeInit order: recovery, then the worker pools run the check job before any apply.
+            simulateRestart(new TableToken[]{tt, whole});
+            new RecoveryCoordinator(engine).recover();
+            ff.reset(tt, whole);
+            new CheckWalTransactionsJob(engine).run();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(tt);
+            Assert.assertEquals("the scan must seed the txn the log keeps", TORN_TAIL_KEPT, tracker.getSeqTxn());
+            Assert.assertEquals(1, engine.getTableSequencerAPI().getTxnTracker(whole).getSeqTxn());
+            Assert.assertEquals("the scan must open the torn log's sequencer once", 1, ff.tornSequencerOpens);
+            Assert.assertEquals("the scan must not open an intact log's sequencer", 0, ff.wholeSequencerOpens);
+            Assert.assertEquals("an intact log: one open", 1, ff.wholeLogOpens);
+            Assert.assertEquals("an intact log: the header and its unflushed records", 2, ff.wholeLogReads);
+            Assert.assertEquals("an intact log: one close", 1, ff.wholeLogCloses);
+            Assert.assertFalse("must not be suspended: " + tracker.getErrorMessage(), tracker.isSuspended());
+            assertApplyGoesIdle(tt);
+
+            // Later scans, with the sequencers released, open no sequencer and read each header alone.
+            engine.releaseInactiveTableSequencers();
+            ff.reset(tt, whole);
+            new CheckWalTransactionsJob(engine).run();
+            engine.getTableSequencerAPI().forAllWalTables(new ObjHashSet<>(), true, (tableId, token, lastTxn) -> {
+            });
+            Assert.assertEquals(0, ff.tornSequencerOpens);
+            Assert.assertEquals(0, ff.wholeSequencerOpens);
+            Assert.assertEquals(2, ff.wholeLogOpens);
+            Assert.assertEquals(2, ff.wholeLogReads);
+            Assert.assertEquals(2, ff.wholeLogCloses);
+
+            try (WalWriter w = engine.getWalWriter(tt)) {
+                commitTornTailRow(w, 1000);
+            }
+            drainWalQueue();
+            Assert.assertEquals(TORN_TAIL_KEPT + 1, tracker.getWriterTxn());
+            Assert.assertEquals(TORN_TAIL_KEPT + 1, tracker.getSeqTxn());
+            final String expectedCount = "count\n" + (TORN_TAIL_KEPT + 1) + "\n";
+            assertQuery("select count() from t").noRandomAccess().expectSize().returns(expectedCount);
+            releaseEngineHandles();
+        });
+    }
+
+    private static void commitTornTailRow(WalWriter w, long i) {
+        final TableWriter.Row row = w.newRow(DAY0 + i * 1_000_000L);
+        row.putLong(1, i);
+        row.append();
+        w.commit();
+    }
+
     private static long nowMs() {
         return engine.getConfiguration().getMicrosecondClock().getTicks() / 1000L;
     }
@@ -853,6 +1029,17 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
     private static String vOf(int i) {
         // More than 9 bytes, so it takes the split (out-of-line) varchar layout (data and aux both exercised).
         return "epoch-varchar-payload-" + String.format("%06d", i);
+    }
+
+    // A bounded count, not a drain: a tracker above the log re-queues the table on every run.
+    private void assertApplyGoesIdle(TableToken tt) {
+        engine.notifyWalTxnRepublisher(tt);
+        try (ApplyWal2TableJob apply = createWalApplyJob()) {
+            int runs = 0;
+            while (apply.run()) {
+                Assert.assertTrue("the apply job must go idle", ++runs < 10);
+            }
+        }
     }
 
     /**
@@ -1265,9 +1452,11 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         } catch (Throwable th) {
             return "recovery refused: " + th.getMessage();
         }
-        // The sequencer certifies its unsynced tail when it is first opened. A restored table first opens it at
-        // its first replay, a table at its save point already during recovery, so open it here as the first
-        // apply would: the second recovery is compared with the state the first process reaches.
+        // The steps production takes after recovery: the check job scans the WAL tables, then the first apply opens
+        // the sequencer, which certifies its unsynced tail. A restored table first opens it there, a table at its
+        // save point already during recovery: the second recovery is compared with the state the first process
+        // reaches.
+        new CheckWalTransactionsJob(engine).run();
         engine.getTableSequencerAPI().lastTxn(s.token);
         final Map<String, byte[]> afterFirst = tableFiles(s);
         engine.releaseAllReaders();
@@ -1387,6 +1576,11 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         }
     }
 
+    private String sequencerLogPath(TableToken tt) {
+        final String dbRoot = engine.getConfiguration().getDbRoot().toString();
+        return Paths.get(dbRoot, tt.getDirName(), WalUtils.SEQ_DIR, WalUtils.TXNLOG_FILE_NAME).toString();
+    }
+
     // Switches the instance mode and checks the configuration reports it. The test harness drops a pending
     // configuration change when a property is set again to the value it already has, so the epoch interval, set
     // last, takes a value no earlier switch used.
@@ -1397,6 +1591,15 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         Assert.assertEquals(mode, CommitMode.toString(engine.getConfiguration().getCommitMode()));
         Assert.assertEquals(epochIntervalMs, engine.getConfiguration().getAdaptiveEpochIntervalMs());
         commitMode = mode;
+    }
+
+    // The records after the kept ones are zero on the disk: the page that holds them was not written back.
+    private void tearSequencerTail(TableToken tt) {
+        try (Path p = new Path()) {
+            p.of(sequencerLogPath(tt));
+            final long recordSize = TableTransactionLogV1.RECORD_SIZE;
+            crashFf.tornTail(p.$(), TableTransactionLogFile.HEADER_SIZE + TORN_TAIL_KEPT * recordSize, 3 * recordSize);
+        }
     }
 
     private void tryInsertRows(Scenario s, int day, int count, boolean covered) {
@@ -1689,6 +1892,106 @@ public class AdaptiveEpochCrashTest extends AbstractAdaptiveCrashTest {
         void markUnsyncedRowsDurable() {
             expected.putAll(unsynced);
             unsynced.clear();
+        }
+    }
+
+    // Counts the sequencer files the WAL table scan touches: the opens of _txnlog.meta.i, one per sequencer
+    // construction, for the torn table, and those plus the opens, reads and closes of _txnlog for the intact one.
+    private static final class SequencerFileCountingFacade extends CrashFaultFilesFacade {
+        int tornSequencerOpens;
+        int wholeLogCloses;
+        int wholeLogOpens;
+        int wholeLogReads;
+        int wholeSequencerOpens;
+        private String tornMetaIndex;
+        private String wholeLog;
+        private String wholeMetaIndex;
+
+        @Override
+        public boolean close(long fd) {
+            if (isWholeLog(fd)) {
+                wholeLogCloses++;
+            }
+            return super.close(fd);
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            countOpen(name);
+            return super.openRO(name);
+        }
+
+        @Override
+        public long openRONoCache(LPSZ name) {
+            countOpen(name);
+            return super.openRONoCache(name);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            countOpen(name);
+            return super.openRW(name, opts);
+        }
+
+        @Override
+        public long openRWNoCache(LPSZ name, int opts) {
+            countOpen(name);
+            return super.openRWNoCache(name, opts);
+        }
+
+        @Override
+        public long read(long fd, long buf, long len, long offset) {
+            if (isWholeLog(fd)) {
+                wholeLogReads++;
+            }
+            return super.read(fd, buf, len, offset);
+        }
+
+        @Override
+        public int readNonNegativeInt(long fd, long offset) {
+            if (isWholeLog(fd)) {
+                wholeLogReads++;
+            }
+            return super.readNonNegativeInt(fd, offset);
+        }
+
+        @Override
+        public long readNonNegativeLong(long fd, long offset) {
+            if (isWholeLog(fd)) {
+                wholeLogReads++;
+            }
+            return super.readNonNegativeLong(fd, offset);
+        }
+
+        void reset(TableToken torn, TableToken whole) {
+            final String seq = File.separator + WalUtils.SEQ_DIR + File.separator;
+            tornMetaIndex = torn.getDirName() + seq + WalUtils.TXNLOG_FILE_NAME_META_INX;
+            wholeMetaIndex = whole.getDirName() + seq + WalUtils.TXNLOG_FILE_NAME_META_INX;
+            wholeLog = whole.getDirName() + seq + WalUtils.TXNLOG_FILE_NAME;
+            tornSequencerOpens = 0;
+            wholeSequencerOpens = 0;
+            wholeLogOpens = 0;
+            wholeLogReads = 0;
+            wholeLogCloses = 0;
+        }
+
+        private void countOpen(LPSZ name) {
+            if (wholeLog != null) {
+                // The name may carry its terminating zero.
+                final String path = Utf8String.newInstance(name).toString().replace("\0", "");
+                if (path.endsWith(tornMetaIndex)) {
+                    tornSequencerOpens++;
+                } else if (path.endsWith(wholeMetaIndex)) {
+                    wholeSequencerOpens++;
+                } else if (path.endsWith(wholeLog)) {
+                    wholeLogOpens++;
+                }
+            }
+        }
+
+        private boolean isWholeLog(long fd) {
+            final String path = pathOf(fd);
+            return wholeLog != null && path != null && path.endsWith(wholeLog);
         }
     }
 }

@@ -385,9 +385,10 @@ public class TableSequencerImpl implements TableSequencer {
      * commit. The caller holds the sequencer write lock, the lock {@code nextTxn} takes, so no append or rotation
      * of the log's mappings runs concurrently.
      *
-     * @return the highest seqTxn this flush covers. It is read under the write lock, where no append is in
-     * flight, so every txn at or below it is in the log before the fdatasync; a txn sequenced after the lock is
-     * released is not covered. The caller passes it to {@link SeqTxnTracker#markWriterDurable(int, long, long)}.
+     * @return the highest seqTxn this flush covers: the log's last txn, read under the write lock, where no append
+     * is in flight, so every txn at or below it is in the log before the fdatasync; a txn sequenced after the lock is
+     * released is not covered. Taken from the log, not from the tracker, which a reader of an unopened log can seed.
+     * The caller passes it to {@link SeqTxnTracker#markWriterDurable(int, long, long)}.
      */
     public long fdatasyncTxnLog() {
         return fdatasyncTxnLog(Long.MAX_VALUE);
@@ -399,7 +400,7 @@ public class TableSequencerImpl implements TableSequencer {
      */
     public long fdatasyncTxnLog(long fromTxn) {
         assert !closed;
-        final long coveredSeqTxn = seqTxnTracker.getSeqTxn();
+        final long coveredSeqTxn = tableTransactionLog.lastTxn();
         try {
             tableTransactionLog.fdatasyncTxnLog(fromTxn);
         } catch (Throwable th) {

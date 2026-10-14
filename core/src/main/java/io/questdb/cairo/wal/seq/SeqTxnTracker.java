@@ -124,8 +124,8 @@ public class SeqTxnTracker {
     private final LongList pendingOrphanSeqs = new LongList();
     // Monotonic counter, bumped under durableFrontierLock by orphanWriterPending.
     private long orphanSeq;
-    // Highest seqTxn any completed sequencer fdatasync has covered: seqTxn as it stood under the sequencer
-    // write lock when that fdatasync ran (TableSequencerImpl.fdatasyncTxnLog). Everything at or below it is
+    // Highest seqTxn any completed sequencer fdatasync has covered: the log's last txn as it stood under the
+    // sequencer write lock when that fdatasync ran (TableSequencerImpl.fdatasyncTxnLog). Everything at or below it is
     // device-durable, so under W>0 it is the ceiling of localDurableSeqTxn; the pins can only hold the
     // frontier lower. A running max rather than the latest value: a txn covered by a peer's earlier fdatasync
     // stays claimable after the pin that held it back is released. Guarded by durableFrontierLock.
@@ -593,7 +593,7 @@ public class SeqTxnTracker {
      * ceiling. It never advances to the flushing writer's own seqTxn, which could over-claim a peer's unflushed
      * txn. An unknown or already removed walId is a no-op that still recomputes the prefix.
      *
-     * <p>{@code coveredSeqTxn} is what the caller's fdatasync covered: {@code seqTxn} as read under the
+     * <p>{@code coveredSeqTxn} is what the caller's fdatasync covered: the log's last txn as read under the
      * sequencer write lock, where no append is in flight. The lock is released before this method runs, so the
      * writer's next commit or a peer may already have sequenced further txns that reuse (putIfAbsent) the pin
      * dropped here, and a structure txn carries no pin at all. So the covered value bounds the frontier, kept as

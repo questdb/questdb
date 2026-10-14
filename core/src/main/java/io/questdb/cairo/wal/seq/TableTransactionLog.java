@@ -83,6 +83,47 @@ public class TableTransactionLog implements Closeable {
         this.walDirectoryPolicy = walDirectoryPolicy;
     }
 
+    /**
+     * Whether a log that this process has not opened ends, once opened, at the max txn its header names: an open in
+     * the current commit mode and durability policy would cut no record. Applies the open's own rule for the log's
+     * format; for a V1 log that reads the records the open would check. An unknown format answers true: its open
+     * fails whatever the header says.
+     *
+     * @param fd            the log's {@code _txnlog}, open for reading
+     * @param formatVersion the header's format version
+     * @param maxTxn        the header's max txn
+     * @param unsyncedFrom  the header's flushed-through txn, at the same offset in both formats
+     * @param commitMode    the configured commit mode
+     * @param policy        the engine's current local durability policy
+     */
+    public static boolean isTailCertain(
+            FilesFacade ff,
+            long fd,
+            int formatVersion,
+            long maxTxn,
+            long unsyncedFrom,
+            int commitMode,
+            LocalDurabilityPolicy policy
+    ) {
+        final int mode = LocalDurabilityPolicy.resolveCommitMode(commitMode, policy);
+        return switch (formatVersion) {
+            case WAL_SEQUENCER_FORMAT_VERSION_V1 -> TableTransactionLogV1.isTailIntact(
+                    ff,
+                    fd,
+                    maxTxn,
+                    unsyncedFrom,
+                    mode == CommitMode.ADAPTIVE || mode == CommitMode.SYNC
+            );
+            case WAL_SEQUENCER_FORMAT_VERSION_V2 -> TableTransactionLogV2.isTailCertain(
+                    maxTxn,
+                    unsyncedFrom,
+                    policy.isLocalDurabilityEnabled(),
+                    mode == CommitMode.ADAPTIVE
+            );
+            default -> true;
+        };
+    }
+
     public static long readMaxStructureVersion(FilesFacade ff, Path path) {
         int pathLen = path.size();
         long logFileFd = TableUtils.openRW(ff, path.concat(TXNLOG_FILE_NAME).$(), LOG, CairoConfiguration.O_NONE);

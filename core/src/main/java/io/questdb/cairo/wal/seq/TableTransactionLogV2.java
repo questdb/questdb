@@ -148,6 +148,22 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     }
 
     /**
+     * Whether an open now would keep every record the header counts, judged from the header alone, for a reader that
+     * does not open the log: the open checks no record for a tear. Only an ADAPTIVE open on a node that keeps the log
+     * durable itself checks any, and only those at or above the field's magnitude. For a log whose newest records a
+     * writer that does not know the field appended, above {@link #KNOWN_MAX_TXN_OFFSET_64}, it answers false while
+     * the open trusts them: the reader then opens the log, which trusts them too.
+     *
+     * @param maxTxn       the header's max txn
+     * @param unsyncedFrom the header's {@link #UNSYNCED_FROM_TXN_OFFSET_64}
+     * @param isLocal      whether the node keeps the log durable itself
+     * @param isAdaptive   whether the open would run in ADAPTIVE
+     */
+    public static boolean isTailCertain(long maxTxn, long unsyncedFrom, boolean isLocal, boolean isAdaptive) {
+        return !(isLocal && isAdaptive) || unsyncedFrom == 0 || Math.abs(unsyncedFrom) > maxTxn;
+    }
+
+    /**
      * Lowers a V2 header's max txn to {@code newMaxTxn} and keeps the field and the slot consistent with it, as a
      * checkpoint restore and the torn-tail cut do: the field's magnitude goes no higher than {@code newMaxTxn + 1}
      * and keeps its sign, the slot no higher than {@code newMaxTxn}, both only while the field is set. The three
@@ -397,7 +413,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             scanFrom = unsyncedFrom;
         }
         if (isAdaptive) {
+            final long publishedTxn = lastTxn;
             lastTxn = recoverTail(path, lastTxn, scanFrom, flushFrom);
+            // A reader that does not open the log trusts a header the predicate certifies.
+            assert lastTxn == publishedTxn || !isTailCertain(publishedTxn, unsyncedFrom, isLocal, true);
         }
         maxTxn.set(lastTxn);
 

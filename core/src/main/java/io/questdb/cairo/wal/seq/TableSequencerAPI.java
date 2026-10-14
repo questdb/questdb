@@ -42,9 +42,11 @@ import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.ConcurrentHashMap;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.QuietCloseable;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -60,6 +62,9 @@ import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
 
 public class TableSequencerAPI implements QuietCloseable {
     private static final Log LOG = LogFactory.getLog(TableSequencerAPI.class);
+    // The header bytes the WAL table scan reads: the format version, the max txn and the flushed-through txn, at
+    // the same offsets in both log formats.
+    private static final int SCAN_HEADER_SIZE = (int) (TableTransactionLogV1.UNSYNCED_FROM_TXN_OFFSET_64 + Long.BYTES);
     final CairoConfiguration configuration;
     final ConcurrentHashMap<TableSequencerImpl> seqRegistry = new ConcurrentHashMap<>(false);
     private final Function<CharSequence, SeqTxnTracker> createTxnTracker;
@@ -141,9 +146,7 @@ public class TableSequencerAPI implements QuietCloseable {
                         // metadata and log concurrently as we read the values. It's ok since we iterate
                         // through the WAL tables periodically, so eventually we should see the updates.
                         path.of(root).concat(tableToken.getDirName()).concat(SEQ_DIR);
-                        long fdTxn = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME, LOG);
-                        lastTxn = ff.readNonNegativeLong(fdTxn, TableTransactionLogFile.MAX_TXN_OFFSET_64); // does not throw
-                        ff.close(fdTxn);
+                        lastTxn = readCertifiedLastTxn(ff, path, tableToken);
                     } else {
                         // Slow path.
                         try (TableSequencer tableSequencer = openSequencerLocked(tableToken, SequencerLockType.NONE)) {
@@ -709,6 +712,56 @@ public class TableSequencerAPI implements QuietCloseable {
     @NotNull
     private TableSequencerImpl openSequencerLocked(TableToken tableToken, SequencerLockType lock) {
         return getTableSequencerEntry(tableToken, lock, this.openSequencerInstanceLambda);
+    }
+
+    /**
+     * The last txn of a sequencer log this process has not opened, as its open would leave it, or -1 when the header
+     * cannot be read. A power loss can leave the header on the disk ahead of its newest records, and the first open
+     * in a process cuts them, so the header's max txn is returned only when it is certain: the table's tracker holds
+     * as much, and every value the tracker holds was certified, or an open now would cut no record. A log that is not
+     * certain is opened. Its open fails with the same error at the table's first use when it fails here, so the
+     * header's value is returned then, as without the check.
+     */
+    private long readCertifiedLastTxn(FilesFacade ff, Path path, TableToken tableToken) {
+        long lastTxn = -1;
+        boolean isCertain = true;
+        final long header = Unsafe.malloc(SCAN_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        long fdTxn = -1;
+        try {
+            fdTxn = TableUtils.openRO(ff, path, TXNLOG_FILE_NAME, LOG);
+            if (ff.read(fdTxn, header, SCAN_HEADER_SIZE, 0) == SCAN_HEADER_SIZE) {
+                lastTxn = Math.max(Unsafe.getLong(header + TableTransactionLogFile.MAX_TXN_OFFSET_64), -1);
+                if (lastTxn > 0) {
+                    final SeqTxnTracker tracker = getTxnTrackerIfExists(tableToken);
+                    if (tracker == null || lastTxn > tracker.getSeqTxn()) {
+                        isCertain = TableTransactionLog.isTailCertain(
+                                ff,
+                                fdTxn,
+                                Unsafe.getInt(header),
+                                lastTxn,
+                                Unsafe.getLong(header + TableTransactionLogV1.UNSYNCED_FROM_TXN_OFFSET_64),
+                                configuration.getCommitMode(),
+                                engine.getLocalDurabilityPolicy()
+                        );
+                    }
+                }
+            }
+        } finally {
+            if (fdTxn != -1) {
+                ff.close(fdTxn);
+            }
+            Unsafe.free(header, SCAN_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
+        }
+        if (!isCertain) {
+            try (TableSequencer tableSequencer = openSequencerLocked(tableToken, SequencerLockType.NONE)) {
+                return tableSequencer.lastTxn();
+            } catch (CairoException ex) {
+                if (ex.isFileCannotRead() || ex.isTableDropped()) {
+                    throw ex;
+                }
+            }
+        }
+        return lastTxn;
     }
 
     private boolean releaseEntries(long deadline) {

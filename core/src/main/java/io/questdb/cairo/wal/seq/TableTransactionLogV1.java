@@ -82,6 +82,8 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
      */
     public static final long UNSYNCED_FROM_TXN_OFFSET_64 = HEADER_SEQ_PART_SIZE_32 + Integer.BYTES + 2 * Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV1.class);
+    // The most records isTailIntact reads at once.
+    private static final long TAIL_CHECK_READ_RECORDS = 4096;
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
     private final CairoConfiguration configuration;
@@ -97,6 +99,49 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         this.configuration = configuration;
         this.durabilityPolicy = durabilityPolicy;
         this.ff = configuration.getFilesFacade();
+    }
+
+    /**
+     * Whether an open now would keep every record the header counts, for a reader that does not open the log. Reads
+     * the records {@link #open(Path)} checks for a tear, the same bytes, with the record before them, and applies the
+     * open's rule to them. Reads nothing when the open checks none.
+     *
+     * @param fd            the log, open for reading
+     * @param maxTxn        the header's max txn
+     * @param unsyncedFrom  the header's {@link #UNSYNCED_FROM_TXN_OFFSET_64}
+     * @param isDurableMode whether the open would run in ADAPTIVE or SYNC
+     * @return false when the open would cut a record, or when a record cannot be read
+     */
+    public static boolean isTailIntact(FilesFacade ff, long fd, long maxTxn, long unsyncedFrom, boolean isDurableMode) {
+        long txn = scanFrom(unsyncedFrom, maxTxn, isDurableMode);
+        if (txn > maxTxn) {
+            return true;
+        }
+        // The first record read precedes the first one checked: the rule compares a record with the one before it.
+        long lo = Math.max(1, txn - 1);
+        final long bufSize = Math.min(maxTxn - lo + 1, TAIL_CHECK_READ_RECORDS) * RECORD_SIZE;
+        final long buf = Unsafe.malloc(bufSize, MemoryTag.NATIVE_DEFAULT);
+        try {
+            while (true) {
+                final long hi = Math.min(maxTxn, lo + bufSize / RECORD_SIZE - 1);
+                final long offset = HEADER_SIZE + (lo - 1) * RECORD_SIZE;
+                final long bytesRead = ff.read(fd, buf, (hi - lo + 1) * RECORD_SIZE, offset);
+                // The open counts a record the file does not hold whole as torn.
+                final long readHi = lo - 1 + Math.max(bytesRead, 0) / RECORD_SIZE;
+                for (; txn <= hi; txn++) {
+                    final long record = buf + (txn - lo) * RECORD_SIZE;
+                    if (txn > readHi || isTornRecord(txn, record, record - RECORD_SIZE)) {
+                        return false;
+                    }
+                }
+                if (hi == maxTxn) {
+                    return true;
+                }
+                lo = hi;
+            }
+        } finally {
+            Unsafe.free(buf, bufSize, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     public static long readMaxStructureVersion(long logFileFd, FilesFacade ff) {
@@ -255,6 +300,49 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         return maxStructureVersion;
     }
 
+    /**
+     * Whether the record at {@code txn}, at {@code record}, is not wholly on disk. A sector holds a record's bytes
+     * whole or not at all, the bytes past the tail were zero, and the commit timestamp is stored last, so a torn
+     * record shows zeros where the written record has none: a zero wal id, a timestamp whose upper half is zero, or a
+     * structure version whose lower half is zero and does not follow the previous record, at {@code prevRecord},
+     * which is not read for txn 1. The previous record is intact: the scan starts after a flushed one and stops at
+     * the first torn one.
+     */
+    private static boolean isTornRecord(long txn, long record, long prevRecord) {
+        final int walId = Unsafe.getInt(record + TX_LOG_WAL_ID_OFFSET);
+        if (walId == 0) {
+            return true;
+        }
+        if (txn == 1) {
+            // Record 1 shares the header's sector, so it reaches the disk with the header that publishes it.
+            return false;
+        }
+        final long timestamp = Unsafe.getLong(record + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
+        final long prevTimestamp = Unsafe.getLong(prevRecord + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
+        if ((timestamp >>> 32) == 0 && ((prevTimestamp >>> 32) != 0 || (timestamp == 0 && prevTimestamp != 0))) {
+            return true;
+        }
+        final long structureVersion = Unsafe.getLong(record + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        if ((structureVersion & 0xFFFFFFFFL) != 0) {
+            return false;
+        }
+        final long prevStructureVersion = Unsafe.getLong(prevRecord + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        if (walId == STRUCTURAL_CHANGE_WAL_ID) {
+            return structureVersion != prevStructureVersion + 1;
+        }
+        return walId > 0 && structureVersion != prevStructureVersion;
+    }
+
+    // The first txn an open checks for a tear: the records below it were covered by a completed flush, or are
+    // trusted. Above publishedTxn when it checks none.
+    private static long scanFrom(long unsyncedFrom, long publishedTxn, boolean isDurableMode) {
+        // A file written by a binary without the hint has none: its records are trusted.
+        if (unsyncedFrom > 0 || (unsyncedFrom < 0 && !isDurableMode)) {
+            return Math.max(1, Math.min(Math.abs(unsyncedFrom), publishedTxn + 1));
+        }
+        return unsyncedFrom < 0 ? 1 : publishedTxn + 1;
+    }
+
     private boolean hasNonZeroBytes(long lo, long hi) {
         long offset = lo;
         for (; offset + Long.BYTES <= hi; offset += Long.BYTES) {
@@ -275,40 +363,13 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         return commitMode == CommitMode.ADAPTIVE || commitMode == CommitMode.SYNC;
     }
 
-    /**
-     * Whether the record at {@code txn} is not wholly on disk. A sector holds a record's bytes whole or
-     * not at all, the bytes past the tail were zero, and the commit timestamp is stored last, so a torn
-     * record shows zeros where the written record has none: a zero wal id, a timestamp whose upper half is
-     * zero, or a structure version whose lower half is zero and does not follow the previous record. The
-     * previous record is intact: the scan starts after a flushed one and stops at the first torn one.
-     */
     private boolean isTornRecord(long txn) {
         final long offset = HEADER_SIZE + (txn - 1) * RECORD_SIZE;
         if (offset + RECORD_SIZE > txnMem.size()) {
             return true;
         }
-        final int walId = txnMem.getInt(offset + TX_LOG_WAL_ID_OFFSET);
-        if (walId == 0) {
-            return true;
-        }
-        if (txn == 1) {
-            // Record 1 shares the header's sector, so it reaches the disk with the header that publishes it.
-            return false;
-        }
-        final long timestamp = txnMem.getLong(offset + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
-        final long prevTimestamp = txnMem.getLong(offset - RECORD_SIZE + TX_LOG_COMMIT_TIMESTAMP_OFFSET);
-        if ((timestamp >>> 32) == 0 && ((prevTimestamp >>> 32) != 0 || (timestamp == 0 && prevTimestamp != 0))) {
-            return true;
-        }
-        final long structureVersion = txnMem.getLong(offset + TX_LOG_STRUCTURE_VERSION_OFFSET);
-        if ((structureVersion & 0xFFFFFFFFL) != 0) {
-            return false;
-        }
-        final long prevStructureVersion = txnMem.getLong(offset - RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
-        if (walId == STRUCTURAL_CHANGE_WAL_ID) {
-            return structureVersion != prevStructureVersion + 1;
-        }
-        return walId > 0 && structureVersion != prevStructureVersion;
+        final long record = txnMem.addressOf(offset);
+        return isTornRecord(txn, record, record - RECORD_SIZE);
     }
 
     // Every record up to the tail is on disk.
@@ -345,13 +406,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private long recoverTail(Path path, long publishedTxn) {
         final long unsyncedFrom = txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64);
         final boolean isDurableMode = isDurableMode();
-        // A file written by a binary without the hint has none: its records are trusted.
-        final long scanFrom;
-        if (unsyncedFrom > 0 || (unsyncedFrom < 0 && !isDurableMode)) {
-            scanFrom = Math.max(1, Math.min(Math.abs(unsyncedFrom), publishedTxn + 1));
-        } else {
-            scanFrom = unsyncedFrom < 0 ? 1 : publishedTxn + 1;
-        }
+        final long scanFrom = scanFrom(unsyncedFrom, publishedTxn, isDurableMode);
         long tail = publishedTxn;
         for (long txn = scanFrom; txn <= publishedTxn; txn++) {
             if (isTornRecord(txn)) {
