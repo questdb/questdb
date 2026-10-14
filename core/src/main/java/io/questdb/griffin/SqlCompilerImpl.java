@@ -555,6 +555,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     @Override
+    public void freeUnclaimedPivotPlans() {
+        optimiser.freePivotInListChecks();
+    }
+
+    @Override
     public ExecutionModel generateExecutionModel(CharSequence sqlText, SqlExecutionContext executionContext) throws SqlException {
         clear();
         lexer.of(sqlText);
