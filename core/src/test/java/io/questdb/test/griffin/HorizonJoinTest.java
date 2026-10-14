@@ -33,11 +33,14 @@ import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.functions.test.TestWorkerCloneFunctionFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinRecordCursorFactory;
+import io.questdb.griffin.engine.table.AsyncHorizonTimestampIterator;
 import io.questdb.griffin.engine.table.HorizonJoinNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinRecordCursorFactory;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.DirectLongList;
+import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
@@ -69,6 +72,21 @@ public class HorizonJoinTest extends AbstractCairoTest {
         setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HORIZON_JOIN_ENABLED, String.valueOf(parallelHorizonJoinEnabled));
         setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
         super.setUp();
+    }
+
+    @Test
+    public void testAsyncHorizonTimestampOverflowDuringInitialization() throws Exception {
+        assertAsyncHorizonTimestampOverflow(Long.MAX_VALUE, 1, false);
+    }
+
+    @Test
+    public void testAsyncHorizonTimestampOverflowDuringIteration() throws Exception {
+        assertAsyncHorizonTimestampOverflow(Long.MAX_VALUE, 1, true);
+    }
+
+    @Test
+    public void testAsyncHorizonTimestampUnderflowDuringInitialization() throws Exception {
+        assertAsyncHorizonTimestampOverflow(Long.MIN_VALUE + 1, -2, false);
     }
 
     @Test
@@ -2105,6 +2123,50 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinRangeSpanOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS, 3);
+            for (TestTimestampType timestampType : TestTimestampType.values()) {
+                final String unit = timestampType == TestTimestampType.MICRO ? "U" : "n";
+                execute("CREATE TABLE trades (ts " + timestampType.getTypeName() + ") TIMESTAMP(ts)");
+                execute("CREATE TABLE prices (ts " + timestampType.getTypeName() + ", price DOUBLE) TIMESTAMP(ts)");
+                execute("INSERT INTO trades VALUES ('1970-01-01T00:00:00Z')");
+                execute("INSERT INTO prices VALUES ('1970-01-01T00:00:00Z', 10)");
+
+                for (boolean isParallel : new boolean[]{false, true}) {
+                    sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                    for (boolean hasMultipleSlaves : new boolean[]{false, true}) {
+                        final String query = "SELECT h.offset, count(p.price) FROM trades t HORIZON JOIN prices p "
+                                + (hasMultipleSlaves ? "HORIZON JOIN prices q " : "")
+                                + "RANGE FROM -9000000000000000000" + unit
+                                + " TO 9000000000000000000" + unit + " STEP ";
+                        assertQuery(query + "9000000000000000000" + unit + " AS h ORDER BY h.offset")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        offset\tcount
+                                        -9000000000000000000\t0
+                                        0\t1
+                                        9000000000000000000\t1
+                                        """);
+                        assertQuery(query + "8000000000000000000" + unit + " AS h ORDER BY h.offset")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        offset\tcount
+                                        -9000000000000000000\t0
+                                        -1000000000000000000\t0
+                                        7000000000000000000\t1
+                                        """);
+                    }
+                }
+                execute("DROP TABLE trades");
+                execute("DROP TABLE prices");
+            }
+        });
+    }
+
+    @Test
     public void testHorizonJoinRangeStepNotPositive() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
@@ -2132,6 +2194,29 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 5s STEP 1s AS h")
                     .noLeakCheck()
                     .fails(102, "RANGE generates too many offsets [count=6, max=3]");
+        });
+    }
+
+    @Test
+    public void testHorizonJoinRangeTooManyOffsetsOverflow() throws Exception {
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_SQL_HORIZON_JOIN_MAX_OFFSETS, 3);
+            execute("CREATE TABLE trades (ts TIMESTAMP_NS) TIMESTAMP(ts)");
+            execute("CREATE TABLE prices (ts TIMESTAMP_NS, price DOUBLE) TIMESTAMP(ts)");
+            final String query = "SELECT h.offset, count(p.price) FROM trades t HORIZON JOIN prices p RANGE FROM ";
+            assertQuery(query + "0s TO 3s STEP 1s AS h")
+                    .noLeakCheck()
+                    .fails(query.length(), "RANGE generates too many offsets [count=4, max=3]");
+            assertQuery(query + "-9000000000000000000n TO 9000000000000000000n STEP 3000000000000000000n AS h")
+                    .noLeakCheck()
+                    .fails(query.length(), "RANGE generates too many offsets [count=7, max=3]");
+
+            // Cover count = 2^63, 2^64 - 1 and 2^64, including the +1 wrapping to zero.
+            for (String from : new String[]{"0", "-9223372036854775807", "-9223372036854775808"}) {
+                assertQuery(query + from + "n TO 9223372036854775807n STEP 1n AS h")
+                        .noLeakCheck()
+                        .fails(query.length(), "RANGE generates too many offsets [count>9223372036854775807, max=3]");
+            }
         });
     }
 
@@ -3188,16 +3273,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             execute("INSERT INTO prices VALUES ('9999-12-31T23:59:59.999999Z', 'AX', 10)");
 
             // Offset of 9_000_000_000_000s = 9e18 micros; year 9999 ts + offset > Long.MAX_VALUE
-            // First offset (0) is fine, second offset causes overflow during iteration
-            try {
-                assertExceptionNoLeakCheck(
+            // The first offset fits; the second exceeds Long.MAX_VALUE.
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                CairoException e = Assert.assertThrows(CairoException.class, () -> assertExceptionNoLeakCheck(
                         "SELECT avg(p.price) " +
                                 "FROM trades AS t " +
                                 "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
                                 "LIST (0s, 9000000000000s) AS h"
+                ));
+                Assert.assertFalse(e.isCritical());
+                TestUtils.assertEquals(
+                        "horizon timestamp overflow [timestamp=253402300799999999, offset=9000000000000000000]",
+                        e.getFlyweightMessage()
                 );
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "overflow");
             }
         });
     }
@@ -7479,16 +7568,20 @@ public class HorizonJoinTest extends AbstractCairoTest {
             execute("INSERT INTO bids VALUES ('9999-12-31T23:59:59.999999Z', 'AX', 10)");
             execute("INSERT INTO asks VALUES ('9999-12-31T23:59:59.999999Z', 'AX', 20)");
 
-            try {
-                assertExceptionNoLeakCheck(
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                CairoException e = Assert.assertThrows(CairoException.class, () -> assertExceptionNoLeakCheck(
                         "SELECT avg(b.bid) " +
                                 "FROM trades AS t " +
                                 "HORIZON JOIN bids AS b ON (t.sym = b.sym) " +
                                 "HORIZON JOIN asks AS a ON (t.sym = a.sym) " +
                                 "LIST (0s, 9000000000000s) AS h"
+                ));
+                Assert.assertFalse(e.isCritical());
+                TestUtils.assertEquals(
+                        "horizon timestamp overflow [timestamp=253402300799999999, offset=9000000000000000000]",
+                        e.getFlyweightMessage()
                 );
-            } catch (CairoException e) {
-                TestUtils.assertContains(e.getFlyweightMessage(), "overflow");
             }
         });
     }
@@ -7711,6 +7804,50 @@ public class HorizonJoinTest extends AbstractCairoTest {
                             2\t200.0\t201.0
                             """);
         });
+    }
+
+    private static void assertAsyncHorizonTimestampOverflow(long timestamp, long offset, boolean isDuringIteration) throws Exception {
+        for (boolean isFiltered : new boolean[]{false, true}) {
+            TestUtils.assertMemoryLeak(() -> {
+                try (
+                        DirectLongList timestamps = new DirectLongList(3, MemoryTag.NATIVE_DEFAULT);
+                        DirectLongList filteredRows = new DirectLongList(2, MemoryTag.NATIVE_DEFAULT);
+                        AsyncHorizonTimestampIterator iterator = new AsyncHorizonTimestampIterator(new long[]{0, offset})
+                ) {
+                    timestamps.add(Long.MIN_VALUE + 1);
+                    if (isDuringIteration) {
+                        timestamps.add(timestamp - 2);
+                    }
+                    timestamps.add(timestamp);
+                    for (long row = 1, n = timestamps.size(); row < n; row++) {
+                        filteredRows.add(row);
+                    }
+
+                    Runnable initialize = () -> {
+                        if (isFiltered) {
+                            iterator.ofFiltered(timestamps.getAddress(), filteredRows);
+                        } else {
+                            iterator.of(timestamps.getAddress(), 1, timestamps.size() - 1);
+                        }
+                    };
+                    CairoException e;
+                    if (isDuringIteration) {
+                        initialize.run();
+                        e = Assert.assertThrows(CairoException.class, () -> {
+                            while (iterator.next()) {
+                            }
+                        });
+                    } else {
+                        e = Assert.assertThrows(CairoException.class, initialize::run);
+                    }
+                    Assert.assertFalse(e.isCritical());
+                    TestUtils.assertEquals(
+                            "horizon timestamp overflow [timestamp=" + timestamp + ", offset=" + offset + ']',
+                            e.getFlyweightMessage()
+                    );
+                }
+            });
+        }
     }
 
     private void assertHorizonJoinTypeMismatch(String masterKeyType, String slaveKeyType) throws Exception {

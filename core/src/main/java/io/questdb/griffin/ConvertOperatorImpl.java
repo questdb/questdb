@@ -231,6 +231,7 @@ public class ConvertOperatorImpl implements Closeable {
             dataSyncFailureOperation = null;
             long start = timer.getTicks();
             long totalRows = 0;
+            boolean hasNullTopRows = false;
 
             // Pre-pass: convert parquet partitions to native when needed.
             // Case 1: chained conversion (e.g. INT -> STRING -> DATE) where parquet stores an
@@ -321,14 +322,13 @@ public class ConvertOperatorImpl implements Closeable {
                         // row offsets.
                         final long parquetPts = tableWriter.getPartitionTimestamp(partitionIndex);
                         final long parquetColTop = columnVersionWriter.getColumnTop(parquetPts, existingColIndex);
+                        final long parquetNewColTop = parquetColTop > -1 ? parquetColTop : tableWriter.getPartitionSize(partitionIndex);
+                        hasNullTopRows |= parquetNewColTop > 0;
                         if (parquetColTop != tableWriter.getColumnTop(parquetPts, columnIndex, -1)) {
                             long partTs = tableWriter.getPartitionBy() != PartitionBy.NONE
                                     ? parquetPts
                                     : TxReader.DEFAULT_PARTITION_TIMESTAMP;
-                            columnVersionWriter.upsertColumnTop(
-                                    partTs, columnIndex,
-                                    parquetColTop > -1 ? parquetColTop : tableWriter.getPartitionSize(partitionIndex)
-                            );
+                            columnVersionWriter.upsertColumnTop(partTs, columnIndex, parquetNewColTop);
                         }
                         continue;
                     }
@@ -337,6 +337,7 @@ public class ConvertOperatorImpl implements Closeable {
                         final long maxRow = tableWriter.getPartitionSize(partitionIndex);
 
                         final long columnTop = columnVersionWriter.getColumnTop(partitionTimestamp, existingColIndex);
+                        hasNullTopRows |= (columnTop > -1 ? columnTop : maxRow) > 0;
                         if (columnTop > -1) {
                             long rowCount = maxRow - columnTop;
                             long partitionNameTxn = tableWriter.getPartitionNameTxn(partitionIndex);
@@ -424,6 +425,9 @@ public class ConvertOperatorImpl implements Closeable {
                 }
             }
             consumeConversionTasks(messageBus.getColumnTaskQueue(), queueCount, true);
+            if (hasNullTopRows && ColumnType.isSymbol(newType)) {
+                tableWriter.getSymbolMapWriter(columnIndex).updateNullFlag(true);
+            }
             long elapsed = timer.getTicks() - start;
             LOG.info().$("completed column conversion [at=").$(tableWriter.getTableToken())
                     .$(", column=").$safe(columnName).$(", from=").$(ColumnType.nameOf(existingType))
