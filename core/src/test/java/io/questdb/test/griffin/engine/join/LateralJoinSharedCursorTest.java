@@ -426,6 +426,53 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                     """;
             bindVariableService.clear();
             bindVariableService.setBoolean(0, false);
+            final String groupBy = enableParallelGroupBy ? "GroupBy vectorized: true workers: 1" : "GroupBy vectorized: false";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Right Outer Join Light
+                                  condition: d.k=a.k
+                                    Hash Left Outer Join Light
+                                      condition: l.__qdb_outer_ref__0_k=o.k
+                                        Hash Join Light
+                                          condition: o.k=a.k
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: a
+                                            Hash
+                                                Filter filter: $0::boolean
+                                                    %1$s
+                                                      keys: [k]
+                                                      values: [count(*)]
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t
+                                        Hash
+                                            GroupBy vectorized: false
+                                              keys: [__qdb_outer_ref__0_k]
+                                              values: [max(v)]
+                                                SelectedRecord
+                                                    Filter filter: (__qdb_outer_ref__0.__qdb_outer_ref__0_k>=u.k and test_latched_counter())
+                                                        Cross Join
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: u
+                                                            GroupBy vectorized: false
+                                                              keys: [__qdb_outer_ref__0_k]
+                                                                SelectedRecord
+                                                                    (Shared)
+                                                                        %1$s
+                                                                          keys: [k]
+                                                                          values: [count(*)]
+                                                                            PageFrame
+                                                                                Row forward scan
+                                                                                Frame forward scan on: t
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: d
+                            """.formatted(groupBy));
             try (RecordCursorFactory factory = select(query)) {
                 for (boolean flag : new boolean[]{false, true, false}) {
                     bindVariableService.setBoolean(0, flag);

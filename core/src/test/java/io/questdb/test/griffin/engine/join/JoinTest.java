@@ -9427,14 +9427,85 @@ public class JoinTest extends AbstractCairoTest {
             final String filteredB = "(SELECT * FROM b WHERE test_latched_counter()) b";
             final String emptyA = "(SELECT * FROM a WHERE 1 = 2) a";
             final String gatedA = "(SELECT * FROM a WHERE now() < '1960-01-01') a";
-            assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM " + emptyA + " LEFT JOIN " + filteredB + " ON a.k = b.k", 0, 0);
+            String query = "SELECT a.k, b.k bk FROM " + emptyA + " LEFT JOIN " + filteredB + " ON a.k = b.k";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: b.k=a.k
+                                    Empty table
+                                    Hash
+                                        Async Filter workers: 1
+                                          filter: test_latched_counter()
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                            """);
+            assertJoinFilterEvaluationCount(query, 0, 0);
             assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM " + gatedA + " LEFT JOIN " + filteredB + " ON a.k = b.k", 0, 0);
             assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM " + emptyA + " LEFT JOIN " + filteredB + " ON a.k = b.k AND a.x > b.k", 0, 0);
-            assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM " + emptyA + " JOIN " + filteredB + " ON a.k = b.k", 0, 0);
+            query = "SELECT a.k, b.k bk FROM " + emptyA + " JOIN " + filteredB + " ON a.k = b.k";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: b.k=a.k
+                                    Empty table
+                                    Hash
+                                        Async Filter workers: 1
+                                          filter: test_latched_counter()
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                            """);
+            assertJoinFilterEvaluationCount(query, 0, 0);
             assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM " + gatedA + " JOIN " + filteredB + " ON a.k = b.k", 0, 0);
             // the empty a empties the first LEFT join, which is the master of the second
-            assertJoinFilterEvaluationCount("SELECT a.k, b.k bk FROM " + emptyA + " LEFT JOIN c ON a.k = c.y LEFT JOIN " + filteredB + " ON a.k = b.k", 0, 0);
-            assertJoinFilterEvaluationCount("SELECT b.k, j.k jk FROM " + filteredB + " CROSS JOIN (SELECT a.k FROM " + emptyA + " JOIN c ON a.k = c.y) j", 0, 0);
+            query = "SELECT a.k, b.k bk FROM " + emptyA + " LEFT JOIN c ON a.k = c.y LEFT JOIN " + filteredB + " ON a.k = b.k";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: b.k=a.k
+                                    Hash Left Outer Join Light
+                                      condition: c.y=a.k
+                                        Empty table
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                    Hash
+                                        Async Filter workers: 1
+                                          filter: test_latched_counter()
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                            """);
+            assertJoinFilterEvaluationCount(query, 0, 0);
+            query = "SELECT b.k, j.k jk FROM " + filteredB + " CROSS JOIN (SELECT a.k FROM " + emptyA + " JOIN c ON a.k = c.y) j";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Cross Join
+                                    Async Filter workers: 1
+                                      filter: test_latched_counter()
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                                    SelectedRecord
+                                        Hash Join Light
+                                          condition: c.y=a.k
+                                            Empty table
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: c
+                            """);
+            assertJoinFilterEvaluationCount(query, 0, 0);
             // the master computes a column of, or filters, an INNER join that the empty a empties
             assertJoinFilterEvaluationCount("SELECT m.k, b.k bk FROM (SELECT a.k + 1 k FROM " + emptyA + " JOIN c ON a.k = c.y) m LEFT JOIN " + filteredB + " ON m.k = b.k", 0, 0);
             assertJoinFilterEvaluationCount("SELECT m.k, b.k bk FROM (SELECT a.k FROM " + emptyA + " JOIN c ON a.k = c.y WHERE a.x > c.y) m LEFT JOIN " + filteredB + " ON m.k = b.k", 0, 0);
