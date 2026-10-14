@@ -219,8 +219,9 @@ public class TableConverter {
                             }
                         }
                     } catch (Exception e) {
-                        // _convert stays, so the next start tries again.
-                        LOG.critical().$("table conversion failed, the table keeps its type [path=").$(path).$(", e=").$(e).I$();
+                        // _convert stays. A failure before the _meta flip keeps the table's type and the next start
+                        // tries again; after the flip the table is already of the new type and the next start skips it.
+                        LOG.critical().$("table conversion failed [path=").$(path).$(", e=").$(e).I$();
                     } finally {
                         if (txWriter != null) {
                             txWriter.close();
