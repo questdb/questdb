@@ -80,145 +80,6 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
     private static final RecordSink SLAVE_KEY_SINK = new KeySink(SlaveRecord.KEY_COLUMN);
 
     @Test
-    public void testFilteredSuccessfulLookupsAfterKeyMissDoNotCopyExtraKeys() throws Exception {
-        assertSuccessfulLookupsAfterKeyMissDoNotCopyExtraKeys(BooleanConstant.TRUE);
-    }
-
-    @Test
-    public void testProjectionSuccessfulLookupsAfterKeyMissDoNotCopyExtraKeys() throws Exception {
-        assertSuccessfulLookupsAfterKeyMissDoNotCopyExtraKeys(null);
-    }
-
-    @Test
-    public void testProjectionKeyMissLookupAcrossDifferentBounds() throws Exception {
-        assertMemoryLeak(() -> {
-            final SlaveCursor cursor = new SlaveCursor(new long[]{64, 0, 64, 64}, row -> row == 120 ? RARE_KEY : row == 70 ? 3 : COMMON_KEY);
-            try (
-                    Map map = newMap();
-                    HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
-                            configuration, 64, 1, BWD_SCAN_ABSOLUTE_THRESHOLD, BWD_SCAN_MIN_GAP,
-                            BWD_SCAN_SWITCH_FACTOR, null, new SingleColumnType(ColumnType.INT), true
-                    )
-            ) {
-                helper.of(cursor, null);
-                final IntList keys = new IntList();
-                final int[] lookupKeys = {RARE_KEY, 3, RARE_KEY, 3, -1, RARE_KEY, 3, RARE_KEY, RARE_KEY};
-                final long[] positions = {40, 60, 110, 100, 150, 119, 60, 130, 110};
-                final long[] reads = {41, 61, 70, 31, 151, 9, 0, 11, 0};
-                for (int i = 0; i < positions.length; i++) {
-                    helper.toTop();
-                    keys.clear();
-                    keys.add(lookupKeys[i]);
-                    Assert.assertArrayEquals(
-                            "reads for key " + lookupKeys[i] + " at position " + positions[i],
-                            new long[]{reads[i]},
-                            lookupWithoutReset(helper, cursor, map, new LongList(new long[]{positions[i]}), keys)
-                    );
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testProjectionKeyMissSurvivesBatchReset() throws Exception {
-        assertMemoryLeak(() -> {
-            final SlaveCursor cursor = new SlaveCursor(new long[]{10_000}, row -> COMMON_KEY);
-            final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
-            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, new SingleColumnType(ColumnType.INT), 1, null, null));
-            @SuppressWarnings("unchecked") final Class<RecordSink>[] masterSinkClasses = new Class[]{MasterKeySink.class};
-            @SuppressWarnings("unchecked") final Class<RecordSink>[] slaveSinkClasses = new Class[]{SlaveKeySink.class};
-            final long outAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            try (HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, masterSinkClasses, slaveSinkClasses, -1)) {
-                matcher.of(0, cursor, null, null, null);
-                final MasterRecord master = new MasterRecord();
-                for (int batch = 0; batch < 6; batch++) {
-                    matcher.toTop();
-                    // Rotate the first absent key. Keys answered by the exhausted prefix need no
-                    // entry until they cause a scan themselves; each key pays for history once.
-                    for (int k = 0; k < 3; k++) {
-                        master.key = switch ((batch + k) % 3) {
-                            case 0 -> -1;
-                            case 1 -> -2;
-                            default -> Integer.MIN_VALUE;
-                        };
-                        for (int offset = 0; offset < 4; offset++) {
-                            matcher.match(10_000 + offset, master, outAddress, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
-                            Assert.assertEquals(Long.MIN_VALUE, Unsafe.getLong(outAddress));
-                        }
-                    }
-                    Assert.assertEquals("history scans after batch " + batch, Math.min(batch + 1, 3) * 10_000L, cursor.keyReadCount);
-                }
-            } finally {
-                Unsafe.free(outAddress, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
-            }
-        });
-    }
-
-    @Test
-    public void testProjectionKeyMissBoundsAndReopen() throws Exception {
-        assertMemoryLeak(() -> {
-            // Empty frames and a cross-frame bound exercise encoded row IDs as well as offsets.
-            final SlaveCursor cursor = new SlaveCursor(new long[]{512, 0, 512, 512}, row -> row == 1029 ? RARE_KEY : COMMON_KEY);
-            try (
-                    Map map = newMap();
-                    HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
-                            configuration, 64, 1, BWD_SCAN_ABSOLUTE_THRESHOLD, BWD_SCAN_MIN_GAP,
-                            BWD_SCAN_SWITCH_FACTOR, null, new SingleColumnType(ColumnType.INT), true
-                    )
-            ) {
-                helper.of(cursor, null);
-                final IntList keys = new IntList();
-                keys.add(RARE_KEY);
-                final long[] positions = {1000, 1010, 500, 1005, 1025, 1030, 1028, 1029};
-                final long[] reads = {1001, 10, 0, 0, 15, 2, 3, 1};
-                for (int i = 0; i < positions.length; i++) {
-                    helper.toTop();
-                    map.clear();
-                    Assert.assertArrayEquals(
-                            "reads at position " + positions[i],
-                            new long[]{reads[i]},
-                            lookupWithoutReset(helper, cursor, map, new LongList(new long[]{positions[i]}), keys)
-                    );
-                }
-                // of() binds a fresh slave snapshot and discards the old miss bound.
-                final SlaveCursor reopened = new SlaveCursor(new long[]{1536}, row -> row == 100 ? RARE_KEY : COMMON_KEY);
-                Assert.assertArrayEquals(new long[]{1}, lookup(helper, reopened, map, new LongList(new long[]{100}), keys));
-            }
-        });
-    }
-
-    @Test
-    public void testProjectionExhaustedPrefixDoesNotAdmitEveryMissingKey() throws Exception {
-        assertMemoryLeak(() -> {
-            final SlaveCursor cursor = new SlaveCursor(new long[]{100}, row -> COMMON_KEY);
-            try (
-                    LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
-                    Map map = newMap();
-                    HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
-                            configuration, 64, 1, BWD_SCAN_ABSOLUTE_THRESHOLD, BWD_SCAN_MIN_GAP,
-                            BWD_SCAN_SWITCH_FACTOR, null, new SingleColumnType(ColumnType.INT), true
-                    )
-            ) {
-                helper.of(cursor, tracker);
-                final MasterRecord master = new MasterRecord();
-                master.key = -1;
-                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(99, master, MASTER_KEY_SINK, SLAVE_KEY_SINK, map, null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
-                final long missBytes = tracker.getUsed();
-                Assert.assertTrue(missBytes > 0);
-                tracker.setLimit(missBytes);
-                for (int key = -2; key > -10_000; key--) {
-                    master.key = key;
-                    Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(99, master, MASTER_KEY_SINK, SLAVE_KEY_SINK, map, null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
-                }
-                Assert.assertEquals(missBytes, tracker.getUsed());
-                Assert.assertEquals(100, cursor.keyReadCount);
-                helper.close();
-                Assert.assertEquals(0, tracker.getUsed());
-            }
-        });
-    }
-
-    @Test
     public void testAggregatingConstructorKeepsWindowSwitchOff() throws Exception {
         // The aggregating HORIZON JOIN factories build their helpers with the constructor that
         // takes no window switch flag. Over the fixture of
@@ -342,6 +203,11 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                 }
             }
         });
+    }
+
+    @Test
+    public void testFilteredSuccessfulLookupsAfterKeyMissDoNotCopyExtraKeys() throws Exception {
+        assertSuccessfulLookupsAfterKeyMissDoNotCopyExtraKeys(BooleanConstant.TRUE);
     }
 
     @Test
@@ -918,6 +784,140 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
     }
 
     @Test
+    public void testProjectionExhaustedPrefixDoesNotAdmitEveryMissingKey() throws Exception {
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(new long[]{100}, row -> COMMON_KEY);
+            try (
+                    LimitedMemoryTracker tracker = new LimitedMemoryTracker(Long.MAX_VALUE);
+                    Map map = newMap();
+                    HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
+                            configuration, 64, 1, BWD_SCAN_ABSOLUTE_THRESHOLD, BWD_SCAN_MIN_GAP,
+                            BWD_SCAN_SWITCH_FACTOR, null, new SingleColumnType(ColumnType.INT), true
+                    )
+            ) {
+                helper.of(cursor, tracker);
+                final MasterRecord master = new MasterRecord();
+                master.key = -1;
+                Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(99, master, MASTER_KEY_SINK, SLAVE_KEY_SINK, map, null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                final long missBytes = tracker.getUsed();
+                Assert.assertTrue(missBytes > 0);
+                tracker.setLimit(missBytes);
+                for (int key = -2; key > -10_000; key--) {
+                    master.key = key;
+                    Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(99, master, MASTER_KEY_SINK, SLAVE_KEY_SINK, map, null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                }
+                Assert.assertEquals(missBytes, tracker.getUsed());
+                Assert.assertEquals(100, cursor.keyReadCount);
+                helper.close();
+                Assert.assertEquals(0, tracker.getUsed());
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionKeyMissBoundsAndReopen() throws Exception {
+        assertMemoryLeak(() -> {
+            // Empty frames and a cross-frame bound exercise encoded row IDs as well as offsets.
+            final SlaveCursor cursor = new SlaveCursor(new long[]{512, 0, 512, 512}, row -> row == 1029 ? RARE_KEY : COMMON_KEY);
+            try (
+                    Map map = newMap();
+                    HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
+                            configuration, 64, 1, BWD_SCAN_ABSOLUTE_THRESHOLD, BWD_SCAN_MIN_GAP,
+                            BWD_SCAN_SWITCH_FACTOR, null, new SingleColumnType(ColumnType.INT), true
+                    )
+            ) {
+                helper.of(cursor, null);
+                final IntList keys = new IntList();
+                keys.add(RARE_KEY);
+                final long[] positions = {1000, 1010, 500, 1005, 1025, 1030, 1028, 1029};
+                final long[] reads = {1001, 10, 0, 0, 15, 2, 3, 1};
+                for (int i = 0; i < positions.length; i++) {
+                    helper.toTop();
+                    map.clear();
+                    Assert.assertArrayEquals(
+                            "reads at position " + positions[i],
+                            new long[]{reads[i]},
+                            lookupWithoutReset(helper, cursor, map, new LongList(new long[]{positions[i]}), keys)
+                    );
+                }
+                // of() binds a fresh slave snapshot and discards the old miss bound.
+                final SlaveCursor reopened = new SlaveCursor(new long[]{1536}, row -> row == 100 ? RARE_KEY : COMMON_KEY);
+                Assert.assertArrayEquals(new long[]{1}, lookup(helper, reopened, map, new LongList(new long[]{100}), keys));
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionKeyMissLookupAcrossDifferentBounds() throws Exception {
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(new long[]{64, 0, 64, 64}, row -> row == 120 ? RARE_KEY : row == 70 ? 3 : COMMON_KEY);
+            try (
+                    Map map = newMap();
+                    HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
+                            configuration, 64, 1, BWD_SCAN_ABSOLUTE_THRESHOLD, BWD_SCAN_MIN_GAP,
+                            BWD_SCAN_SWITCH_FACTOR, null, new SingleColumnType(ColumnType.INT), true
+                    )
+            ) {
+                helper.of(cursor, null);
+                final IntList keys = new IntList();
+                final int[] lookupKeys = {RARE_KEY, 3, RARE_KEY, 3, -1, RARE_KEY, 3, RARE_KEY, RARE_KEY};
+                final long[] positions = {40, 60, 110, 100, 150, 119, 60, 130, 110};
+                final long[] reads = {41, 61, 70, 31, 151, 9, 0, 11, 0};
+                for (int i = 0; i < positions.length; i++) {
+                    helper.toTop();
+                    keys.clear();
+                    keys.add(lookupKeys[i]);
+                    Assert.assertArrayEquals(
+                            "reads for key " + lookupKeys[i] + " at position " + positions[i],
+                            new long[]{reads[i]},
+                            lookupWithoutReset(helper, cursor, map, new LongList(new long[]{positions[i]}), keys)
+                    );
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionKeyMissSurvivesBatchReset() throws Exception {
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(new long[]{10_000}, row -> COMMON_KEY);
+            final ObjList<HorizonJoinSlaveState> slaveStates = new ObjList<>();
+            slaveStates.add(new HorizonJoinSlaveState(null, 1, 1, new SingleColumnType(ColumnType.INT), 1, null, null));
+            @SuppressWarnings("unchecked") final Class<RecordSink>[] masterSinkClasses = new Class[]{MasterKeySink.class};
+            @SuppressWarnings("unchecked") final Class<RecordSink>[] slaveSinkClasses = new Class[]{SlaveKeySink.class};
+            final long outAddress = Unsafe.malloc(Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            try (HorizonJoinMatcher matcher = new HorizonJoinMatcher(configuration, slaveStates, masterSinkClasses, slaveSinkClasses, -1)) {
+                matcher.of(0, cursor, null, null, null);
+                final MasterRecord master = new MasterRecord();
+                for (int batch = 0; batch < 6; batch++) {
+                    matcher.toTop();
+                    // Rotate the first absent key. Keys answered by the exhausted prefix need no
+                    // entry until they cause a scan themselves; each key pays for history once.
+                    for (int k = 0; k < 3; k++) {
+                        master.key = switch ((batch + k) % 3) {
+                            case 0 -> -1;
+                            case 1 -> -2;
+                            default -> Integer.MIN_VALUE;
+                        };
+                        for (int offset = 0; offset < 4; offset++) {
+                            matcher.match(10_000 + offset, master, outAddress, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER);
+                            Assert.assertEquals(Long.MIN_VALUE, Unsafe.getLong(outAddress));
+                        }
+                    }
+                    Assert.assertEquals("history scans after batch " + batch, Math.min(batch + 1, 3) * 10_000L, cursor.keyReadCount);
+                }
+            } finally {
+                Unsafe.free(outAddress, Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionSuccessfulLookupsAfterKeyMissDoNotCopyExtraKeys() throws Exception {
+        assertSuccessfulLookupsAfterKeyMissDoNotCopyExtraKeys(null);
+    }
+
+    @Test
     public void testRelativeSwitchWithoutWindowSwitch() throws Exception {
         // Lookups 1,500 rows apart, above the min gap, alternate between a common key and a key
         // that only row 0 holds. The relative check compares a position's backward scan cost with
@@ -1006,44 +1006,6 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                 final long[] projectionRows = lookup(newHelper(true), cursor, map, positions, keys);
                 for (int i = 0, n = positions.size(); i < n; i++) {
                     Assert.assertEquals("rows of lookup " + i, i < 22 ? aggregatingRows[i] : 100, projectionRows[i]);
-                }
-            }
-        });
-    }
-
-    private void assertSuccessfulLookupsAfterKeyMissDoNotCopyExtraKeys(Function filter) throws Exception {
-        assertMemoryLeak(() -> {
-            final SlaveCursor cursor = new SlaveCursor(new long[]{64}, row -> COMMON_KEY);
-            try (
-                    Map map = newMap();
-                    HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
-                            configuration, 64, 1, BWD_SCAN_ABSOLUTE_THRESHOLD, BWD_SCAN_MIN_GAP,
-                            BWD_SCAN_SWITCH_FACTOR, filter, new SingleColumnType(ColumnType.INT), true
-                    )
-            ) {
-                final MasterRecord master = new MasterRecord();
-                for (int pass = 0; pass < 3; pass++) {
-                    helper.of(cursor, null);
-                    master.key = RARE_KEY;
-                    Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(0, master, MASTER_KEY_SINK, SLAVE_KEY_SINK, map, null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
-                    master.key = COMMON_KEY;
-                    for (int row = 1; row < 64; row++) {
-                        if (row == 32) {
-                            helper.toTop();
-                        }
-                        final long reads = master.keyReadCount;
-                        Assert.assertEquals(row, helper.findKeyedAsOfMatch(row, master, MASTER_KEY_SINK, SLAVE_KEY_SINK, map, null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
-                        // A newest-row match needs the master hash and equality check. An older
-                        // miss for another key must not add key copies to each successful lookup.
-                        Assert.assertEquals("master key copies at row " + row, 2, master.keyReadCount - reads);
-                    }
-                    // Raise the bound before both of() and close()/of(). A stale bound would
-                    // add a miss-map key copy to the successful lookups in the next pass.
-                    master.key = RARE_KEY;
-                    Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(63, master, MASTER_KEY_SINK, SLAVE_KEY_SINK, map, null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
-                    if (pass == 1) {
-                        helper.close();
-                    }
                 }
             }
         });
@@ -1187,6 +1149,44 @@ public class HorizonJoinTimeFrameHelperForwardScanTest extends AbstractCairoTest
                 new SingleColumnType(ColumnType.INT),
                 new SingleColumnType(ColumnType.LONG)
         );
+    }
+
+    private void assertSuccessfulLookupsAfterKeyMissDoNotCopyExtraKeys(Function filter) throws Exception {
+        assertMemoryLeak(() -> {
+            final SlaveCursor cursor = new SlaveCursor(new long[]{64}, row -> COMMON_KEY);
+            try (
+                    Map map = newMap();
+                    HorizonJoinTimeFrameHelper helper = new HorizonJoinTimeFrameHelper(
+                            configuration, 64, 1, BWD_SCAN_ABSOLUTE_THRESHOLD, BWD_SCAN_MIN_GAP,
+                            BWD_SCAN_SWITCH_FACTOR, filter, new SingleColumnType(ColumnType.INT), true
+                    )
+            ) {
+                final MasterRecord master = new MasterRecord();
+                for (int pass = 0; pass < 3; pass++) {
+                    helper.of(cursor, null);
+                    master.key = RARE_KEY;
+                    Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(0, master, MASTER_KEY_SINK, SLAVE_KEY_SINK, map, null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                    master.key = COMMON_KEY;
+                    for (int row = 1; row < 64; row++) {
+                        if (row == 32) {
+                            helper.toTop();
+                        }
+                        final long reads = master.keyReadCount;
+                        Assert.assertEquals(row, helper.findKeyedAsOfMatch(row, master, MASTER_KEY_SINK, SLAVE_KEY_SINK, map, null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                        // A newest-row match needs the master hash and equality check. An older
+                        // miss for another key must not add key copies to each successful lookup.
+                        Assert.assertEquals("master key copies at row " + row, 2, master.keyReadCount - reads);
+                    }
+                    // Raise the bound before both of() and close()/of(). A stale bound would
+                    // add a miss-map key copy to the successful lookups in the next pass.
+                    master.key = RARE_KEY;
+                    Assert.assertEquals(Long.MIN_VALUE, helper.findKeyedAsOfMatch(63, master, MASTER_KEY_SINK, SLAVE_KEY_SINK, map, null, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                    if (pass == 1) {
+                        helper.close();
+                    }
+                }
+            }
+        });
     }
 
     /**

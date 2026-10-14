@@ -102,40 +102,6 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testProjectionKeyMissReopenAfterWalInsert() throws Exception {
-        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "true");
-        testProjectionKeyMissReopenAfterInsert();
-    }
-
-    @Test
-    public void testProjectionKeyMissReopenAfterInsert() throws Exception {
-        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1);
-        for (boolean isParallel : MODES) {
-            sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
-            assertQuery("""
-                    SELECT t.k, q.bid FROM trades t
-                    HORIZON JOIN quotes q ON (k, v) LIST (0s) AS h
-                    """)
-                    .ddl("""
-                            CREATE TABLE trades AS (
-                                SELECT x::INT k, 'missing'::VARCHAR v, 10::TIMESTAMP ts FROM long_sequence(3)
-                            ) TIMESTAMP(ts) PARTITION BY DAY
-                            """, """
-                            CREATE TABLE quotes AS (
-                                SELECT 0::INT k, 'missing'::VARCHAR v, 1::LONG bid, 8::TIMESTAMP ts FROM long_sequence(1)
-                            ) TIMESTAMP(ts) PARTITION BY DAY
-                            """)
-                    .mutateWith("INSERT INTO quotes VALUES (2, 'missing', 42, 5)")
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns("k\tbid\n1\tnull\n2\tnull\n3\tnull\n", "k\tbid\n1\tnull\n2\t42\n3\tnull\n");
-            execute("DROP TABLE trades");
-            execute("DROP TABLE quotes");
-        }
-    }
-
-    @Test
     public void testAggregateSubQueryKeepsUnselectedGroupingKeys() throws Exception {
         assertMemoryLeak(() -> {
             createTradesAndQuotes();
@@ -1204,6 +1170,40 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testProjectionKeyMissReopenAfterInsert() throws Exception {
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 1);
+        for (boolean isParallel : MODES) {
+            sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+            assertQuery("""
+                    SELECT t.k, q.bid FROM trades t
+                    HORIZON JOIN quotes q ON (k, v) LIST (0s) AS h
+                    """)
+                    .ddl("""
+                            CREATE TABLE trades AS (
+                                SELECT x::INT k, 'missing'::VARCHAR v, 10::TIMESTAMP ts FROM long_sequence(3)
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """, """
+                            CREATE TABLE quotes AS (
+                                SELECT 0::INT k, 'missing'::VARCHAR v, 1::LONG bid, 8::TIMESTAMP ts FROM long_sequence(1)
+                            ) TIMESTAMP(ts) PARTITION BY DAY
+                            """)
+                    .mutateWith("INSERT INTO quotes VALUES (2, 'missing', 42, 5)")
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("k\tbid\n1\tnull\n2\tnull\n3\tnull\n", "k\tbid\n1\tnull\n2\t42\n3\tnull\n");
+            execute("DROP TABLE trades");
+            execute("DROP TABLE quotes");
+        }
+    }
+
+    @Test
+    public void testProjectionKeyMissReopenAfterWalInsert() throws Exception {
+        setProperty(PropertyKey.CAIRO_WAL_ENABLED_DEFAULT, "true");
+        testProjectionKeyMissReopenAfterInsert();
     }
 
     @Test
