@@ -121,34 +121,40 @@ final class SortFactoryGenerator {
                 final GenericRecordMetadata metadata = GenericRecordMetadata.copyOfNew(base.getMetadata());
                 metadata.setTimestampIndex(PhysicalProperties.timestampIndex(sort));
                 final RecordCursorFactory ownedBase = base;
-                base = null;
                 switch (algorithm) {
                     case LONG_TOP_K -> {
+                        assert limit != null;
                         final long count = LogicalPlans.limitValue((ConstantExpression) limit.getLo());
+                        base = null;
                         return new LongTopKRecordCursorFactory(metadata, ownedBase, Math.abs(firstKey) - 1, (int) count, firstKey > 0);
                     }
                     case PARALLEL_FILTERED_TOP_K, PARALLEL_TOP_K -> {
                         final IllegalStateException failure = new IllegalStateException("parallel top-K generates its own input");
+                        base = null;
                         Misc.free(ownedBase, failure);
                         throw failure;
                     }
                     case LIMITED, PRESORTED_LIMITED -> {
                         final Function ownedLo = lo;
                         final Function ownedHi = hi;
+                        base = null;
                         lo = null;
                         hi = null;
                         return generateSort(metadata, ownedBase, keys, ownedLo, ownedHi,
                                 algorithm == SortPlan.Algorithm.PRESORTED_LIMITED ? Math.abs(firstKey) - 1 : -1,
                                 configuration.isSqlOrderBySortEnabled(), false);
                     }
-                    default ->
-                            base = generateSort(metadata, ownedBase, keys, null, null, -1, configuration.isSqlOrderBySortEnabled(),
-                                    algorithm == SortPlan.Algorithm.MATERIALIZED);
+                    default -> {
+                        base = null;
+                        base = generateSort(metadata, ownedBase, keys, null, null, -1, configuration.isSqlOrderBySortEnabled(),
+                                algorithm == SortPlan.Algorithm.MATERIALIZED);
+                    }
                 }
             }
             if (lo == null) {
                 return base;
             }
+            assert limit != null;
             final RecordCursorFactory limited = base;
             final Function ownedLo = lo;
             final Function ownedHi = hi;

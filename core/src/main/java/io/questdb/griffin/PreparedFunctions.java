@@ -29,8 +29,11 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.engine.functions.SymbolFunction;
 import io.questdb.griffin.engine.functions.columns.BindableColumn;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.TreeWalk;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Mutable;
 import io.questdb.std.ObjIntHashMap;
@@ -58,10 +61,28 @@ public final class PreparedFunctions implements Mutable {
      * the leaves of the operands its folds drop.
      */
     public static boolean hasOnlyReadLeaves(Entry entry) {
+        IntHashSet columnIds = null;
         for (int i = 0, n = entry.leaves.size(); i < n; i++) {
             final BindableColumn leaf = entry.leaves.getQuick(i);
-            if (leaf.isOpen() && !LogicalPlans.readsColumn(entry.expression, leaf.getColumnId())) {
-                return false;
+            if (leaf.isOpen()) {
+                if (n == 1) {
+                    return LogicalPlans.readsColumn(entry.expression, leaf.getColumnId());
+                }
+                if (columnIds == null) {
+                    final IntHashSet readColumnIds = new IntHashSet();
+                    if (entry.expression != null) {
+                        entry.expression.walk(expression -> {
+                            if (expression instanceof ColumnExpression column) {
+                                readColumnIds.add(column.getColumnId());
+                            }
+                            return TreeWalk.CONTINUE;
+                        });
+                    }
+                    columnIds = readColumnIds;
+                }
+                if (!columnIds.contains(leaf.getColumnId())) {
+                    return false;
+                }
             }
         }
         return true;

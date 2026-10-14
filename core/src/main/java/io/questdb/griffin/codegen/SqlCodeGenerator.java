@@ -177,7 +177,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     entityColumnFilter, tmpIndexes, tmpValues, tmpMasterKeys);
             this.joinGenerator = new JoinFactoryGenerator(configuration, this, filterGenerator, functionInstantiator, expressionRewriter,
                     functionResolver.getFunctionFactoryCache(), asm, entityColumnFilter, reduceTaskFactory, tmpSink, tmpIds, tmpIndexes);
-            this.latestByGenerator = new LatestByFactoryGenerator(configuration, this, asm);
+            this.latestByGenerator = new LatestByFactoryGenerator(configuration, this, asm, tmpLongs);
             this.projectionGenerator = new ProjectionFactoryGenerator(functionInstantiator);
             this.scanGenerator = new ScanFactoryGenerator(configuration, filterGenerator, latestByGenerator, functionInstantiator,
                     expressionRewriter, functionSources, reduceTaskFactory, planTables);

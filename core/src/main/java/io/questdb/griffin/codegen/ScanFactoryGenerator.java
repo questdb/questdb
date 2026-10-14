@@ -420,10 +420,6 @@ final class ScanFactoryGenerator {
                                                      IntervalExtractor scanIntervals, LatestByPlan latest, GenericRecordMetadata metadata,
                                                      GenericRecordMetadata readerMetadata, TableReader reader, IntList indexes,
                                                      IntList shifts) throws SqlException {
-        frame.latestPrefixes.clear();
-        if (scan.getWithin() != null) {
-            PlanToFactoryRules.withinPrefixes(scan.getWithin(), scan.getOutput(), frame.latestPrefixes);
-        }
         final BoundExpression residual = scan.getResidual();
         final CursorExpression keySubquery = scan.getKeySubquery();
         final ObjList<Function> keys = new ObjList<>();
@@ -461,7 +457,7 @@ final class ScanFactoryGenerator {
                     scan.getIndexRead() != ScanPlan.IndexRead.NONE, keyGetter, indexes, shifts);
         }
         return latestByGenerator.generateLatestByScan(frame, scan, frames, metadata, reader, indexes, shifts, latest.getKeyColumnIds(),
-                filter, keys, excludedKeys, frame.latestPrefixes, symbolCounts, executionContext);
+                filter, keys, excludedKeys, symbolCounts, executionContext);
     }
 
     private RecordCursorFactory generatePageFrameScan(GenerationFrame frame, ScanPlan scan, SqlExecutionContext executionContext,
@@ -877,8 +873,6 @@ final class ScanFactoryGenerator {
         } catch (Throwable th) {
             Misc.clear(frame.intervals, th);
             throw th;
-        } finally {
-            frame.latestPrefixes.clear();
         }
         return SqlCodeGenerator.clearAfter(frame.intervals, factory);
     }

@@ -533,19 +533,18 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
 
     @Test
     public void testNanosecondBoundaryCasts() throws Exception {
-        assertMemoryLeak(() -> assertQuery("""
+        assertQuery("""
                 SELECT '1677-09-21T00:12:43.145224193Z'::TIMESTAMP_NS::LONG AS lo,
                        '1677-09-21T00:12:43.145224194Z'::TIMESTAMP_NS::LONG AS adjacent,
                        '2262-04-11T23:47:16.854775807Z'::TIMESTAMP_NS::LONG AS hi,
                        '1677-09-21T00:12:43.145224193Z'::TIMESTAMP_NS IS NULL AS is_null,
                        NULL::TIMESTAMP_NS::LONG AS null_cast
                 """)
-                .noLeakCheck()
                 .expectSize()
                 .returns("""
                         lo\tadjacent\thi\tis_null\tnull_cast
                         -9223372036854775807\t-9223372036854775806\t9223372036854775807\tfalse\tnull
-                        """));
+                        """);
     }
 
     @Test

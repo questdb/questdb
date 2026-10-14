@@ -37,10 +37,10 @@ import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.PreparedFunctions;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.SubqueryCompiler;
 import io.questdb.griffin.TableFunctionSources;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryModel;
@@ -99,7 +99,7 @@ public final class BindContext implements Mutable {
      * temporaries with this context.
      */
     public BindContext(
-            SubqueryCompiler subqueryCompiler,
+            SqlCompilerImpl compiler,
             FunctionParser functionParser,
             BindScopeStack scopes,
             ObjectPool<ExpressionNode> bindingExpressions,
@@ -137,7 +137,7 @@ public final class BindContext implements Mutable {
         this.tmpOuterColumns = tmpOuterColumns;
         this.outerColumnReads = outerColumnReads;
         this.functionFactoryCache = functionParser.getFunctionFactoryCache();
-        this.functionBinder = new FunctionBinder(this, functionParser.getFunctionResolver(), subqueryCompiler, traverseAlgo, callFunctions,
+        this.functionBinder = new FunctionBinder(this, functionParser.getFunctionResolver(), compiler, traverseAlgo, callFunctions,
                 callPositions, callArguments, intervalText, parsedIntervals);
     }
 

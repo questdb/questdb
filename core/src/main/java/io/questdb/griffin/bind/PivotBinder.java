@@ -31,10 +31,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.griffin.CharacterStoreEntry;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.SubqueryCompiler;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.PivotForColumn;
 import io.questdb.griffin.model.QueryColumn;
@@ -68,12 +68,12 @@ import static io.questdb.griffin.bind.TemporalJoinBinder.rejectWindowJoinSlaveCo
 final class PivotBinder implements Mutable {
     private final AggregateBinder aggregateBinder;
     private final SqlBinder binder;
+    private final SqlCompilerImpl compiler;
     private final CairoConfiguration configuration;
     private final BindContext ctx;
     private final JoinBinder joinBinder;
     private final StringSink pivotValueSink;
     private final CharSequenceHashSet pivotValues;
-    private final SubqueryCompiler subqueryCompiler;
     private final TemporalJoinBinder temporalJoinBinder;
     private final WindowBinder windowBinder;
     private final ObjectPool<WindowJoinPivotAggregate> windowJoinPivotAggregatePool;
@@ -88,7 +88,7 @@ final class PivotBinder implements Mutable {
             JoinBinder joinBinder,
             StringSink pivotValueSink,
             CharSequenceHashSet pivotValues,
-            SubqueryCompiler subqueryCompiler
+            SqlCompilerImpl compiler
     ) {
         this.ctx = ctx;
         this.binder = binder;
@@ -100,7 +100,7 @@ final class PivotBinder implements Mutable {
         this.joinBinder = joinBinder;
         this.pivotValueSink = pivotValueSink;
         this.pivotValues = pivotValues;
-        this.subqueryCompiler = subqueryCompiler;
+        this.compiler = compiler;
     }
 
     @Override
@@ -201,7 +201,7 @@ final class PivotBinder implements Mutable {
         final ExpressionNode subquery = column.getSelectSubqueryExpr();
         final int position = subquery.position;
         // The values of the sub-query become output columns, so it is generated and run while binding.
-        try (RecordCursorFactory factory = subqueryCompiler.compileSubqueryFactory(subquery.queryModel, position, executionContext)) {
+        try (RecordCursorFactory factory = compiler.compileSubqueryFactory(subquery.queryModel, position, executionContext)) {
             final RecordMetadata metadata = factory.getMetadata();
             if (metadata.getColumnCount() != 1) {
                 throw SqlException.$(position, "PIVOT IN subquery must return exactly one column, got ").put(metadata.getColumnCount());

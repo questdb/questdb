@@ -43,13 +43,13 @@ import io.questdb.griffin.PlanNodePools;
 import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.PostOrderTreeTraversalAlgo;
 import io.questdb.griffin.PreparedFunctions;
+import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlHints;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlParserCallback;
 import io.questdb.griffin.SqlUtil;
-import io.questdb.griffin.SubqueryCompiler;
 import io.questdb.griffin.TableFunctionSources;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.griffin.model.QueryColumn;
@@ -123,7 +123,7 @@ public final class SqlBinder implements Mutable {
     public SqlBinder(
             CairoConfiguration configuration,
             FunctionParser functionParser,
-            SubqueryCompiler subqueryCompiler,
+            SqlCompilerImpl compiler,
             BindScopeStack scopes,
             ObjectPool<ExpressionNode> sqlNodePool,
             CharacterStore characterStore,
@@ -163,7 +163,7 @@ public final class SqlBinder implements Mutable {
         this.tmpOutputColumns = tmpValues;
         this.tmpIds = tmpIds;
         this.referencedColumns = new ReferencedColumns(tmpIdMap);
-        this.ctx = new BindContext(subqueryCompiler, functionParser, scopes, sqlNodePool, characterStore, planNodePools, planTables,
+        this.ctx = new BindContext(compiler, functionParser, scopes, sqlNodePool, characterStore, planNodePools, planTables,
                 preparedFunctions, functionSources, expressionRewriter, functionInstantiator, traversalAlgo, tmpArguments, tmpPositions,
                 tmpScope, tmpIndexes, tmpFunctions, tmpFunctionPositions, tmpExpressions, tmpSink, tmpLongs, outerColumnReads);
         this.windowBinder = new WindowBinder(ctx, functionParser, tmpValues, tmpIds);
@@ -176,7 +176,7 @@ public final class SqlBinder implements Mutable {
                 tmpIndexes, tmpValues, tmpMasterKeys, tmpUniqueNames);
         this.temporalJoinBinder = new TemporalJoinBinder(ctx, this, emptySchema, orderBinder, aggregateBinder, joinBinder);
         this.pivotBinder = new PivotBinder(ctx, this, configuration, windowBinder, temporalJoinBinder, aggregateBinder, joinBinder,
-                tmpSink, tmpTokens, subqueryCompiler);
+                tmpSink, tmpTokens, compiler);
         this.updateBinder = new UpdateBinder(ctx, this, windowBinder, orderBinder, updateTarget);
     }
 

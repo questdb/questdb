@@ -157,6 +157,7 @@ final class JoinFactoryGenerator {
     private final FunctionInstantiator functionInstantiator;
     private final IntHashSet intHashSet;
     private final PageFrameReduceTaskFactory reduceTaskFactory;
+    private final ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
     private final IntList slaveValueIndexes;
 
     JoinFactoryGenerator(
@@ -354,7 +355,6 @@ final class JoinFactoryGenerator {
         final ListColumnFilter listColumnFilterB = joinKeys.masterColumns;
         final ArrayColumnTypes keyTypes = joinKeys.keyTypes;
         final ArrayColumnTypes valueTypes = frame.valueTypes;
-        final ArrayColumnTypes slaveTypes = frame.slaveTypes;
         JoinRecordMetadata metadata = null;
         boolean isTransferred = false;
         try {

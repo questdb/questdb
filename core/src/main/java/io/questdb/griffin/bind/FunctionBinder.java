@@ -47,7 +47,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.StaticTypeFunction;
-import io.questdb.griffin.SubqueryCompiler;
 import io.questdb.griffin.SubsampleValidator;
 import io.questdb.griffin.TypeConstant;
 import io.questdb.griffin.engine.functions.CursorFunction;
@@ -111,6 +110,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private final ObjList<BoundExpression> callArguments;
     private final ObjList<Function> callFunctions;
     private final IntList callPositions;
+    private final SqlCompilerImpl compiler;
     private final BindContext ctx;
     private final Decimal128 decimal128 = new Decimal128();
     private final Decimal256 decimal256 = new Decimal256();
@@ -122,7 +122,6 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     private final LongList parsedIntervals;
     private final IntList positionStack = new IntList();
     private final FunctionResolver resolver;
-    private final SubqueryCompiler subqueryCompiler;
     private final PostOrderTreeTraversalAlgo traverseAlgo;
     private final ObjList<BoundExpression> unconstructed = new ObjList<>();
     private SqlExecutionContext sqlExecutionContext;
@@ -133,7 +132,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     FunctionBinder(
             BindContext ctx,
             FunctionResolver resolver,
-            SubqueryCompiler subqueryCompiler,
+            SqlCompilerImpl compiler,
             PostOrderTreeTraversalAlgo traverseAlgo,
             ObjList<Function> callFunctions,
             IntList callPositions,
@@ -143,7 +142,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
     ) {
         this.ctx = ctx;
         this.resolver = resolver;
-        this.subqueryCompiler = subqueryCompiler;
+        this.compiler = compiler;
         this.traverseAlgo = traverseAlgo;
         this.callFunctions = callFunctions;
         this.callPositions = callPositions;
@@ -765,7 +764,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
         final ExpressionNode lo = findTimestampBetweenLowerBound(node);
         if (lo != null) {
             final BindScope scope = ctx.scope();
-            scope.boundLowerBound = subqueryCompiler.bindSubquery(lo.queryModel, lo.position, executionContext);
+            scope.boundLowerBound = compiler.bindSubquery(lo.queryModel, lo.position, executionContext);
             scope.boundLowerBoundNode = lo;
         }
     }
@@ -1082,7 +1081,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
             scope.boundLowerBound = null;
             scope.boundLowerBoundNode = null;
         } else {
-            subquery = subqueryCompiler.bindSubquery(node.queryModel, node.position, executionContext);
+            subquery = compiler.bindSubquery(node.queryModel, node.position, executionContext);
         }
         scope.currentPreparation.isRebuildRequired = true;
         final CursorExpression cursor = nextCursor().of(subquery, node.position);

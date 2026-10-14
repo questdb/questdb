@@ -52,9 +52,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
     private final IntStack positionStack;
     private final FunctionResolver resolver;
     private final PostOrderTreeTraversalAlgo traverseAlgo;
+    private SqlCompilerImpl compiler;
     private RecordMetadata metadata;
     private SqlExecutionContext sqlExecutionContext;
-    private SubqueryCompiler subqueryCompiler;
 
     public FunctionParser(CairoConfiguration configuration, FunctionFactoryCache functionFactoryCache) {
         this(configuration, new FunctionResolver(configuration, functionFactoryCache));
@@ -236,10 +236,10 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
 
     private Function createCursorFunction(ExpressionNode node) throws SqlException {
         assert node.queryModel != null;
-        if (subqueryCompiler == null) {
+        if (compiler == null) {
             throw SqlException.$(node.position, "sub-query is not supported in this context");
         }
-        return new CursorFunction(subqueryCompiler.compileSubqueryFactory(node.queryModel, node.position, sqlExecutionContext));
+        return new CursorFunction(compiler.compileSubqueryFactory(node.queryModel, node.position, sqlExecutionContext));
     }
 
     private Function createFunction(
@@ -262,9 +262,9 @@ public class FunctionParser implements PostOrderTreeTraversalAlgo.Visitor, Mutab
      * Installs the compiler that compiles the sub-queries met outside function binding while it binds a statement,
      * e.g. in table-function arguments, and returns the previous one for the caller to restore.
      */
-    SubqueryCompiler swapSubqueryCompiler(SubqueryCompiler compiler) {
-        final SubqueryCompiler previous = subqueryCompiler;
-        subqueryCompiler = compiler;
+    SqlCompilerImpl swapCompiler(SqlCompilerImpl compiler) {
+        final SqlCompilerImpl previous = this.compiler;
+        this.compiler = compiler;
         return previous;
     }
 

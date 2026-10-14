@@ -75,15 +75,18 @@ final class LatestByFactoryGenerator {
     private final BytecodeAssembler asm;
     private final SqlCodeGenerator codeGenerator;
     private final CairoConfiguration configuration;
+    private final LongList tmpLongs;
 
     LatestByFactoryGenerator(
             CairoConfiguration configuration,
             SqlCodeGenerator codeGenerator,
-            BytecodeAssembler asm
+            BytecodeAssembler asm,
+            LongList tmpLongs
     ) {
         this.configuration = configuration;
         this.codeGenerator = codeGenerator;
         this.asm = asm;
+        this.tmpLongs = tmpLongs;
     }
 
     /**
@@ -356,11 +359,14 @@ final class LatestByFactoryGenerator {
             @Nullable Function filter,
             ObjList<Function> keys,
             ObjList<Function> excludedKeys,
-            LongList geoHashPrefixes,
             @Nullable IntList symbolCounts,
             SqlExecutionContext executionContext
     ) {
         try {
+            tmpLongs.clear();
+            if (scan.getWithin() != null) {
+                PlanToFactoryRules.withinPrefixes(scan.getWithin(), scan.getOutput(), tmpLongs);
+            }
             final ArrayColumnTypes keyTypes = frame.keyTypes;
             final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
             keyTypes.clear();
@@ -388,7 +394,7 @@ final class LatestByFactoryGenerator {
                             filter, columnIndexes, columnSizeShifts, scan.getIndexRead(), scan.hasNullableKey(), isBackupSuppressed);
             case LATEST_BY_ALL_INDEXED ->
                     new LatestByAllIndexedRecordCursorFactory(executionContext.getCairoEngine(), configuration,
-                            queryMetadata, frames, keyIndex, columnIndexes, columnSizeShifts, geoHashPrefixes);
+                            queryMetadata, frames, keyIndex, columnIndexes, columnSizeShifts, tmpLongs);
             case LATEST_BY_STATIC_SYMBOL -> new LatestByDeferredListValuesFilteredRecordCursorFactory(
                     configuration, queryMetadata, frames, keyIndex, filter, columnIndexes, columnSizeShifts);
             case LATEST_BY_SYMBOLS, LATEST_BY_ALL ->

@@ -72,7 +72,6 @@ final class GenerationFrame implements Closeable, Mutable {
     final IntervalExtractor intervals;
     final JoinKeyLayout joinKeys;
     final ArrayColumnTypes keyTypes = new ArrayColumnTypes();
-    final LongList latestPrefixes = new LongList();
     final ListColumnFilter listColumnFilterA = new ListColumnFilter();
     final ListColumnFilter listColumnFilterB = new ListColumnFilter();
     final GenericRecordMetadata projectionScopeMetadata = new GenericRecordMetadata();
@@ -83,7 +82,6 @@ final class GenerationFrame implements Closeable, Mutable {
     final IntList sharedConsumerCounts = new IntList();
     final ObjList<RecordCursorFactory> sharedFactories = new ObjList<>();
     final ObjList<JoinInput> sharedSources = new ObjList<>();
-    final ArrayColumnTypes slaveTypes = new ArrayColumnTypes();
     final BitSet symbolAsString = new BitSet();
     final ArrayColumnTypes valueTypes = new ArrayColumnTypes();
     final IntList windowFunctionPositions = new IntList();
@@ -130,10 +128,8 @@ final class GenerationFrame implements Closeable, Mutable {
         functions.clear();
         symbolAsString.clear();
         joinKeys.clear();
-        slaveTypes.clear();
         limitHi = null;
         limitLo = null;
-        latestPrefixes.clear();
         expressions.clear();
         schema.clear();
         columnReferenceCounts.clear();

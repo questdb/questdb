@@ -102,7 +102,7 @@ public final class FunctionInstantiator implements Mutable {
     private static final ExpressionVisitor UNRELOCATABLE_CALLS = expression -> expression instanceof FunctionExpression call
             && !call.getOverload().isRelocatableScalar() && !call.getOverload().isArrayColumnLayoutSensitive() ? TreeWalk.STOP : TreeWalk.CONTINUE;
     private static final String NULL_PROBE_COLUMN = "null_probe";
-    private final SubqueryCompiler compiler;
+    private final SqlCompilerImpl compiler;
     private final ObjectPool<InstantiationArguments> instantiations;
     private final ObjList<Function> nullProbeConstants = new ObjList<>(1);
     private final GenericRecordMetadata nullProbeMetadata = new GenericRecordMetadata();
@@ -123,7 +123,7 @@ public final class FunctionInstantiator implements Mutable {
      * Instantiates for the compiler's binder, adopting from the statement's preparations; a query generates at the
      * nesting depth the scope stack enters. The NULL probe schema is borrowed for single calls only.
      */
-    public FunctionInstantiator(SubqueryCompiler compiler, FunctionResolver resolver, PreparedFunctions prepared, OutputSchema nullProbeSchema,
+    public FunctionInstantiator(SqlCompilerImpl compiler, FunctionResolver resolver, PreparedFunctions prepared, OutputSchema nullProbeSchema,
                                 int maxRetainedInstantiations) {
         this.compiler = compiler;
         this.instantiations = new ObjectPool<>(InstantiationArguments::new, 8, maxRetainedInstantiations);

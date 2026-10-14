@@ -27,17 +27,17 @@ package io.questdb.griffin.optimiser;
 import io.questdb.ParanoiaState;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.griffin.BoundExpressionRewriter;
+import io.questdb.griffin.CallBinder;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.FunctionFactoryCache;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.OuterColumnReads;
 import io.questdb.griffin.PlanNodePools;
+import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.CallBinder;
 import io.questdb.griffin.TableFunctionSources;
-import io.questdb.griffin.PlanTables;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
@@ -138,23 +138,20 @@ public final class SqlOptimiser implements Mutable {
         decorrelation = new Decorrelation(context, planNodes, characterStore, tmpConjuncts, tmpIndexes, tmpValues,
                 tmpKeys, tmpSlaveKeys, tmpOrder, tmpPending, tmpPairs, tmpPlans, tmpSchema, tmpSteps, substitution, tmpColumnMap, takenNames, outerColumnReads);
         aggregateInputOrder = new AggregateInputOrder();
-        final FilterPushdown filterPushdown = new FilterPushdown(context, aggregateInputOrder, tmpExpressions, filters, columns, tmpProjection,
-                tmpColumn, tmpSlaveKeys, tmpIndexes, tmpValues, tmpConjuncts);
-        final ColumnPruning columnPruning = new ColumnPruning(context, aggregateInputOrder, tmpExpressions, columns, projects, tmpIndexes, tmpValues,
-                columnIds, tmpPlans, tmpPlanPath, tmpSchema);
         final ProjectionMerge projectionMerge = new ProjectionMerge(context, columnIds);
-        final AggregateRewrite aggregateRewrite = new AggregateRewrite(context, projectionMerge, tmpProjection, tmpColumn, tmpKeys);
-        joinOrdering = new JoinOrdering(context, filters, new JoinOrderSolver(planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys, tmpKeys,
-                tmpOrder, tmpPending, readyInputs, joinChildren, joinChildrenPool, joinTypes, stagedDependencies), tmpConjuncts);
         // The endpoint LIMIT comes first so the later passes keep filters below it.
         passes.add(new TimestampEndpointLimit(constants, limits, sorts));
-        passes.add(aggregateRewrite);
-        passes.add(filterPushdown);
+        passes.add(new AggregateRewrite(context, projectionMerge, tmpProjection, tmpColumn, tmpKeys));
+        joinOrdering = new JoinOrdering(context, filters, new JoinOrderSolver(planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys, tmpKeys,
+                tmpOrder, tmpPending, readyInputs, joinChildren, joinChildrenPool, joinTypes, stagedDependencies), tmpConjuncts);
+        passes.add(new FilterPushdown(context, aggregateInputOrder, tmpExpressions, filters, columns, tmpProjection,
+                tmpColumn, tmpSlaveKeys, tmpIndexes, tmpValues, tmpConjuncts));
         // Window calls merge before pruning drops the columns a merge leaves unread.
         windowCallMerge = new WindowCallMerge(context, columns, tmpProjection, tmpPlans, tmpPlanPath, tmpIndexes, substitution, tmpOrder,
                 tmpPairs, tmpColumnMap);
         passes.add(windowCallMerge);
-        passes.add(columnPruning);
+        passes.add(new ColumnPruning(context, aggregateInputOrder, tmpExpressions, columns, projects, tmpIndexes, tmpValues,
+                columnIds, tmpPlans, tmpPlanPath, tmpSchema));
         passes.add(projectionMerge);
         passes.add(new NegativeLimitReversal(constants, sorts, tmpIndexes, tmpPlans));
         passes.add(new OrderPlanning(functionFactoryCache, sorts, columnIds));
@@ -182,6 +179,11 @@ public final class SqlOptimiser implements Mutable {
         joinOrdering.clear();
         decorrelation.clear();
         Misc.clearObjList(passes);
+    }
+
+    @TestOnly
+    public long getWindowCallComparisonCount() {
+        return windowCallMerge.getCallComparisonCount();
     }
 
     /**
@@ -221,11 +223,6 @@ public final class SqlOptimiser implements Mutable {
             LogicalPlans.deriveColumnReferenceCounts(plan, columnIds);
         }
         return plan;
-    }
-
-    @TestOnly
-    public long getWindowCallComparisonCount() {
-        return windowCallMerge.getCallComparisonCount();
     }
 
     /**

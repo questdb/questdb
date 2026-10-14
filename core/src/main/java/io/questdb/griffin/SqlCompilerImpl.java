@@ -239,22 +239,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final BindScopeStack scopes = new BindScopeStack();
     private final ObjectPool<ExpressionNode> sqlNodePool;
     private final ObjList<Subquery> subqueries = new ObjList<>();
-    private final SubqueryCompiler subqueryCompiler = new SubqueryCompiler() {
-        @Override
-        public Subquery bindSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
-            return SqlCompilerImpl.this.bindSubquery(model, position, executionContext);
-        }
-
-        @Override
-        public RecordCursorFactory compileSubqueryFactory(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
-            return SqlCompilerImpl.this.compileSubqueryFactory(model, position, executionContext);
-        }
-
-        @Override
-        public RecordCursorFactory generateSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException {
-            return SqlCompilerImpl.this.generateSubquery(subquery, executionContext);
-        }
-    };
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final ObjList<BoundExpression> tmpArguments = new ObjList<>(2);
@@ -461,6 +445,32 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
     }
 
+    /**
+     * Binds a sub-query of the query binding now with the scope one depth deeper and returns it. The statement
+     * optimises it, in the order binding finished, before the statement itself.
+     */
+    public Subquery bindSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
+        final BindScope scope = scopes.push();
+        final LogicalPlan subqueryRoot;
+        final boolean isWindowContextPushed = !executionContext.getWindowContext().isEmpty();
+        if (isWindowContextPushed) {
+            executionContext.pushWindowContext();
+        }
+        try {
+            subqueryRoot = binder.bind(model, binder.getParserCallback(), executionContext);
+        } finally {
+            scopes.pop();
+            if (isWindowContextPushed) {
+                executionContext.popWindowContext();
+            }
+        }
+        nonDeterministicCalls.rejectExternalSource(subqueryRoot, position, executionContext);
+        final Subquery subquery = planNodePools.subqueries.next().of(subqueryRoot, scopes.depth() + 1,
+                LogicalPlans.isResultStable(subqueryRoot, executionContext.isParallelGroupByEnabled()));
+        subqueries.add(subquery);
+        return subquery;
+    }
+
     @Override
     public void clear() {
         remainingRecompileAttempts = maxRecompileAttempts;
@@ -591,6 +601,22 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
         }
+    }
+
+    /**
+     * Binds a sub-query whose rows binding consumes, optimises and authorizes it after the sub-queries it contains,
+     * and generates it; the caller owns the factory.
+     */
+    public RecordCursorFactory compileSubqueryFactory(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
+        final int first = subqueries.size();
+        final Subquery subquery = bindSubquery(model, position, executionContext);
+        for (int i = first, n = subqueries.size(); i < n; i++) {
+            optimiseSubquery(subqueries.getQuick(i), executionContext);
+        }
+        subqueries.setPos(first);
+        nonDeterministicCalls.reject(subquery.getRoot(), executionContext);
+        optimiser.planAccessPaths(subquery.getRoot(), codeGenerator.getGenerationDepth(), false, executionContext);
+        return generateSelectOneShot(model, subquery, executionContext, false);
     }
 
     /**
@@ -2423,14 +2449,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         scopes.clear();
         clearExpressionStages();
         binder.clear();
-        final SubqueryCompiler previous = functionParser.swapSubqueryCompiler(subqueryCompiler);
+        final SqlCompilerImpl previous = functionParser.swapCompiler(this);
         try {
             root = binder.bind(model, this, executionContext);
         } catch (SqlException e) {
             nonDeterministicCalls.rejectCreated(functionResolver, executionContext);
             throw e;
         } finally {
-            functionParser.swapSubqueryCompiler(previous);
+            functionParser.swapCompiler(previous);
         }
     }
 
@@ -5958,7 +5984,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private SqlBinder newBinder(FunctionParser parser, BindScopeStack scopes, BoundExpressionRewriter rewriter, FunctionInstantiator instantiator) {
-        return new SqlBinder(configuration, parser, subqueryCompiler, scopes, sqlNodePool, characterStore, planNodePools, planTables,
+        return new SqlBinder(configuration, parser, this, scopes, sqlNodePool, characterStore, planNodePools, planTables,
                 preparedFunctions, functionSources, rewriter, instantiator, joinGraphBuilder, updateTarget, emptySchema, traversalAlgo,
                 tmpArguments, tmpPositions, tmpScope, tmpFunctions, tmpFunctionPositions, tmpExpressions, tmpSink, tmpLongs, outerColumnReads,
                 tmpIds, tmpIndexes, tmpValues, tmpMasterKeys, tmpSlaveKeys, tmpNodes, tmpTokens, tmpIdMap, tmpUniqueNames);
@@ -5971,7 +5997,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private FunctionInstantiator newFunctionInstantiator(FunctionParser parser) {
-        return new FunctionInstantiator(subqueryCompiler, parser.getFunctionResolver(), preparedFunctions, tmpScope,
+        return new FunctionInstantiator(this, parser.getFunctionResolver(), preparedFunctions, tmpScope,
                 planNodePools.maxRetainedExpressions);
     }
 
@@ -6295,32 +6321,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     protected void authorizeColumnAccess(SqlExecutionContext executionContext, LogicalPlan root) throws SqlException {
     }
 
-    /**
-     * Binds a sub-query of the query binding now with the scope one depth deeper and returns it. The statement
-     * optimises it, in the order binding finished, before the statement itself.
-     */
-    Subquery bindSubquery(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
-        final BindScope scope = scopes.push();
-        final LogicalPlan subqueryRoot;
-        final boolean isWindowContextPushed = !executionContext.getWindowContext().isEmpty();
-        if (isWindowContextPushed) {
-            executionContext.pushWindowContext();
-        }
-        try {
-            subqueryRoot = binder.bind(model, binder.getParserCallback(), executionContext);
-        } finally {
-            scopes.pop();
-            if (isWindowContextPushed) {
-                executionContext.popWindowContext();
-            }
-        }
-        nonDeterministicCalls.rejectExternalSource(subqueryRoot, position, executionContext);
-        final Subquery subquery = planNodePools.subqueries.next().of(subqueryRoot, scopes.depth() + 1,
-                LogicalPlans.isResultStable(subqueryRoot, executionContext.isParallelGroupByEnabled()));
-        subqueries.add(subquery);
-        return subquery;
-    }
-
     protected void compileAlterExt(SqlExecutionContext executionContext, CharSequence tok) throws SqlException {
         if (tok == null) {
             throw SqlException.position(lexer.getPosition()).put("'table' or 'materialized' or 'live' or 'view' expected");
@@ -6460,22 +6460,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         throw SqlException.position(position).put("'table' or 'view' or 'materialized view' or 'all' expected");
     }
 
-    /**
-     * Binds a sub-query whose rows binding consumes, optimises and authorizes it after the sub-queries it contains,
-     * and generates it; the caller owns the factory.
-     */
-    RecordCursorFactory compileSubqueryFactory(QueryModel model, int position, SqlExecutionContext executionContext) throws SqlException {
-        final int first = subqueries.size();
-        final Subquery subquery = bindSubquery(model, position, executionContext);
-        for (int i = first, n = subqueries.size(); i < n; i++) {
-            optimiseSubquery(subqueries.getQuick(i), executionContext);
-        }
-        subqueries.setPos(first);
-        nonDeterministicCalls.reject(subquery.getRoot(), executionContext);
-        optimiser.planAccessPaths(subquery.getRoot(), codeGenerator.getGenerationDepth(), false, executionContext);
-        return generateSelectOneShot(model, subquery, executionContext, false);
-    }
-
     protected AlterOperationBuilder createAlterOperationBuilder() {
         return new AlterOperationBuilder();
     }
@@ -6485,7 +6469,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
      * a SELECT, of the SELECT of an INSERT, CREATE TABLE, CREATE VIEW or CREATE MATERIALIZED VIEW, of an EXPLAIN, or
      * of the rows an UPDATE selects. Otherwise it is the plan of {@code subquery}, whose rows binding consumes, such as
      * a {@code PIVOT ... FOR ... IN (SELECT ...)} sub-query or one in the arguments of a table function, see
-     * {@link #compileSubqueryFactory}. The sub-queries that {@link SubqueryCompiler#generateSubquery} generates for
+     * {@link #compileSubqueryFactory}. The sub-queries that {@link #generateSubquery} generates for
      * {@code FunctionInstantiator} and {@code ScanFactoryGenerator} are parts of an enclosing plan and do not pass
      * through here.
      */
