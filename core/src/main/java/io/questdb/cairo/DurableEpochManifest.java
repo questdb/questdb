@@ -599,6 +599,11 @@ public final class DurableEpochManifest {
     ) {
         final FilesFacade ff = configuration.getFilesFacade();
         try {
+            // Where syncfs is filesystem-wide, the walk only looks for links: a full one first asks a single
+            // listing of the table directory whether any entry is, or may be, a link.
+            if (!isFileByFile && (txnDirty == null || cvDirty == null) && !mayHoldSoftLink(ff, path, rootLen)) {
+                return;
+            }
             for (int i = 0, n = txReader.getPartitionCount(); i < n; i++) {
                 final long timestamp = txReader.getPartitionTimestampByIndex(i);
                 if (txnDirty != null && cvDirty != null && txnDirty.excludes(timestamp) && cvDirty.excludes(timestamp)) {
@@ -761,6 +766,30 @@ public final class DurableEpochManifest {
             }
         } finally {
             tablePath.trimTo(rootLen);
+        }
+    }
+
+    // False only when one listing of the table directory completes and shows no entry that is a link or whose type
+    // the filesystem does not report. It only reads the listing: it creates and writes nothing.
+    private static boolean mayHoldSoftLink(FilesFacade ff, Path path, int rootLen) {
+        final long findPtr = ff.findFirst(path.trimTo(rootLen).$());
+        if (findPtr <= 0) {
+            return true;
+        }
+        try {
+            int findResult;
+            do {
+                final int type = ff.findType(findPtr);
+                if ((type == Files.DT_LNK || type == Files.DT_UNKNOWN) && Files.notDots(ff.findName(findPtr))) {
+                    return true;
+                }
+                findResult = ff.findNext(findPtr);
+            } while (findResult > 0);
+            // An incomplete listing proves nothing.
+            return findResult < 0;
+        } finally {
+            ff.findClose(findPtr);
+            path.trimTo(rootLen);
         }
     }
 

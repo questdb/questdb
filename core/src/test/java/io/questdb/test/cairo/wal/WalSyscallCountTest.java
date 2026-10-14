@@ -33,6 +33,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoConfigurationWrapper;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
@@ -91,6 +92,8 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     // A WAL column file: .d, plus .i for var-size columns.
     private static final Pattern COLUMN_FILE = Pattern.compile("[a-z]+\\.[di]");
     private static final Properties COUNT_PROPERTIES = new Properties();
+    // A bitmap index value file: of a symbol dictionary, or of an indexed column in a partition.
+    private static final Pattern INDEX_VALUE_FILE = Pattern.compile("[a-z0-9_]+\\.v(\\.[0-9]+)?");
     private static final int MEASURED = 20;
     // The files base writes in a WAL segment: the event file and its index, the segment _meta and the column
     // files (.d, plus .i for var-size columns).
@@ -282,6 +285,48 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * A save point that covers every partition, the first after a writer opens and the one after a rollback, learns
+     * from one listing of the table directory that no partition is a soft link, instead of probing each partition.
+     */
+    @Test
+    public void testFullSavePointListsTableDirInsteadOfProbingPartitions() throws Exception {
+        Assume.assumeTrue("only ADAPTIVE takes save points", "adaptive".equals(commitMode));
+        Assume.assumeFalse("the sequencer log format does not change the partition walk", isV2);
+        final CountingFacade ff = new CountingFacade();
+        Assume.assumeTrue("where syncfs flushes one file, each partition is flushed file by file", ff.isSyncfsFileSystemWide());
+        setCountProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        setCountProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x SELECT CAST(x * 86_400_000_000L AS TIMESTAMP), x FROM long_sequence(30)");
+            drainWalQueue();
+            engine.releaseAllWriters();
+            final Pattern anyFile = Pattern.compile(".*");
+            final Pattern tableDir = Pattern.compile(Pattern.quote(engine.verifyTableName("x").getDirName()));
+            try (TableWriter writer = getWriter("x")) {
+                Assert.assertEquals(30, writer.getPartitionCount());
+                ff.start(true);
+                writer.advanceDurableEpoch(1L);
+                ff.stop();
+                final String afterOpen = "isSoftLink=" + ff.probes("isSoftLink", anyFile) + " findFirst=" + ff.probes("findFirst", tableDir);
+                final TableWriter.Row row = writer.newRow(31 * 86_400_000_000L);
+                row.putLong(1, 31);
+                row.append();
+                writer.rollback();
+                ff.start(true);
+                writer.advanceDurableEpoch(2L);
+                ff.stop();
+                final String afterRollback = "isSoftLink=" + ff.probes("isSoftLink", anyFile) + " findFirst=" + ff.probes("findFirst", tableDir);
+                Assert.assertEquals(
+                        "the first save point after the writer opens; the one after a rollback",
+                        "isSoftLink=0 findFirst=1; isSoftLink=0 findFirst=1",
+                        afterOpen + "; " + afterRollback
+                );
+            }
+        });
+    }
+
     @Test
     public void testOnlyBaseFiles() throws Exception {
         setCountProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
@@ -385,17 +430,62 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             Assert.assertEquals(1000, cfg.getWalApplyTableTimeQuota());
             Assert.assertEquals(200, cfg.getWalApplyLookAheadTransactionCount());
             Assert.assertEquals(-1, cfg.getWalMaxLagTxnCount());
-            Assert.assertEquals(300000, cfg.getIdleCheckInterval());
-            Assert.assertEquals(120000, cfg.getInactiveReaderTTL());
-            Assert.assertEquals(600000, cfg.getInactiveWriterTTL());
-            Assert.assertEquals(120000, cfg.getInactiveWalWriterTTL());
+            Assert.assertEquals(300_000, cfg.getIdleCheckInterval());
+            Assert.assertEquals(120_000, cfg.getInactiveReaderTTL());
+            Assert.assertEquals(600_000, cfg.getInactiveWriterTTL());
+            Assert.assertEquals(120_000, cfg.getInactiveWalWriterTTL());
             Assert.assertEquals(1024, cfg.getMetadataPoolCapacity());
             Assert.assertEquals(1, cfg.getPartitionPurgeListCapacity());
-            Assert.assertEquals(50000, cfg.getAdaptiveCommitGroupWindowUs());
-            Assert.assertEquals(5000000, cfg.getAdaptiveEpochMaxRows());
+            Assert.assertEquals(50_000, cfg.getAdaptiveCommitGroupWindowUs());
+            Assert.assertEquals(5_000_000, cfg.getAdaptiveEpochMaxRows());
             Assert.assertEquals(0, cfg.getDefaultSeqPartTxnCount());
-            Assert.assertEquals(60000, cfg.getAdaptiveEpochIntervalMs());
-            Assert.assertEquals(200000, cfg.getWalSegmentRolloverRowCount());
+            Assert.assertEquals(60_000, cfg.getAdaptiveEpochIntervalMs());
+            Assert.assertEquals(200_000, cfg.getWalSegmentRolloverRowCount());
+        });
+    }
+
+    /**
+     * A reader refreshed after a commit re-reads each symbol dictionary on the files it has open, so it checks no
+     * index value file's length; only an open does. A query that reads through the index of a partition that grew
+     * re-opens that partition's index reader, which checks its value file once.
+     */
+    @Test
+    public void testReaderRefreshChecksIndexValueFilesOnlyAtOpen() throws Exception {
+        Assume.assumeFalse("the sequencer log format does not change the reader", isV2);
+        setCountProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        final CountingFacade ff = new CountingFacade();
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, s1 SYMBOL INDEX, s2 SYMBOL, s3 SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO x VALUES (1_000_000, 'a', 'b', 'c', 0)");
+            drainWalQueue();
+            engine.releaseAllReaders();
+            final TableToken token = engine.verifyTableName("x");
+            final String query = "SELECT count() FROM x WHERE s1 = 'a'";
+            ff.start(true);
+            try (TableReader reader = engine.getReader(token)) {
+                Assert.assertEquals(1, reader.size());
+            }
+            ff.stop();
+            Assert.assertEquals("an open checks each symbol dictionary", 3, ff.probes("lengthByName", INDEX_VALUE_FILE));
+            // Opens the partition and its s1 index in the pooled reader.
+            printSql(query);
+            for (int i = 1; i <= 3; i++) {
+                execute("INSERT INTO x VALUES (" + (i + 1) * 1_000_000L + ", 'a', 'b', 'c', " + i + ")");
+                drainWalQueue();
+                ff.start(true);
+                try (TableReader reader = engine.getReader(token)) {
+                    Assert.assertEquals(i + 1, reader.size());
+                }
+                ff.stop();
+                Assert.assertEquals("a refresh checks no index value file", 0, ff.probes("lengthByName", INDEX_VALUE_FILE));
+            }
+            execute("INSERT INTO x VALUES (5_000_000, 'a', 'b', 'c', 4)");
+            drainWalQueue();
+            ff.start(true);
+            printSql(query);
+            ff.stop();
+            Assert.assertEquals("count()\n5\n", sink.toString());
+            Assert.assertEquals("a query re-opens the grown partition's index", 1, ff.probes("lengthByName", INDEX_VALUE_FILE));
         });
     }
 
@@ -591,6 +681,8 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         private final Map<Long, String> fdNames = new HashMap<>();
         private final Map<String, int[]> opened = new TreeMap<>();
         private final Map<String, int[]> pageReleases = new TreeMap<>();
+        // Path calls on the measuring thread since start(), by call and file name; the summaries leave them out.
+        private final Map<String, int[]> probes = new TreeMap<>();
         private final List<String> summaries = new ArrayList<>();
         private final List<String> syncLog = new ArrayList<>();
         private boolean isCountingPageReleases;
@@ -639,6 +731,12 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         }
 
         @Override
+        public long findFirst(LPSZ path) {
+            countProbe("findFirst", path);
+            return super.findFirst(path);
+        }
+
+        @Override
         public void fsync(long fd) {
             count("fsync");
             logSync("fsync", fd);
@@ -661,6 +759,12 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         }
 
         @Override
+        public boolean isSoftLink(LPSZ softLink) {
+            countProbe("isSoftLink", softLink);
+            return super.isSoftLink(softLink);
+        }
+
+        @Override
         public long length(long fd) {
             count("length");
             return super.length(fd);
@@ -669,6 +773,7 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         @Override
         public long length(LPSZ name) {
             count("lengthByName");
+            countProbe("lengthByName", name);
             return super.length(name);
         }
 
@@ -871,6 +976,12 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             }
         }
 
+        private void countProbe(String call, LPSZ path) {
+            if (Thread.currentThread() == measured) {
+                increment(probes, call + ' ' + fileName(path));
+            }
+        }
+
         private void logSync(String call, long fd) {
             if (Thread.currentThread() == syncLogged) {
                 syncLog.add(call + ' ' + fdNames.get(fd));
@@ -884,9 +995,21 @@ public class WalSyscallCountTest extends AbstractCairoTest {
             return fd;
         }
 
+        private int probes(String call, Pattern file) {
+            int n = 0;
+            for (Map.Entry<String, int[]> e : probes.entrySet()) {
+                final String key = e.getKey();
+                if (key.startsWith(call + ' ') && file.matcher(key.substring(call.length() + 1)).matches()) {
+                    n += e.getValue()[0];
+                }
+            }
+            return n;
+        }
+
         private void start(boolean isArmed) {
             assertConfiguration();
             stop();
+            probes.clear();
             measured = isArmed ? Thread.currentThread() : null;
         }
 

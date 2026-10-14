@@ -280,16 +280,16 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
             Assert.assertEquals(1000, cfg.getWalApplyTableTimeQuota());
             Assert.assertEquals(200, cfg.getWalApplyLookAheadTransactionCount());
             Assert.assertEquals(-1, cfg.getWalMaxLagTxnCount());
-            Assert.assertEquals(300000, cfg.getIdleCheckInterval());
-            Assert.assertEquals(120000, cfg.getInactiveReaderTTL());
-            Assert.assertEquals(600000, cfg.getInactiveWriterTTL());
-            Assert.assertEquals(120000, cfg.getInactiveWalWriterTTL());
+            Assert.assertEquals(300_000, cfg.getIdleCheckInterval());
+            Assert.assertEquals(120_000, cfg.getInactiveReaderTTL());
+            Assert.assertEquals(600_000, cfg.getInactiveWriterTTL());
+            Assert.assertEquals(120_000, cfg.getInactiveWalWriterTTL());
             Assert.assertEquals(1024, cfg.getMetadataPoolCapacity());
             Assert.assertEquals(1, cfg.getPartitionPurgeListCapacity());
-            Assert.assertEquals(50000, cfg.getAdaptiveCommitGroupWindowUs());
-            Assert.assertEquals(5000000, cfg.getAdaptiveEpochMaxRows());
+            Assert.assertEquals(50_000, cfg.getAdaptiveCommitGroupWindowUs());
+            Assert.assertEquals(5_000_000, cfg.getAdaptiveEpochMaxRows());
             Assert.assertEquals(commitMode, CommitMode.toString(cfg.getCommitMode()));
-            Assert.assertEquals(3600000, cfg.getAdaptiveEpochIntervalMs());
+            Assert.assertEquals(3_600_000, cfg.getAdaptiveEpochIntervalMs());
         });
     }
 
@@ -757,7 +757,7 @@ public class DirectoryBarrierCountTest extends AbstractCairoTest {
             Assert.assertSame(this, cfg.getFilesFacade());
             Assert.assertEquals(30, cfg.getWalMaxSegmentFileDescriptorsCache());
             Assert.assertEquals(COUNT_PROPERTIES.getProperty(PropertyKey.CAIRO_COMMIT_MODE.getPropertyPath()), CommitMode.toString(cfg.getCommitMode()));
-            Assert.assertEquals(3600000, cfg.getAdaptiveEpochIntervalMs());
+            Assert.assertEquals(3_600_000, cfg.getAdaptiveEpochIntervalMs());
             counts.clear();
             renameCounts.clear();
             emptyCount = 0;
