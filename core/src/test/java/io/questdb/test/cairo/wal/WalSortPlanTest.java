@@ -30,10 +30,15 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.log.LogFactory;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
+import io.questdb.std.ObjList;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.Utf8String;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.LogCapture;
 import org.junit.After;
+import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
@@ -63,6 +68,33 @@ public class WalSortPlanTest extends AbstractCairoTest {
         } finally {
             LogFactory.disableGuaranteedLogging(TableWriter.class);
         }
+    }
+
+    @Test
+    public void testLargeBlockReleasesSortPlanMemory() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, i int) timestamp(ts) partition by day wal with maxUncommittedRows=400_000");
+            // sorted commits that do not overlap, the plan copies all of them
+            assertBlockApplyReleasesMemory(5_000, 64, 2);
+            capture.assertLoggedRE("sorted by plan \\[table=.*x.*, rows=320000, copiedRows=320000");
+        });
+    }
+
+    @Test
+    public void testLargeBlockReleasesTxnListMemory() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, i int) timestamp(ts) partition by day wal with maxUncommittedRows=100_000");
+            assertBlockApplyReleasesMemory(50_000, 1, 1);
+        });
+    }
+
+    @Test
+    public void testLargeDedupBlockReleasesTxnListMemory() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("create table x (ts timestamp, i int) timestamp(ts) partition by day wal with maxUncommittedRows=100_000 dedup upsert keys(ts)");
+            assertBlockApplyReleasesMemory(50_000, 1, 1);
+            capture.assertNotLogged("sorted by plan");
+        });
     }
 
     @Test
@@ -146,6 +178,53 @@ public class WalSortPlanTest extends AbstractCairoTest {
         });
     }
 
+    // Applies a block of commits written by the WAL writers in turn, in descending time order, then checks
+    // that the pooled table writer does not keep the memory of the block transaction lists
+    private void assertBlockApplyReleasesMemory(int commitCount, int rowsPerCommit, int walWriterCount) throws Exception {
+        final TableToken x = engine.verifyTableName("x");
+        final long step = 1000;
+        final long commitSpan = rowsPerCommit * step;
+        final ObjList<WalWriter> walWriters = new ObjList<>();
+        try {
+            for (int i = 0; i < walWriterCount; i++) {
+                walWriters.add(engine.getWalWriter(x));
+            }
+            writeCommit(walWriters.getQuick(0), START_TS, 1, step);
+            drainWalQueue();
+            // the pooled writer applied a single transaction, the block lists are at the initial size
+            final long memBefore = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER);
+
+            writeBlock(walWriters, START_TS + commitSpan, commitCount, rowsPerCommit, step);
+            drainWalQueue();
+            capture.drain();
+            capture.assertLoggedRE("processing WAL transaction block \\[table=.*x.*, seqTxn=2\\.\\." + (commitCount + 1) + ",");
+
+            // the next apply resets the WAL transaction order list, it applies a single transaction
+            writeCommit(walWriters.getQuick(0), START_TS + (commitCount + 1) * commitSpan, 1, step);
+            drainWalQueue();
+            final long memAfter = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_TABLE_WRITER);
+
+            // the block lists take more than 50 bytes per transaction, megabytes when they are not released
+            final long retained = memAfter - memBefore;
+            Assert.assertTrue(
+                    "writer retains memory of the transaction block [before=" + memBefore + ", after=" + memAfter + ", retained=" + retained + ']',
+                    retained < 64 * 1024
+            );
+
+            // the writer applies the next block with the lists grown again
+            writeBlock(walWriters, START_TS + (commitCount + 2) * commitSpan, commitCount, rowsPerCommit, step);
+            drainWalQueue();
+            capture.drain();
+            capture.assertLoggedRE("processing WAL transaction block \\[table=.*x.*, seqTxn=" + (commitCount + 3) + "\\.\\." + (2 * commitCount + 2) + ",");
+        } finally {
+            Misc.freeObjList(walWriters);
+        }
+        assertQuery("SELECT count(), count_distinct(ts) FROM x")
+                .expectSize()
+                .noRandomAccess()
+                .returns("count\tcount_distinct\n" + (2L * commitCount * rowsPerCommit + 2) + "\t" + (2L * commitCount * rowsPerCommit + 2) + "\n");
+    }
+
     private static void createTables() throws Exception {
         final String columns = "(ts timestamp, i int, l long, d double, s symbol, str string, vc varchar, b boolean)";
         execute("create table x " + columns + " timestamp(ts) partition by hour wal");
@@ -172,5 +251,21 @@ public class WalSortPlanTest extends AbstractCairoTest {
         if (writer instanceof WalWriter walWriter) {
             walWriter.commit();
         }
+    }
+
+    // Commit c starts at startTs + (commitCount - 1 - c) * rowsPerCommit * step, the commits do not overlap
+    private static void writeBlock(ObjList<WalWriter> walWriters, long startTs, int commitCount, int rowsPerCommit, long step) {
+        for (int c = 0; c < commitCount; c++) {
+            writeCommit(walWriters.getQuick(c % walWriters.size()), startTs + (commitCount - 1 - c) * rowsPerCommit * step, rowsPerCommit, step);
+        }
+    }
+
+    private static void writeCommit(WalWriter w, long startTs, int rowCount, long step) {
+        for (int r = 0; r < rowCount; r++) {
+            final TableWriter.Row row = w.newRow(startTs + r * step);
+            row.putInt(1, r);
+            row.append();
+        }
+        w.commit();
     }
 }

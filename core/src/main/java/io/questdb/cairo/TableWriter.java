@@ -1675,6 +1675,9 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     } else {
                         throw e;
                     }
+                } finally {
+                    // The pooled writer must not keep the memory of a large block
+                    segmentCopyInfo.resetCapacity();
                 }
             }
         } catch (CairoException e) {

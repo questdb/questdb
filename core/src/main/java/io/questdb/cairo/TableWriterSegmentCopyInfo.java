@@ -356,6 +356,21 @@ public class TableWriterSegmentCopyInfo implements QuietCloseable {
         return segments.get(segmentIndex * 4L + 3) > 0;
     }
 
+    /**
+     * Clears the block and shrinks the lists back to their initial capacity. A block of many transactions
+     * grows the lists, this releases that memory once the block is applied.
+     */
+    public void resetCapacity() {
+        clear();
+        segments.resetCapacity();
+        txns.resetCapacity();
+        txnMeta.resetCapacity();
+        runs.resetCapacity();
+        sortPlanItems.resetCapacity();
+        sortPlanTxns.resetCapacity();
+        sortPlanRunOrder.resetCapacity();
+    }
+
     public void setAllTxnDataInOrder(boolean allInOrder) {
         this.allDataInOrder = allInOrder;
     }
