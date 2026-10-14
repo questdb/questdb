@@ -736,7 +736,9 @@ public class FilesFacadeImpl implements FilesFacade {
                         src.trimTo(len);
                         src.concat(name);
                         dst.concat(name);
-                        if (type == Files.DT_FILE) {
+                        // A file system that reports no entry types (XFS without ftype, some FUSE and network
+                        // file systems) lists every entry as unknown: ask it whether the entry is a directory.
+                        if (type == Files.DT_FILE || (type == Files.DT_UNKNOWN && !isDirOrSoftLinkDir(src.$()))) {
                             if ((res = operation.invoke(src.$(), dst.$())) < 0) {
                                 return res;
                             }

@@ -43,6 +43,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.millitime.DateFormatUtils;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -62,6 +63,7 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
@@ -339,6 +341,60 @@ public class FilesTest {
                         TestUtils.assertFileContentsEquals(src, dst);
                     } finally {
                         Files.rmdir(p2, true);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * On a file system that reports no entry types (XFS without ftype, some FUSE and network file systems) the
+     * recursive copy and hard link must ask whether an entry is a directory; they used to open every file as a
+     * directory and fail with ENOTDIR. A file system that reports types must not pay for the question.
+     */
+    @Test
+    public void testCopyRecursiveAndHardLinkRecursiveWhenEntryTypesAreUnknown() throws Exception {
+        assertMemoryLeak(() -> {
+            final int mkdirMode = 509;
+            final AtomicBoolean isEntryTypeUnknown = new AtomicBoolean();
+            final AtomicInteger dirChecks = new AtomicInteger();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public int findType(long findPtr) {
+                    return isEntryTypeUnknown.get() ? Files.DT_UNKNOWN : super.findType(findPtr);
+                }
+
+                @Override
+                public boolean isDirOrSoftLinkDir(LPSZ path) {
+                    dirChecks.incrementAndGet();
+                    return super.isDirOrSoftLinkDir(path);
+                }
+            };
+            final java.nio.file.Path root = temporaryFolder.newFolder().toPath();
+            final java.nio.file.Path srcDir = root.resolve("src");
+            java.nio.file.Files.createDirectories(srcDir.resolve("subdir").resolve("nested"));
+            java.nio.file.Files.writeString(srcDir.resolve("file"), "abcde");
+            java.nio.file.Files.writeString(srcDir.resolve("subdir").resolve("file2"), "efgh");
+            java.nio.file.Files.writeString(srcDir.resolve("subdir").resolve("nested").resolve("file3"), "ij");
+            try (Path src = new Path(); Path dst = new Path()) {
+                for (boolean isUnknown : new boolean[]{false, true}) {
+                    for (boolean isHardLink : new boolean[]{false, true}) {
+                        final java.nio.file.Path dstDir = root.resolve("dst-" + isUnknown + "-" + isHardLink);
+                        src.of(srcDir.toString());
+                        dst.of(dstDir.toString());
+                        dirChecks.set(0);
+                        isEntryTypeUnknown.set(isUnknown);
+                        final int rc;
+                        try {
+                            rc = isHardLink ? ff.hardLinkDirRecursive(src, dst, mkdirMode) : ff.copyRecursive(src, dst, mkdirMode);
+                        } finally {
+                            isEntryTypeUnknown.set(false);
+                        }
+                        Assert.assertEquals(0, rc);
+                        Assert.assertEquals("one directory check per entry listed as unknown, none for typed entries", isUnknown ? 5 : 0, dirChecks.get());
+                        Assert.assertEquals("abcde", java.nio.file.Files.readString(dstDir.resolve("file")));
+                        Assert.assertEquals("efgh", java.nio.file.Files.readString(dstDir.resolve("subdir").resolve("file2")));
+                        Assert.assertEquals("ij", java.nio.file.Files.readString(dstDir.resolve("subdir").resolve("nested").resolve("file3")));
                     }
                 }
             }

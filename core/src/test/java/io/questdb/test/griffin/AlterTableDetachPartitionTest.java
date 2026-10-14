@@ -3206,8 +3206,8 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
      * A crash between the link of a detached partition's files under its {@code .detached} name and the removal of
      * its temporary name leaves {@code .detached} without some files; the next writer open links what it lacks, then
      * removes the temporary name. On a file system that reports no entry types (XFS without ftype, some FUSE and
-     * network file systems) the open's scan must still find the temporary name, and the finish must still link the
-     * files: the removal would otherwise take the only copy.
+     * network file systems) the DETACH must still link the partition, the open's scan must still find the temporary
+     * name, and the finish must still link the files: the removal would otherwise take the only copy.
      */
     @Test
     public void testFinishDetachAfterCrashLinksFilesListedAsUnknown() throws Exception {
@@ -3221,6 +3221,9 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
         assertMemoryLeak(ff, () -> {
             execute("create table tab (ts " + timestampType.getTypeName() + ", v long) timestamp(ts) partition by day bypass wal");
             execute("insert into tab values ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-02T00:00:00.000000Z', 2)");
+            // Every listing from the DETACH to the end reports unknown types: the DETACH's link, the writer open's
+            // scan and finish after the simulated crash, the ATTACH and the query.
+            isEntryTypeUnknown.set(true);
             execute("alter table tab detach partition list '2024-01-01'");
             final TableToken tt = engine.verifyTableName("tab");
             final long detachTxn;
@@ -3240,15 +3243,10 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             }
             Assert.assertFalse("the temporary name must hold the partition's files", files.isEmpty());
 
-            // Every listing from the crash on reports unknown types, the writer open's scan included. The DETACH
-            // and the ATTACH themselves link and copy with walks, unchanged from the base release, that take an
-            // unknown entry for a directory and fail on such a file system.
-            isEntryTypeUnknown.set(true);
             try (TableWriter writer = getWriter(tt)) {
                 Assert.assertNotNull(writer);
             }
             engine.releaseAllWriters();
-            isEntryTypeUnknown.set(false);
             Assert.assertFalse("the open must finish the detach", java.nio.file.Files.exists(detaching));
             try (Stream<java.nio.file.Path> list = java.nio.file.Files.list(detached)) {
                 Assert.assertEquals(files, list.map(p -> p.getFileName().toString()).sorted().collect(Collectors.toList()));
@@ -3257,6 +3255,7 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
             java.nio.file.Files.move(detached, tableDir.resolve("2024-01-01" + configuration.getAttachPartitionSuffix()));
             execute("alter table tab attach partition list '2024-01-01'");
             assertQuery("select count(), sum(v) from tab").noRandomAccess().expectSize().returns("count\tsum\n2\t3\n");
+            isEntryTypeUnknown.set(false);
         });
     }
 

@@ -61,6 +61,7 @@ import org.junit.runners.Parameterized;
 
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
 import static io.questdb.cairo.AttachDetachStatus.ATTACH_ERR_RENAME;
@@ -183,6 +184,48 @@ public class AlterTableAttachPartitionTest extends AbstractAlterTableAttachParti
                     attachFromSrcIntoDst(src, dst, "2020-01-10");
                 }
         );
+    }
+
+    /**
+     * On an adaptive WAL table an ATTACH links {@code .attachable} into the partition and keeps it until a save point
+     * covers the ATTACH. On a file system that reports no entry types (XFS without ftype, some FUSE and network file
+     * systems) the link must still tell files from directories: it took the first column file for a directory,
+     * failed with ENOTDIR and suspended the table, and RESUME WAL failed the same way.
+     */
+    @Test
+    public void testAttachAdaptiveWalPartitionWhenEntryTypesAreUnknown() throws Exception {
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        final AtomicBoolean isEntryTypeUnknown = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int findType(long findPtr) {
+                return isEntryTypeUnknown.get() ? Files.DT_UNKNOWN : super.findType(findPtr);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("create table tab (ts " + timestampType.getTypeName() + ", v long) timestamp(ts) partition by day wal");
+            execute("insert into tab values ('2024-01-01T00:00:00.000000Z', 1), ('2024-01-02T00:00:00.000000Z', 2)");
+            drainWalQueue();
+            execute("alter table tab detach partition list '2024-01-01'");
+            drainWalQueue();
+            final TableToken tt = engine.verifyTableName("tab");
+            final java.nio.file.Path tableDir = java.nio.file.Path.of(configuration.getDbRoot().toString(), tt.getDirName());
+            final java.nio.file.Path attachable = tableDir.resolve("2024-01-01" + configuration.getAttachPartitionSuffix());
+            java.nio.file.Files.move(tableDir.resolve("2024-01-01" + TableUtils.DETACHED_DIR_MARKER), attachable);
+
+            // Every listing from the ATTACH to the end reports unknown types. The DETACH before it keeps its types
+            // so that a failure here names the ATTACH's link; AlterTableDetachPartitionTest runs a DETACH with
+            // unknown types.
+            isEntryTypeUnknown.set(true);
+            try {
+                execute("alter table tab attach partition list '2024-01-01'");
+                drainWalQueue();
+                Assert.assertFalse("the attach must not suspend the table", engine.getTableSequencerAPI().isSuspended(tt));
+                assertQuery("select count(), sum(v) from tab").noRandomAccess().expectSize().returns("count\tsum\n2\t3\n");
+            } finally {
+                isEntryTypeUnknown.set(false);
+            }
+        });
     }
 
     @Test
