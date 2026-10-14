@@ -396,6 +396,27 @@ public class FilesTest {
     }
 
     @Test
+    public void testDirectoryContentSizeDepthLimit() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            final String root = temporaryFolder.newFolder("deep").getAbsolutePath();
+            try (Path path = new Path().of(root)) {
+                // a 10-byte file at every nesting level, from the root (depth 0) down to depth 69
+                for (int depth = 0; depth < 70; depth++) {
+                    if (depth > 0) {
+                        Assert.assertEquals(0, Files.mkdir(path.concat("d").$(), 0755));
+                    }
+                    final int len = path.size();
+                    createTempFile(path, "f", "0123456789");
+                    path.trimTo(len);
+                }
+                // the walk does not descend below depth 63, which bounds its stack and descriptor use
+                Assert.assertEquals(64 * 10, Files.getDirSize(path.of(root)));
+            }
+        });
+    }
+
+    @Test
     public void testDirectoryContentSizeNonExistingDirectory() {
         try (Path path = new Path().of("banana")) {
             Assert.assertEquals(0L, Files.getDirSize(path));
@@ -410,6 +431,26 @@ public class FilesTest {
             createTempFile(path, "small.txt", content);
             Assert.assertEquals(0L, Files.getDirSize(path));
         }
+    }
+
+    @Test
+    public void testDirectoryContentSizeSymlinkCycle() throws Exception {
+        Assume.assumeFalse(Os.isWindows());
+        assertMemoryLeak(() -> {
+            final String root = temporaryFolder.newFolder("cycle", "sub").getParentFile().getAbsolutePath();
+            try (Path path = new Path(); Path link = new Path()) {
+                createTempFile(path.of(root), "a.d", "0123456789");
+                createTempFile(path.of(root).concat("sub"), "b.d", "01234");
+                // links back to an ancestor and to the directory itself
+                Assert.assertEquals(0, Files.softLink(path.of(root).$(), link.of(root).concat("sub").concat("up").$()));
+                Assert.assertEquals(0, Files.softLink(path.of(root).$(), link.of(root).concat("self").$()));
+                // the walk stops at directories already on its descent path, so it terminates
+                // and counts each file once
+                Assert.assertEquals(15, Files.getDirSize(path.of(root)));
+                // sub/up leads to the root, which holds a.d, and the root leads back to sub
+                Assert.assertEquals(15, Files.getDirSize(path.of(root).concat("sub")));
+            }
+        });
     }
 
     @Test
@@ -669,6 +710,23 @@ public class FilesTest {
             try (Path path = new Path()) {
                 assertLastModified(path, DateFormatUtils.parseUTCDate("2015-10-17T10:00:00.000Z"));
                 assertLastModified(path, 122222212222L);
+            }
+        });
+    }
+
+    @Test
+    public void testLastModifiedOfDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            final String dir = temporaryFolder.newFolder("mtime").getAbsolutePath();
+            try (Path path = new Path()) {
+                final long before = Files.getLastModified(path.of(dir).$());
+                Assert.assertTrue(before > 0);
+                // file systems take timestamps from a clock that ticks every few milliseconds
+                Os.sleep(50);
+                // creating an entry changes the modification time of the directory, which
+                // TableDiskSizeCache relies on
+                createTempFile(path.of(dir), "f.d", "data");
+                Assert.assertTrue(Files.getLastModified(path.of(dir).$()) > before);
             }
         });
     }

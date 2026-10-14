@@ -1107,6 +1107,7 @@ public class ServerMainTest extends AbstractBootstrapTest {
                                     "cairo.sql.orderby.sort.enabled\tQDB_CAIRO_SQL_ORDERBY_SORT_ENABLED\ttrue\tdefault\tfalse\tfalse\n" +
                                     "cairo.system.o3.column.memory.size\tQDB_CAIRO_SYSTEM_O3_COLUMN_MEMORY_SIZE\t262144\tdefault\tfalse\tfalse\n" +
                                     "cairo.system.table.prefix\tQDB_CAIRO_SYSTEM_TABLE_PREFIX\tsys.\tdefault\tfalse\tfalse\n" +
+                                    "cairo.table.storage.cache.ttl\tQDB_CAIRO_TABLE_STORAGE_CACHE_TTL\t600000\tdefault\tfalse\ttrue\n" +
                                     "cairo.system.wal.writer.data.append.page.size\tQDB_CAIRO_SYSTEM_WAL_WRITER_DATA_APPEND_PAGE_SIZE\t262144\tdefault\tfalse\tfalse\n" +
                                     "cairo.system.wal.writer.event.append.page.size\tQDB_CAIRO_SYSTEM_WAL_WRITER_EVENT_APPEND_PAGE_SIZE\t16384\tdefault\tfalse\tfalse\n" +
                                     "cairo.system.writer.data.append.page.size\tQDB_CAIRO_SYSTEM_WRITER_DATA_APPEND_PAGE_SIZE\t262144\tdefault\tfalse\tfalse\n" +

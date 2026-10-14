@@ -103,6 +103,8 @@ public class TableNameRegistryRO extends AbstractTableNameRegistry {
         dirNameToTableTokenMap2 = dirNameToTableTokenMap1;
         dirNameToTableTokenMap1 = tmp2;
 
+        // a reload is the only way a dropped table leaves a read-only instance
+        engine.getTableDiskSizeCache().evictDroppedTables();
         lastReloadTimestampMs = clockMs.getTicks();
         return consistent;
     }

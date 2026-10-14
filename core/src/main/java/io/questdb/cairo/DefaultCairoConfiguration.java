@@ -1472,6 +1472,11 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
     }
 
     @Override
+    public long getTableStorageCacheTTL() {
+        return 600_000;
+    }
+
+    @Override
     public @NotNull TelemetryConfiguration getTelemetryConfiguration() {
         return telemetryConfiguration;
     }

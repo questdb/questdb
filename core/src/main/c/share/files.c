@@ -38,6 +38,11 @@
 #include <sys/mount.h>
 #include "files.h"
 
+#ifdef __APPLE__
+#include <sys/attr.h>
+#include <sys/vnode.h>
+#endif
+
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_write
         (JNIEnv *e, jclass cl, jint fd, jlong address, jlong len, jlong offset) {
     off_t writeOffset = offset;
@@ -355,6 +360,261 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Files_findClose
     FIND *find = (FIND *) findPtr;
     closedir(find->dir);
     free(find);
+}
+
+// Upper bound on the directory nesting that getDirSize0() descends into. Table directories
+// are a handful of levels deep; the bound caps the stack and file descriptor usage.
+#define DIR_SIZE_MAX_DEPTH 64
+
+#ifdef __APPLE__
+#define DIR_SIZE_BULK_BUFFER_SIZE (32 * 1024)
+#endif
+
+typedef struct {
+    dev_t dev;
+    ino_t ino;
+} dir_size_dir_id_t;
+
+typedef struct {
+    // device and inode of each directory on the current descent path, so that a symlink
+    // pointing back at an ancestor does not send the walk into a cycle
+    dir_size_dir_id_t ancestors[DIR_SIZE_MAX_DEPTH];
+#ifdef __APPLE__
+    // one getattrlistbulk() buffer per nesting level, allocated on first use
+    char *buffers[DIR_SIZE_MAX_DEPTH];
+#endif
+} dir_size_ctx_t;
+
+static inline int dir_size_is_dots(const char *name) {
+    return name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'));
+}
+
+// Records the directory open at fd as the ancestor at the given depth. Returns 0 when the
+// walk must not descend into it: the depth limit is reached, the directory cannot be
+// stat-ed, or it is already on the descent path (a symlink cycle).
+static int dir_size_push(dir_size_ctx_t *ctx, int depth, int fd) {
+    if (depth >= DIR_SIZE_MAX_DEPTH) {
+        return 0;
+    }
+    struct stat st;
+    if (fstat(fd, &st) != 0) {
+        return 0;
+    }
+    for (int i = 0; i < depth; i++) {
+        if (ctx->ancestors[i].ino == st.st_ino && ctx->ancestors[i].dev == st.st_dev) {
+            return 0;
+        }
+    }
+    ctx->ancestors[depth].dev = st.st_dev;
+    ctx->ancestors[depth].ino = st.st_ino;
+    return 1;
+}
+
+// Opens the subdirectory (or symlink to a directory) 'name' of the directory open at
+// parent_fd. Returns -1 when the walk must skip it.
+static int dir_size_open_child(dir_size_ctx_t *ctx, int depth, int parent_fd, const char *name) {
+    int fd;
+    RESTARTABLE(openat(parent_fd, name, O_RDONLY | O_DIRECTORY | O_CLOEXEC), fd);
+    if (fd < 0) {
+        return -1;
+    }
+    if (!dir_size_push(ctx, depth, fd)) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+}
+
+// Returns 1 when the entry 'name' of the directory open at parent_fd is a symlink to a
+// directory. Symlinks to files do not contribute to the size, matching the original Java
+// implementation of Files.getDirSize().
+static int dir_size_is_link_to_dir(int parent_fd, const char *name) {
+    struct stat st;
+    return fstatat(parent_fd, name, &st, 0) == 0 && S_ISDIR(st.st_mode);
+}
+
+// Sums st_size of all regular files below the directory open at fd, which this function
+// takes ownership of. It stats files relative to the directory descriptor, so the kernel
+// resolves a single path component per file instead of the full absolute path.
+static jlong dir_size_posix(dir_size_ctx_t *ctx, int depth, int fd) {
+    DIR *dir = fdopendir(fd);
+    if (dir == NULL) {
+        close(fd);
+        return 0;
+    }
+    const int dir_fd = dirfd(dir);
+    jlong total = 0;
+    struct stat st;
+    struct dirent *entry;
+    while ((entry = readdir(dir)) != NULL) {
+        const char *name = entry->d_name;
+        if (dir_size_is_dots(name)) {
+            continue;
+        }
+
+        const unsigned char type = entry->d_type;
+        if (type == DT_REG) {
+            if (fstatat(dir_fd, name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+                total += st.st_size;
+            }
+            continue;
+        }
+
+        if (type == DT_LNK) {
+            if (!dir_size_is_link_to_dir(dir_fd, name)) {
+                continue;
+            }
+        } else if (type == DT_UNKNOWN) {
+            // some file systems do not report the entry type, find it out
+            if (fstatat(dir_fd, name, &st, AT_SYMLINK_NOFOLLOW) != 0) {
+                continue;
+            }
+            if (S_ISREG(st.st_mode)) {
+                total += st.st_size;
+                continue;
+            }
+            if (S_ISLNK(st.st_mode)) {
+                if (!dir_size_is_link_to_dir(dir_fd, name)) {
+                    continue;
+                }
+            } else if (!S_ISDIR(st.st_mode)) {
+                continue;
+            }
+        } else if (type != DT_DIR) {
+            // fifo, socket, device
+            continue;
+        }
+
+        const int child_fd = dir_size_open_child(ctx, depth + 1, dir_fd, name);
+        if (child_fd >= 0) {
+            total += dir_size_posix(ctx, depth + 1, child_fd);
+        }
+    }
+    closedir(dir);
+    return total;
+}
+
+#ifdef __APPLE__
+
+// macOS variant of dir_size_posix(): getattrlistbulk() returns the names, types and sizes
+// of many directory entries per system call, so regular files need no stat call at all.
+static jlong dir_size_bulk(dir_size_ctx_t *ctx, int depth, int fd) {
+    char *buf = ctx->buffers[depth];
+    if (buf == NULL) {
+        buf = malloc(DIR_SIZE_BULK_BUFFER_SIZE);
+        if (buf == NULL) {
+            return dir_size_posix(ctx, depth, fd);
+        }
+        ctx->buffers[depth] = buf;
+    }
+
+    struct attrlist attrs;
+    memset(&attrs, 0, sizeof(attrs));
+    attrs.bitmapcount = ATTR_BIT_MAP_COUNT;
+    attrs.commonattr = ATTR_CMN_RETURNED_ATTRS | ATTR_CMN_NAME | ATTR_CMN_ERROR | ATTR_CMN_OBJTYPE;
+    attrs.fileattr = ATTR_FILE_DATALENGTH;
+
+    jlong total = 0;
+    int is_first_batch = 1;
+    for (;;) {
+        int count;
+        RESTARTABLE(getattrlistbulk(fd, &attrs, buf, DIR_SIZE_BULK_BUFFER_SIZE, 0), count);
+        if (count < 0 && is_first_batch) {
+            // the file system rejected the bulk call, the directory offset is still at the start
+            return dir_size_posix(ctx, depth, fd);
+        }
+        if (count <= 0) {
+            break;
+        }
+        is_first_batch = 0;
+
+        // Entry layout, see getattrlistbulk(2): u_int32_t length, attribute_set_t returned,
+        // u_int32_t error (when returned), attrreference_t name, fsobj_type_t type, then
+        // the file attributes, off_t data length (when returned). Fields are only 4-byte
+        // aligned, hence the memcpy() reads.
+        const char *entry = buf;
+        for (int i = 0; i < count; i++) {
+            const char *field = entry;
+            uint32_t length;
+            memcpy(&length, field, sizeof(length));
+            field += sizeof(uint32_t);
+
+            attribute_set_t returned;
+            memcpy(&returned, field, sizeof(returned));
+            field += sizeof(attribute_set_t);
+
+            uint32_t error = 0;
+            if (returned.commonattr & ATTR_CMN_ERROR) {
+                memcpy(&error, field, sizeof(error));
+                field += sizeof(uint32_t);
+            }
+
+            const char *name = NULL;
+            if (returned.commonattr & ATTR_CMN_NAME) {
+                attrreference_t name_ref;
+                memcpy(&name_ref, field, sizeof(name_ref));
+                name = field + name_ref.attr_dataoffset;
+                field += sizeof(attrreference_t);
+            }
+
+            fsobj_type_t type = VNON;
+            if (returned.commonattr & ATTR_CMN_OBJTYPE) {
+                memcpy(&type, field, sizeof(type));
+                field += sizeof(fsobj_type_t);
+            }
+
+            if (error == 0 && name != NULL && !dir_size_is_dots(name)) {
+                if (type == VREG) {
+                    if (returned.fileattr & ATTR_FILE_DATALENGTH) {
+                        off_t data_length;
+                        memcpy(&data_length, field, sizeof(data_length));
+                        total += data_length;
+                    } else {
+                        struct stat st;
+                        if (fstatat(fd, name, &st, AT_SYMLINK_NOFOLLOW) == 0) {
+                            total += st.st_size;
+                        }
+                    }
+                } else if (type == VDIR || (type == VLNK && dir_size_is_link_to_dir(fd, name))) {
+                    const int child_fd = dir_size_open_child(ctx, depth + 1, fd, name);
+                    if (child_fd >= 0) {
+                        total += dir_size_bulk(ctx, depth + 1, child_fd);
+                    }
+                }
+            }
+            entry += length;
+        }
+    }
+    close(fd);
+    return total;
+}
+
+#endif
+
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDirSize0
+        (JNIEnv *e, jclass cl, jlong lpszPath) {
+    int fd;
+    RESTARTABLE(open((const char *) lpszPath, O_RDONLY | O_DIRECTORY | O_CLOEXEC), fd);
+    if (fd < 0) {
+        // missing path, or not a directory
+        return 0;
+    }
+
+    dir_size_ctx_t ctx;
+    if (!dir_size_push(&ctx, 0, fd)) {
+        close(fd);
+        return 0;
+    }
+#ifdef __APPLE__
+    memset(ctx.buffers, 0, sizeof(ctx.buffers));
+    const jlong total = dir_size_bulk(&ctx, 0, fd);
+    for (int i = 0; i < DIR_SIZE_MAX_DEPTH; i++) {
+        free(ctx.buffers[i]);
+    }
+    return total;
+#else
+    return dir_size_posix(&ctx, 0, fd);
+#endif
 }
 
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_findName

@@ -381,6 +381,14 @@ JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getFileLimit
 JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getMapCountLimit
         (JNIEnv *, jclass);
 
+/*
+ * Class:     com_questdb_std_Files
+ * Method:    getDirSize0
+ * Signature: (J)J
+ */
+JNIEXPORT jlong JNICALL Java_io_questdb_std_Files_getDirSize0
+        (JNIEnv *, jclass, jlong);
+
 // On Linux, read() (and similar system calls) will transfer at most 0x7ffff000 (2,147,479,552) bytes,
 // returning the number of bytes actually transferred or -1 depending on the platforms
 #define MAX_RW_COUNT 0x7ffff000
