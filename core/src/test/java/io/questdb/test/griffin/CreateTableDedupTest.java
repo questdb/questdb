@@ -1030,6 +1030,46 @@ public class CreateTableDedupTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testRenameTablePreservesDedupMode() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
+            execute("CREATE TABLE u (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+            execute("INSERT INTO x VALUES ('2024-01-01T00:00:00.000000Z', 'a', 1)");
+            drainWalQueue();
+
+            execute("RENAME TABLE x TO y");
+            execute("RENAME TABLE u TO w");
+            // MetadataCache.renameTable() copies the cached entry; nothing re-hydrates it when the rename applies
+            assertShowCreateTable("y", "\nDEDUP SKIP KEYS(ts,sym)");
+            assertShowCreateTable("w", "\nDEDUP UPSERT KEYS(ts)");
+
+            drainWalQueue();
+            assertDedupMode("y", true, TableUtils.DEDUP_MODE_SKIP);
+            assertDedupMode("w", true, TableUtils.DEDUP_MODE_UPSERT);
+            assertShowCreateTable("y", "\nDEDUP SKIP KEYS(ts,sym)");
+            assertShowCreateTable("w", "\nDEDUP UPSERT KEYS(ts)");
+
+            // the renamed table keeps the stored row on a duplicate key
+            execute("INSERT INTO y VALUES ('2024-01-01T00:00:00.000000Z', 'a', 2)");
+            drainWalQueue();
+            assertQuery("SELECT * FROM y")
+                    .noLeakCheck()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tsym\tv
+                            2024-01-01T00:00:00.000000Z\ta\t1
+                            """);
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            reloadMetadataCache();
+            assertDedupMode("y", true, TableUtils.DEDUP_MODE_SKIP);
+            assertShowCreateTable("y", "\nDEDUP SKIP KEYS(ts,sym)");
+        });
+    }
+
     private static void reloadMetadataCache() {
         try (MetadataCacheWriter metadataRW = engine.getMetadataCache().writeLock()) {
             metadataRW.clearCache();
