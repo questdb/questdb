@@ -100,6 +100,14 @@ public class VirtualRecordCursorFactory extends AbstractRecordCursorFactory {
         base.changePageFrameSizes(minRows, maxRows);
     }
 
+    /**
+     * Drops the values the projection's memoizers hold for the current row, for a caller that evaluates the
+     * functions row by row without this factory's cursor.
+     */
+    public void clearMemos() {
+        cursor.clearMemos();
+    }
+
     @Override
     public boolean followedOrderByAdvice() {
         return base.followedOrderByAdvice();

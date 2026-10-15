@@ -207,7 +207,7 @@ public class VirtualFunctionRecordCursor implements RecordCursor {
         GroupByUtils.toTop(functions);
     }
 
-    private void clearMemos() {
+    void clearMemos() {
         for (int i = 0; i < memoizerCount; i++) {
             memoizers.getQuick(i).clearMemo();
         }

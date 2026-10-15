@@ -422,6 +422,74 @@ public class JoinPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDisconnectedTimestampedLeadingCrossLeadsUnderLateralRead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_cross_a (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE lp_cross_b (k INT)");
+            execute("CREATE TABLE lp_cross_c (k INT)");
+            execute("INSERT INTO lp_cross_a VALUES (1, '2020-01-01T00:00:00Z'), (2, '2020-01-01T00:00:01Z'), (3, '2020-01-01T00:00:02Z')");
+            execute("INSERT INTO lp_cross_b VALUES (1), (2), (3)");
+            execute("INSERT INTO lp_cross_c VALUES (2), (3)");
+            assertQuery("""
+                    SELECT x.id, l.v
+                    FROM (SELECT a.id, row_number() OVER () rn FROM lp_cross_a a CROSS JOIN lp_cross_b b JOIN lp_cross_c c ON b.k=c.k) x
+                    JOIN LATERAL (SELECT x.rn v FROM long_sequence(1)) l ON true
+                    """)
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlanContaining(LEADING_CROSS_PLAN.indent(16)).returns("""
+                            id\tv
+                            1\t1
+                            1\t2
+                            2\t3
+                            2\t4
+                            3\t5
+                            3\t6
+                            """);
+        });
+    }
+
+    @Test
+    public void testDisconnectedTimestampedLeadingCrossTrailsUnderUnreadOrderedColumns() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_cross_a (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE lp_cross_b (k INT)");
+            execute("CREATE TABLE lp_cross_c (k INT)");
+            execute("INSERT INTO lp_cross_a VALUES (1, '2020-01-01T00:00:00Z'), (2, '2020-01-01T00:00:01Z'), (3, '2020-01-01T00:00:02Z')");
+            execute("INSERT INTO lp_cross_b VALUES (1), (2), (3)");
+            execute("INSERT INTO lp_cross_c VALUES (2)");
+            final String join = "lp_cross_a a CROSS JOIN lp_cross_b b JOIN lp_cross_c c ON b.k=c.k";
+            assertQuery("SELECT count() FROM (SELECT a.id, row_number() OVER (ORDER BY a.id) rn FROM " + join + ")")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                            Count
+                            """ + TRAILING_CROSS_PLAN.indent(4)).returns("count\n3\n");
+            assertQuery("SELECT count() FROM (SELECT a.id + 1 x, sum(a.id) OVER (ORDER BY a.ts RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW) s FROM " + join + ")")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                            Count
+                                VirtualRecord
+                            """ + TRAILING_CROSS_PLAN.indent(8)).returns("count\n3\n");
+            assertQuery("SELECT count() FROM (SELECT b.k, first(a.id) f FROM " + join + ")")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                            Count
+                                GroupBy vectorized: false
+                                  keys: [k]
+                            """ + TRAILING_CROSS_PLAN.indent(8)).returns("count\n1\n");
+            assertQuery("SELECT sum(id) FROM (SELECT a.id, rn FROM (SELECT a.id, row_number() OVER (ORDER BY a.ts) rn FROM " + join + ") a)")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                            GroupBy vectorized: false
+                              values: [sum(id)]
+                                SelectedRecord
+                            """ + TRAILING_CROSS_PLAN.indent(8)).returns("sum\n6\n");
+            assertQuery("SELECT sum(rn) FROM (SELECT a.id, row_number() OVER (ORDER BY a.id) rn FROM " + join + ")")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlan("""
+                            GroupBy vectorized: false
+                              values: [sum(rn)]
+                                CachedWindow
+                                  orderedFunctions: [[id] => [row_number()]]
+                                    SelectedRecord
+                            """ + LEADING_CROSS_PLAN.indent(12)).returns("sum\n6\n");
+        });
+    }
+
+    @Test
     public void testDisconnectedTimestampedLeadingCrossTrailsUnlessOrderIsVisible() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_cross_a (id INT, ts TIMESTAMP) TIMESTAMP(ts)");

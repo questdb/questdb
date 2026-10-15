@@ -1156,15 +1156,23 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * True when a bounded sort under the LIMIT keeps only its first rows by a top-K: the LIMIT is a constant count
-     * {@code 0 < lo <= Integer.MAX_VALUE} without a hi, over an input that does not deliver the sort's order.
+     * True when a LIMIT of {@code lo} and {@code hi} is a count a top-K keeps: a constant
+     * {@code 0 < lo <= Integer.MAX_VALUE} without a hi.
      */
-    static boolean isTopKLimit(LimitPlan limit, boolean isTimestampOrdered) {
-        if (isTimestampOrdered || limit.getHi() != null || !(limit.getLo() instanceof ConstantExpression lo)) {
+    static boolean isTopKCount(BoundExpression lo, BoundExpression hi) {
+        if (hi != null || !(lo instanceof ConstantExpression count)) {
             return false;
         }
-        final long count = LogicalPlans.limitValue(lo);
-        return count > 0 && count <= Integer.MAX_VALUE;
+        final long value = LogicalPlans.limitValue(count);
+        return value > 0 && value <= Integer.MAX_VALUE;
+    }
+
+    /**
+     * True when a bounded sort under the LIMIT keeps only its first rows by a top-K: the LIMIT is a top-K count, see
+     * {@link #isTopKCount}, over an input that does not deliver the sort's order.
+     */
+    static boolean isTopKLimit(LimitPlan limit, boolean isTimestampOrdered) {
+        return !isTimestampOrdered && isTopKCount(limit.getLo(), limit.getHi());
     }
 
     /**

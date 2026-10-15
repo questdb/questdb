@@ -15371,15 +15371,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testProjectionCanReferenceOwnFunctions2() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("select rnd_double_array(2, 0, 0, 2, 10) a from long_sequence(100);")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            VirtualRecord
-                              functions: [rnd_double_array(2,0,ignored,2,10)]
-                                long_sequence count: 100
-                            """);
-        });
+        assertQuery("select rnd_double_array(2, 0, 0, 2, 10) a from long_sequence(100);")
+                .assertsPlan("""
+                        VirtualRecord
+                          functions: [rnd_double_array(2,0,ignored,2,10)]
+                            long_sequence count: 100
+                        """);
     }
 
     @Test

@@ -32,6 +32,7 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinGraph;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -42,6 +43,8 @@ import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
+import io.questdb.griffin.plan.logical.WindowPlan;
+import io.questdb.std.IntHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.ObjectPool;
 
@@ -58,9 +61,11 @@ import io.questdb.std.ObjectPool;
  * after it. A conjunct of the first step filters its input; the constant conjuncts filter the last step.
  */
 final class JoinOrdering implements OptimiserPass {
+    private final ColumnReads columnReads;
     private final OptimiserContext context;
     private final ObjectPool<FilterPlan> filters;
     private final ObjList<BoundExpression> placed;
+    private final IntHashSet readColumnIds = new IntHashSet();
     private final JoinOrderSolver solver;
     private int lastPosition;
     private JoinPlan readJoin;
@@ -73,8 +78,15 @@ final class JoinOrdering implements OptimiserPass {
         return TreeWalk.CONTINUE;
     };
 
-    JoinOrdering(OptimiserContext context, ObjectPool<FilterPlan> filters, JoinOrderSolver solver, ObjList<BoundExpression> placed) {
+    JoinOrdering(
+            OptimiserContext context,
+            ColumnReads columnReads,
+            ObjectPool<FilterPlan> filters,
+            JoinOrderSolver solver,
+            ObjList<BoundExpression> placed
+    ) {
         this.context = context;
+        this.columnReads = columnReads;
         this.filters = filters;
         this.solver = solver;
         this.placed = placed;
@@ -82,6 +94,7 @@ final class JoinOrdering implements OptimiserPass {
 
     @Override
     public LogicalPlan apply(LogicalPlan plan) throws SqlException {
+        columnReads.of(plan, readColumnIds);
         orderJoins(plan, context.getExecutionContext().isTimestampRequired());
         return plan;
     }
@@ -89,39 +102,14 @@ final class JoinOrdering implements OptimiserPass {
     @Override
     public void clear() {
         solver.clear();
+        columnReads.clear();
+        readColumnIds.clear();
         readJoin = null;
     }
 
     @Override
     public String getName() {
         return "join order";
-    }
-
-    /**
-     * True when the plan sees the order of its input at {@code inputIndex}, an index of a join's
-     * {@link LogicalPlans#orderedSteps}, given whether its own consumer sees the plan's order: {@code isOrderVisible}.
-     * A sort orders the rows itself, and an aggregate groups them, so neither sees it unless the aggregate's values
-     * depend on the order or an aggregate function reads the designated timestamp. A filter, a projection, a LIMIT
-     * and a DISTINCT pass the order on, unless they compute something that depends on row order or the projection
-     * declares a designated timestamp. A set operation passes it on from its left input and from each branch of a
-     * UNION, while EXCEPT and INTERSECT read their right input as a set. A join passes it on to its first input,
-     * shows it to the inputs whose timestamp a temporal step reads, and reads its other inputs as the rows it matches.
-     * Any other node sees it.
-     */
-    private static boolean isInputOrderVisible(LogicalPlan plan, int inputIndex, boolean isOrderVisible) {
-        return switch (plan) {
-            case SortPlan _ -> false;
-            case AggregatePlan aggregate -> LogicalPlans.hasTimestampAggregate(aggregate.getAggregates())
-                    || !LogicalPlans.isAggregateOrderIndependent(aggregate);
-            case FilterPlan filter -> isOrderVisible || !LogicalPlans.isOrderIndependent(filter.getPredicate());
-            case ProjectPlan project -> isOrderVisible || !LogicalPlans.isOrderTransparent(project);
-            case LimitPlan _, DistinctPlan _ -> isOrderVisible;
-            case SetOperationPlan operation ->
-                    isOrderVisible && (inputIndex == 0 || operation.getOperation().isUnion());
-            case JoinPlan join ->
-                    inputIndex == 0 && isOrderVisible || LogicalPlans.consumesInputTimestamp(join, inputIndex);
-            default -> true;
-        };
     }
 
     /**
@@ -186,6 +174,68 @@ final class JoinOrdering implements OptimiserPass {
         return position;
     }
 
+    private boolean hasOrderedReadAggregate(AggregatePlan aggregate) {
+        final int keyCount = aggregate.getGroupingExpressions().size();
+        for (int i = 0, n = aggregate.getAggregates().size(); i < n; i++) {
+            final FunctionExpression function = aggregate.getAggregates().getQuick(i);
+            if (columnReads.isRead(aggregate.getOutput().getColumnId(keyCount + i))
+                    && (LogicalPlans.isTimestampAggregate(function) || !LogicalPlans.isOrderIndependentAggregate(function))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasOrderedReadExpression(ProjectPlan project) {
+        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
+            if (columnReads.isRead(project.getOutput().getColumnId(i)) && !LogicalPlans.isOrderIndependent(project.getExpressions().getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean hasReadFunction(WindowPlan window) {
+        for (int i = 0, n = window.getFunctionColumnIds().size(); i < n; i++) {
+            if (columnReads.isRead(window.getFunctionColumnIds().getQuick(i))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True when the plan sees the order of its input at {@code inputIndex}, an index of a join's
+     * {@link LogicalPlans#orderedSteps}, given whether its own consumer sees the plan's order: {@code isOrderVisible}.
+     * A node sees the order only through the columns the query reads from it, see {@link ColumnReads}: column pruning
+     * removes the computations of every other column. A sort orders the rows itself, and an aggregate groups them, so
+     * neither sees it unless its grouping keys or a read aggregate value depend on the order or a read aggregate
+     * function reads the designated timestamp. A filter, a projection, a window, a LIMIT and a DISTINCT pass the order
+     * on, unless the filter or a read column of the projection depends on row order, the projection declares a
+     * designated timestamp, or the window computes a read column. A set operation passes it on from its left input and
+     * from each branch of a
+     * UNION, while EXCEPT and INTERSECT read their right input as a set. A join passes it on to its first input,
+     * shows it to the inputs whose timestamp a temporal step reads, and reads its other inputs as the rows it matches.
+     * Any other node sees it.
+     */
+    private boolean isInputOrderVisible(LogicalPlan plan, int inputIndex, boolean isOrderVisible) {
+        return switch (plan) {
+            case SortPlan _ -> false;
+            case AggregatePlan aggregate ->
+                    !LogicalPlans.areOrderIndependent(aggregate.getGroupingExpressions()) || hasOrderedReadAggregate(aggregate);
+            case FilterPlan filter -> isOrderVisible || !LogicalPlans.isOrderIndependent(filter.getPredicate());
+            case ProjectPlan project ->
+                    isOrderVisible || project.hasTimestampDeclaration() || hasOrderedReadExpression(project);
+            case WindowPlan window -> isOrderVisible || hasReadFunction(window);
+            case LimitPlan _, DistinctPlan _ -> isOrderVisible;
+            case SetOperationPlan operation ->
+                    isOrderVisible && (inputIndex == 0 || operation.getOperation().isUnion());
+            case JoinPlan join ->
+                    inputIndex == 0 && isOrderVisible || LogicalPlans.consumesInputTimestamp(join, inputIndex);
+            default -> true;
+        };
+    }
+
     private int lastOrderedInput(BoundExpression expression, JoinPlan join) {
         readJoin = join;
         lastPosition = -1;
@@ -210,6 +260,8 @@ final class JoinOrdering implements OptimiserPass {
      * Orders every join under and at the plan, whose consumer sees its order when {@code isOrderVisible}.
      */
     private void orderJoins(LogicalPlan plan, boolean isOrderVisible) throws SqlException {
+        columnReads.retainOutputs(plan);
+        columnReads.collectInputReads(plan);
         if (plan instanceof JoinPlan join) {
             final ObjList<JoinInput> steps = LogicalPlans.orderedSteps(join);
             for (int i = 0, n = steps.size(); i < n; i++) {

@@ -2339,6 +2339,39 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     .withPlanContaining("limit: 1", "Row forward scan")
                     .withPlanNotContaining("AdaptiveSymbolPattern")
                     .returns("sym\tv\naa\t1\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' ORDER BY ts DESC LIMIT 1, 2")
+                    .expectSize()
+                    .withPlanContaining("AdaptiveSymbolPattern", "lo: 1 hi: 2")
+                    .returns("sym\tv\naa\t1\n");
+        });
+    }
+
+    @Test
+    public void testDescOrderLimitWithoutParallelTopK() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL INDEX, v LONG, txt VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('aa', 1, 'x', 0), ('ba', 2, 'x', 1), ('ab', 3, 'x', 2), (null, 4, 'x', 3)");
+            sqlExecutionContext.setParallelTopKEnabled(false);
+
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' ORDER BY ts DESC LIMIT 1")
+                    .expectSize()
+                    .withPlanContaining("sort light lo: 1", "AdaptiveSymbolPattern", "limit: 1", "Row backward scan")
+                    .withPlanNotContaining("Top K")
+                    .returns("sym\tv\nab\t3\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' AND v != 1 ORDER BY ts DESC LIMIT 1")
+                    .expectSize()
+                    .withPlanContaining("sort light lo: 1", "AdaptiveSymbolPattern")
+                    .withPlanNotContaining("Top K")
+                    .returns("sym\tv\nab\t3\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' AND txt != 'z' ORDER BY ts DESC LIMIT 1")
+                    .expectSize()
+                    .withPlanContaining("sort light lo: 1", "AdaptiveSymbolPattern", "limit: 1", "Row backward scan")
+                    .withPlanNotContaining("Top K")
+                    .returns("sym\tv\nab\t3\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' ORDER BY ts DESC")
+                    .withPlanContaining("Row backward scan")
+                    .withPlanNotContaining("Sort", "AdaptiveSymbolPattern")
+                    .returns("sym\tv\nab\t3\naa\t1\n");
         });
     }
 

@@ -352,10 +352,13 @@ final class AccessPathPlanning {
 
     /**
      * Plans the indexed SYMBOL pattern access path and returns true, or returns false, recording nothing, when no
-     * pattern conjunct can drive the scan.
+     * pattern conjunct can drive the scan, or when a backward scan serves a descending timestamp order: the order has
+     * no LIMIT, or a parallel top-K would implement its LIMIT over every page frame of the table.
      */
     private boolean planPattern(ScanPlan scan, BoundExpression residual) {
-        if (scan.isNativeTimestampOrderRequested() && scan.getRequestedOrder().getDirections().getQuick(0) == SortDirection.DESCENDING) {
+        if (scan.isNativeTimestampOrderRequested() && scan.getRequestedOrder().getDirections().getQuick(0) == SortDirection.DESCENDING
+                && (scan.getLimitLo() == null || context.getExecutionContext().isParallelTopKEnabled()
+                && OperatorPlanning.isTopKCount(scan.getLimitLo(), scan.getLimitHi()))) {
             return false;
         }
         final OutputSchema output = scan.getOutput();

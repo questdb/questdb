@@ -602,7 +602,7 @@ final class ScanFactoryGenerator {
         }
         ObjList<Function> workerFilters = null;
         Function limit = null;
-        final BoundExpression limitCount = scan.getCoveredFilterLimit();
+        final BoundExpression limitCount = isCovering ? scan.getCoveredFilterLimit() : scan.getFilterLimit();
         final PreparedFilter stolenFilter = frame.stolenFilter;
         final boolean isParallel = scan.getResidualAlgorithm() == FilterPlan.Algorithm.PARALLEL && stolenFilter == null;
         try {

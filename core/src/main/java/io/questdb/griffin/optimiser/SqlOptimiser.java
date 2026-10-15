@@ -142,7 +142,8 @@ public final class SqlOptimiser implements Mutable {
         // The endpoint LIMIT comes first so the later passes keep filters below it.
         passes.add(new TimestampEndpointLimit(constants, limits, sorts));
         passes.add(new AggregateRewrite(context, projectionMerge, tmpProjection, tmpColumn, tmpKeys));
-        joinOrdering = new JoinOrdering(context, filters, new JoinOrderSolver(planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys, tmpKeys,
+        final ColumnReads columnReads = new ColumnReads();
+        joinOrdering = new JoinOrdering(context, columnReads, filters, new JoinOrderSolver(planNodes, columnIds, tmpIndexes, tmpValues, tmpSlaveKeys, tmpKeys,
                 tmpOrder, tmpPending, readyInputs, joinChildren, joinChildrenPool, joinTypes, stagedDependencies), tmpConjuncts);
         passes.add(new FilterPushdown(context, aggregateInputOrder, tmpExpressions, filters, columns, tmpProjection,
                 tmpColumn, tmpSlaveKeys, tmpValues, tmpConjuncts));
@@ -150,7 +151,7 @@ public final class SqlOptimiser implements Mutable {
         windowCallMerge = new WindowCallMerge(context, columns, tmpProjection, tmpPlans, tmpPlanPath, tmpIndexes, substitution, tmpOrder,
                 tmpPairs, tmpColumnMap);
         passes.add(windowCallMerge);
-        passes.add(new ColumnPruning(context, aggregateInputOrder, tmpExpressions, columns, projects, tmpIndexes, tmpValues,
+        passes.add(new ColumnPruning(context, aggregateInputOrder, columnReads, tmpExpressions, columns, projects, tmpIndexes, tmpValues,
                 columnIds, tmpPlans, tmpPlanPath, tmpSchema));
         passes.add(projectionMerge);
         passes.add(new NegativeLimitReversal(constants, sorts, tmpIndexes, tmpPlans));

@@ -383,7 +383,7 @@ public final class LogicalPlans {
      */
     public static boolean hasTimestampAggregate(ObjList<FunctionExpression> aggregates) {
         for (int i = 0, n = aggregates.size(); i < n; i++) {
-            if ((aggregates.getQuick(i).getFunctionFlags() & (BoundExpression.ASCENDING_TIMESTAMP | BoundExpression.TIMESTAMP_ARGUMENT)) != 0) {
+            if (isTimestampAggregate(aggregates.getQuick(i))) {
                 return true;
             }
         }
@@ -395,12 +395,11 @@ public final class LogicalPlans {
      * arguments of its aggregate functions depend on no row order, and no aggregate function is order-sensitive.
      */
     public static boolean isAggregateOrderIndependent(AggregatePlan aggregate) {
-        if (!areOrderIndependent(aggregate.getGroupingExpressions()) || hasOrderSensitiveAggregate(aggregate.getAggregates())) {
+        if (!areOrderIndependent(aggregate.getGroupingExpressions())) {
             return false;
         }
         for (int i = 0, n = aggregate.getAggregates().size(); i < n; i++) {
-            final FunctionExpression expression = aggregate.getAggregates().getQuick(i);
-            if (!expression.isAggregate() || !areOrderIndependent(expression.getArguments())) {
+            if (!isOrderIndependentAggregate(aggregate.getAggregates().getQuick(i))) {
                 return false;
             }
         }
@@ -590,6 +589,15 @@ public final class LogicalPlans {
     }
 
     /**
+     * True when the value of the aggregate function does not depend on the order of its input rows: it is not
+     * order-sensitive, and its arguments depend on no row order.
+     */
+    public static boolean isOrderIndependentAggregate(FunctionExpression aggregate) {
+        return aggregate.isAggregate() && !aggregate.getOverload().isOrderSensitiveAggregate()
+                && areOrderIndependent(aggregate.getArguments());
+    }
+
+    /**
      * True when the projection hands its input's rows on in their order: it declares no designated timestamp and
      * computes nothing that depends on row order.
      */
@@ -610,6 +618,13 @@ public final class LogicalPlans {
      */
     public static boolean isStableWithinExecution(BoundExpression expression) {
         return (expression.getFunctionFlags() & BoundExpression.STABLE_WITHIN_EXECUTION) != 0;
+    }
+
+    /**
+     * True when the aggregate function reads the designated timestamp of its input or requires its ascending order.
+     */
+    public static boolean isTimestampAggregate(FunctionExpression aggregate) {
+        return (aggregate.getFunctionFlags() & (BoundExpression.ASCENDING_TIMESTAMP | BoundExpression.TIMESTAMP_ARGUMENT)) != 0;
     }
 
     /**
