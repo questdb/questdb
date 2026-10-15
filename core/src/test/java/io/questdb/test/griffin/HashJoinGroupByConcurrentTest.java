@@ -64,7 +64,9 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
     @Override
     @Before
     public void setUp() {
+        // The fused path dispatches its frames and round tasks to the unordered reduce queue.
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
+        setProperty(PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MIN_ROWS, 1);
         setProperty(PropertyKey.CAIRO_SQL_PAGE_FRAME_MAX_ROWS, 31);
         super.setUp();
@@ -739,6 +741,10 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
         final long decodedBound = isCopyFitting ? cacheSize : slotCount * readerShare;
         // A share holds less than a decoded build, so the readers decode row groups again.
         Assert.assertTrue(readerShare < decodedBuildSize);
+        // Every worker must hold a probe frame at once, and the gated owner publishes no frame past
+        // a full queue, so the queue needs a frame per worker. This goes first: Overrides keeps the
+        // changes only when the last property set in a batch changes.
+        setProperty(PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, workerCount);
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2_000);
         setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, cacheSize);
         // The build has fewer rows than the default bound, so it runs on the owner unless forced.

@@ -530,6 +530,34 @@ public class BitmapIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testConcurrentForwardReaderRepoolsCursorOfMissingKey() throws Exception {
+        // getCursor() pops a pooled cursor before it knows whether the key has rows. For a key past
+        // the key count it returns the shared empty cursor, whose close() pools nothing, so
+        // getCursor() itself must return the popped cursor to the pool. Pooling reuses the same
+        // instance, so a lost cursor shows as a fresh instance on the next lookup.
+        TestUtils.assertMemoryLeak(() -> {
+            final LongList list = new LongList();
+            create(configuration, path.trimTo(plen), "x", 4);
+            try (BitmapIndexWriter writer = new BitmapIndexWriter(configuration, path, "x", COLUMN_NAME_TXN_NONE)) {
+                writer.add(0, 10);
+                writer.add(1, 20);
+            }
+            try (ConcurrentBitmapIndexFwdReader reader = new ConcurrentBitmapIndexFwdReader(configuration, path.trimTo(plen), "x", COLUMN_NAME_TXN_NONE, -1, 0)) {
+                final RowCursor pooled = reader.getCursor(1, 0, Long.MAX_VALUE);
+                assertThat("[20]", pooled, list);
+                for (int i = 0; i < 3; i++) {
+                    final RowCursor empty = reader.getCursor(1_000, 0, Long.MAX_VALUE);
+                    Assert.assertSame(EmptyRowCursor.INSTANCE, empty);
+                    empty.close();
+                }
+                final RowCursor reused = reader.getCursor(0, 0, Long.MAX_VALUE);
+                Assert.assertSame("a lookup of a missing key must return the pooled cursor to the pool", pooled, reused);
+                assertThat("[10]", reused, list);
+            }
+        });
+    }
+
+    @Test
     public void testConcurrentWriterAndBackwardReadBreadth() throws Exception {
         final Rnd rnd = TestUtils.generateRandom(LOG);
         testConcurrentBackwardRW(rnd.nextInt(10000000), 1024);
