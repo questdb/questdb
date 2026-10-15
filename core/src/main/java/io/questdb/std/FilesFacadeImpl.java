@@ -680,9 +680,10 @@ public class FilesFacadeImpl implements FilesFacade {
             if (unlink(path.$()) == 0) {
                 LOG.debug().$("removed by unlink [path=").$(path).I$();
                 return true;
-            } else {
-                LOG.debug().$("failed to unlink, will remove [path=").$(path).I$();
             }
+            // A recursive remove would follow the link and delete its target's files
+            LOG.debug().$("cannot unlink [path=").$(path).$(", errno=").$(errno()).I$();
+            return false;
         }
 
         if (rmdir(path)) {

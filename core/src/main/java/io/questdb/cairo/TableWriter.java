@@ -1207,11 +1207,15 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
         }
 
+        Path detachedPath = Path.PATH.get().of(configuration.getDbRoot()).concat(tableToken);
+        setPathForNativePartition(detachedPath, timestampType, partitionBy, timestamp, -1L);
+        detachedPath.put(configuration.getAttachPartitionSuffix()).$();
         // final name of partition folder after attachment
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, timestamp, getTxn());
         if (ff.exists(path.$())) {
             // No committed partition bears the current txn, so an earlier failed attempt of this attach left the
-            // directory. Skipping the attach would lose it, and a later partition could reuse the name.
+            // directory. Skipping the attach would lose it, and a later partition could reuse the name. The source
+            // tells which step is safe: without it the directory may be the moved partition itself.
             final CairoException e = AttachDetachStatus.ATTACH_ERR_DIR_EXISTS.getException(
                     0,
                     AttachDetachStatus.ATTACH_ERR_DIR_EXISTS,
@@ -1219,16 +1223,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     timestampType,
                     partitionBy,
                     timestamp
-            ).put(", an earlier failed attach left its directory: remove it and ").put(tableToken.isWal() ? "RESUME WAL" : "attach again")
-                    .put(" [path=").put(path).put(']');
+            );
+            if (!ff.exists(detachedPath.$())) {
+                e.put(", ").put(path).put(" may hold the partition an earlier attempt moved: rename it to ").put(detachedPath);
+            } else if (ff.isSoftLink(path.$())) {
+                e.put(", remove only the soft link ").put(path).put(" (not its target)");
+            } else {
+                e.put(", remove ").put(path).put(" (a copy or links of ").put(detachedPath).put(')');
+            }
+            e.put(", then ").put(tableToken.isWal() ? "RESUME WAL" : "attach again");
             path.trimTo(pathSize);
             LOG.critical().$safe(e.getFlyweightMessage()).$();
             throw e;
         }
 
-        Path detachedPath = Path.PATH.get().of(configuration.getDbRoot()).concat(tableToken);
-        setPathForNativePartition(detachedPath, timestampType, partitionBy, timestamp, -1L);
-        detachedPath.put(configuration.getAttachPartitionSuffix()).$();
         int detachedRootLen = detachedPath.size();
         boolean forceRenamePartitionDir = partitionSize < 0;
         boolean checkPassed = false;
@@ -1380,7 +1388,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } finally {
                     path.trimTo(partitionPathLen);
                     if (!checkPassed) {
-                        attachPartitionRevertDir(isRenamed, detachedPath.trimTo(detachedRootLen));
+                        attachPartitionRevertDir(isRenamed, isSoftLink, detachedPath.trimTo(detachedRootLen));
                     }
                 }
             } else {
@@ -5814,15 +5822,22 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void attachPartitionRevertDir(boolean isRenamed, Path detachedPath) {
-        if (!isRenamed) {
-            // A copied or linked destination is this attempt's own: the destination did not exist before it, and the
-            // source is untouched. A soft link is unlinked, not followed.
-            if (!ff.unlinkOrRemove(path, LOG) && ff.exists(path.$())) {
-                LOG.error().$("could not remove partition dir copy [errno=").$(ff.errno()).$(", path=").$(path).I$();
+    private void attachPartitionRevertDir(boolean isRenamed, boolean isSoftLink, Path detachedPath) {
+        if (isRenamed) {
+            if (ff.rename(path.$(), detachedPath.$()) != FILES_RENAME_OK) {
+                final String nextStep = tableToken.isWal() ? "RESUME WAL" : "attach again";
+                LOG.critical().$("could not restore detached partition dir, rename it by hand, then ").$(nextStep)
+                        .$(" [errno=").$(ff.errno()).$(", from=").$(path).$(", to=").$(detachedPath).I$();
             }
-        } else if (ff.rename(path.$(), detachedPath.$()) != FILES_RENAME_OK) {
-            LOG.critical().$("could not restore detached partition dir [errno=").$(ff.errno()).$(", from=").$(path).$(", to=").$(detachedPath).I$();
+        } else if (isSoftLink) {
+            // This attempt's soft link to the source: unlink it, never touch its target
+            if (ff.unlink(path.$()) != 0 && ff.isSoftLink(path.$())) {
+                LOG.error().$("could not remove partition dir soft link [errno=").$(ff.errno()).$(", path=").$(path).I$();
+            }
+        } else if (!ff.unlinkOrRemove(path, LOG) && ff.exists(path.$())) {
+            // A copied or hard-linked destination is this attempt's own directory: it did not exist before it, and
+            // the source is untouched. unlinkOrRemove never removes through a link.
+            LOG.error().$("could not remove partition dir copy [errno=").$(ff.errno()).$(", path=").$(path).I$();
         }
     }
 
