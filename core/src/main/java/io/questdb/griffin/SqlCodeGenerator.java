@@ -11546,8 +11546,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             intHashSet.clear();
             final IntList columnIndexes = new IntList();
             // Cached window functions read from the record chain, which reorders columns
-            // (window outputs lead, base columns follow), so track where the designated
-            // timestamp lands in the chain for RANGE-framed functions to read.
+            // (the SELECT list first, in SELECT order, then the base columns it leaves out),
+            // so track where the designated timestamp lands in the chain for RANGE-framed
+            // functions to read.
             int chainTimestampIndex = -1;
             for (int i = 0; i < columnCount; i++) {
                 final QueryColumn qc = columns.getQuick(i);
@@ -11813,6 +11814,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         ));
                         deferredWindowFunctions.extendAndSet(i, windowFunction);
 
+                        // The sink steps past the window column's chain space, fixed-size
+                        // bytes or a var-size slot, so the base columns after it land in
+                        // their own place; the cursor writes the column itself later.
                         listColumnFilterA.extendAndSet(i, -i - 1);
                     } catch (Throwable th) {
                         if (windowFunctionOwned) {
@@ -11883,8 +11887,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // compare, which can regress 10-100x on cold/partitioned bases.
             // It also requires every window-output column to be fixed-width: the narrow chain
             // never initializes var-size aux pointers, so a var-size output column would read
-            // uninitialized offsets and crash. No window function returns a var-size type today;
-            // this guard keeps the path safe if one is ever added.
+            // uninitialized offsets and crash. The array forms of percentile_disc/percentile_cont
+            // and their quantile aliases return DOUBLE[], so this guard sends them to the cached
+            // factory below.
             if (configuration.isSqlWindowCachedLightEnabled()
                     && base.recordCursorSupportsRandomAccess()
                     && isAllGroupsEncodedEligible
