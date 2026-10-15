@@ -1749,6 +1749,72 @@ public class WalPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSequencerProbeFailureClosesTableListing() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync"); // mode-independent: the probe fails before any purge decision
+        final String tableName = testName.getMethodName();
+        final String tableDirName = tableName + "~1";
+        final AtomicBoolean isArmed = new AtomicBoolean(false);
+        final AtomicInteger openTableListings = new AtomicInteger();
+        final RuntimeException probeFailure = new RuntimeException("sequencer probe failure");
+        final FilesFacade testFf = new TestFilesFacadeImpl() {
+            private long tableListingPtr = -1;
+
+            @Override
+            public long findClose(long findPtr) {
+                if (findPtr == tableListingPtr) {
+                    tableListingPtr = -1;
+                    openTableListings.decrementAndGet();
+                }
+                return super.findClose(findPtr);
+            }
+
+            @Override
+            public long findFirst(LPSZ path) {
+                final long ptr = super.findFirst(path);
+                if (isArmed.get() && ptr > 0 && Utf8s.endsWithAscii(path, tableDirName)) {
+                    tableListingPtr = ptr;
+                    openTableListings.incrementAndGet();
+                }
+                return ptr;
+            }
+        };
+        engine.setWalDirectoryPolicy(
+                new DefaultWalDirectoryPolicy() {
+                    @Override
+                    public boolean isInUse(Path path) {
+                        if (isArmed.get() && Utf8s.endsWithAscii(path, SEQ_DIR)) {
+                            throw probeFailure;
+                        }
+                        return false;
+                    }
+                }
+        );
+
+        assertMemoryLeak(testFf, () -> {
+            execute("CREATE TABLE " + tableName + " (x LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO " + tableName + " VALUES (1, '2022-02-24T00:00:00.000000Z')");
+            engine.releaseInactive();
+            assertWalExistence(true, tableName, 1);
+
+            // The sequencer probe fails while the purge walks the table directory: the listing must still close.
+            isArmed.set(true);
+            try (WalPurgeJob job = new WalPurgeJob(
+                    engine,
+                    testFf,
+                    engine.getConfiguration().getMicrosecondClock()
+            )) {
+                try {
+                    RuntimeException e = Assert.assertThrows(RuntimeException.class, () -> job.drain(0));
+                    Assert.assertSame(probeFailure, e);
+                } finally {
+                    isArmed.set(false);
+                }
+            }
+            Assert.assertEquals("table directory listings left open", 0, openTableListings.get());
+        });
+    }
+
+    @Test
     public void testTrackingFailureReleasesLock() throws Exception {
         assertMemoryLeak(() -> {
             final String tableName = testName.getMethodName();

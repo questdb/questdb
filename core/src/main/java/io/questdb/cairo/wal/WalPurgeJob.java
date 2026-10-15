@@ -374,10 +374,11 @@ public class WalPurgeJob extends SynchronizedJob implements Closeable {
      * @return false if there aren't any pending tasks
      */
     private boolean discoverWalSegments() {
+        // Before the listing opens: a throw between the open and the try below would leave the listing open.
+        boolean hasPendingTasks = sequencerHasPendingTasks();
         Path path = setTablePath(tableToken);
         long p = ff.findFirst(path.$());
         int rootPathLen = path.size();
-        boolean hasPendingTasks = sequencerHasPendingTasks();
         if (p > 0) {
             try {
                 do {
