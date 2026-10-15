@@ -1702,6 +1702,38 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testInPlaceIndexAppendExtendsLiveIndex() throws Exception {
+        // An in-order commit into the parquet partition appends to the live index of s. The job opens
+        // the live s.k and s.v once each and truncates each only when it closes them, to trim the
+        // mapped tail. A rebuild would also truncate both when it re-initializes them.
+        setInPlaceParquetO3Properties();
+        final LiveIndexTruncateCounter ff = new LiveIndexTruncateCounter();
+        assertMemoryLeak(ff, () -> {
+            createIndexedParquetTable("INDEX", "TIMESTAMP");
+            final long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
+            Assert.assertEquals(-1, getColumnNameTxn("pt", 0, "s"));
+            try (Path path = new Path()) {
+                setPartitionPath("pt", 0, path);
+                ff.track(path.toString());
+            }
+
+            execute(symRowsInsert(SYM_APPEND_ROWS));
+            drainWalQueue();
+
+            Assert.assertEquals(partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(-1, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertEquals(1, ff.getOpenCount("s.k"));
+            Assert.assertEquals(1, ff.getOpenCount("s.v"));
+            Assert.assertEquals(1, ff.getTruncateCount("s.k"));
+            Assert.assertEquals(1, ff.getTruncateCount("s.v"));
+            assertQuery(STALE_INDEX_QUERIES[0])
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expectedStaleIndexQueryResult(0, false, SYM_BASE_ROWS, SYM_APPEND_ROWS));
+        });
+    }
+
+    @Test
     public void testInPlaceIndexAtServerDefaults() throws Exception {
         // Server default row group size (100_000) and rewrite thresholds: a 200_001-row parquet partition
         // has 3 row groups and takes both the append and the merge in place
@@ -2610,6 +2642,62 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         int getOpenCount(String fileName) {
             final AtomicInteger count = openCounts.get(fileName);
             return count == null ? 0 : count.get();
+        }
+    }
+
+    /**
+     * Counts the read-write opens of the BITMAP index files of column {@code s} in one partition
+     * directory, and the truncations of the descriptors those opens return.
+     */
+    private static class LiveIndexTruncateCounter extends TestFilesFacadeImpl {
+        private final ConcurrentHashMap<Long, String> fileNamesByFd = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<String, AtomicInteger> openCounts = new ConcurrentHashMap<>();
+        private final ConcurrentHashMap<String, AtomicInteger> truncateCounts = new ConcurrentHashMap<>();
+        private volatile String partitionDir;
+
+        @Override
+        public boolean close(long fd) {
+            fileNamesByFd.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            final String dir = partitionDir;
+            if (dir != null && fd > -1) {
+                final String path = Utf8s.stringFromUtf8Bytes(name);
+                for (String fileName : new String[]{"s.k", "s.v"}) {
+                    if (path.equals(dir + Files.SEPARATOR + fileName)) {
+                        fileNamesByFd.put(fd, fileName);
+                        openCounts.computeIfAbsent(fileName, k -> new AtomicInteger()).incrementAndGet();
+                    }
+                }
+            }
+            return fd;
+        }
+
+        @Override
+        public boolean truncate(long fd, long size) {
+            final String fileName = fileNamesByFd.get(fd);
+            if (fileName != null) {
+                truncateCounts.computeIfAbsent(fileName, k -> new AtomicInteger()).incrementAndGet();
+            }
+            return super.truncate(fd, size);
+        }
+
+        int getOpenCount(String fileName) {
+            final AtomicInteger count = openCounts.get(fileName);
+            return count == null ? 0 : count.get();
+        }
+
+        int getTruncateCount(String fileName) {
+            final AtomicInteger count = truncateCounts.get(fileName);
+            return count == null ? 0 : count.get();
+        }
+
+        void track(String partitionDir) {
+            this.partitionDir = partitionDir;
         }
     }
 
