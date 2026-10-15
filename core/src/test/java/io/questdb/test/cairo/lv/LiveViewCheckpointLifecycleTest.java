@@ -307,6 +307,26 @@ public class LiveViewCheckpointLifecycleTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLeftoverStagedRetirementQueueKeepsTheCheckpointDirectory() throws Exception {
+        assertMemoryLeak(() -> {
+            ensureDirs();
+            publish(1, 1, 7, 0, 5);
+            // What a crash between the staged write of the retirement work set and its rename
+            // leaves: a current-layout name, unlike the legacy artefacts above.
+            touchTopLevel(LiveViewCheckpointLayout.RETIREMENT_QUEUE_TMP_FILE_NAME);
+
+            final LiveViewCheckpointLifecycle.ReconcileResult result;
+            try (Path dir = checkpointsDir()) {
+                result = LiveViewCheckpointLifecycle.reconcile(configuration, dir, 7, 0, true);
+            }
+            Assert.assertFalse("a staged work set must not reset the directory", result.isFormatReset());
+            Assert.assertFalse(result.isFormatBlocked());
+            Assert.assertTrue(timelineExists());
+            Assert.assertEquals(1, result.getWalPurgeFloor());
+        });
+    }
+
+    @Test
     public void testOrphanCleanupCollectsWhatNoGenerationCatalogues() throws Exception {
         assertMemoryLeak(() -> {
             ensureDirs();

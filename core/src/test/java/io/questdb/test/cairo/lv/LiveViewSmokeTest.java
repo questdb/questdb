@@ -81,6 +81,7 @@ import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Assume;
@@ -9034,53 +9035,87 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
             }
         };
 
-        assertMemoryLeak(ff, () -> {
-            setCurrentMicros(0);
-            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
-            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(ff, () -> {
+                setCurrentMicros(0);
+                execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                        "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
 
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                // Happy-path drain seeds lastFlushTimeUs and lvConsumedSeqTxn.
-                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000001Z', 1)");
-                drainWalQueue();
-                drainJob(job);
-                drainWalQueue();
-
-                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
-                Assert.assertNotNull(instance);
-                Assert.assertFalse("LV must be valid after happy path", instance.isInvalid());
-
-                failPersist.set(true);
-                try {
-                    // Two consecutive persist failures: first hits retryCount=1 (budget
-                    // not exhausted, log only); second hits retryCount=2 == max → invalidate.
-                    setCurrentMicros(200_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000002Z', 2)");
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    // Happy-path drain seeds lastFlushTimeUs and lvConsumedSeqTxn.
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000001Z', 1)");
                     drainWalQueue();
                     drainJob(job);
-                    Assert.assertEquals("first failure must increment retryCount to 1",
-                            1, instance.getFlushRetryCount());
-                    Assert.assertFalse("LV must still be valid after one failure",
-                            instance.isInvalid());
+                    drainWalQueue();
 
-                    setCurrentMicros(400_000L);
-                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000003Z', 3)");
+                    LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                    Assert.assertNotNull(instance);
+                    Assert.assertFalse("LV must be valid after happy path", instance.isInvalid());
+
+                    failPersist.set(true);
+                    try {
+                        // Two consecutive persist failures: first hits retryCount=1 (budget
+                        // not exhausted, log only); second hits retryCount=2 == max → invalidate.
+                        setCurrentMicros(200_000L);
+                        execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000002Z', 2)");
+                        drainWalQueue();
+                        drainJob(job);
+                        Assert.assertEquals("first failure must increment retryCount to 1",
+                                1, instance.getFlushRetryCount());
+                        Assert.assertFalse("LV must still be valid after one failure",
+                                instance.isInvalid());
+                        capture.drain();
+                        capture.assertNotLogged("live view refresh budget exhausted, invalidating");
+
+                        setCurrentMicros(400_000L);
+                        execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000003Z', 3)");
+                        drainWalQueue();
+                        drainJob(job);
+                        Assert.assertTrue("second failure (retryCount=2) must exhaust the budget",
+                                instance.isInvalid());
+                        Assert.assertEquals("flush retry budget exhausted", instance.getInvalidationReason());
+                    } finally {
+                        failPersist.set(false);
+                    }
+
+                    // The fault clears, and a later commit must not reach the invalidated view.
+                    setCurrentMicros(600_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000004Z', 4)");
                     drainWalQueue();
                     drainJob(job);
-                    Assert.assertTrue("second failure (retryCount=2) must exhaust the budget",
-                            instance.isInvalid());
-                    Assert.assertTrue(
-                            "invalidation reason must mention flush retry [reason=" + instance.getInvalidationReason() + "]",
-                            Chars.contains(instance.getInvalidationReason(), "flush retry budget")
-                    );
-                } finally {
-                    failPersist.set(false);
+                    Assert.assertTrue(instance.isInvalid());
                 }
-            }
+                capture.drain();
+                capture.assertLoggedRE("C i\\.q\\.c\\.l\\.LiveViewRefreshJob live view refresh budget exhausted, invalidating "
+                        + "\\[view=lv, retryCount=2, elapsedUs=200000, error=");
+                assertQuery("SELECT view_status, invalidation_reason FROM live_views() WHERE view_name = 'lv'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .returns("""
+                                view_status\tinvalidation_reason
+                                invalid\tflush retry budget exhausted
+                                """);
+                // Each faulting turn flushed its row to the view's table ahead of the state write
+                // that failed, so the view keeps serving all three rows, and nothing after them.
+                assertQuery("SELECT ts, x, rn FROM lv")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .returns("""
+                                ts\tx\trn
+                                2026-04-01T00:00:00.000001Z\t1\t1
+                                2026-04-01T00:00:00.000002Z\t2\t2
+                                2026-04-01T00:00:00.000003Z\t3\t3
+                                """);
 
-            execute("DROP LIVE VIEW lv");
-        });
+                execute("DROP LIVE VIEW lv");
+            });
+        } finally {
+            capture.stop();
+        }
     }
 
     @Test

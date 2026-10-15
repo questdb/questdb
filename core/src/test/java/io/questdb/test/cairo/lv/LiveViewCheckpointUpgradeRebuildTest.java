@@ -220,6 +220,86 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
     }
 
     @Test
+    public void testACrashBetweenTheRetireAndTheFirstSealRebuildsAgainOnRestart() throws Exception {
+        assertMemoryLeak(fault, () -> {
+            seedSixRows();
+            carryOverToOlderFormat();
+            failFirstSealAfterTheRetire();
+
+            // The restart meets no timeline, so it takes the ordinary missing-timeline route with
+            // the guard armed, not the upgrade's: the older superblock that owed the upgrade is
+            // gone. The rows the upgrade committed equal a recompute over the base, so the guard
+            // finds nothing to refuse and the rebuild seals this build's format.
+            shutdown();
+            final LiveViewRebuildRestatementGuard guard = restart();
+            assertRebuiltFromAppliedBase("lv");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_NONE, guard.getVerdict());
+            Assert.assertEquals(6, guard.getReproducedRows());
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertFalse(instance.isCheckpointUpgradeRebuildPending());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            assertRecoveryReport("active\t\t\t\n");
+            assertViewRows(ALL_ROWS);
+            assertNoRefreshFaults("lv");
+            Assert.assertEquals(LiveViewCheckpointSuperblock.SLOT_FORMAT_VERSION, readSuperblockFormatVersion(checkpointsRootByDirName()));
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                insertAndRefresh(job, "('2026-01-03T10:00:00.000000Z', 'acct-1', 64.0)");
+            }
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertRecoveryReport("active\t\t\t\n");
+            assertViewRows(ALL_ROWS + "2026-01-03T10:00:00.000000Z\tacct-1\t80.0\t2\n");
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testABaseThatLostADayBetweenTheRetireAndTheFirstSealRefusesTheRestartRebuild() throws Exception {
+        assertMemoryLeak(fault, () -> {
+            seedSixRows();
+            carryOverToOlderFormat();
+            failFirstSealAfterTheRetire();
+
+            // The upgrade is over, so the view keeps the rows of a day its base loses from here on,
+            // as any view does, and a commit with no rows of its own seals nothing over them.
+            execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01'");
+            drainWalQueue();
+            drive();
+            assertViewRows(ALL_ROWS);
+            Assert.assertFalse(new File(checkpointsRootByDirName(), LiveViewCheckpointLayout.TIMELINE_FILE_NAME).exists());
+
+            // The restart's rebuild is the missing-timeline route's, not the upgrade's: the guard
+            // compares, refuses the rebuild that would drop that day, and stops the view.
+            shutdown();
+            final LiveViewRebuildRestatementGuard guard = restart();
+            final LiveViewInstance instance = instance("lv");
+            Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute()));
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
+            Assert.assertTrue(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isCheckpointUpgradeRebuildPending());
+            Assert.assertFalse("a refused rebuild must not write _lv.s.invalid", instance.isInvalid());
+            TestUtils.assertContains(
+                    instance.getCheckpointRecoveryReason(),
+                    "rebuilding the view from its base table would drop rows it retains [cause=timeline is absent]"
+            );
+            assertQuery("SELECT view_status, checkpoint_recovery_phase FROM live_views() WHERE view_name = 'lv'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_status\tcheckpoint_recovery_phase
+                            invalid\trebuild_blocked
+                            """);
+            capture.drain();
+            capture.assertNotLogged("live view upgrade rebuild restates rows the view retained");
+            assertViewRows(ALL_ROWS);
+        });
+    }
+
+    @Test
     public void testABaseSchemaChangeDuringTheUpgradeRebuildStillCompletesTheUpgrade() throws Exception {
         assertMemoryLeak(fault, () -> {
             seedSixRows();
@@ -790,6 +870,27 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
         }
     }
 
+    /**
+     * Runs the upgrade rebuild of a view {@link #carryOverToOlderFormat} carried over, and fails
+     * the open that creates its {@code _timeline} afresh: the first seal in this build's format,
+     * which the retire of the older directory has just made room for. That is the disk a crash
+     * between the retire and the first seal leaves: the rebuilt rows, and no timeline at all.
+     */
+    private void failFirstSealAfterTheRetire() throws Exception {
+        fault.armTimelineCreate();
+        final LiveViewRebuildRestatementGuard guard = drive();
+        Assert.assertTrue("the first seal after the retire must have been failed", fault.hasTimelineCreateFired());
+        Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_FORMAT_UPGRADE, guard.getAbstention());
+        capture.drain();
+        capture.assertLogged("live view retired its older-format checkpoint timeline, the next seal writes the supported format [view=lv");
+        capture.assertLogged("could not write live view head checkpoint [view=lv");
+        assertUpgradeRebuilt("lv");
+        Assert.assertFalse(new File(checkpointsRootByDirName(), LiveViewCheckpointLayout.TIMELINE_FILE_NAME).exists());
+        assertRecoveryReport("active\t\t\t\n");
+        assertViewRows(ALL_ROWS);
+        assertNoRefreshFaults("lv");
+    }
+
     private void insertAndRefresh(LiveViewRefreshJob job, String values) throws Exception {
         execute("INSERT INTO tx VALUES " + values);
         drainWalQueue();
@@ -845,9 +946,10 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
     }
 
     /**
-     * Fails, once each and only when armed: the unlink of a view's {@code _timeline}, the removal of
-     * its checkpoint {@code meta} directory, and the open of the base's {@code amount} column that
-     * the whole-view rebuild's scan of the applied base makes and the raw-WAL drain never does.
+     * Fails, once each and only when armed: the unlink of a view's {@code _timeline}, the open that
+     * creates a view's {@code _timeline} where none exists, the removal of its checkpoint
+     * {@code meta} directory, and the open of the base's {@code amount} column that the whole-view
+     * rebuild's scan of the applied base makes and the raw-WAL drain never does.
      * <p>
      * Also lands, once and only when armed, an {@code ADD COLUMN} on the base between the restart's
      * plan compile and the upgrade rebuild's base reader open. The restart opens a reader of the
@@ -861,6 +963,8 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
         private final AtomicBoolean isMetaDirRemoveFired = new AtomicBoolean();
         private final AtomicBoolean isSchemaChangeArmed = new AtomicBoolean();
         private final AtomicBoolean isSchemaChangeFired = new AtomicBoolean();
+        private final AtomicBoolean isTimelineCreateArmed = new AtomicBoolean();
+        private final AtomicBoolean isTimelineCreateFired = new AtomicBoolean();
         private final AtomicBoolean isTimelineRemoveArmed = new AtomicBoolean();
         private final AtomicBoolean isTimelineRemoveFired = new AtomicBoolean();
         private volatile String baseDir;
@@ -901,6 +1005,18 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
         }
 
         @Override
+        public long openRW(LPSZ name, int opts) {
+            if (isTimelineCreateArmed.get()
+                    && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME + File.separator + LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
+                    && !exists(name)
+                    && isTimelineCreateArmed.compareAndSet(true, false)) {
+                isTimelineCreateFired.set(true);
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        @Override
         public boolean removeQuiet(LPSZ name) {
             if (isTimelineRemoveArmed.get()
                     && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME + File.separator + LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
@@ -938,6 +1054,11 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
             isMetaDirRemoveArmed.set(true);
         }
 
+        void armTimelineCreate() {
+            isTimelineCreateFired.set(false);
+            isTimelineCreateArmed.set(true);
+        }
+
         void armTimelineRemove() {
             isTimelineRemoveFired.set(false);
             isTimelineRemoveArmed.set(true);
@@ -953,6 +1074,10 @@ public class LiveViewCheckpointUpgradeRebuildTest extends AbstractLiveViewCheckp
 
         boolean hasSchemaChangeFired() {
             return isSchemaChangeFired.get();
+        }
+
+        boolean hasTimelineCreateFired() {
+            return isTimelineCreateFired.get();
         }
 
         boolean hasTimelineRemoveFired() {

@@ -581,7 +581,8 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
         // them, so the restatement guard refuses it and stops the view. The reason says what a
         // restart does without promising or ruling out that it lifts the block. The test then
         // checks both outcomes: a restart over the unchanged base meets the same refusal, and a
-        // restart once the base holds the lost day again resumes the view with its 6 rows.
+        // restart once the base holds the lost day again resumes the view with its 6 rows and
+        // folds the next commit onto them.
         final String viewRows = """
                 created_at\taccount_id\tcumulative_sum\tcumulative_count
                 2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
@@ -649,11 +650,24 @@ public class LiveViewCheckpointRestoreTest extends AbstractLiveViewTest {
                     ('2026-01-01T09:10:00.000000Z', 'acct-2', 2.0)""");
             drainWalQueue();
             restartLiveViews();
-            assertLiveViewStatus("""
+            final String active = """
                     view_status\tcheckpoint_recovery_phase\tinvalidation_reason
                     active\t\t
-                    """);
+                    """;
+            assertLiveViewStatus(active);
+            assertRebuiltFromAppliedBase("lv");
             assertLiveViewRows(viewRows);
+
+            // A resumed view refreshes again: a commit after the resume reaches it, folded onto
+            // the accumulators the rebuild derived. A view that reported active while it stayed
+            // frozen, or that resumed over a runtime the rebuild never filled, fails here.
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-03T10:00:00.000000Z', 'acct-1', 64.0)");
+                driveRefreshToQuiescence(job);
+            }
+            assertLiveViewStatus(active);
+            assertNoRefreshFaults("lv");
+            assertLiveViewRows(viewRows + "2026-01-03T10:00:00.000000Z\tacct-1\t80.0\t2\n");
 
             execute("CHECKPOINT RELEASE");
         });

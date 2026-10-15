@@ -1476,6 +1476,76 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     @Test
+    public void testAMarkerItsClearLeftOnASpliceThatSealedNoRootReadsAsLiveAndRefusesTheRebuild() throws Exception {
+        // The late row's resume replays no row above the newest root it re-versions, so the
+        // splice is the repair's only publication: the timeline stands one generation past the
+        // marker's. Nothing on disk tells that splice from a truncate whose head seal never ran,
+        // which the marker exists to protect, so a marker the clear left behind must read as
+        // live. The restart rebuilds rather than restores, and the guard refuses the rebuild
+        // over the day the base lost.
+        final MarkerClearFault fault = new MarkerClearFault();
+        assertMemoryLeak(fault, () -> {
+            final LiveViewRebuildRestatementGuard guard = failMarkerClearAfterASpliceAndRestart(
+                    fault,
+                    "('2026-01-03T09:05:00.000000Z', 'acct-1', 64.0)",
+                    1,
+                    CORRECTED_DAY_THREE_ROWS
+            );
+            final LiveViewInstance instance = instance("lv");
+            assertRebuildBlocked(instance, "prefix preservation repair marker present");
+            Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute()));
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR, guard.getVerdict());
+            assertLiveViewsReportsTheBlock();
+            assertViewRows(CORRECTED_DAY_THREE_ROWS);
+            try (Path dir = checkpointsDir(instance)) {
+                Assert.assertTrue(
+                        "the marker must survive for the next restart to meet",
+                        LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), dir)
+                );
+            }
+        });
+    }
+
+    @Test
+    public void testAMarkerItsClearLeftUnderASealAboveTheSpliceReadsAsStaleAndRestoresOverTheDayTheBaseLost() throws Exception {
+        // The same commit also carries an in-order row above the newest root the splice
+        // re-versions, so the head seal appends a root of its own: the timeline stands two
+        // generations past the marker's, which only a completed repair publishes. A marker the
+        // clear left behind is a leftover, and the restart must clear it and restore from the
+        // timeline. Reading it as live would rebuild, meet the day the base lost and stop the
+        // view.
+        final MarkerClearFault fault = new MarkerClearFault();
+        assertMemoryLeak(fault, () -> {
+            final String forwardRow = "2026-01-03T10:00:00.000000Z\tacct-1\t144.0\t3\n";
+            failMarkerClearAfterASpliceAndRestart(
+                    fault,
+                    "('2026-01-03T09:05:00.000000Z', 'acct-1', 64.0), " + ROWS_AHEAD[0],
+                    2,
+                    CORRECTED_DAY_THREE_ROWS + forwardRow
+            );
+            assertRestoredFromTimeline("lv");
+            final LiveViewInstance restarted = instance("lv");
+            assertLiveViewsReportsNoRecovery(restarted);
+            assertNoRefreshFaults("lv");
+            assertViewRows(CORRECTED_DAY_THREE_ROWS + forwardRow);
+            try (Path dir = checkpointsDir(restarted)) {
+                Assert.assertFalse(
+                        "a stale marker must be gone once the view restored past it",
+                        LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), dir)
+                );
+            }
+
+            execute("INSERT INTO tx VALUES " + ROWS_AHEAD[1]);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertNoRefreshFaults("lv");
+            assertLiveViewsReportsNoRecovery(restarted);
+            assertViewRows(CORRECTED_DAY_THREE_ROWS + forwardRow + "2026-01-03T10:10:00.000000Z\tacct-2\t160.0\t2\n");
+        });
+    }
+
+    @Test
     public void testAResumeReplayFaultRestoresInPlaceOverTheDayTheBaseLost() throws Exception {
         final StagedSegmentOpenFault fault = new StagedSegmentOpenFault();
         assertMemoryLeak(fault, () -> {
@@ -2070,6 +2140,18 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             assertLiveViewsReportsTheBreach();
             assertViewRows(ALL_ROWS);
         });
+    }
+
+    @Test
+    public void testAMidDrainRebuildRefusedOverALostMiddleDayRestartsFromTheTimelineItKept() throws Exception {
+        // The row shortfall refuses after the rebuild's scan, in the last step before its
+        // replacement commits, which is also where the rebuild retires the timeline.
+        assertRefusedMidDrainRebuildRestartsFromTheTimelineItKept("2026-01-02", LiveViewRebuildRestatementGuard.VERDICT_ROW_SHORTFALL);
+    }
+
+    @Test
+    public void testAMidDrainRebuildRefusedOverALostOldestDayRestartsFromTheTimelineItKept() throws Exception {
+        assertRefusedMidDrainRebuildRestartsFromTheTimelineItKept("2026-01-01", LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR);
     }
 
     @Test
@@ -3840,6 +3922,72 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     }
 
     /**
+     * Has the base lose {@code lostDay}, then fails a turn mid-drain together with the restore
+     * its recovery tries first: a transient fault fails the one open of the view's timeline the
+     * restore makes. The recovery falls back to the whole-view rebuild, which the guard refuses
+     * with {@code verdict}, stopping the view. The refusal must leave the timeline as the fault
+     * found it, so the restart that runs the recovery again, with the fault gone, restores from
+     * that timeline rather than meeting the same refusal on a rebuild: the view keeps every row,
+     * drains the commits the failed turn stopped at, and folds a commit made after the restart
+     * onto the restored accumulators.
+     */
+    private void assertRefusedMidDrainRebuildRestartsFromTheTimelineItKept(String lostDay, int verdict) throws Exception {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            dropPartitionAndRefresh(lostDay);
+            final LiveViewInstance instance = instance("lv");
+            final long generationBefore = newestGeneration(instance);
+            final int boundariesBefore = countSealedBoundaries("lv");
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The first commit lands in the view's un-flushed lead, and the next two coalesce
+                // behind it into one pass, which fails reading the third.
+                setCurrentMicros(instance.getLastFlushTimeUs());
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[1]);
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[2]);
+                drainWalQueue();
+                fault.arm(2);
+                fault.armTimelineOpen();
+                drainJob(job);
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                Assert.assertFalse("the recovery's restore must have been failed", fault.isTimelineOpenArmed());
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            capture.drain();
+            capture.assertLogged("live view could not restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "[view=lv, cause=" + MID_DRAIN_CAUSE + ", error=");
+            Assert.assertEquals(LiveViewRebuildRestatementGuard.ABSTAIN_NONE, guard.getAbstention());
+            Assert.assertEquals(verdict, guard.getVerdict());
+            assertRebuildBlocked(instance, MID_DRAIN_CAUSE);
+            assertLiveViewsReportsTheBlock();
+            Assert.assertEquals("the refusal must keep the generation it found", generationBefore, newestGeneration(instance));
+            Assert.assertEquals("the refusal must keep every root it found", boundariesBefore, countSealedBoundaries("lv"));
+            assertViewRows(ALL_ROWS + rowsAheadOutput(1));
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            final LiveViewInstance restarted = instance("lv");
+            assertLiveViewsReportsNoRecovery(restarted);
+            assertNoRefreshFaults("lv");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(3));
+
+            execute("INSERT INTO tx VALUES " + ROWS_AHEAD[3]);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertNoRefreshFaults("lv");
+            assertLiveViewsReportsNoRecovery(restarted);
+            assertViewRows(ALL_ROWS + rowsAheadOutput(4));
+        });
+    }
+
+    /**
      * Refreshes rows on three days into a view created with {@code viewPartitionBy} while every
      * open of its {@code _timeline} fails, over a deduplicating base whose middle day holds only a
      * row the filter rejects. Then the base loses that day, replaces a row the view holds with one
@@ -4016,6 +4164,57 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         fault.arm(2);
         drainJob(job);
         Assert.assertTrue("the mid-drain segment read must have been failed exactly once", fault.hasFired());
+    }
+
+    /**
+     * Seeds the six rows, has the base lose its oldest day, and commits {@code values} in one
+     * commit: a late day-three row, which the view repairs by resuming from the day's first root
+     * and splicing the roots its replay re-versions, and any in-order rows that ride along.
+     * {@code fault} refuses the clear that resolves the repair's marker, so the marker stays on
+     * disk under the generation the repair started from while the repair publishes
+     * {@code generationsPublished} generations above it: the splice, then the head seal's root
+     * when the frontier ran past the splice's newest root. Then the process stops, the fault
+     * goes, and the view restarts.
+     *
+     * @return what the restart's whole-view rebuild guard found, if a rebuild ran
+     */
+    private LiveViewRebuildRestatementGuard failMarkerClearAfterASpliceAndRestart(
+            MarkerClearFault fault,
+            String values,
+            int generationsPublished,
+            String correctedRows
+    ) throws Exception {
+        seedSixRows("");
+        dropPartitionAndRefresh("2026-01-01");
+        final LiveViewInstance instance = instance("lv");
+        final long generationBefore = newestGeneration(instance);
+        execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + values);
+        drainWalQueue();
+        fault.arm();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+        }
+        fault.disarm();
+
+        capture.drain();
+        capture.assertLogged("resumeFromAnchor=true");
+        capture.assertLogged("live view checkpoint timeline repair published [view=lv");
+        Assert.assertEquals("the repair must clear its marker once", 1, fault.getRefusedClears());
+        Assert.assertTrue("the repair must splice", instance.getCheckpointRepairRootsVersioned() > 0);
+        Assert.assertEquals(generationBefore + generationsPublished, newestGeneration(instance));
+        try (Path dir = checkpointsDir(instance)) {
+            Assert.assertTrue(
+                    "the refused clear must leave the marker",
+                    LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), dir)
+            );
+            Assert.assertEquals(generationBefore, LiveViewCheckpointRepairMarker.readBaseGeneration(engine.getConfiguration(), dir));
+        }
+        assertLiveViewsReportsNoRecovery(instance);
+        assertNoRefreshFaults("lv");
+        assertViewRows(correctedRows);
+
+        shutdown();
+        return restart();
     }
 
     /**
@@ -4985,6 +5184,38 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
 
         int getDedupHistoryFailures() {
             return dedupHistoryFailures.get();
+        }
+    }
+
+    /**
+     * Once armed, refuses every unlink of a view's published repair marker,
+     * {@code _checkpoints/_repairing}, and leaves the file in place: what a clear that fails
+     * between a repair's last publication and the end of its turn leaves behind.
+     */
+    private static final class MarkerClearFault extends TestFilesFacadeImpl {
+        private final AtomicBoolean isArmed = new AtomicBoolean();
+        private final AtomicInteger refusedClears = new AtomicInteger();
+
+        @Override
+        public boolean removeQuiet(LPSZ name) {
+            if (isArmed.get() && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME)) {
+                refusedClears.incrementAndGet();
+                return false;
+            }
+            return super.removeQuiet(name);
+        }
+
+        void arm() {
+            refusedClears.set(0);
+            isArmed.set(true);
+        }
+
+        void disarm() {
+            isArmed.set(false);
+        }
+
+        int getRefusedClears() {
+            return refusedClears.get();
         }
     }
 

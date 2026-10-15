@@ -39,9 +39,13 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -52,6 +56,8 @@ import org.junit.Test;
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.zip.CRC32;
 
 /**
@@ -97,6 +103,7 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
 
     // One boundary per commit, at ten-second intervals from the daily anchor.
     private static final int BOUNDARIES = 5;
+    private static final String CRASH_IMAGE_DIR_NAME = "lv_checkpoints_crash_image";
     private static final String DAILY_ANCHOR = "2026-01-01T";
     // The next metadata page kind a future release would allocate: this branch's own tags run
     // 0x11..0x1d, so 0x1e is what an extension of the format looks like from here.
@@ -114,6 +121,30 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
     // holds over the same interval.
     private static final String HEAL_DECLINED_ROWS =
             "live view checkpoint heal declined, the base table does not hold the rows the view materialized";
+    // What the view holds once a commit that puts a tie on the head and a row above it lands over
+    // the five boundaries, and the same over a first commit that also carried a row an hour below
+    // them.
+    private static final String TIE_AND_FRONTIER_ROWS = """
+            created_at\taccount_id\tcumulative_sum\tcumulative_count
+            2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+            2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1
+            2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2
+            2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2
+            2026-01-01T09:00:40.000000Z\tacct-1\t63.0\t3
+            2026-01-01T09:00:40.000000Z\tacct-2\t1042.0\t3
+            2026-01-01T09:00:45.000000Z\tacct-1\t163.0\t4
+            """;
+    private static final String TIE_AND_FRONTIER_ROWS_OVER_AN_EARLIER_HOUR = """
+            created_at\taccount_id\tcumulative_sum\tcumulative_count
+            2026-01-01T08:00:00.000000Z\tacct-1\t500.0\t1
+            2026-01-01T09:00:00.000000Z\tacct-1\t501.0\t2
+            2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1
+            2026-01-01T09:00:20.000000Z\tacct-1\t522.0\t3
+            2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2
+            2026-01-01T09:00:40.000000Z\tacct-1\t563.0\t4
+            2026-01-01T09:00:40.000000Z\tacct-2\t1042.0\t3
+            2026-01-01T09:00:45.000000Z\tacct-1\t663.0\t5
+            """;
     // Three gates can produce the same outcome here - a valid view holding correct rows - and
     // the state a case can read afterwards does not say which one fired. The log does, so every
     // case names its own gate rather than settling for the shared ending.
@@ -498,32 +529,87 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
             );
             Assert.assertEquals(ts(timestamp(45)), instance("lv").getHeadCheckpointMaxTs());
             Assert.assertTrue(isFusedHead("lv"));
-            final String viewRows = """
-                    created_at\taccount_id\tcumulative_sum\tcumulative_count
-                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
-                    2026-01-01T09:00:10.000000Z\tacct-2\t11.0\t1
-                    2026-01-01T09:00:20.000000Z\tacct-1\t22.0\t2
-                    2026-01-01T09:00:30.000000Z\tacct-2\t42.0\t2
-                    2026-01-01T09:00:40.000000Z\tacct-1\t63.0\t3
-                    2026-01-01T09:00:40.000000Z\tacct-2\t1042.0\t3
-                    2026-01-01T09:00:45.000000Z\tacct-1\t163.0\t4
-                    """;
-            assertViewRows(viewRows);
+            assertViewRows(TIE_AND_FRONTIER_ROWS);
 
             // Both accounts read their healed accumulators back, before and after a restart.
-            commitAndRefresh("('" + timestamp(50) + "', 'acct-2', 100.0), ('" + timestamp(55) + "', 'acct-1', 1.0)");
-            final String grownRows = viewRows + """
-                    2026-01-01T09:00:50.000000Z\tacct-2\t1142.0\t4
-                    2026-01-01T09:00:55.000000Z\tacct-1\t164.0\t5
-                    """;
-            assertViewRows(grownRows);
-            assertViewMatchesRecompute();
-            shutdown();
+            commitAboveTheTieAndRestart();
+        });
+    }
+
+    @Test
+    public void testACrashBetweenAHealsSpliceAndItsFrontierSealRebuildsOnRestart() throws Exception {
+        // A heal that seals the frontier above its ceiling publishes twice: the splice that
+        // re-versions the ceiling, then the frontier root at the same base seqTxn. A crash
+        // between the two leaves the healed ceiling as the newest root, below the durable
+        // frontier, under a generation whose base coordinate already covers the frontier's
+        // commit: a restore replays nothing onto that root and falls short of the view's rows,
+        // so it must refuse the generation and rebuild from the base.
+        final HealFrontierSealFault fault = new HealFrontierSealFault();
+        assertMemoryLeak(fault, () -> {
+            try (
+                    Path crashImage = new Path().of(engine.getConfiguration().getDbRoot()).concat(CRASH_IMAGE_DIR_NAME).slash();
+                    Path checkpoints = new Path()
+            ) {
+                healAFutureHeadWhoseFrontierSealFails(fault, false, () -> {
+                    checkpoints.of(checkpointsRoot().getAbsolutePath()).slash();
+                    TestUtils.copyDirectory(checkpoints, crashImage, engine.getConfiguration().getMkDirMode());
+                });
+                // The failed heal sends this start to the rebuild, which the intact base lets
+                // through.
+                assertRebuiltFromAppliedBase("lv");
+                assertLiveViewsReportsNoRecovery();
+                assertViewRows(TIE_AND_FRONTIER_ROWS);
+                assertViewMatchesRecompute();
+
+                // The crash: the next start finds the checkpoints as the fault found them.
+                shutdown();
+                final FilesFacade ff = engine.getConfiguration().getFilesFacade();
+                Assert.assertTrue(ff.rmdir(checkpoints));
+                TestUtils.copyDirectory(crashImage, checkpoints, engine.getConfiguration().getMkDirMode());
+                Assert.assertTrue(ff.rmdir(crashImage));
+            }
+            capture.start();
             restart();
-            assertRestoredFromTimeline("lv");
+
+            capture.drain();
+            // The splice healed the ceiling, so nothing reads as corrupt any more: the restore's
+            // own row count is what refuses the generation.
+            capture.assertNotLogged("live view checkpoint restore fell back past corrupt roots");
+            capture.assertLogged("live view checkpoint timeline rebuild does not match durable materialization");
+            assertRebuiltFromAppliedBase("lv");
+            assertLiveViewsReportsNoRecovery();
             assertNoRefreshFaults("lv");
-            assertViewRows(grownRows);
+            assertViewRows(TIE_AND_FRONTIER_ROWS);
             assertViewMatchesRecompute();
+            commitAboveTheTieAndRestart();
+        });
+    }
+
+    @Test
+    public void testAHealThatCannotSealItsFrontierOverALossyBaseStopsTheView() throws Exception {
+        // The same fault over a base that lost the hour of the view's oldest row. The heal warms
+        // up from a predecessor above that hour, so it alone could bring the view back; with its
+        // frontier seal failed, the start falls back to the rebuild, which the guard refuses. The
+        // refusal keeps the generation the splice published, which is what a crash between the
+        // two publications leaves, so the next start meets that generation, refuses it on the
+        // rows it falls short of, and stops the view again rather than restore a runtime that
+        // never folded the frontier's rows.
+        final HealFrontierSealFault fault = new HealFrontierSealFault();
+        assertMemoryLeak(fault, () -> {
+            healAFutureHeadWhoseFrontierSealFails(fault, true, () -> {
+            });
+            assertHealFallbackRefused();
+            Assert.assertTrue("the splice must have healed the ceiling in this build's shape", isFusedHead("lv"));
+            Assert.assertEquals("the splice re-versions the ceiling in place", BOUNDARIES, countSealedBoundaries("lv"));
+
+            shutdown();
+            capture.start();
+            restart();
+
+            capture.drain();
+            capture.assertNotLogged("live view checkpoint restore fell back past corrupt roots");
+            capture.assertLogged("live view checkpoint timeline rebuild does not match durable materialization");
+            assertHealFallbackRefused();
         });
     }
 
@@ -807,6 +893,32 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
                     new File(checkpointsRoot, FUTURE_TOP_LEVEL_ARTEFACT).exists()
             );
             assertRestartsCleanlyAfterwards();
+        });
+    }
+
+    @Test
+    public void testALeftoverStagedRetirementQueueRestoresFromTheTimeline() throws Exception {
+        assertMemoryLeak(() -> {
+            seedFiveBoundaries();
+            final File checkpointsRoot = checkpointsRoot();
+            shutdown();
+
+            // A crash between the staged write of the retirement work set and its rename leaves
+            // _retirements.tmp beside the published _retirements. The name is this build's own,
+            // not a newer build's addition, so it must not trip the gate the case above pins: the
+            // restart restores from the timeline, and the next publication stages over the file.
+            final File staged = new File(checkpointsRoot, LiveViewCheckpointLayout.RETIREMENT_QUEUE_TMP_FILE_NAME);
+            Assert.assertTrue("cannot create the staged work set", staged.createNewFile());
+
+            restart();
+            capture.drain();
+            capture.assertNotLogged("live view checkpoint directory holds an entry outside the current layout");
+            assertRestoredFromTimeline("lv");
+            assertLiveViewsReportsNoRecovery();
+            Assert.assertEquals("the restore must keep every boundary", BOUNDARIES, countSealedBoundaries("lv"));
+            assertNoRefreshFaults("lv");
+            assertRestartsCleanlyAfterwards();
+            Assert.assertFalse("the next publication must have renamed its own staged work set into place", staged.exists());
         });
     }
 
@@ -1150,6 +1262,40 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
      * the discriminator has to be the lineage: a rebuild retires the timeline first, which takes
      * the boundary ladder back to what a single replay seals.
      */
+    /**
+     * Asserts what a heal whose frontier seal failed leaves over a base that lost the hour of the
+     * view's oldest row: the start fell back to the rebuild and the guard refused it, so the view
+     * is stopped, not invalidated, and serves every row it held.
+     */
+    private void assertHealFallbackRefused() throws Exception {
+        final LiveViewInstance instance = instance("lv");
+        Assert.assertEquals("rebuild_blocked", LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute()));
+        Assert.assertTrue(instance.isCheckpointRecoveryBlocked());
+        Assert.assertFalse("a refused rebuild must not write _lv.s.invalid", instance.isInvalid());
+        TestUtils.assertContains(
+                instance.getCheckpointRecoveryReason(),
+                "rebuilding the view from its base table would drop rows it retains [cause=timeline restore failed]"
+        );
+        assertQuery("SELECT view_status, checkpoint_recovery_phase FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        view_status\tcheckpoint_recovery_phase
+                        invalid\trebuild_blocked
+                        """);
+        assertViewRows(TIE_AND_FRONTIER_ROWS_OVER_AN_EARLIER_HOUR);
+    }
+
+    private void assertLiveViewsReportsNoRecovery() throws Exception {
+        assertQuery("SELECT view_status, checkpoint_recovery_phase FROM live_views() WHERE view_name = 'lv'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        view_status\tcheckpoint_recovery_phase
+                        active\t
+                        """);
+    }
+
     private void assertRebuiltFromTheBase() throws Exception {
         final LiveViewInstance instance = instance("lv");
         Assert.assertFalse("a checkpoint tree this build cannot read must not invalidate the view", instance.isInvalid());
@@ -1345,6 +1491,28 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
         );
     }
 
+    /**
+     * Commits a row of each account above {@link #TIE_AND_FRONTIER_ROWS}, so both read their
+     * accumulators back, then restarts and requires the restore from the timeline. A runtime that
+     * missed the tie or the frontier row, or folded either twice, answers different sums.
+     */
+    private void commitAboveTheTieAndRestart() throws Exception {
+        commitAndRefresh("('" + timestamp(50) + "', 'acct-2', 100.0), ('" + timestamp(55) + "', 'acct-1', 1.0)");
+        final String grownRows = TIE_AND_FRONTIER_ROWS + """
+                2026-01-01T09:00:50.000000Z\tacct-2\t1142.0\t4
+                2026-01-01T09:00:55.000000Z\tacct-1\t164.0\t5
+                """;
+        assertViewRows(grownRows);
+        assertViewMatchesRecompute();
+        shutdown();
+        restart();
+        assertRestoredFromTimeline("lv");
+        assertLiveViewsReportsNoRecovery();
+        assertNoRefreshFaults("lv");
+        assertViewRows(grownRows);
+        assertViewMatchesRecompute();
+    }
+
     private void commitAndRefresh(String values) throws Exception {
         try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
             commitAndRefresh(job, values);
@@ -1364,6 +1532,43 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
                 + "SELECT created_at, account_id, sum(amount) OVER w AS cumulative_sum, "
                 + "count(account_id) OVER w AS cumulative_count "
                 + "FROM tx WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')");
+    }
+
+    /**
+     * Seals {@link #seedFiveBoundaries()}, then one commit that puts a tie on the head and a row
+     * above it, which the cadence seals neither of, and restarts with the head unreadable: the
+     * restore heals the head and seals the frontier above it. {@code fault} fails that frontier
+     * seal, after running {@code onFault}, once the splice that heals the ceiling has published.
+     * When {@code isBaseLossy}, the first commit also carries a row an hour below the boundaries,
+     * and the base loses that hour before the restart, so the view keeps a row the base no
+     * longer holds.
+     */
+    private void healAFutureHeadWhoseFrontierSealFails(HealFrontierSealFault fault, boolean isBaseLossy, Runnable onFault) throws Exception {
+        if (isBaseLossy) {
+            seedFiveBoundaries("('2026-01-01T08:00:00.000000Z', 'acct-1', 500.0)", -1, null);
+            execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01T08'");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            assertNoRefreshFaults("lv");
+        } else {
+            seedFiveBoundaries();
+        }
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ADAPTIVE_CADENCE_ENABLED, "false");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_MAX_DURATION_MICROS, 86_400_000_000L);
+        commitAndRefresh("('" + timestamp(40) + "', 'acct-2', 1000.0), ('" + timestamp(45) + "', 'acct-1', 100.0)");
+        Assert.assertEquals("the commit must not seal a boundary", BOUNDARIES, countSealedBoundaries("lv"));
+        assertViewRows(isBaseLossy ? TIE_AND_FRONTIER_ROWS_OVER_AN_EARLIER_HOUR : TIE_AND_FRONTIER_ROWS);
+
+        fault.arm(onFault);
+        rollBackTheHead();
+        Assert.assertTrue("the heal's frontier seal must have been failed", fault.hasFired());
+        capture.drain();
+        capture.assertLogged("live view checkpoint restore fell back past corrupt roots, reconstructing");
+        capture.assertLogged("could not reconstruct corrupt live view checkpoint roots [view=lv");
+        capture.assertNotLogged("reconstructed corrupt live view checkpoint roots");
     }
 
     private File metaSegmentFile(File checkpointsRoot, long segmentId) {
@@ -1591,6 +1796,46 @@ public class LiveViewCheckpointForwardCompatTest extends AbstractLiveViewCheckpo
         }
         Assert.assertEquals("one state root per sealed boundary", countSealedBoundaries("lv"), sites.size());
         return sites;
+    }
+
+    /**
+     * Once armed, fails the second open of a checkpoint data segment the view stages, after
+     * running the armed action. A heal stages one when its replay freezes the ceiling it
+     * re-versions, which its splice then publishes, and the next one when it seals the frontier
+     * above that ceiling: the fault lands between the heal's two publications.
+     */
+    private static final class HealFrontierSealFault extends TestFilesFacadeImpl {
+        private static final String DATA_SEGMENT_PATH_PART = LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME
+                + File.separator + LiveViewCheckpointLayout.DATA_DIR_NAME
+                + File.separator + LiveViewCheckpointLayout.DATA_SEGMENT_PREFIX;
+        private final AtomicBoolean hasFired = new AtomicBoolean();
+        // -1 disarmed; otherwise the staged data segment opens seen since arming.
+        private final AtomicInteger stagedOpens = new AtomicInteger(-1);
+        private volatile Runnable onFault;
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            if (stagedOpens.get() >= 0
+                    && Utf8s.containsAscii(name, DATA_SEGMENT_PATH_PART)
+                    && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TMP_SUFFIX)
+                    && stagedOpens.incrementAndGet() == 2) {
+                stagedOpens.set(-1);
+                onFault.run();
+                hasFired.set(true);
+                return -1;
+            }
+            return super.openRW(name, opts);
+        }
+
+        void arm(Runnable onFault) {
+            this.onFault = onFault;
+            hasFired.set(false);
+            stagedOpens.set(0);
+        }
+
+        boolean hasFired() {
+            return hasFired.get();
+        }
     }
 
     /**
