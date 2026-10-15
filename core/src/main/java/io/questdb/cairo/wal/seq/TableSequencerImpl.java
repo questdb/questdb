@@ -112,13 +112,12 @@ public class TableSequencerImpl implements TableSequencer {
                     configuration.getIdGenerateBatchStep() < 0 ? 512 : configuration.getIdGenerateBatchStep()
             );
             // The engine swaps its policy when the node changes role; the log reads the current one. An open that
-            // finds a torn record keeps what the table has already applied, and the table's schema with it.
+            // finds a torn record keeps what the table has committed, and the table's schema with it.
             tableTransactionLog = new TableTransactionLog(
                     configuration,
                     walDirectoryPolicy,
                     () -> engine.getLocalDurabilityPolicy().isLocalDurabilityEnabled(),
-                    this::readUsedTxnFloor,
-                    () -> readTableTxn(false)
+                    this::readCommittedTableTxn
             );
             microClock = configuration.getMicrosecondClock();
             if (tableStruct != null) {
@@ -201,8 +200,7 @@ public class TableSequencerImpl implements TableSequencer {
                         configuration,
                         walDirectoryPolicy,
                         LocalDurabilityPolicy.ALWAYS_ON,
-                        () -> Long.MAX_VALUE,
-                        () -> -1
+                        () -> null
                 )
         ) {
             createSequencerFiles(
@@ -747,29 +745,28 @@ public class TableSequencerImpl implements TableSequencer {
     }
 
     /**
-     * The table's applied txn, its {@code _txn} seqTxn and lag txns, which is where the apply resumes, or with
-     * {@code isAppliedTxn} false its column structure version; -1 when its {@code _txn} does not load. Read only when
-     * an open of the log finds a torn record.
+     * One read of the table's {@code _txn}, taken only when an open of the log finds a torn record: its committed
+     * seqTxn, which the apply never reads from the log again, and its column structure version. Not its saved lag
+     * txns: every writer open drops them and applies them again from the log. Null when {@code _txn} does not load,
+     * or when its live area does not lie whole inside the file, as after a lost file extension, which maps as zeros:
+     * an unknown answer is never taken as "nothing committed".
      */
-    private long readTableTxn(boolean isAppliedTxn) {
+    private long[] readCommittedTableTxn() {
         final CairoConfiguration configuration = engine.getConfiguration();
-        try (Path txnPath = new Path(); TxReader txReader = new TxReader(configuration.getFilesFacade())) {
+        final FilesFacade ff = configuration.getFilesFacade();
+        try (Path txnPath = new Path(); TxReader txReader = new TxReader(ff)) {
             txnPath.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(TableUtils.TXN_FILE_NAME);
             // Neither value depends on the partitioning or the timestamp type, so this needs no metadata.
             txReader.ofRO(txnPath.$(), ColumnType.TIMESTAMP, PartitionBy.NONE);
             // A table writer can commit while a promote reloads the log.
             TableUtils.safeReadTxn(txReader, configuration.getMillisecondClock(), configuration.getSpinLockTimeout());
-            return isAppliedTxn ? txReader.getSeqTxn() + txReader.getLagTxnCount() : txReader.getColumnStructureVersion();
+            if (txReader.getBaseOffset() + txReader.getRecordSize() > ff.length(txnPath.$())) {
+                return null;
+            }
+            return new long[]{txReader.getSeqTxn(), txReader.getColumnStructureVersion()};
         } catch (CairoException | CairoError e) {
-            return -1;
+            return null;
         }
-    }
-
-    // The txn below which an open of the log never cuts: the table's applied txn, or Long.MAX_VALUE, nothing is cut,
-    // when its _txn does not load.
-    private long readUsedTxnFloor() {
-        final long appliedTxn = readTableTxn(true);
-        return appliedTxn < 0 ? Long.MAX_VALUE : appliedTxn;
     }
 
     private void rebuildMetadataFromCommittedLog(long committedStructureVersion) {

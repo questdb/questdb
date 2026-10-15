@@ -55,7 +55,7 @@ import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
 
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 
 import static io.questdb.cairo.wal.WalUtils.*;
 
@@ -114,6 +114,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public static final long KNOWN_MAX_TXN_OFFSET_64 = UNSYNCED_FROM_TXN_OFFSET_64 + Long.BYTES;
     private static final Log LOG = LogFactory.getLog(TableTransactionLogV2.class);
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
+    private final Supplier<long[]> committedTableTxn;
     private final CairoConfiguration configuration;
     // A replica's object store holds the durable copy: the log is not scanned there, and its field stays 0.
     private final LocalDurabilityPolicy durabilityPolicy;
@@ -122,10 +123,8 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     private final DirectUtf8StringZ partName = new DirectUtf8StringZ();
     private final LongList partsToFlush = new LongList();
     private final Path rootPath;
-    private final LongSupplier tableStructureVersion;
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnPartMem = Vm.getCMARWInstance();
-    private final LongSupplier usedTxnFloor;
     private final WalDirectoryPolicy walDirectoryPolicy;
     private long partId = -1;
     private int partTransactionCount;
@@ -134,31 +133,28 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
 
     @TestOnly
     public TableTransactionLogV2(CairoConfiguration configuration, int seqPartTransactionCount, WalDirectoryPolicy walDirectoryPolicy) {
-        this(configuration, seqPartTransactionCount, walDirectoryPolicy, LocalDurabilityPolicy.ALWAYS_ON, () -> 0, () -> -1);
+        this(configuration, seqPartTransactionCount, walDirectoryPolicy, LocalDurabilityPolicy.ALWAYS_ON, () -> new long[]{0, -1});
     }
 
     /**
-     * @param usedTxnFloor          the highest txn the table has applied, which a torn-tail cut keeps; asked only when
-     *                              an open finds a torn record. {@code Long.MAX_VALUE} when it is not known: nothing is
-     *                              cut then
-     * @param tableStructureVersion the table's structure version, which an open that keeps a torn last record takes
-     *                              when it is above the last whole record's; -1 when it is not known
+     * @param committedTableTxn one read of the table's {@code _txn}, asked only when an open finds a torn record: its
+     *                          committed txn, which a torn-tail cut keeps, and its structure version, which an open
+     *                          that keeps a torn last record takes when it is above the last whole record's. Null
+     *                          when it is not known: nothing is cut then
      */
     public TableTransactionLogV2(
             CairoConfiguration configuration,
             int seqPartTransactionCount,
             WalDirectoryPolicy walDirectoryPolicy,
             LocalDurabilityPolicy durabilityPolicy,
-            LongSupplier usedTxnFloor,
-            LongSupplier tableStructureVersion
+            Supplier<long[]> committedTableTxn
     ) {
         this.configuration = configuration;
         this.durabilityPolicy = durabilityPolicy;
         this.ff = configuration.getFilesFacade();
         this.partTransactionCount = seqPartTransactionCount;
         this.walDirectoryPolicy = walDirectoryPolicy;
-        this.usedTxnFloor = usedTxnFloor;
-        this.tableStructureVersion = tableStructureVersion;
+        this.committedTableTxn = committedTableTxn;
         rootPath = new Path();
     }
 
@@ -428,10 +424,13 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             scanFrom = unsyncedFrom;
         }
         long wholeTxn = lastTxn;
+        long[] tableTxn = null;
         if (isAdaptive) {
             final long publishedTxn = lastTxn;
             wholeTxn = findWholeTail(publishedTxn, scanFrom);
-            lastTxn = recoverTail(path, publishedTxn, wholeTxn, flushFrom);
+            // One read of the table's _txn, only when a record is torn.
+            tableTxn = wholeTxn < publishedTxn ? committedTableTxn.get() : null;
+            lastTxn = recoverTail(path, publishedTxn, wholeTxn, tableTxn, flushFrom);
             // A reader that does not open the log trusts a header the predicate certifies.
             assert lastTxn == publishedTxn || !isTailCertain(publishedTxn, unsyncedFrom, isLocal, true);
         }
@@ -444,9 +443,9 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             long lastPartTxn = (prevTxn) % partTransactionCount;
             maxStructureVersion = txnPartMem.getLong(lastPartTxn * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
         }
-        if (lastTxn > wholeTxn) {
-            // The kept torn records' versions are not on the disk; the table applied them, so it has their schema.
-            maxStructureVersion = Math.max(maxStructureVersion, tableStructureVersion.getAsLong());
+        if (lastTxn > wholeTxn && tableTxn != null) {
+            // The kept torn records' versions are not on the disk; the table committed them, so it has their schema.
+            maxStructureVersion = Math.max(maxStructureVersion, tableTxn[1]);
         }
         openTxnPart();
         // Open part can leave prev txn append position when part is the same
@@ -687,8 +686,10 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
      * batched flush, and a power loss before it can leave the header counting records the part does not hold, or
      * holds only in part. The records from the field (or its magnitude after a run in another mode) were scanned,
      * never below the last part, and {@code wholeTxn} is the last one before the first that fails its check. The log
-     * is cut there, but never below the txns the table has already applied: those stay as they are, as the apply
-     * never reads them again, and a cut would hand their txns out twice. Records below the field were covered by a
+     * is cut there, but never below the table's committed txn, {@code tableTxn[0]}, and not at all when
+     * {@code tableTxn} is null, not known: those records stay as they are, as the apply never reads them again, and
+     * a cut would hand their txns out twice. Its saved lag txns are not kept, as every writer open applies them again
+     * from the log. Records below the field were covered by a
      * completed flush and are never cut: a damaged one is reported by the
      * cursor. Earlier parts are whole within ADAPTIVE runs: a part is flushed before the next one opens
      * (openTxnPart), and at every append without a window. The parts another mode's run wrote are flushed here,
@@ -698,18 +699,18 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
      * after every part flush returned, so a power loss before that leaves the field as it was and the next open does
      * the same work again. Reads the records since the last completed flush, at most one part.
      */
-    private long recoverTail(Path path, long publishedTxn, long wholeTxn, long flushFrom) {
+    private long recoverTail(Path path, long publishedTxn, long wholeTxn, long[] tableTxn, long flushFrom) {
         final long lastPartFirstTxn = lastPartFirstTxn(publishedTxn, partTransactionCount);
         long tail = publishedTxn;
         if (wholeTxn < publishedTxn) {
-            final long appliedTxn = usedTxnFloor.getAsLong();
-            tail = Math.max(wholeTxn, Math.min(publishedTxn, appliedTxn));
+            final long committedTxn = tableTxn != null ? tableTxn[0] : Long.MAX_VALUE;
+            tail = Math.max(wholeTxn, Math.min(publishedTxn, committedTxn));
             if (tail > wholeTxn) {
                 LOG.error().$("keeping torn sequencer txnlog records the table already used [path=").$(path)
                         .$(", publishedTxn=").$(publishedTxn)
                         .$(", firstTornTxn=").$(wholeTxn + 1)
                         .$(", keptTxn=").$(tail)
-                        .$(", appliedTxn=").$(appliedTxn)
+                        .$(", committedTxn=").$(committedTxn)
                         .I$();
             }
         }

@@ -48,7 +48,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.function.LongSupplier;
+import java.util.function.Supplier;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
@@ -88,35 +88,31 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private static final long TAIL_CHECK_READ_RECORDS = 4096;
     private static final CarrierLocal<TransactionLogCursorImpl> tlTransactionLogCursor = new CarrierLocal<>();
     public static long RECORD_SIZE = TX_LOG_COMMIT_TIMESTAMP_OFFSET + Long.BYTES;
+    private final Supplier<long[]> committedTableTxn;
     private final CairoConfiguration configuration;
     private final LocalDurabilityPolicy durabilityPolicy;
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
-    private final LongSupplier tableStructureVersion;
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
-    private final LongSupplier usedTxnFloor;
     // Set by open(): the first append checks the bytes past the tail. On a replica they are the downloader's
     // records, written ahead of the tail it publishes, and only a Java append may wipe them.
     private boolean isPastTailUnchecked;
 
     /**
-     * @param usedTxnFloor          the highest txn the table has applied, which a torn-tail cut keeps; asked only when
-     *                              an open finds a torn record. {@code Long.MAX_VALUE} when it is not known: nothing is
-     *                              cut then
-     * @param tableStructureVersion the table's structure version, which an open that keeps a torn last record takes
-     *                              when it is above the last whole record's; -1 when it is not known
+     * @param committedTableTxn one read of the table's {@code _txn}, asked only when an open finds a torn record: its
+     *                          committed txn, which a torn-tail cut keeps, and its structure version, which an open
+     *                          that keeps a torn last record takes when it is above the last whole record's. Null
+     *                          when it is not known: nothing is cut then
      */
     public TableTransactionLogV1(
             CairoConfiguration configuration,
             LocalDurabilityPolicy durabilityPolicy,
-            LongSupplier usedTxnFloor,
-            LongSupplier tableStructureVersion
+            Supplier<long[]> committedTableTxn
     ) {
         this.configuration = configuration;
         this.durabilityPolicy = durabilityPolicy;
         this.ff = configuration.getFilesFacade();
-        this.usedTxnFloor = usedTxnFloor;
-        this.tableStructureVersion = tableStructureVersion;
+        this.committedTableTxn = committedTableTxn;
     }
 
     /**
@@ -314,14 +310,16 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         final boolean isDurableMode = isDurableMode();
         final long scanFrom = scanFrom(unsyncedFrom, publishedTxn, isDurableMode);
         final long wholeTxn = findWholeTail(scanFrom, publishedTxn);
-        final long lastTxn = recoverTail(path, publishedTxn, wholeTxn, unsyncedFrom, scanFrom, isDurableMode);
+        // One read of the table's _txn, only when a record is torn.
+        final long[] tableTxn = wholeTxn < publishedTxn ? committedTableTxn.get() : null;
+        final long lastTxn = recoverTail(path, publishedTxn, wholeTxn, tableTxn, unsyncedFrom, scanFrom, isDurableMode);
         isPastTailUnchecked = true;
         maxTxn.set(lastTxn);
         txnMem.jumpTo(HEADER_SIZE);
         long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (wholeTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
-        if (lastTxn > wholeTxn) {
-            // The kept torn records' versions are not on the disk; the table applied them, so it has their schema.
-            maxStructureVersion = Math.max(maxStructureVersion, tableStructureVersion.getAsLong());
+        if (lastTxn > wholeTxn && tableTxn != null) {
+            // The kept torn records' versions are not on the disk; the table committed them, so it has their schema.
+            maxStructureVersion = Math.max(maxStructureVersion, tableTxn[1]);
         }
         txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);
         return maxStructureVersion;
@@ -437,22 +435,24 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     /**
      * Drops a torn tail left by a power loss and returns the txn the log ends at. The records from the
      * first one a flush may not have covered were scanned, and {@code wholeTxn} is the last one before the
-     * first torn one. The log is cut there, but never below the txns the table has already applied: those
-     * stay as they are, as the apply never reads them again, and a cut would hand their txns out twice. A
+     * first torn one. The log is cut there, but never below the table's committed txn, {@code tableTxn[0]},
+     * and not at all when {@code tableTxn} is null, not known: those records stay as they are, as the apply
+     * never reads them again, and a cut would hand their txns out twice. Its saved lag txns are not kept, as
+     * every writer open applies them again from the log. A
      * cut zeroes everything past the new tail and makes that durable before the hint moves past the records
      * it kept. An open that cuts nothing leaves the bytes past the tail to the first append.
      */
-    private long recoverTail(Path path, long publishedTxn, long wholeTxn, long unsyncedFrom, long scanFrom, boolean isDurableMode) {
+    private long recoverTail(Path path, long publishedTxn, long wholeTxn, long[] tableTxn, long unsyncedFrom, long scanFrom, boolean isDurableMode) {
         long tail = publishedTxn;
         if (wholeTxn < publishedTxn) {
-            final long appliedTxn = usedTxnFloor.getAsLong();
-            tail = Math.max(wholeTxn, Math.min(publishedTxn, appliedTxn));
+            final long committedTxn = tableTxn != null ? tableTxn[0] : Long.MAX_VALUE;
+            tail = Math.max(wholeTxn, Math.min(publishedTxn, committedTxn));
             if (tail > wholeTxn) {
                 LOG.error().$("keeping torn sequencer txnlog records the table already used [path=").$(path)
                         .$(", publishedTxn=").$(publishedTxn)
                         .$(", firstTornTxn=").$(wholeTxn + 1)
                         .$(", keptTxn=").$(tail)
-                        .$(", appliedTxn=").$(appliedTxn)
+                        .$(", committedTxn=").$(committedTxn)
                         .I$();
                 final long keptEnd = HEADER_SIZE + tail * RECORD_SIZE;
                 if (keptEnd > txnMem.size()) {

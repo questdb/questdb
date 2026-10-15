@@ -2369,7 +2369,7 @@ public class WalWriterTest extends AbstractCairoTest {
                 path.of(root).concat("v1_drop");
                 ff.mkdir(path.$(), configuration.getMkDirMode());
 
-                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON, () -> 0, () -> -1);
+                TableTransactionLogV1 v1 = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON, () -> new long[]{0, -1});
                 v1.create(path.of(root).concat("v1_drop"), 65_897);
                 v1.open(path);
 
