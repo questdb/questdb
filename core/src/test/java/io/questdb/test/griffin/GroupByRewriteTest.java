@@ -773,6 +773,36 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumOrderByOnlyStaysHidden() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE g (x INT, sym SYMBOL)");
+            execute("INSERT INTO g VALUES (1, 'a'), (3, 'b'), (2, 'c')");
+            bindVariableService.setInt("k", 2);
+            bindVariableService.setInt("n", -2);
+            bindVariableService.setStr("s", "2");
+            bindVariableService.setInt(0, 2);
+            final String descending = """
+                    sym
+                    b
+                    c
+                    a
+                    """;
+            final String ascending = """
+                    sym
+                    a
+                    c
+                    b
+                    """;
+            for (String operator : new String[]{"*", "+", "-"}) {
+                assertSumOrderByOnly(descending, operator, "2", ":k", "$1", "2::INT", ":s::INT", "-(-2)");
+                assertSumOrderByOnly("*".equals(operator) ? ascending : descending, operator, "-2", ":n", "-:k");
+            }
+            execute("CREATE TABLE c AS (SELECT sym FROM g GROUP BY sym ORDER BY SUM(x * :k) DESC)");
+            assertQuery("c").noLeakCheck().expectSize().returns(descending);
+        });
+    }
+
+    @Test
     public void testSumRebindMultiplier() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x SHORT)");
@@ -875,6 +905,20 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     + "SUM(x + " + operand + ") c, SUM(" + operand + " + x) d, "
                     + "SUM(x - " + operand + ") e, SUM(" + operand + " - x) f FROM t")
                     .noLeakCheck().noRandomAccess().expectSize().returns(expected);
+        }
+    }
+
+    private void assertSumOrderByOnly(String expected, String operator, String... operands) throws Exception {
+        for (String operand : operands) {
+            final String orderBy = " ORDER BY SUM(x " + operator + " " + operand + ") DESC";
+            for (String select : new String[]{
+                    "SELECT sym FROM g GROUP BY sym",
+                    "SELECT sym FROM g",
+                    "SELECT DISTINCT sym FROM g GROUP BY sym",
+                    "SELECT DISTINCT sym FROM g"
+            }) {
+                assertQuery(select + orderBy).noLeakCheck().expectSize().withPlanContaining("values: [sum(x)").returns(expected);
+            }
         }
     }
 

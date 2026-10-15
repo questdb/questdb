@@ -12460,7 +12460,7 @@ public class SqlOptimiser implements Mutable {
             );
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
 
             // group-by column could have spit out a function call, e.g.
             // select sum(f(x)) from t -> select sum(col) from (select f(x) col) from t)
@@ -12498,7 +12498,7 @@ public class SqlOptimiser implements Mutable {
             );
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
             rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
             rewriteStatus |= REWRITE_STATUS_USE_WINDOW_MODEL;
             return rewriteStatus;
@@ -12529,7 +12529,7 @@ public class SqlOptimiser implements Mutable {
 
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
             if (!isWindowJoin && !isHorizonJoin) {
                 for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
                     emitLiterals(
@@ -12851,7 +12851,7 @@ public class SqlOptimiser implements Mutable {
                         }
 
                         rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
-                        qc.of(qc.getAlias(), repl);
+                        qc.of(qc.getAlias(), repl, qc.isIncludeIntoWildcard());
                     } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
                         continue;
                     }
