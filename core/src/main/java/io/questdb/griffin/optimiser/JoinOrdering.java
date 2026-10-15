@@ -61,6 +61,9 @@ final class JoinOrdering implements OptimiserPass {
     private final OptimiserContext context;
     private final ObjectPool<FilterPlan> filters;
     private final ObjList<BoundExpression> placed;
+    private final JoinOrderSolver solver;
+    private int lastPosition;
+    private JoinPlan readJoin;
     private final ExpressionVisitor orderedInputReads = expression -> {
         if (expression instanceof ColumnExpression column) {
             final JoinPlan join = this.readJoin;
@@ -69,9 +72,6 @@ final class JoinOrdering implements OptimiserPass {
         }
         return TreeWalk.CONTINUE;
     };
-    private final JoinOrderSolver solver;
-    private int lastPosition;
-    private JoinPlan readJoin;
 
     JoinOrdering(OptimiserContext context, ObjectPool<FilterPlan> filters, JoinOrderSolver solver, ObjList<BoundExpression> placed) {
         this.context = context;
@@ -114,10 +114,13 @@ final class JoinOrdering implements OptimiserPass {
             case AggregatePlan aggregate -> LogicalPlans.hasTimestampAggregate(aggregate.getAggregates())
                     || !LogicalPlans.isAggregateOrderIndependent(aggregate);
             case FilterPlan filter -> isOrderVisible || !LogicalPlans.isOrderIndependent(filter.getPredicate());
-            case ProjectPlan project -> isOrderVisible || project.hasTimestampDeclaration() || !isOrderIndependent(project.getExpressions());
+            case ProjectPlan project ->
+                    isOrderVisible || project.hasTimestampDeclaration() || !isOrderIndependent(project.getExpressions());
             case LimitPlan _, DistinctPlan _ -> isOrderVisible;
-            case SetOperationPlan operation -> isOrderVisible && (inputIndex == 0 || operation.getOperation().isUnion());
-            case JoinPlan join -> inputIndex == 0 && isOrderVisible || LogicalPlans.consumesInputTimestamp(join, inputIndex);
+            case SetOperationPlan operation ->
+                    isOrderVisible && (inputIndex == 0 || operation.getOperation().isUnion());
+            case JoinPlan join ->
+                    inputIndex == 0 && isOrderVisible || LogicalPlans.consumesInputTimestamp(join, inputIndex);
             default -> true;
         };
     }
@@ -169,8 +172,9 @@ final class JoinOrdering implements OptimiserPass {
         }
         return switch (plan) {
             case FilterPlan _, LimitPlan _, DistinctPlan _ -> true;
-            case ProjectPlan project -> project.getExpressions().getQuick(output.getTimestampIndex()) instanceof ColumnExpression column
-                    && column.getColumnId() == source.getTimestampColumnId();
+            case ProjectPlan project ->
+                    project.getExpressions().getQuick(output.getTimestampIndex()) instanceof ColumnExpression column
+                            && column.getColumnId() == source.getTimestampColumnId();
             case SetOperationPlan _, JoinPlan _ -> inputIndex == 0;
             default -> false;
         };
