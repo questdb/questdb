@@ -2800,6 +2800,31 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         return txWriter.isPartitionReadOnly(partitionIndex);
     }
 
+    /**
+     * An O3 split shrinks the parent's row count but leaves the moved rows in its column files.
+     * Returns true while a reader locked in [parentNameTxn, splitNameTxn] can still read them,
+     * so the parent's tail must not be written in place.
+     */
+    public boolean isPartitionTailPinnedByReaders(long partitionTimestamp) {
+        final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
+        if (partitionIndex < 0 || partitionIndex + 1 >= txWriter.getPartitionCount()) {
+            return false;
+        }
+        final long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex + 1);
+        if (txWriter.getLogicalPartitionTimestamp(partitionTimestamp) != txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp)) {
+            return false;
+        }
+        final long fromTxn = Math.max(0, txWriter.getPartitionNameTxn(partitionIndex));
+        final long toTxn = txWriter.getPartitionNameTxn(partitionIndex + 1) + 1;
+        if (toTxn > txWriter.getTxn()) {
+            // The split belongs to the commit in flight, so readers at the current txn see the
+            // pre-split row count. isRangeAvailable() would also raise the scoreboard max past the
+            // committed txn and stall new readers until this commit lands.
+            return true;
+        }
+        return !txnScoreboard.isRangeAvailable(fromTxn, toTxn);
+    }
+
     public boolean isSymbolMapWriterCached(int columnIndex) {
         return symbolMapWriters.getQuick(columnIndex).isCached();
     }
