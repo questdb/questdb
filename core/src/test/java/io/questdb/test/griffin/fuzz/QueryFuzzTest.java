@@ -641,6 +641,7 @@ public class QueryFuzzTest extends AbstractCairoTest {
         writerPool.halt();
 
         QueryFuzzDriver.run(engine, sqlExecutionContext, config, rnd, tables, queryWorkerNamePrefix,
-                QueryFuzzDriver.Phase.MIXED);
+                QueryFuzzDriver.Phase.MIXED,
+                queryRnd -> setProperty(PropertyKey.CAIRO_SQL_LATEST_BY_JIT_ENABLED, Boolean.toString(queryRnd.nextBoolean())));
     }
 }

@@ -1315,6 +1315,8 @@ public interface CairoConfiguration {
 
     boolean isSqlJitDebugEnabled();
 
+    boolean isSqlLatestByJitEnabled();
+
     boolean isSqlOrderBySortEnabled();
 
     boolean isSqlParallelFilterEnabled();

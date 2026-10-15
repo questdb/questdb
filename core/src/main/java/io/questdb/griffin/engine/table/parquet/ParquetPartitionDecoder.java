@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table.parquet;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.std.DirectIntList;
@@ -32,6 +33,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.Os;
 import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
+import io.questdb.std.Vect;
 
 /**
  * Parquet partition decoder that decode row-groups from `data.parquet`
@@ -251,6 +253,27 @@ public class ParquetPartitionDecoder implements ParquetDecoder, QuietCloseable {
 
     public long getParquetSize() {
         return parquetSize;
+    }
+
+    public boolean hasSymbolNulls(RowGroupBuffers rowGroupBuffers, DirectIntList columnIdsAndTypes, int parquetColumnIndex) {
+        columnIdsAndTypes.clear();
+        columnIdsAndTypes.add(parquetColumnIndex);
+        columnIdsAndTypes.add(ColumnType.SYMBOL);
+        for (int rowGroupIndex = 0, n = parquetMetaReader.getRowGroupCount(); rowGroupIndex < n; rowGroupIndex++) {
+            if (parquetMetaReader.hasChunkNullCount(rowGroupIndex, parquetColumnIndex)) {
+                if (parquetMetaReader.getChunkNullCount(rowGroupIndex, parquetColumnIndex) > 0) {
+                    return true;
+                }
+                continue;
+            }
+            final long rowGroupSize = parquetMetaReader.getRowGroupSize(rowGroupIndex);
+            decodeRowGroup(rowGroupBuffers, columnIdsAndTypes, rowGroupIndex, 0, (int) rowGroupSize);
+            final long decodedRowCount = rowGroupBuffers.getChunkDataSize(0) / Integer.BYTES;
+            if (decodedRowCount < rowGroupSize || Vect.countInt(rowGroupBuffers.getChunkDataPtr(0), decodedRowCount) < decodedRowCount) {
+                return true;
+            }
+        }
+        return false;
     }
 
     public ParquetMetaFileReader metadata() {

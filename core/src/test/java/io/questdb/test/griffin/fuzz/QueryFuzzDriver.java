@@ -40,6 +40,7 @@ import java.io.BufferedWriter;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.file.Paths;
+import java.util.function.Consumer;
 
 /**
  * Shared query campaign over caller-owned tables and a quiescent writer pool.
@@ -97,7 +98,7 @@ public final class QueryFuzzDriver {
     }
 
     public static void run(CairoEngine engine, SqlExecutionContext sqlExecutionContext, FuzzConfig config, Rnd rnd,
-                           ObjList<FuzzTable> tables, String queryWorkerNamePrefix, Phase phase) throws Exception {
+                           ObjList<FuzzTable> tables, String queryWorkerNamePrefix, Phase phase, Consumer<Rnd> querySetup) throws Exception {
         for (int i = 0; i < tables.size(); i++) {
             logSchema(tables.getQuick(i));
             if (tables.getQuick(i).getShadow() != null) {
@@ -133,6 +134,7 @@ public final class QueryFuzzDriver {
                 : config.getNumQueries();
         try (BufferedWriter dump = openDump(config.getDumpPath())) {
             for (int q = 0; q < budget; q++) {
+                querySetup.accept(rnd);
                 // Decide fault injection before generation so a FUNCTION fault can
                 // ask the generator to emit the fault function. Drawn from the
                 // seeded rnd, so replay reproduces the choice.
