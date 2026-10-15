@@ -108,6 +108,7 @@ public class OrderedMap implements Map, Reopenable {
     private static final int BATCH_KEY_CACHE_TRIAL_ROWS = 256;
     // keys up to this size take the batch key cache; longer ones compare too slowly to gain
     private static final long BATCH_KEY_CACHE_MAX_KEY_SIZE = 32;
+    private static final int DIRECT_INT_KEYS = 1 << 14;
     static final long VAR_KEY_HEADER_SIZE = 4;
     // The largest heap the biased compressed offsets address. Note that it is 16 bytes below 2^35,
     // i.e. not a power of two, hence resize() has to clamp to it rather than reject an overshoot.
@@ -139,6 +140,11 @@ public class OrderedMap implements Map, Reopenable {
     // The batch probe's direct-mapped cache of recent keys: the value offset of the entry whose key
     // last hashed to the slot, -1 for none. Valid within one probeBatch*FixedSize() call only.
     private final long[] batchKeyCache = new long[BATCH_KEY_CACHE_SIZE];
+    // a batch probe's entry offsets of 4-byte keys below DIRECT_INT_KEYS (SYMBOL keys, small INTs) by key
+    // value, -1 for none: see probeDirectInt(); allocated on first use, its touched slots reset after
+    // every batch
+    private long[] directIntOffsets;
+    private int[] directIntTouched;
     private long batchEmptyValueStart;
     private int batchKeyCacheHits;
     private int free;
@@ -936,6 +942,9 @@ public class OrderedMap implements Map, Reopenable {
 
         final Key k = key;
         long p = batchStart;
+        if (keySize == Integer.BYTES) {
+            return probeDirectInt(record, mapSink, rowIdsAddr, batchStart, batchEnd, batchAddr);
+        }
         if (keySize <= BATCH_KEY_CACHE_MAX_KEY_SIZE && batchEnd - batchStart > BATCH_KEY_CACHE_TRIAL_ROWS) {
             final long[] cache = resetBatchKeyCache();
             final long trialEnd = batchStart + BATCH_KEY_CACHE_TRIAL_ROWS;
@@ -1005,6 +1014,71 @@ public class OrderedMap implements Map, Reopenable {
             long encoded = Map.encodeBatchEntry(r, v.getValueAddress() - heapAddr, v.isNew());
             Unsafe.putLong(batchAddr, encoded);
             batchAddr += Long.BYTES;
+        }
+        return heapAddr;
+    }
+
+    /**
+     * The batch probe of a 4-byte key (a SYMBOL key, an INT): a key whose value lies in [0, DIRECT_INT_KEYS)
+     * finds its entry by value in a direct table, which holds the entry once the batch has met the key,
+     * without a hash or a key compare; another key probes the map. The rows are the batch's row indexes
+     * at rowIdsAddr, or batchStart..batchEnd when rowIdsAddr is 0. The heap has room for every row's entry
+     * (the caller reserved it), so an entry offset stays valid through the batch.
+     */
+    private long probeDirectInt(
+            PageFrameMemoryRecord record,
+            RecordSink mapSink,
+            long rowIdsAddr,
+            long batchStart,
+            long batchEnd,
+            long batchAddr
+    ) {
+        long[] offsets = directIntOffsets;
+        if (offsets == null) {
+            offsets = directIntOffsets = new long[DIRECT_INT_KEYS];
+            java.util.Arrays.fill(offsets, -1L);
+            directIntTouched = new int[DIRECT_INT_KEYS];
+        }
+        final int[] touched = directIntTouched;
+        int touchedCount = 0;
+        final Key k = key;
+        try {
+            for (long p = batchStart; p < batchEnd; p++) {
+                final long r = rowIdsAddr != 0 ? Unsafe.getLong(rowIdsAddr + (p << 3)) : p;
+                record.setRowIndex(r);
+                k.startAddr = kPos;
+                k.appendAddr = kPos;
+                mapSink.copy(record, k);
+                final int v = Unsafe.getInt(kPos);
+                final long encoded;
+                if (v >= 0 && v < DIRECT_INT_KEYS) {
+                    final long cached = offsets[v];
+                    if (cached != -1) {
+                        encoded = Map.encodeBatchEntry(r, cached, false);
+                    } else {
+                        final FlyweightPackedMapValue value = (FlyweightPackedMapValue) k.createValue();
+                        if (value.isNew() && batchEmptyValueStart != 0) {
+                            value.copyRawValue(batchEmptyValueStart);
+                        }
+                        final long offset = value.getValueAddress() - heapAddr;
+                        offsets[v] = offset;
+                        touched[touchedCount++] = v;
+                        encoded = Map.encodeBatchEntry(r, offset, value.isNew());
+                    }
+                } else {
+                    final FlyweightPackedMapValue value = (FlyweightPackedMapValue) k.createValue();
+                    if (value.isNew() && batchEmptyValueStart != 0) {
+                        value.copyRawValue(batchEmptyValueStart);
+                    }
+                    encoded = Map.encodeBatchEntry(r, value.getValueAddress() - heapAddr, value.isNew());
+                }
+                Unsafe.putLong(batchAddr, encoded);
+                batchAddr += Long.BYTES;
+            }
+        } finally {
+            for (int i = 0; i < touchedCount; i++) {
+                offsets[touched[i]] = -1;
+            }
         }
         return heapAddr;
     }
@@ -1080,6 +1154,9 @@ public class OrderedMap implements Map, Reopenable {
 
         final Key k = key;
         long r = batchStart;
+        if (keySize == Integer.BYTES) {
+            return probeDirectInt(record, mapSink, 0, batchStart, batchEnd, batchAddr);
+        }
         if (keySize <= BATCH_KEY_CACHE_MAX_KEY_SIZE && batchEnd - batchStart > BATCH_KEY_CACHE_TRIAL_ROWS) {
             final long[] cache = resetBatchKeyCache();
             final long trialEnd = batchStart + BATCH_KEY_CACHE_TRIAL_ROWS;

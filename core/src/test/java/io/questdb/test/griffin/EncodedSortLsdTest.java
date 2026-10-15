@@ -127,6 +127,29 @@ public class EncodedSortLsdTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testSortCopiesSymbolBlocks() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tr AS (SELECT"
+                    + " timestamp_sequence('2024-01-01', 1000) ts,"
+                    + " rnd_symbol('A', 'B', 'C', NULL) ex,"
+                    + " rnd_symbol(300, 2, 5, 2) sym,"
+                    + " rnd_symbol('x', 'y') cond,"
+                    + " rnd_int(1, 20, 0)::FLOAT size,"
+                    + " rnd_boolean() b"
+                    + " FROM long_sequence(80_000)) TIMESTAMP(ts) PARTITION BY HOUR");
+            // the Min/Max Filter's rows reach the sort as row blocks, SYMBOL columns as keys; the sort
+            // keeps their order (ts) among equal keys
+            final String rows = "SELECT ts, ex, sym, cond, size, b FROM (SELECT ts, ex, sym, cond, size, b, min(size) OVER (PARTITION BY ex, sym) ms FROM tr) WHERE size = ms";
+            final StringSink plan = new StringSink();
+            printSql("EXPLAIN " + rows + " ORDER BY sym", plan);
+            TestUtils.assertContains(plan, "Min/Max Filter");
+            for (String k : new String[]{"sym", "ex", "cond", "sym DESC"}) {
+                assertSame(rows + " ORDER BY " + k, rows + " ORDER BY " + k + ", ts");
+            }
+        });
+    }
+
     private static void assertSame(String sql, String reference) throws Exception {
         final StringSink a = new StringSink();
         final StringSink b = new StringSink();

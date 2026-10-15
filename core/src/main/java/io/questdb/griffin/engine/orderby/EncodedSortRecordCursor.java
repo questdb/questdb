@@ -70,9 +70,10 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     // the sample the key spread reads, see SortKeyEncoder.spreadKeyWords()
     private long[] spreadSample;
     private long lastChainBytes;
-    // the value sizes of the chain's columns when every one is of a fixed-size, non-symbol type
-    // the chain lays out at a fixed offset, so that a block of the base's rows is copied into it
-    // column by column; null otherwise
+    // the value sizes of the chain's columns when every one is of a fixed-size type the chain lays out
+    // at a fixed offset (a SYMBOL as its key, which the chain keeps and the base's symbol tables
+    // resolve, as a block's SYMBOL column holds it), so that a block of the base's rows is copied into
+    // it column by column; null otherwise
     private final int[] blockColumnSizes;
     // the chain ordinals of a sorted block's rows, see peekRecordBlock(); null until the first block
     private DirectLongList sortedBlockRows;
@@ -168,7 +169,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     }
 
     /**
-     * The next sorted rows, when every column is of a fixed size and not a SYMBOL (see
+     * The next sorted rows, when every column is of a fixed size, a SYMBOL's keys included (see
      * {@link #blockColumnSizes}): the chain's records then lie at a constant stride from its
      * start, so a block offers each column at the chain's first record's value, at the stride, and
      * gathered by the rows' chain ordinals in sorted order.
@@ -385,7 +386,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             sizes[c] = switch (ColumnType.tagOf(metadata.getColumnType(c))) {
                 case ColumnType.BOOLEAN, ColumnType.BYTE -> 1;
                 case ColumnType.SHORT, ColumnType.CHAR -> 2;
-                case ColumnType.INT, ColumnType.FLOAT -> 4;
+                case ColumnType.INT, ColumnType.FLOAT, ColumnType.SYMBOL -> 4;
                 case ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.DOUBLE -> 8;
                 default -> -1;
             };
