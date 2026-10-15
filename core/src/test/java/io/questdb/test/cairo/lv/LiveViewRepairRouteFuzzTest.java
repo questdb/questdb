@@ -1021,7 +1021,8 @@ public class LiveViewRepairRouteFuzzTest extends AbstractLiveViewTest {
     /**
      * What every pass of one run draws from.
      */
-    private record PassShape(String oracleSql, String orderBy, int pinPct, int applySkipPct, int faultPct, int restartPct) {
+    private record PassShape(String oracleSql, String orderBy, int pinPct, int applySkipPct, int faultPct,
+                             int restartPct) {
     }
 
     /**
