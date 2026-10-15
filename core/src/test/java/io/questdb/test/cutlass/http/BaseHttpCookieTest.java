@@ -1,10 +1,14 @@
 package io.questdb.test.cutlass.http;
 
+import io.questdb.PropertyKey;
 import io.questdb.ServerMain;
 import io.questdb.cutlass.http.HttpSessionStore;
 import io.questdb.cutlass.http.client.HttpClient;
 import io.questdb.test.AbstractBootstrapTest;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Supplier;
 
@@ -18,6 +22,56 @@ public abstract class BaseHttpCookieTest extends AbstractBootstrapTest {
 
     protected boolean isSecure() {
         return false;
+    }
+
+    protected void testConnectionLimitedRequestDoesNotExtendSession(Supplier<ServerMain> serverMainSupplier, Supplier<HttpClient> httpClientSupplier, AtomicLong currentMicros) throws Exception {
+        assertMemoryLeak(() -> {
+            Files.writeString(
+                    Path.of(root, "conf", "server.conf"),
+                    "\n" + PropertyKey.HTTP_JSON_QUERY_CONNECTION_LIMIT.getPropertyPath() + "=1\n",
+                    StandardOpenOption.APPEND
+            );
+            try (final ServerMain questdb = serverMainSupplier.get();
+                 final HttpClient admittedClient = httpClientSupplier.get()) {
+                questdb.start();
+                assertEquals(1, questdb.getConfiguration().getHttpServerConfiguration().getHttpContextConfiguration().getJsonQueryConnectionLimit());
+                final HttpSessionStore sessionStore = questdb.getConfiguration().getFactoryProvider().getHttpSessionStore();
+                final long sessionTimeout = questdb.getConfiguration().getHttpServerConfiguration().getHttpContextConfiguration().getSessionTimeout();
+                final String expectedBody = """
+                        {"query":"SELECT 1","columns":[{"name":"1","type":"INT"}],"timestamp":-1,"dataset":[[1]],"count":1}\
+                        """;
+
+                // Keep this connection open so that a second connection exceeds the limit.
+                HttpClient.ResponseHeaders response = newHttpRequest(admittedClient, HTTP_PORT, "SELECT 1", USER, PASSWORD, "true");
+                awaitStatusCode(response, "200");
+                final String sessionId = assertSessionCookie(response, isSecure());
+                assertChunkedBody(response, expectedBody);
+                final HttpSessionStore.SessionInfo session = assertSession(sessionStore, sessionId, currentMicros.get(), sessionTimeout);
+                final long expiresAt = session.getExpiresAt();
+                final long rotateAt = session.getRotateAt();
+                currentMicros.set(rotateAt + 1);
+
+                try (HttpClient rejectedClient = httpClientSupplier.get()) {
+                    response = newHttpRequest(rejectedClient, HTTP_PORT, "SELECT 1", null, null, null, SESSION_COOKIE_NAME, sessionId);
+                    awaitStatusCode(response, "429");
+                    assertNoSessionCookie(response);
+                    assertChunkedBodyContains(response, "exceeded connection limit");
+                }
+
+                assertSame(session, sessionStore.getSession(sessionId));
+                assertEquals(expiresAt, session.getExpiresAt());
+                assertEquals(rotateAt, session.getRotateAt());
+                assertEquals(sessionId, session.getSessionId());
+
+                response = newHttpRequest(admittedClient, HTTP_PORT, "SELECT 1", null, null, null, SESSION_COOKIE_NAME, sessionId);
+                awaitStatusCode(response, "200");
+                final String newSessionId = assertSessionCookie(response, isSecure());
+                assertChunkedBody(response, expectedBody);
+                assertNotEquals(sessionId, newSessionId);
+                assertEquals(newSessionId, session.getSessionId());
+                assertEquals(currentMicros.get() + sessionTimeout, session.getExpiresAt());
+            }
+        });
     }
 
     protected void testExpiredSessionEvicted(Supplier<ServerMain> serverMainSupplier, Supplier<HttpClient> httpClientSupplier, AtomicLong currentMicros) throws Exception {

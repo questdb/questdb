@@ -17,6 +17,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.util.Iterator;
 import java.util.Map;
+import java.util.function.Predicate;
 
 import static io.questdb.cutlass.http.HttpConstants.SESSION_ID_PREFIX;
 
@@ -132,12 +133,12 @@ public class HttpSessionStoreImpl implements HttpSessionStore {
     }
 
     @Override
-    public synchronized void destroySessions(@NotNull CharSequence principal) {
+    public synchronized void destroySessions(@NotNull CharSequence principal, @NotNull Predicate<SessionInfo> filter) {
         int destroyed = 0;
         final Iterator<Map.Entry<CharSequence, SessionInfo>> iterator = sessionsById.entrySet().iterator();
         while (iterator.hasNext()) {
             final SessionInfo session = iterator.next().getValue();
-            if (Chars.equals(principal, session.getPrincipal())) {
+            if (Chars.equals(principal, session.getPrincipal()) && filter.test(session)) {
                 // a rotated session is mapped under more than one id, every mapping is removed;
                 // invalidating the session also rejects an id rotated in concurrently
                 iterator.remove();

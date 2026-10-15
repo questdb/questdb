@@ -155,6 +155,39 @@ public class HttpSessionStoreImplTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDestroySessionsWithFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            setCurrentMicros(START_MICROS);
+            final HttpSessionStore store = newStore(REVALIDATION_INTERVAL);
+            try (HttpConnectionContext context = newContext()) {
+                final HttpSessionStore.SessionInfo internal = createSession(store, context, "alice", null, null);
+                final String oldId = internal.getSessionId();
+                store.createSession(new TestPrincipal("alice", SecurityContext.AUTH_TYPE_JWK_TOKEN), null, null, context);
+                final HttpSessionStore.SessionInfo independent = store.getSession(context.getSessionIdSink());
+                Assert.assertNotNull(independent);
+                final HttpSessionStore.SessionInfo bob = createSession(store, context, "bob", null, null);
+
+                setCurrentMicros(internal.getRotateAt() + 1);
+                store.extendSession(internal, context);
+                final String newId = internal.getSessionId();
+                Assert.assertNotEquals(oldId, newId);
+                Assert.assertEquals(3, store.size("alice"));
+
+                store.destroySessions("alice", session -> session.getAuthType() == SecurityContext.AUTH_TYPE_CREDENTIALS);
+
+                Assert.assertTrue(internal.isInvalid());
+                Assert.assertNull(store.verifySessionId(oldId, context));
+                Assert.assertNull(store.verifySessionId(newId, context));
+                Assert.assertEquals(1, store.size("alice"));
+                Assert.assertFalse(independent.isInvalid());
+                Assert.assertSame(independent, store.verifySessionId(independent.getSessionId(), context));
+                Assert.assertFalse(bob.isInvalid());
+                Assert.assertSame(bob, store.verifySessionId(bob.getSessionId(), context));
+            }
+        });
+    }
+
+    @Test
     public void testRevokedCredentialEndsSession() throws Exception {
         assertMemoryLeak(() -> {
             setCurrentMicros(START_MICROS);
@@ -303,10 +336,14 @@ public class HttpSessionStoreImplTest extends AbstractCairoTest {
         );
     }
 
-    private record TestPrincipal(String principal) implements PrincipalContext {
+    private record TestPrincipal(String principal, byte authType) implements PrincipalContext {
+        private TestPrincipal(String principal) {
+            this(principal, SecurityContext.AUTH_TYPE_CREDENTIALS);
+        }
+
         @Override
         public byte getAuthType() {
-            return SecurityContext.AUTH_TYPE_CREDENTIALS;
+            return authType;
         }
 
         @Override

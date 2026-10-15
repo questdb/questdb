@@ -13,6 +13,7 @@ import org.jetbrains.annotations.TestOnly;
 
 import java.security.MessageDigest;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
 
 public interface HttpSessionStore {
 
@@ -46,7 +47,18 @@ public interface HttpSessionStore {
      *
      * @param principal entity name
      */
-    void destroySessions(@NotNull CharSequence principal);
+    default void destroySessions(@NotNull CharSequence principal) {
+        destroySessions(principal, session -> true);
+    }
+
+    /**
+     * Close the matching sessions of a principal. The filter can distinguish independent identities
+     * that share a principal name, such as an internal user and an external identity provider's user.
+     *
+     * @param principal entity name
+     * @param filter    selects the sessions to close
+     */
+    void destroySessions(@NotNull CharSequence principal, @NotNull Predicate<SessionInfo> filter);
 
     /**
      * Extend the lifetime of the session, and rotate its id if due.

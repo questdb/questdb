@@ -5,6 +5,8 @@ import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import java.util.function.Predicate;
+
 public class EmptyHttpSessionStore implements HttpSessionStore {
     public static final EmptyHttpSessionStore INSTANCE = new EmptyHttpSessionStore();
 
@@ -25,7 +27,7 @@ public class EmptyHttpSessionStore implements HttpSessionStore {
     }
 
     @Override
-    public void destroySessions(@NotNull CharSequence principal) {
+    public void destroySessions(@NotNull CharSequence principal, @NotNull Predicate<SessionInfo> filter) {
     }
 
     @Override

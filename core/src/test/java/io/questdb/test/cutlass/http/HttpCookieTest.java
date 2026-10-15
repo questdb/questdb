@@ -27,6 +27,16 @@ public class HttpCookieTest extends BaseHttpCookieTest {
     }
 
     @Test
+    public void testConnectionLimitedRequestDoesNotExtendSession() throws Exception {
+        final AtomicLong currentMicros = new AtomicLong(1_760_743_438_000_000L);
+        testConnectionLimitedRequestDoesNotExtendSession(
+                () -> new ServerMain(getBootstrapWithMockClock(currentMicros)),
+                HttpClientFactory::newPlainTextInstance,
+                currentMicros
+        );
+    }
+
+    @Test
     public void testExpiredSessionEvicted() throws Exception {
         final AtomicLong currentMicros = new AtomicLong(1760743438000000L);
         final Bootstrap bootstrap = getBootstrapWithMockClock(currentMicros);
