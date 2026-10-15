@@ -58,7 +58,10 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.file.Paths;
 import java.time.LocalDate;
 import java.util.Arrays;
@@ -73,6 +76,8 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Predicate;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 /**
  * Regression test for stale-reader safety during append-only `_pm` updates.
@@ -85,6 +90,87 @@ import java.util.function.Predicate;
  * chain while a fresh reader sees the new footer after the O3 merge commits.
  */
 public class O3ParquetStaleReaderTest extends AbstractCairoTest {
+    // the columns added together with s in the column top shape tests: one of each type CONVERT TO NATIVE decodes from parquet
+    private static final String[] COLUMN_TOP_SHAPE_COLUMNS = {
+            "s SYMBOL", "d DOUBLE", "i INT", "l LONG", "vc VARCHAR", "st STRING", "ch CHAR", "bo BOOLEAN", "bt BYTE", "sh SHORT", "u UUID", "ip IPv4",
+            "l256 LONG256", "g GEOHASH(4c)", "d18 DECIMAL(18, 2)", "d38 DECIMAL(38, 4)", "arr DOUBLE[]", "sy SYMBOL", "tn TIMESTAMP_NS"
+    };
+    private static final String[] COLUMN_TOP_SHAPE_COLUMN_NAMES = {"s", "d", "i", "l", "vc", "st", "ch", "bo", "bt", "sh", "u", "ip", "l256", "g", "d18", "d38", "arr", "sy", "tn"};
+    private static final String COLUMN_TOP_SHAPE_NULL_SQL = "SELECT v, ts, s FROM pt WHERE s IS NULL AND ts IN '2024-01-01'";
+    // partition 2024-01-01: 2 row groups of 4 rows, every column added later NULL
+    private static final String COLUMN_TOP_SHAPE_P1_ROWS = """
+            (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z'),
+            (3, '2024-01-01T02:00:00.000000Z'), (4, '2024-01-01T03:00:00.000000Z'),
+            (5, '2024-01-01T04:00:00.000000Z'), (6, '2024-01-01T05:00:00.000000Z'),
+            (7, '2024-01-01T06:00:00.000000Z'), (8, '2024-01-01T07:00:00.000000Z')""";
+    private static final String COLUMN_TOP_SHAPE_P1_NULL_ROWS = """
+            v\tts\ts
+            1\t2024-01-01T00:00:00.000000Z\t
+            2\t2024-01-01T01:00:00.000000Z\t
+            3\t2024-01-01T02:00:00.000000Z\t
+            4\t2024-01-01T03:00:00.000000Z\t
+            5\t2024-01-01T04:00:00.000000Z\t
+            6\t2024-01-01T05:00:00.000000Z\t
+            7\t2024-01-01T06:00:00.000000Z\t
+            8\t2024-01-01T07:00:00.000000Z\t
+            """;
+    // after the last row of partition 2024-01-01, more than one row group
+    private static final String[] COLUMN_TOP_SHAPE_APPEND_ROWS = {
+            columnTopShapeRow(101, "2024-01-01T08:10:00.000000Z", "x"),
+            columnTopShapeRow(102, "2024-01-01T08:20:00.000000Z", "a"),
+            columnTopShapeRow(103, "2024-01-01T08:30:00.000000Z", null),
+            columnTopShapeRow(104, "2024-01-01T08:40:00.000000Z", ""),
+            columnTopShapeRow(105, "2024-01-01T08:50:00.000000Z", "x")
+    };
+    // into the first row group, the second one, and past the last row
+    private static final String[] COLUMN_TOP_SHAPE_MERGE_ROWS = {
+            columnTopShapeRow(101, "2024-01-01T00:30:00.000000Z", "x"),
+            columnTopShapeRow(102, "2024-01-01T04:30:00.000000Z", "a"),
+            columnTopShapeRow(103, "2024-01-01T05:30:00.000000Z", null),
+            columnTopShapeRow(104, "2024-01-01T06:30:00.000000Z", ""),
+            columnTopShapeRow(105, "2024-01-01T09:30:00.000000Z", "x")
+    };
+    private static final String[] COLUMN_TOP_SHAPE_QUERIES = {
+            "SELECT * FROM {t}",
+            "SELECT * FROM {t} WHERE ts IN '2024-01-01'",
+            "SELECT v, ts, s FROM {t} WHERE s = 'x'",
+            "SELECT v, ts, s FROM {t} WHERE s = 'a'",
+            "SELECT v, ts, s FROM {t} WHERE s = ''",
+            "SELECT v, ts, s FROM {t} WHERE s IS NULL",
+            "SELECT v, ts, s FROM {t} WHERE s IN ('x', 'a')",
+            "SELECT v, ts, s FROM {t} WHERE s != 'x'",
+            "SELECT v, ts, s FROM {t} WHERE s = 'x' ORDER BY ts DESC",
+            "SELECT v, ts, s FROM {t} LATEST ON ts PARTITION BY s",
+            "SELECT v, ts, s FROM {t} WHERE s = 'x' LATEST ON ts PARTITION BY s",
+            "SELECT count() FROM {t} WHERE s = 'x'"
+    };
+    // reads d and vc through the index when it covers them
+    private static final String[] COLUMN_TOP_SHAPE_COVERED_QUERIES = {"SELECT ts, s, d, vc FROM {t} WHERE s = 'x'"};
+    private static final String[] LEGACY_ABSENT_QUERIES = {
+            "SELECT * FROM {t}",
+            "SELECT v, ts, s FROM {t} WHERE s = 'x'",
+            "SELECT v, ts, s FROM {t} WHERE s = 'z'",
+            "SELECT v, ts, s FROM {t} WHERE s IS NULL",
+            "SELECT v, ts, s FROM {t} WHERE s IN ('x', 'a')",
+            "SELECT v, ts, s FROM {t} LATEST ON ts PARTITION BY s"
+    };
+    private static final String[] LEGACY_LIVE_TOP_QUERIES = {
+            "SELECT * FROM {t}",
+            "SELECT v, ts, s FROM {t} WHERE s IS NULL",
+            "SELECT v, ts, s FROM {t} WHERE s = 'y'",
+            "SELECT v, ts, s FROM {t} WHERE s = 'x'",
+            "SELECT v, ts, s FROM {t} WHERE s IN ('x', 'y', 'a')",
+            "SELECT v, ts, s, d, vc FROM {t} WHERE s = 'y' ORDER BY ts DESC",
+            "SELECT v, ts, k FROM {t} WHERE k = 'a'",
+            "SELECT v, ts, k FROM {t} WHERE k = 'b' ORDER BY ts DESC",
+            "SELECT v, ts, s FROM {t} LATEST ON ts PARTITION BY s",
+            "SELECT count() FROM {t} WHERE s = 'x'"
+    };
+    private static final String LEGACY_LIVE_TOP_P1_ROWS = """
+            ('a', 1, '2024-01-01T00:00:00.000000Z'), ('b', 2, '2024-01-01T01:00:00.000000Z'),
+            ('a', 3, '2024-01-01T02:00:00.000000Z'), ('b', 4, '2024-01-01T03:00:00.000000Z'),
+            ('a', 5, '2024-01-01T04:00:00.000000Z'), ('b', 6, '2024-01-01T05:00:00.000000Z'),
+            ('a', 7, '2024-01-01T06:00:00.000000Z'), ('b', 8, '2024-01-01T07:00:00.000000Z')""";
     private static final Comparator<SymRow> SYM_ROW_BY_TS = Comparator.comparing((SymRow row) -> row.day).thenComparing(row -> row.time);
     // Partition 2024-01-01 holds 12 rows, 3 row groups of 4 rows with a row group size of 4.
     // Partition 2024-01-02 keeps the first one from being the last partition, which CONVERT requires.
@@ -828,7 +914,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     @Test
     public void testColumnTopAbsentColumnKeepsLiveIndexName() throws Exception {
         // s is added after partition 2024-01-01 exists, so _cv says the column is absent there (top -1).
-        // No reader reads its index files, the merge rebuilds them in place and creates no _cv record.
+        // No reader reads its index files, the merge rebuilds them in place. The parquet file holds s
+        // from row 0 after the update, so _cv gets a record with top 0 and the live column name txn.
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -860,14 +947,15 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                             8\t2024-01-01T07:00:00.000000Z
                             """
             );
-            Assert.assertEquals(-1, getColumnVersionRecordIndex("pt", 0, "s"));
+            Assert.assertTrue(getColumnVersionRecordIndex("pt", 0, "s") > -1);
+            Assert.assertEquals(0, getColumnTop("pt", 0, "s"));
         });
     }
 
     @Test
     public void testColumnTopAtRowCountKeepsLiveIndexName() throws Exception {
         // s is added while partition 2024-01-01 is the last one, so its top there equals the row count.
-        // No reader reads its index files, the merge rebuilds them in place.
+        // No reader reads its index files, the merge rebuilds them in place, and the top becomes 0.
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -897,40 +985,411 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                             8\t2024-01-01T07:00:00.000000Z
                             """
             );
-            Assert.assertEquals(8, getColumnTop("pt", 0, "s"));
+            Assert.assertEquals(0, getColumnTop("pt", 0, "s"));
         });
     }
 
     @Test
-    public void testColumnTopInsidePartitionAppend() throws Exception {
-        // top = old row count - 1: the last committed row has a value, so readers use the index;
-        // an append keeps the index version and indexes only the new rows
+    public void testInPlaceColumnTopShapesBitmap() throws Exception {
+        assertInPlaceColumnTopShapes("");
+    }
+
+    @Test
+    public void testInPlaceColumnTopShapesBitmapCapacity2() throws Exception {
+        assertInPlaceColumnTopShapes("CAPACITY 2");
+    }
+
+    @Test
+    public void testInPlaceColumnTopShapesPosting() throws Exception {
+        assertInPlaceColumnTopShapes("TYPE POSTING");
+    }
+
+    @Test
+    public void testInPlaceColumnTopShapesPostingCovering() throws Exception {
+        assertInPlaceColumnTopShapes("TYPE POSTING INCLUDE (d, vc)");
+    }
+
+    @Test
+    public void testInPlaceColumnTopFirstAndLastRowId() throws Exception {
+        // Partition 2024-01-01 holds rows on the hour from 01:00. The O3 row lands at the first row id
+        // (00:30, with s NULL: an all-NULL column) or after the last one (with s 'x'). With 8 rows the
+        // update runs in place. With 1 row the partition has a single row group, which the update
+        // rewrites into a new directory: that path gives top 0 as well.
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
-            for (String indexDefinition : new String[]{"INDEX", "INDEX TYPE POSTING"}) {
-                assertColumnTopInsidePartitionAppend(indexDefinition);
+            for (int p1RowCount : new int[]{8, 1}) {
+                for (ColumnTopShape shape : new ColumnTopShape[]{ColumnTopShape.ABSENT, ColumnTopShape.AT_ROW_COUNT}) {
+                    for (boolean isFirstRowId : new boolean[]{true, false}) {
+                        final String context = p1RowCount + " rows, " + shape + (isFirstRowId ? ", first row id" : ", last row id");
+                        execute("DROP TABLE IF EXISTS pt");
+                        execute("DROP TABLE IF EXISTS tw");
+                        final StringSink p1Rows = new StringSink();
+                        final StringSink p1NullRows = new StringSink();
+                        for (int v = 1; v <= p1RowCount; v++) {
+                            final String timestamp = "2024-01-01T0" + v + ":00:00.000000Z";
+                            p1Rows.put(v > 1 ? ", " : "").put('(').put(v).put(", '").put(timestamp).put("')");
+                            p1NullRows.put(v).put('\t').put(timestamp).put("\t\n");
+                        }
+                        createColumnTopShapeTable("pt", shape, "", "WAL", p1Rows.toString(), true);
+                        createColumnTopShapeTable("tw", shape, "", "WAL", p1Rows.toString(), false);
+                        Assert.assertEquals(context, shape == ColumnTopShape.ABSENT ? -1 : p1RowCount, getColumnTop("pt", 0, "s"));
+                        final long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
+                        final String lastTimestamp = "2024-01-01T0" + (p1RowCount + 1) + ":00:00.000000Z";
+                        final String o3Row = isFirstRowId
+                                ? columnTopShapeRow(101, "2024-01-01T00:30:00.000000Z", null)
+                                : columnTopShapeRow(101, lastTimestamp, "x");
+                        execute(columnTopShapeInsert("pt", o3Row));
+                        execute(columnTopShapeInsert("tw", o3Row));
+                        drainWalQueue();
+                        Assert.assertEquals(context, p1RowCount > 1, partitionNameTxn == getParquetPartitionNameTxn("pt", 0));
+                        assertColumnTopsZero(context);
+                        assertQuery("SELECT v, ts, s FROM pt WHERE s IS NULL AND ts IN '2024-01-01'")
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .returns("v\tts\ts\n" + (isFirstRowId ? "101\t2024-01-01T00:30:00.000000Z\t\n" : "") + p1NullRows);
+                        assertQuery("SELECT v, ts, s FROM pt WHERE s = 'x'")
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .returns("v\tts\ts\n" + (isFirstRowId ? "" : "101\t" + lastTimestamp + "\tx\n"));
+                        assertColumnTopShapeQueriesMatchTwin(context);
+                        execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                        drainWalQueue();
+                        assertColumnTopShapeQueriesMatchTwin(context + ", native");
+                    }
+                }
             }
         });
     }
 
     @Test
-    public void testColumnTopInsidePartitionMerge() throws Exception {
-        // top = old row count - 1: the last committed row has a value, so readers use the index;
-        // a merge moves the index to a new version and keeps the top
+    public void testInPlaceColumnTopTwoPartitionsOneCommitWorkerPool() throws Exception {
+        // s and the other columns are added while 2024-01-02 is the last partition: their top is -1 on
+        // 2024-01-01 and the row count on 2024-01-02. One non-WAL commit, run by a worker pool, merges
+        // a row into the first parquet partition and appends a row to the second. Both end with top 0.
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
-            for (String indexDefinition : new String[]{"INDEX", "INDEX TYPE POSTING"}) {
-                final byte indexType = indexDefinition.contains("POSTING") ? IndexType.POSTING : IndexType.BITMAP;
-                execute("DROP TABLE IF EXISTS pt");
-                createColumnTopInsidePartitionTable(indexDefinition);
-                final long columnNameTxnBefore = getColumnNameTxn("pt", 0, "s");
-                final long txnBefore = getTableTxn("pt");
-                assertColumnTopInsidePartitionStaleCursors("INSERT INTO pt VALUES (101, '2024-01-01T04:30:00.000000Z', 'x')");
-                Assert.assertEquals(txnBefore, getColumnNameTxn("pt", 0, "s"));
-                Assert.assertEquals(8, getColumnTop("pt", 0, "s"));
-                Assert.assertTrue(isIndexKeyFilePresent("pt", 0, indexType, txnBefore));
-                Assert.assertTrue(isIndexKeyFilePresent("pt", 0, indexType, columnNameTxnBefore));
+            for (String table : new String[]{"pt", "tw"}) {
+                execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                execute("INSERT INTO " + table + " (v, ts) VALUES " + COLUMN_TOP_SHAPE_P1_ROWS);
+                execute("INSERT INTO " + table + " (v, ts) VALUES " + COLUMN_TOP_SHAPE_P1_ROWS.replace("2024-01-01", "2024-01-02"));
+                addColumnTopShapeColumns(table, "");
+                execute(columnTopShapeInsert(table, columnTopShapeRow(100, "2024-01-03T00:00:00.000000Z", "a")));
             }
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            Assert.assertEquals(-1, getColumnTop("pt", 0, "s"));
+            Assert.assertEquals(8, getColumnTop("pt", 1, "s"));
+            final long firstDayNameTxn = getParquetPartitionNameTxn("pt", 0);
+            final long secondDayNameTxn = getParquetPartitionNameTxn("pt", 1);
+            final String o3Insert = columnTopShapeInsert(
+                    "pt",
+                    columnTopShapeRow(101, "2024-01-01T04:30:00.000000Z", "x"),
+                    columnTopShapeRow(102, "2024-01-02T08:30:00.000000Z", "x")
+            );
+            final WorkerPool pool = new TestWorkerPool(2);
+            try {
+                WorkerPoolUtils.setupWriterJobs(pool, engine);
+                pool.start(LOG);
+                execute(o3Insert);
+                execute(o3Insert.replace("INSERT INTO pt ", "INSERT INTO tw "));
+            } finally {
+                pool.halt();
+            }
+            Assert.assertEquals(firstDayNameTxn, getParquetPartitionNameTxn("pt", 0));
+            Assert.assertEquals(secondDayNameTxn, getParquetPartitionNameTxn("pt", 1));
+            for (int partitionIndex = 0; partitionIndex < 2; partitionIndex++) {
+                for (String column : COLUMN_TOP_SHAPE_COLUMN_NAMES) {
+                    Assert.assertEquals("partition " + partitionIndex + ", column " + column, 0, getColumnTop("pt", partitionIndex, column));
+                }
+            }
+            assertQuery("SELECT v, ts, s FROM pt WHERE s = 'x'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts\ts
+                            101\t2024-01-01T04:30:00.000000Z\tx
+                            102\t2024-01-02T08:30:00.000000Z\tx
+                            """);
+            assertColumnTopShapeQueriesMatchTwin("two partitions");
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01', '2024-01-02'");
+            assertColumnTopShapeQueriesMatchTwin("two partitions, native");
+        });
+    }
+
+    @Test
+    public void testInPlaceColumnTopRepairSurvivesRestart() throws Exception {
+        // The first in-place commit into a partition with top -1 rebuilds the index of s in place and
+        // zeroes the tops. Both survive a writer and reader restart. The next in-order commit appends to
+        // the live index: it opens and truncates the live s.k and s.v once each, and writes no _cv.
+        setInPlaceParquetO3Properties();
+        final LiveIndexTruncateCounter ff = new LiveIndexTruncateCounter();
+        assertMemoryLeak(ff, () -> {
+            createColumnTopShapeTable("pt", ColumnTopShape.ABSENT, "", "WAL", COLUMN_TOP_SHAPE_P1_ROWS, true);
+            createColumnTopShapeTable("tw", ColumnTopShape.ABSENT, "", "WAL", COLUMN_TOP_SHAPE_P1_ROWS, false);
+            final long columnNameTxn = getColumnNameTxn("pt", 0, "s");
+            final long txnBefore = getTableTxn("pt");
+            final String mergeRow = columnTopShapeRow(101, "2024-01-01T04:30:00.000000Z", "x");
+            execute(columnTopShapeInsert("pt", mergeRow));
+            execute(columnTopShapeInsert("tw", mergeRow));
+            drainWalQueue();
+            // case A: no reader used the index, so it stays under the live name
+            Assert.assertEquals(columnNameTxn, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertFalse(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, txnBefore));
+
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            assertColumnTopsZero("after restart");
+            Assert.assertEquals(columnNameTxn, getColumnNameTxn("pt", 0, "s"));
+            assertColumnTopShapeQueriesMatchTwin("after restart");
+
+            final long columnVersionBefore;
+            try (TableReader reader = getReader("pt")) {
+                columnVersionBefore = reader.getTxFile().getColumnVersion();
+            }
+            final String nameTxnSuffix = columnNameTxn > -1 ? "." + columnNameTxn : "";
+            try (Path path = new Path()) {
+                setPartitionPath("pt", 0, path);
+                ff.track(path.toString(), "s.k" + nameTxnSuffix, "s.v" + nameTxnSuffix);
+            }
+            final String appendRow = columnTopShapeRow(102, "2024-01-01T08:30:00.000000Z", "x");
+            execute(columnTopShapeInsert("pt", appendRow));
+            execute(columnTopShapeInsert("tw", appendRow));
+            drainWalQueue();
+            try (TableReader reader = getReader("pt")) {
+                Assert.assertEquals(columnVersionBefore, reader.getTxFile().getColumnVersion());
+            }
+            Assert.assertEquals(columnNameTxn, getColumnNameTxn("pt", 0, "s"));
+            Assert.assertEquals(1, ff.getOpenCount("s.k" + nameTxnSuffix));
+            Assert.assertEquals(1, ff.getOpenCount("s.v" + nameTxnSuffix));
+            Assert.assertEquals(1, ff.getTruncateCount("s.k" + nameTxnSuffix));
+            Assert.assertEquals(1, ff.getTruncateCount("s.v" + nameTxnSuffix));
+            assertQuery("SELECT v, ts, s FROM pt WHERE s = 'x'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts\ts
+                            101\t2024-01-01T04:30:00.000000Z\tx
+                            102\t2024-01-01T08:30:00.000000Z\tx
+                            """);
+            assertColumnTopShapeQueriesMatchTwin("after append");
+        });
+    }
+
+    @Test
+    public void testInPlaceColumnTopTxnCommitFailureRollback() throws Exception {
+        // Non-WAL, s absent from partition 2024-01-01 (top -1): the _cv commit with the zeroed tops
+        // lands, the _txn commit fails. rollback() restores top -1, and the retry zeroes it again.
+        setInPlaceParquetO3Properties();
+        final TxnExtendFailingFacade ff = new TxnExtendFailingFacade("pt");
+        final StringSink o3Rows = new StringSink();
+        o3Rows.put(columnTopShapeRow(101, "2024-01-01T04:30:00.000000Z", "x"));
+        // one row in each of 300 new partitions: the partition table outgrows the _txn file
+        for (int i = 0; i < 300; i++) {
+            o3Rows.put(", ").put(columnTopShapeRow(1_000 + i, LocalDate.of(2024, 1, 3).plusDays(i) + "T00:00:00.000000Z", "z"));
+        }
+        assertMemoryLeak(ff, () -> {
+            createColumnTopShapeTable("pt", ColumnTopShape.ABSENT, "", "BYPASS WAL", COLUMN_TOP_SHAPE_P1_ROWS, true);
+            createColumnTopShapeTable("tw", ColumnTopShape.ABSENT, "", "BYPASS WAL", COLUMN_TOP_SHAPE_P1_ROWS, false);
+            final long columnVersionBefore;
+            try (TableReader reader = getReader("pt")) {
+                columnVersionBefore = reader.getTxFile().getColumnVersion();
+            }
+            try (
+                    RecordCursorFactory factory = select(COLUMN_TOP_SHAPE_NULL_SQL);
+                    RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+            ) {
+                ff.isArmed.set(true);
+                try {
+                    execute(columnTopShapeInsert("pt", o3Rows.toString()));
+                    Assert.fail("the _txn commit must fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "No space left");
+                }
+                Assert.assertFalse(ff.isArmed.get());
+                Assert.assertEquals(columnVersionBefore, readColumnVersionFileVersion("pt"));
+                engine.releaseInactive();
+                Assert.assertEquals(-1, getColumnTop("pt", 0, "s"));
+                Assert.assertEquals(-1, getColumnTop("pt", 0, "d"));
+                assertQuery(COLUMN_TOP_SHAPE_NULL_SQL)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns(COLUMN_TOP_SHAPE_P1_NULL_ROWS);
+                assertColumnTopShapeQueriesMatchTwin("after the failed commit");
+
+                execute(columnTopShapeInsert("pt", o3Rows.toString()));
+                execute(columnTopShapeInsert("tw", o3Rows.toString()));
+                assertStaleCursor("after the retry", COLUMN_TOP_SHAPE_P1_NULL_ROWS, factory, cursor);
+            }
+            assertColumnTopsZero("after the retry");
+            assertQuery("SELECT v, ts, s FROM pt WHERE s = 'x'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts\ts
+                            101\t2024-01-01T04:30:00.000000Z\tx
+                            """);
+            assertColumnTopShapeQueriesMatchTwin("after the retry");
+        });
+    }
+
+    @Test
+    public void testInPlaceColumnTopIndexRebuildFailure() throws Exception {
+        // Non-WAL, s absent from partition 2024-01-01 (top -1): opening its index key file for the
+        // rebuild from row 0 fails. The commit rolls back with the top still -1, and the next commit
+        // rebuilds the index and zeroes the top.
+        setInPlaceParquetO3Properties();
+        final AtomicReference<String> failingKeyFile = new AtomicReference<>();
+        final AtomicInteger failures = new AtomicInteger();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                final String keyFile = failingKeyFile.get();
+                if (keyFile != null && keyFile.equals(Utf8s.stringFromUtf8Bytes(name)) && failingKeyFile.compareAndSet(keyFile, null)) {
+                    failures.incrementAndGet();
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createColumnTopShapeTable("pt", ColumnTopShape.ABSENT, "", "BYPASS WAL", COLUMN_TOP_SHAPE_P1_ROWS, true);
+            createColumnTopShapeTable("tw", ColumnTopShape.ABSENT, "", "BYPASS WAL", COLUMN_TOP_SHAPE_P1_ROWS, false);
+            final long columnNameTxn = getColumnNameTxn("pt", 0, "s");
+            final long txnBefore = getTableTxn("pt");
+            try (Path path = new Path()) {
+                setPartitionPath("pt", 0, path);
+                failingKeyFile.set(Utf8s.stringFromUtf8Bytes(IndexFactory.keyFileName(IndexType.BITMAP, path, "s", columnNameTxn)));
+            }
+            final String o3Insert = columnTopShapeInsert("pt", columnTopShapeRow(101, "2024-01-01T04:30:00.000000Z", "x"));
+            try {
+                execute(o3Insert);
+                Assert.fail("the index rebuild must fail");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "bulk update failed and will be rolled back");
+            }
+            Assert.assertEquals(1, failures.get());
+            Assert.assertEquals(txnBefore, getTableTxn("pt"));
+            Assert.assertEquals(-1, getColumnTop("pt", 0, "s"));
+            Assert.assertEquals(-1, getColumnTop("pt", 0, "d"));
+            assertQuery(COLUMN_TOP_SHAPE_NULL_SQL)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(COLUMN_TOP_SHAPE_P1_NULL_ROWS);
+            assertColumnTopShapeQueriesMatchTwin("after the failed commit");
+
+            execute(o3Insert);
+            execute(o3Insert.replace("INSERT INTO pt ", "INSERT INTO tw "));
+            assertColumnTopsZero("after the retry");
+            Assert.assertEquals(columnNameTxn, getColumnNameTxn("pt", 0, "s"));
+            assertQuery("SELECT v, ts, s FROM pt WHERE s = 'x'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts\ts
+                            101\t2024-01-01T04:30:00.000000Z\tx
+                            """);
+            assertColumnTopShapeQueriesMatchTwin("after the retry");
+        });
+    }
+
+    @Test
+    public void testInPlaceColumnTopDedupSkip() throws Exception {
+        // DEDUP SKIP, s absent from partition 2024-01-01 (top -1). A commit whose rows all duplicate
+        // existing rows leaves the parquet file as it is, so the top stays -1. A commit that also adds
+        // a row updates the file in place, which then holds every column from row 0: the top becomes 0.
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"pt", "tw"}) {
+                execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts)");
+                execute("INSERT INTO " + table + " (v, ts) VALUES " + COLUMN_TOP_SHAPE_P1_ROWS);
+                execute("INSERT INTO " + table + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+                addColumnTopShapeColumns(table, "");
+                execute(columnTopShapeInsert(table, columnTopShapeRow(100, "2024-01-02T01:00:00.000000Z", "a")));
+            }
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            final long txnBefore = getTableTxn("pt");
+            for (String table : new String[]{"pt", "tw"}) {
+                execute("INSERT INTO " + table + " (v, ts) VALUES (1, '2024-01-01T00:00:00.000000Z'), (6, '2024-01-01T05:00:00.000000Z')");
+            }
+            drainWalQueue();
+            Assert.assertEquals(txnBefore + 1, getTableTxn("pt"));
+            Assert.assertEquals(-1, getColumnTop("pt", 0, "s"));
+            Assert.assertEquals(-1, getColumnTop("pt", 0, "d"));
+            assertQuery(COLUMN_TOP_SHAPE_NULL_SQL)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(COLUMN_TOP_SHAPE_P1_NULL_ROWS);
+            assertColumnTopShapeQueriesMatchTwin("dedup skip noop");
+
+            for (String table : new String[]{"pt", "tw"}) {
+                execute(columnTopShapeInsert(
+                        table,
+                        columnTopShapeRow(2, "2024-01-01T01:00:00.000000Z", "y"),
+                        columnTopShapeRow(101, "2024-01-01T04:30:00.000000Z", "x")
+                ));
+            }
+            drainWalQueue();
+            assertColumnTopsZero("dedup skip partial");
+            // the duplicate of row 2 is skipped, its s stays NULL
+            assertQuery("SELECT v, ts, s FROM pt WHERE s IN ('x', 'y')")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts\ts
+                            101\t2024-01-01T04:30:00.000000Z\tx
+                            """);
+            assertColumnTopShapeQueriesMatchTwin("dedup skip partial");
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertColumnTopShapeQueriesMatchTwin("dedup skip, native");
+        });
+    }
+
+    @Test
+    public void testLegacyColumnTopInsidePartitionAppend() throws Exception {
+        assertLegacyColumnTopInsidePartition("2024-01-01T08:30:00.000000Z");
+    }
+
+    @Test
+    public void testLegacyColumnTopInsidePartitionMerge() throws Exception {
+        assertLegacyColumnTopInsidePartition("2024-01-01T04:30:00.000000Z");
+    }
+
+    @Test
+    public void testLegacyAbsentColumnRepairedByNextCommit() throws Exception {
+        // Fixture legacy_absent_merged: an earlier version merged a row with s 'x' into the parquet
+        // partition 2024-01-01 in place and kept top -1 for s and d there. The next in-place commit
+        // rebuilds the index of s from row 0 under the live name and zeroes the tops.
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            loadStaleColumnTopFixture("legacy_absent_merged");
+            execute("CREATE TABLE tw (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO tw VALUES " + COLUMN_TOP_SHAPE_P1_ROWS + ", (99, '2024-01-02T00:00:00.000000Z')");
+            execute("ALTER TABLE tw ADD COLUMN s SYMBOL INDEX");
+            execute("ALTER TABLE tw ADD COLUMN d DOUBLE");
+            execute("INSERT INTO tw VALUES (100, '2024-01-02T01:00:00.000000Z', 'a', 0.5)");
+            execute("INSERT INTO tw VALUES (101, '2024-01-01T04:30:00.000000Z', 'x', 1.5)");
+            final String table = "legacy_absent_merged";
+            Assert.assertEquals(-1, getColumnTop(table, 0, "s"));
+            Assert.assertEquals(-1, getColumnTop(table, 0, "d"));
+            final long columnNameTxn = getColumnNameTxn(table, 0, "s");
+            for (String t : new String[]{table, "tw"}) {
+                execute("INSERT INTO " + t + " VALUES (102, '2024-01-01T09:30:00.000000Z', 'z', 2.5)");
+            }
+            Assert.assertEquals(0, getColumnTop(table, 0, "s"));
+            Assert.assertEquals(0, getColumnTop(table, 0, "d"));
+            Assert.assertEquals(columnNameTxn, getColumnNameTxn(table, 0, "s"));
+            assertQuery("SELECT v, ts, s, d FROM " + table + " WHERE s = 'x'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts\ts\td
+                            101\t2024-01-01T04:30:00.000000Z\tx\t1.5
+                            """);
+            assertLegacyQueriesMatchTwin(table, "repaired");
+            execute("ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            assertLegacyQueriesMatchTwin(table, "repaired, native");
         });
     }
 
@@ -1465,7 +1924,8 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     @Test
     public void testInPlaceMergeVersionsOnlyIndexesReadersUse() throws Exception {
         // One merge, three SYMBOL columns: s is indexed with data, t is indexed but absent from the
-        // partition (added after it), u is not indexed. Only s moves to a new index version.
+        // partition (added after it), u is not indexed. Only s moves to a new index version, t gets
+        // top 0 under its live name.
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
             execute("CREATE TABLE pt (s SYMBOL INDEX, u SYMBOL, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -1492,7 +1952,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, "s", txnBefore));
             Assert.assertTrue(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, "s", sNameTxn));
             Assert.assertEquals(tNameTxn, getColumnNameTxn("pt", 0, "t"));
-            Assert.assertEquals(-1, getColumnVersionRecordIndex("pt", 0, "t"));
+            // the parquet file holds t from row 0 after the update
+            Assert.assertTrue(getColumnVersionRecordIndex("pt", 0, "t") > -1);
+            Assert.assertEquals(0, getColumnTop("pt", 0, "t"));
             Assert.assertFalse(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, "t", txnBefore));
             Assert.assertFalse(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, "u", txnBefore));
             Assert.assertFalse(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, "u", getColumnNameTxn("pt", 0, "u")));
@@ -1507,7 +1969,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     public void testInPlaceIndexUpdateFuzz() throws Exception {
         // Random appends and merges into a parquet partition, each with an index cursor opened before
         // it. The held cursor must return the full-scan rows captured before the commit, and a fresh
-        // index query the full-scan rows after it. The number of batches is a budget property.
+        // index query the full-scan rows after it. s starts in each column top shape: created with the
+        // table, added after the partition exists (top -1), added while it is the last one (top at the
+        // row count). At the end CONVERT TO NATIVE must give the rows of a native twin table that got
+        // the same rows. The number of batches is a budget property.
         setInPlaceParquetO3Properties();
         final int batchCount = Integer.getInteger("questdb.fuzz.parquet.index.batches", 20);
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -1515,65 +1980,89 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         final long dayMicros = 86_400_000_000L;
         final long dayStart = 1_704_067_200_000_000L; // 2024-01-01T00:00:00Z
         assertMemoryLeak(() -> {
+            // batches per shape, append and merge
+            final int[][] shapeBatches = new int[ColumnTopShape.values().length][2];
             for (String indexDefinition : new String[]{"INDEX", "INDEX TYPE POSTING"}) {
-                execute("DROP TABLE IF EXISTS pt");
-                execute("CREATE TABLE pt (s SYMBOL " + indexDefinition + ", v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                // 40 rows half an hour apart, then the next day's row that lets CONVERT take the first day
-                execute("INSERT INTO pt SELECT rnd_symbol('a', 'b', 'c', NULL), x, '2024-01-01'::TIMESTAMP + (x - 1) * 1_800_000_000L FROM long_sequence(40)");
-                execute("INSERT INTO pt VALUES ('a', 0, '2024-01-02T00:00:00.000000Z')");
-                drainWalQueue();
-                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-                drainWalQueue();
-                final long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
-                int appendBatches = 0;
-                int mergeBatches = 0;
-                long nextV = 1_000;
-                long maxTimestamp = dayStart + 39 * 1_800_000_000L;
-                for (int batch = 0; batch < batchCount; batch++) {
-                    final String key = symbols[rnd.nextInt(symbols.length - 1)];
-                    final String indexSql = "SELECT s, v, ts FROM pt WHERE s = '" + key + "' AND ts IN '2024-01-01'";
-                    final String fullScanSql = "SELECT s, v, ts FROM pt WHERE s::VARCHAR = '" + key + "' AND ts IN '2024-01-01'";
-                    printSql(fullScanSql);
-                    final String rowsBefore = sink.toString();
-                    final long columnNameTxnBefore = getColumnNameTxn("pt", 0, "s");
-                    final long txnBefore = getTableTxn("pt");
-                    // the first two batches pin one shape each, the rest are random
-                    final boolean isAppend = batch == 0 || (batch > 1 && rnd.nextBoolean());
-                    final int rowCount = 1 + rnd.nextInt(6);
-                    final StringSink insert = new StringSink();
-                    insert.put("INSERT INTO pt VALUES ");
-                    for (int i = 0; i < rowCount; i++) {
-                        final long timestamp = isAppend ? maxTimestamp + (i + 1) * 1_000_000L : dayStart + rnd.nextLong(maxTimestamp - dayStart);
-                        final String symbol = symbols[rnd.nextInt(symbols.length)];
-                        insert.put(i > 0 ? ", (" : "(").put(symbol == null ? "NULL" : "'" + symbol + "'").put(", ").put(nextV++).put(", ").put(timestamp).put("::TIMESTAMP)");
-                    }
-                    if (isAppend) {
-                        maxTimestamp += rowCount * 1_000_000L;
-                    }
-                    Assert.assertTrue(maxTimestamp < dayStart + dayMicros);
-                    final String context = indexDefinition + ", batch " + batch + (isAppend ? ", append " : ", merge ") + insert;
-                    try (RecordCursorFactory factory = select(indexSql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
-                        execute(insert);
-                        drainWalQueue();
-                        assertStaleCursor(context, rowsBefore, factory, cursor);
-                    }
-                    Assert.assertEquals(context, partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
-                    Assert.assertEquals(context, isAppend ? columnNameTxnBefore : txnBefore, getColumnNameTxn("pt", 0, "s"));
-                    if (isAppend) {
-                        appendBatches++;
+                for (ColumnTopShape shape : ColumnTopShape.values()) {
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("DROP TABLE IF EXISTS tw");
+                    execute("CREATE TABLE pt (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    if (shape == ColumnTopShape.ZERO) {
+                        execute("ALTER TABLE pt ADD COLUMN s SYMBOL " + indexDefinition);
+                        // 40 rows half an hour apart, then the next day's row that lets CONVERT take the first day
+                        execute("INSERT INTO pt (s, v, ts) SELECT rnd_symbol('a', 'b', 'c', NULL), x, '2024-01-01'::TIMESTAMP + (x - 1) * 1_800_000_000L FROM long_sequence(40)");
                     } else {
-                        mergeBatches++;
+                        execute("INSERT INTO pt (v, ts) SELECT x, '2024-01-01'::TIMESTAMP + (x - 1) * 1_800_000_000L FROM long_sequence(40)");
                     }
-                    assertSqlCursors(fullScanSql, indexSql);
-                    if (rnd.nextBoolean()) {
-                        engine.releaseInactive();
-                        try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
-                            purgeJob.run();
+                    if (shape == ColumnTopShape.AT_ROW_COUNT) {
+                        execute("ALTER TABLE pt ADD COLUMN s SYMBOL " + indexDefinition);
+                    }
+                    execute("INSERT INTO pt (v, ts) VALUES (0, '2024-01-02T00:00:00.000000Z')");
+                    if (shape == ColumnTopShape.ABSENT) {
+                        execute("ALTER TABLE pt ADD COLUMN s SYMBOL " + indexDefinition);
+                    }
+                    execute("INSERT INTO pt (s, v, ts) VALUES ('a', 0, '2024-01-02T01:00:00.000000Z')");
+                    drainWalQueue();
+                    execute("CREATE TABLE tw AS (SELECT * FROM pt) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                    execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    drainWalQueue();
+                    final long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
+                    long nextV = 1_000;
+                    long maxTimestamp = dayStart + 39 * 1_800_000_000L;
+                    for (int batch = 0; batch < batchCount; batch++) {
+                        final String key = symbols[rnd.nextInt(symbols.length - 1)];
+                        final String indexSql = "SELECT s, v, ts FROM pt WHERE s = '" + key + "' AND ts IN '2024-01-01'";
+                        final String fullScanSql = "SELECT s, v, ts FROM pt WHERE s::VARCHAR = '" + key + "' AND ts IN '2024-01-01'";
+                        printSql(fullScanSql);
+                        final String rowsBefore = sink.toString();
+                        final long columnNameTxnBefore = getColumnNameTxn("pt", 0, "s");
+                        final long txnBefore = getTableTxn("pt");
+                        // the first two batches pin one shape each, the rest are random
+                        final boolean isAppend = batch == 0 || (batch > 1 && rnd.nextBoolean());
+                        final int rowCount = 1 + rnd.nextInt(6);
+                        final StringSink insert = new StringSink();
+                        insert.put("INSERT INTO pt (s, v, ts) VALUES ");
+                        for (int i = 0; i < rowCount; i++) {
+                            final long timestamp = isAppend ? maxTimestamp + (i + 1) * 1_000_000L : dayStart + rnd.nextLong(maxTimestamp - dayStart);
+                            final String symbol = symbols[rnd.nextInt(symbols.length)];
+                            insert.put(i > 0 ? ", (" : "(").put(symbol == null ? "NULL" : "'" + symbol + "'").put(", ").put(nextV++).put(", ").put(timestamp).put("::TIMESTAMP)");
+                        }
+                        if (isAppend) {
+                            maxTimestamp += rowCount * 1_000_000L;
+                        }
+                        Assert.assertTrue(maxTimestamp < dayStart + dayMicros);
+                        final String context = indexDefinition + ", " + shape + ", batch " + batch + (isAppend ? ", append " : ", merge ") + insert;
+                        try (RecordCursorFactory factory = select(indexSql); RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            execute(insert);
+                            execute(insert.toString().replace("INSERT INTO pt ", "INSERT INTO tw "));
+                            drainWalQueue();
+                            assertStaleCursor(context, rowsBefore, factory, cursor);
+                        }
+                        Assert.assertEquals(context, partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
+                        // batch 0 is an append, after it s has top 0 in every shape
+                        Assert.assertEquals(context, isAppend ? columnNameTxnBefore : txnBefore, getColumnNameTxn("pt", 0, "s"));
+                        Assert.assertEquals(context, 0, getColumnTop("pt", 0, "s"));
+                        shapeBatches[shape.ordinal()][isAppend ? 0 : 1]++;
+                        assertSqlCursors(fullScanSql, indexSql);
+                        assertSqlCursors(
+                                "SELECT s, v, ts FROM pt WHERE s::VARCHAR IS NULL AND ts IN '2024-01-01'",
+                                "SELECT s, v, ts FROM pt WHERE s IS NULL AND ts IN '2024-01-01'"
+                        );
+                        if (rnd.nextBoolean()) {
+                            engine.releaseInactive();
+                            try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                                purgeJob.run();
+                            }
                         }
                     }
+                    execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                    drainWalQueue();
+                    assertSqlCursors("SELECT * FROM tw", "SELECT * FROM pt");
                 }
-                Assert.assertTrue(appendBatches > 0);
-                Assert.assertTrue(mergeBatches > 0);
+            }
+            for (ColumnTopShape shape : ColumnTopShape.values()) {
+                Assert.assertTrue(shape + " appends", shapeBatches[shape.ordinal()][0] > 0);
+                Assert.assertTrue(shape + " merges", shapeBatches[shape.ordinal()][1] > 0);
             }
         });
     }
@@ -2468,86 +2957,317 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         Assert.assertEquals(partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
         Assert.assertEquals(columnNameTxnBefore, getColumnNameTxn("pt", 0, "s"));
         Assert.assertFalse(isIndexKeyFilePresent("pt", 0, IndexType.BITMAP, txnBefore));
+        assertSqlCursors(
+                "SELECT v, ts, s FROM pt WHERE s::VARCHAR = 'x'",
+                "SELECT v, ts, s FROM pt WHERE s = 'x'"
+        );
+        assertSqlCursors(
+                "SELECT v, ts, s FROM pt WHERE s::VARCHAR IS NULL",
+                "SELECT v, ts, s FROM pt WHERE s IS NULL"
+        );
     }
 
-    private void assertColumnTopInsidePartitionAppend(String indexDefinition) throws Exception {
-        final byte indexType = indexDefinition.contains("POSTING") ? IndexType.POSTING : IndexType.BITMAP;
-        execute("DROP TABLE IF EXISTS pt");
-        createColumnTopInsidePartitionTable(indexDefinition);
-        final long columnNameTxnBefore = getColumnNameTxn("pt", 0, "s");
-        final long txnBefore = getTableTxn("pt");
-        assertColumnTopInsidePartitionStaleCursors("INSERT INTO pt VALUES (101, '2024-01-01T08:30:00.000000Z', 'x')");
-        Assert.assertEquals(columnNameTxnBefore, getColumnNameTxn("pt", 0, "s"));
-        Assert.assertEquals(8, getColumnTop("pt", 0, "s"));
-        Assert.assertFalse(isIndexKeyFilePresent("pt", 0, indexType, txnBefore));
-        assertQuery("SELECT v, ts, s FROM pt WHERE s IN ('x', 'y')")
-                .noLeakCheck()
-                .timestamp("ts")
-                .returns("""
-                        v\tts\ts
-                        9\t2024-01-01T08:00:00.000000Z\ty
-                        101\t2024-01-01T08:30:00.000000Z\tx
-                        """);
-    }
-
-    private void assertColumnTopInsidePartitionStaleCursors(String o3Insert) throws Exception {
-        final long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
-        try (
-                RecordCursorFactory valueFactory = select("SELECT v, ts, s FROM pt WHERE s = 'y' AND ts IN '2024-01-01'");
-                RecordCursor valueCursor = valueFactory.getCursor(sqlExecutionContext);
-                RecordCursorFactory nullFactory = select("SELECT v, ts, s FROM pt WHERE s IS NULL AND ts IN '2024-01-01'");
-                RecordCursor nullCursor = nullFactory.getCursor(sqlExecutionContext)
-        ) {
-            execute(o3Insert);
-            drainWalQueue();
-            assertStaleCursor(
-                    "value key",
-                    """
-                            v\tts\ts
-                            9\t2024-01-01T08:00:00.000000Z\ty
-                            """,
-                    valueFactory,
-                    valueCursor
-            );
-            assertStaleCursor(
-                    "null key",
-                    """
-                            v\tts\ts
-                            1\t2024-01-01T00:00:00.000000Z\t
-                            2\t2024-01-01T01:00:00.000000Z\t
-                            3\t2024-01-01T02:00:00.000000Z\t
-                            4\t2024-01-01T03:00:00.000000Z\t
-                            5\t2024-01-01T04:00:00.000000Z\t
-                            6\t2024-01-01T05:00:00.000000Z\t
-                            7\t2024-01-01T06:00:00.000000Z\t
-                            8\t2024-01-01T07:00:00.000000Z\t
-                            """,
-                    nullFactory,
-                    nullCursor
-            );
+    private static void assertColumnTopsZero(String context) {
+        for (String column : COLUMN_TOP_SHAPE_COLUMN_NAMES) {
+            Assert.assertEquals(context + ", column " + column, 0, getColumnTop("pt", 0, column));
         }
-        Assert.assertEquals(partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
     }
 
-    private void createColumnTopInsidePartitionTable(String indexDefinition) throws Exception {
-        // s is added while partition 2024-01-01 is the last one with 8 rows, CONVERT keeps that top
-        // (it equals the row count), and an in-order row with a value makes it top 8 of 9 rows
-        execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
-        execute("""
-                INSERT INTO pt VALUES
-                (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z'),
-                (3, '2024-01-01T02:00:00.000000Z'), (4, '2024-01-01T03:00:00.000000Z'),
-                (5, '2024-01-01T04:00:00.000000Z'), (6, '2024-01-01T05:00:00.000000Z'),
-                (7, '2024-01-01T06:00:00.000000Z'), (8, '2024-01-01T07:00:00.000000Z')""");
+    private static void assertColumnTopShapeQueriesMatchTwin(String context) throws Exception {
+        assertQueriesMatchTwin("pt", context, COLUMN_TOP_SHAPE_QUERIES);
+    }
+
+    /**
+     * Every query, run on {@code table}, returns what it returns on the native twin table tw, which
+     * received the same DDL and rows but never became parquet. The queries name the table {t}.
+     */
+    private static void assertQueriesMatchTwin(String table, String context, String[] queries) throws Exception {
+        for (String sql : queries) {
+            try {
+                assertSqlCursors(sql.replace("{t}", "tw"), sql.replace("{t}", table));
+            } catch (AssertionError e) {
+                throw new AssertionError(context + ": " + sql, e);
+            }
+        }
+    }
+
+    private void assertInPlaceColumnTopShapes(String indexSuffix) throws Exception {
+        // For each start shape of the column tops of s and of the columns added with it, an append and
+        // a merge in place. Afterwards _cv says what the parquet file holds, every column from row 0,
+        // and every index query and CONVERT TO NATIVE agree with the native twin table.
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                for (ColumnTopShape shape : ColumnTopShape.values()) {
+                    for (boolean isAppend : new boolean[]{true, false}) {
+                        final String context = "index " + indexSuffix + ", " + walMode + ", " + shape + (isAppend ? ", append" : ", merge");
+                        execute("DROP TABLE IF EXISTS pt");
+                        execute("DROP TABLE IF EXISTS tw");
+                        createColumnTopShapeTable("pt", shape, indexSuffix, walMode, COLUMN_TOP_SHAPE_P1_ROWS, true);
+                        createColumnTopShapeTable("tw", shape, indexSuffix, walMode, COLUMN_TOP_SHAPE_P1_ROWS, false);
+                        final long expectedTop = switch (shape) {
+                            case ZERO -> 0;
+                            case ABSENT -> -1;
+                            case AT_ROW_COUNT -> 8;
+                        };
+                        for (String column : COLUMN_TOP_SHAPE_COLUMN_NAMES) {
+                            Assert.assertEquals(context + ", column " + column, expectedTop, getColumnTop("pt", 0, column));
+                        }
+                        final long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
+                        final String[] o3Rows = isAppend ? COLUMN_TOP_SHAPE_APPEND_ROWS : COLUMN_TOP_SHAPE_MERGE_ROWS;
+                        try (
+                                RecordCursorFactory factory = select(COLUMN_TOP_SHAPE_NULL_SQL);
+                                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                        ) {
+                            execute(columnTopShapeInsert("pt", o3Rows));
+                            execute(columnTopShapeInsert("tw", o3Rows));
+                            drainWalQueue();
+                            assertStaleCursor(context, COLUMN_TOP_SHAPE_P1_NULL_ROWS, factory, cursor);
+                        }
+                        Assert.assertEquals(context, partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
+                        assertColumnTopsZero(context);
+                        assertQuery("SELECT v, ts, s FROM pt WHERE s = 'x'")
+                                .noLeakCheck()
+                                .timestamp("ts")
+                                .returns(isAppend
+                                        ? """
+                                        v\tts\ts
+                                        101\t2024-01-01T08:10:00.000000Z\tx
+                                        105\t2024-01-01T08:50:00.000000Z\tx
+                                        """
+                                        : """
+                                        v\tts\ts
+                                        101\t2024-01-01T00:30:00.000000Z\tx
+                                        105\t2024-01-01T09:30:00.000000Z\tx
+                                        """);
+                        assertQuery("SELECT v, ts, s FROM pt WHERE s = 'x'")
+                                .noLeakCheck()
+                                .assertsPlanContaining("Index forward scan on: s");
+                        assertColumnTopShapeQueriesMatchTwin(context);
+                        assertQueriesMatchTwin("pt", context, COLUMN_TOP_SHAPE_COVERED_QUERIES);
+                        execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                        drainWalQueue();
+                        assertColumnTopShapeQueriesMatchTwin(context + ", native");
+                        if (!indexSuffix.contains("INCLUDE")) {
+                            // CONVERT TO NATIVE loses the covered values of the rows an in-place
+                            // update added, whatever the column tops: a separate bug
+                            assertQueriesMatchTwin("pt", context + ", native", COLUMN_TOP_SHAPE_COVERED_QUERIES);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    private void assertLegacyColumnTopInsidePartition(String o3Timestamp) throws Exception {
+        // Fixtures legacy_live_top and legacy_live_top_posting: an earlier version left top 8 of 9 rows
+        // for s, d and vc in parquet partition 2024-01-01, so readers use the index of s with 8 implicit
+        // NULL rows. k has top 0. The next in-place commit, an append or a merge, zeroes the tops and
+        // moves the index of every live column of the partition, s and k, to the version named after the
+        // commit's txn. Cursors opened before it keep their rows, and the purge removes the old versions.
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"legacy_live_top", "legacy_live_top_posting"}) {
+                final boolean isPosting = table.endsWith("_posting");
+                final byte indexType = isPosting ? IndexType.POSTING : IndexType.BITMAP;
+                final String context = table + ", O3 row at " + o3Timestamp;
+                execute("DROP TABLE IF EXISTS tw");
+                loadStaleColumnTopFixture(table);
+                createLegacyLiveTopTwin(isPosting);
+                for (String column : new String[]{"s", "d", "vc"}) {
+                    Assert.assertEquals(context + ", column " + column, 8, getColumnTop(table, 0, column));
+                }
+                Assert.assertEquals(context, 0, getColumnTop(table, 0, "k"));
+                final long partitionNameTxn = getParquetPartitionNameTxn(table, 0);
+                final long sNameTxn = getColumnNameTxn(table, 0, "s");
+                final long kNameTxn = getColumnNameTxn(table, 0, "k");
+                final long txnBefore = getTableTxn(table);
+                final String o3Insert = "INSERT INTO " + table + " (k, v, ts, d, vc, s) VALUES ('a', 101, '" + o3Timestamp + "', 1.5, 'x101', 'x')";
+                try (
+                        RecordCursorFactory nullFactory = select("SELECT v, ts, s FROM " + table + " WHERE s IS NULL AND ts IN '2024-01-01'");
+                        RecordCursor nullCursor = nullFactory.getCursor(sqlExecutionContext);
+                        RecordCursorFactory valueFactory = select("SELECT v, ts, s FROM " + table + " WHERE s = 'y'");
+                        RecordCursor valueCursor = valueFactory.getCursor(sqlExecutionContext);
+                        RecordCursorFactory kFactory = select("SELECT v, ts, k FROM " + table + " WHERE k = 'a' AND ts IN '2024-01-01'");
+                        RecordCursor kCursor = kFactory.getCursor(sqlExecutionContext)
+                ) {
+                    execute(o3Insert);
+                    execute(o3Insert.replace("INSERT INTO " + table + " ", "INSERT INTO tw "));
+                    assertStaleCursor(context + ", s IS NULL", COLUMN_TOP_SHAPE_P1_NULL_ROWS, nullFactory, nullCursor);
+                    assertStaleCursor(
+                            context + ", s = 'y'",
+                            """
+                                    v\tts\ts
+                                    9\t2024-01-01T08:00:00.000000Z\ty
+                                    """,
+                            valueFactory,
+                            valueCursor
+                    );
+                    assertStaleCursor(
+                            context + ", k = 'a'",
+                            """
+                                    v\tts\tk
+                                    1\t2024-01-01T00:00:00.000000Z\ta
+                                    3\t2024-01-01T02:00:00.000000Z\ta
+                                    5\t2024-01-01T04:00:00.000000Z\ta
+                                    7\t2024-01-01T06:00:00.000000Z\ta
+                                    """,
+                            kFactory,
+                            kCursor
+                    );
+                }
+                Assert.assertEquals(context, partitionNameTxn, getParquetPartitionNameTxn(table, 0));
+                Assert.assertEquals(context, txnBefore, getColumnNameTxn(table, 0, "s"));
+                Assert.assertEquals(context, txnBefore, getColumnNameTxn(table, 0, "k"));
+                for (String column : new String[]{"s", "d", "vc", "k"}) {
+                    Assert.assertEquals(context + ", column " + column, 0, getColumnTop(table, 0, column));
+                }
+                Assert.assertTrue(context, isIndexKeyFilePresent(table, 0, indexType, "s", txnBefore));
+                Assert.assertTrue(context, isIndexKeyFilePresent(table, 0, IndexType.BITMAP, "k", txnBefore));
+                assertQuery("SELECT v, ts, s FROM " + table + " WHERE s = 'x'")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("v\tts\ts\n101\t" + o3Timestamp + "\tx\n");
+                assertQueriesMatchTwin(table, context, LEGACY_LIVE_TOP_QUERIES);
+
+                engine.releaseInactive();
+                try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+                    purgeJob.run();
+                }
+                Assert.assertFalse(context, isIndexKeyFilePresent(table, 0, indexType, "s", sNameTxn));
+                Assert.assertFalse(context, isIndexKeyFilePresent(table, 0, IndexType.BITMAP, "k", kNameTxn));
+                Assert.assertTrue(context, isIndexKeyFilePresent(table, 0, indexType, "s", txnBefore));
+                Assert.assertTrue(context, isIndexKeyFilePresent(table, 0, IndexType.BITMAP, "k", txnBefore));
+                assertQueriesMatchTwin(table, context + ", after purge", LEGACY_LIVE_TOP_QUERIES);
+
+                execute("ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                assertQueriesMatchTwin(table, context + ", native", LEGACY_LIVE_TOP_QUERIES);
+            }
+        });
+    }
+
+    private static void assertLegacyQueriesMatchTwin(String table, String context) throws Exception {
+        assertQueriesMatchTwin(table, context, LEGACY_ABSENT_QUERIES);
+    }
+
+    private static String columnTopShapeInsert(String table, String... rows) {
+        return "INSERT INTO " + table + " (v, ts, s, d, i, l, vc, st, ch, bo, bt, sh, u, ip, l256, g, d18, d38, arr, sy, tn) VALUES " + String.join(", ", rows);
+    }
+
+    /**
+     * A row with a value derived from {@code v} in every column added with s, or NULL in all of them
+     * when {@code s} is null.
+     */
+    private static String columnTopShapeRow(int v, String timestamp, String s) {
+        if (s == null) {
+            return "(" + v + ", '" + timestamp + "'" + ", NULL".repeat(COLUMN_TOP_SHAPE_COLUMN_NAMES.length) + ")";
+        }
+        return "(" + v + ", '" + timestamp + "', '" + s + "', " + v + ".5, " + v + ", " + v + "000000000, 'vc" + v + "', 'st" + v + "', 'q', true, "
+                + (v % 100) + "::BYTE, " + v + "::SHORT, '00000000-0000-0000-0000-" + String.format("%012d", v) + "', '10.0.0." + (v % 250) + "', '0x"
+                + Integer.toHexString(v) + "'::LONG256, #9v1s, '" + v + ".25'::DECIMAL(18, 2), '" + v + ".1234'::DECIMAL(38, 4), ARRAY[" + v + ".0, 1.5], 'k"
+                + (v % 3) + "', '2024-01-01T00:00:00." + String.format("%09d", v) + "Z'::TIMESTAMP_NS)";
+    }
+
+    /**
+     * Partition 2024-01-01 gets {@code p1Rows} and 2024-01-02 two rows. s, with the index
+     * {@code indexSuffix}, and the other columns of {@link #COLUMN_TOP_SHAPE_COLUMNS} are added at the
+     * point of the {@code shape}.
+     */
+    private static void createColumnTopShapeTable(
+            String table,
+            ColumnTopShape shape,
+            String indexSuffix,
+            String walMode,
+            String p1Rows,
+            boolean isParquet
+    ) throws Exception {
+        execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        if (shape == ColumnTopShape.ZERO) {
+            addColumnTopShapeColumns(table, indexSuffix);
+        }
+        execute("INSERT INTO " + table + " (v, ts) VALUES " + p1Rows);
+        if (shape == ColumnTopShape.AT_ROW_COUNT) {
+            addColumnTopShapeColumns(table, indexSuffix);
+        }
+        execute("INSERT INTO " + table + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+        if (shape == ColumnTopShape.ABSENT) {
+            addColumnTopShapeColumns(table, indexSuffix);
+        }
+        execute(columnTopShapeInsert(table, columnTopShapeRow(100, "2024-01-02T01:00:00.000000Z", "a")));
         drainWalQueue();
-        execute("ALTER TABLE pt ADD COLUMN s SYMBOL " + indexDefinition);
-        execute("INSERT INTO pt VALUES (99, '2024-01-02T00:00:00.000000Z', 'a')");
-        drainWalQueue();
-        execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
-        drainWalQueue();
-        execute("INSERT INTO pt VALUES (9, '2024-01-01T08:00:00.000000Z', 'y')");
-        drainWalQueue();
-        Assert.assertEquals(8, getColumnTop("pt", 0, "s"));
+        if (isParquet) {
+            execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+        }
+    }
+
+    private static void addColumnTopShapeColumns(String table, String indexSuffix) throws Exception {
+        // one column per statement: a WAL table takes one structure change per ALTER
+        for (String column : COLUMN_TOP_SHAPE_COLUMNS) {
+            execute("ALTER TABLE " + table + " ADD COLUMN " + column);
+        }
+        execute("ALTER TABLE " + table + " ALTER COLUMN s ADD INDEX " + indexSuffix);
+    }
+
+    /**
+     * The native twin of the legacy_live_top fixtures: the statements that wrote them, without the
+     * CONVERT.
+     */
+    private static void createLegacyLiveTopTwin(boolean isPosting) throws Exception {
+        execute("CREATE TABLE tw (k SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO tw VALUES " + LEGACY_LIVE_TOP_P1_ROWS);
+        execute("ALTER TABLE tw ADD COLUMN d DOUBLE");
+        execute("ALTER TABLE tw ADD COLUMN vc VARCHAR");
+        execute("ALTER TABLE tw ADD COLUMN s SYMBOL INDEX" + (isPosting ? " TYPE POSTING" : ""));
+        execute("INSERT INTO tw (k, v, ts, d, vc, s) VALUES ('a', 99, '2024-01-02T00:00:00.000000Z', 0.5, 'p2', 'a')");
+        execute("INSERT INTO tw (k, v, ts, d, vc, s) VALUES ('b', 9, '2024-01-01T08:00:00.000000Z', 2.5, 'y9', 'y')");
+    }
+
+    /**
+     * Unpacks the table {@code tableName} from resources/parquet-stale-column-top into the db root.
+     * The fixtures hold column tops that only versions before the in-place parquet update kept _cv in
+     * step with the file could write. A throwaway AbstractCairoTest wrote them at commit 0ea9e95767,
+     * with the settings of {@link #setInPlaceParquetO3Properties()}, as BYPASS WAL tables:
+     * <ul>
+     *     <li>legacy_live_top: CREATE TABLE (k SYMBOL INDEX, v INT, ts TIMESTAMP), INSERT
+     *     {@link #LEGACY_LIVE_TOP_P1_ROWS}, ADD COLUMN d DOUBLE, ADD COLUMN vc VARCHAR, ADD COLUMN s
+     *     SYMBOL INDEX, INSERT ('a', 99, '2024-01-02', 0.5, 'p2', 'a'), CONVERT '2024-01-01' TO PARQUET,
+     *     INSERT ('b', 9, '2024-01-01T08:00', 2.5, 'y9', 'y'): s, d and vc have top 8 of 9 rows;</li>
+     *     <li>legacy_live_top_posting: the same with s SYMBOL INDEX TYPE POSTING;</li>
+     *     <li>legacy_absent_merged: CREATE TABLE (v INT, ts TIMESTAMP), INSERT
+     *     {@link #COLUMN_TOP_SHAPE_P1_ROWS} and (99, '2024-01-02'), ADD COLUMN s SYMBOL INDEX, ADD
+     *     COLUMN d DOUBLE, INSERT (100, '2024-01-02T01:00', 'a', 0.5), CONVERT '2024-01-01' TO PARQUET,
+     *     INSERT (101, '2024-01-01T04:30', 'x', 1.5): s and d keep top -1.</li>
+     * </ul>
+     * A covering POSTING index cannot have the first shape: that code fails its covering reseal.
+     */
+    private static void loadStaleColumnTopFixture(String tableName) throws IOException {
+        final byte[] buffer = new byte[64 * 1024];
+        final File root = new File(configuration.getDbRoot().toString());
+        try (InputStream is = O3ParquetStaleReaderTest.class.getResourceAsStream("/parquet-stale-column-top/" + tableName + ".zip")) {
+            Assert.assertNotNull(tableName, is);
+            try (ZipInputStream zip = new ZipInputStream(is)) {
+                ZipEntry entry;
+                while ((entry = zip.getNextEntry()) != null) {
+                    final File dest = new File(root, entry.getName());
+                    if (!entry.isDirectory()) {
+                        final File dir = dest.getParentFile();
+                        if (!dir.exists()) {
+                            Assert.assertTrue(dir.mkdirs());
+                        }
+                        try (FileOutputStream out = new FileOutputStream(dest)) {
+                            int n;
+                            while ((n = zip.read(buffer, 0, buffer.length)) > 0) {
+                                out.write(buffer, 0, n);
+                            }
+                        }
+                    }
+                    zip.closeEntry();
+                }
+            }
+        }
+        engine.reloadTableNames();
+        engine.reconcileTableNameRegistryState();
     }
 
     private void createIndexedParquetTable(String indexDefinition, String timestampType) throws Exception {
@@ -2647,13 +3367,16 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
 
     /**
      * Counts the read-write opens of the BITMAP index files of column {@code s} in one partition
-     * directory, and the truncations of the descriptors those opens return.
+     * directory, s.k and s.v unless {@code track()} names them, and the truncations of the
+     * descriptors those opens return.
      */
     private static class LiveIndexTruncateCounter extends TestFilesFacadeImpl {
         private final ConcurrentHashMap<Long, String> fileNamesByFd = new ConcurrentHashMap<>();
         private final ConcurrentHashMap<String, AtomicInteger> openCounts = new ConcurrentHashMap<>();
         private final ConcurrentHashMap<String, AtomicInteger> truncateCounts = new ConcurrentHashMap<>();
+        private volatile String keyFileName = "s.k";
         private volatile String partitionDir;
+        private volatile String valueFileName = "s.v";
 
         @Override
         public boolean close(long fd) {
@@ -2667,7 +3390,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             final String dir = partitionDir;
             if (dir != null && fd > -1) {
                 final String path = Utf8s.stringFromUtf8Bytes(name);
-                for (String fileName : new String[]{"s.k", "s.v"}) {
+                for (String fileName : new String[]{keyFileName, valueFileName}) {
                     if (path.equals(dir + Files.SEPARATOR + fileName)) {
                         fileNamesByFd.put(fd, fileName);
                         openCounts.computeIfAbsent(fileName, k -> new AtomicInteger()).incrementAndGet();
@@ -2697,6 +3420,12 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         }
 
         void track(String partitionDir) {
+            this.partitionDir = partitionDir;
+        }
+
+        void track(String partitionDir, String keyFileName, String valueFileName) {
+            this.keyFileName = keyFileName;
+            this.valueFileName = valueFileName;
             this.partitionDir = partitionDir;
         }
     }
@@ -2732,6 +3461,15 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             }
             return fd;
         }
+    }
+
+    private enum ColumnTopShape {
+        // s and the columns added with it exist before partition 2024-01-01 has rows: top 0
+        ZERO,
+        // added after partition 2024-01-02 exists: absent from partition 2024-01-01, top -1
+        ABSENT,
+        // added while partition 2024-01-01 is the last one: top at its row count
+        AT_ROW_COUNT
     }
 
     private record SymRow(String s, int v, String day, String time) {
