@@ -305,6 +305,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     // longer corrupt them. The lock is a leaf (nothing else is held across it) and the
     // writer paths run post-join uncontended, so it costs nothing measurable.
     private final Object parquetSealPurgeLock = new Object();
+    // Table columns whose column top produceNativeFromParquet() changed; their parquet-side
+    // index was built for the old top, so restoreIndexFilesAfterParquetToNative() rebuilds it.
+    private final IntList parquetToNativeTopChangedColumns = new IntList();
+    // Per decoded column, the native column top produceNativeFromParquet() derives from the
+    // decoder output, -1 until the column writes its first chunk.
+    private final LongList parquetToNativeTops = new LongList();
     private final int partitionBy;
     private final DateFormat partitionDirFmt;
     private final LongList partitionRemoveCandidates = new LongList();
@@ -1949,10 +1955,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             txWriter.setPartitionParquetGenerated(partitionIndex, false);
             txWriter.bumpPartitionTableVersion();
             if (doCommit) {
-                // produceNativeFromParquet may reconstruct column tops for no-sentinel columns
-                // (BOOLEAN/BYTE/SHORT/CHAR). Persist the column version before the txn so the
-                // _txn references the new _cv version; otherwise the upsert stays in-memory and
-                // is lost on the next reader reload. (No-op when there are no column changes.)
+                // produceNativeFromParquet sets the column tops the decoded rows imply. Persist
+                // the column version before the txn so the _txn references the new _cv version;
+                // otherwise the upsert stays in-memory and is lost on the next reader reload.
+                // (No-op when there are no column changes.)
                 if (columnVersionWriter.hasChanges()) {
                     columnVersionWriter.commit();
                     txWriter.setColumnVersion(columnVersionWriter.getVersion());
@@ -1967,6 +1973,27 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         } catch (Throwable th) {
             if (newPartitionDirLen > 0 && !ff.rmdir(other.trimTo(newPartitionDirLen).slash())) {
                 LOG.error().$("could not remove new partition dir on rollback [path=").$(other).I$();
+            }
+            if (doCommit) {
+                // The open transaction was committed above, so the only uncommitted state is this
+                // conversion's: the native partition in txWriter and the column tops in _cv, which
+                // may have been committed ahead of the failed _txn commit. Restore the committed
+                // state as rollback() does; the command queue of a busy non-WAL writer reports the
+                // error and keeps using the writer without a rollback().
+                try {
+                    txWriter.unsafeLoadAll();
+                    columnVersionWriter.readUnsafe();
+                    rollbackColumnVersionToTxn();
+                } catch (Throwable restoreError) {
+                    // Defensive, like rollback(): the three calls read the _txn and _cv areas this
+                    // writer committed, inside its own mappings, and one conversion moves _cv at most
+                    // one version ahead of _txn, so none of them throws from this method.
+                    LOG.critical().$("could not restore committed state after failed parquet to native conversion [table=").$(tableToken)
+                            .$(", partition=").$ts(timestampDriver, partitionTimestamp)
+                            .$(", error=").$(restoreError)
+                            .I$();
+                    distressed = true;
+                }
             }
             throw th;
         } finally {
@@ -12012,6 +12039,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // a fresh _pm. The output is native, so there is no _pm to maintain here.
 
         long parquetRowCount = 0;
+        parquetToNativeTopChangedColumns.clear();
         try (RowGroupBuffers rowGroupBuffers = new RowGroupBuffers(MemoryTag.NATIVE_PARQUET_PARTITION_UPDATER)) {
             path.trimTo(partitionDirLen).concat(PARQUET_PARTITION_NAME).$();
             parquetAddr = mapRO(ff, path.$(), LOG, parquetFileSize, MemoryTag.MMAP_PARQUET_PARTITION_DECODER);
@@ -12070,6 +12098,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 decodedColumnCount++;
             }
+            parquetToNativeTops.setAll(decodedColumnCount, -1);
 
             final int rowGroupCount = parquetMetadata.getRowGroupCount();
             // Scratch decimal buffers for the var->fixed converter when target is DECIMAL.
@@ -12086,6 +12115,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         0,
                         parquetMetadata.getRowGroupSize(rowGroupIndex)
                 );
+                final long rowGroupFirstRow = parquetRowCount;
                 parquetRowCount += rowGroupRowCount;
                 for (int columnIndex = 0; columnIndex < decodedColumnCount; columnIndex++) {
                     final int tableColIdx = parquetDecodedTableColumnIdx.getQuick(columnIndex);
@@ -12100,9 +12130,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                     long srcAuxSize = rowGroupBuffers.getChunkAuxSize(columnIndex);
 
                     if (srcDataSize == 0 && srcAuxSize == 0) {
-                        // Column fully topped (all NULL in this row group). Rust reset the buffers;
-                        // the empty native file with column_top from the column version is correct.
+                        // The file's column_top covers the whole row group: Rust reset the buffers.
+                        // Nothing to write; the rows count toward the native column top.
                         continue;
+                    }
+
+                    // The native column top is the row of the first chunk the column writes, plus the
+                    // leading nulls that chunk leaves out of the data file. column_top is a prefix, so
+                    // only the first chunk can start with nulls.
+                    final boolean isFirstChunk = parquetToNativeTops.getQuick(columnIndex) < 0;
+                    if (isFirstChunk) {
+                        parquetToNativeTops.setQuick(columnIndex, rowGroupFirstRow);
                     }
 
                     if (ColumnType.isVarSize(tableColumnType)) {
@@ -12143,7 +12181,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                                     long auxWritePtr = auxBuf;
                                     long auxWriteSize = auxSize;
-                                    if (rowGroupIndex > 0) {
+                                    if (!isFirstChunk) {
                                         // Aux entries from convertFixedColumnTo* are relative to
                                         // the start of the local data buffer (offset 0). Shift
                                         // them to be relative to the start of the destination
@@ -12151,7 +12189,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         ctd.shiftCopyAuxVector(-dataVecBytesWritten, auxBuf, 0, rowGroupRowCount - 1, auxBuf, auxSize);
                                         // STRING aux has a leading entry equal to the initial
                                         // offset; it was already written as the trailing entry
-                                        // of the previous row group's aux block.
+                                        // of the previous chunk's aux block.
                                         final long adjust = ctd.getMinAuxVectorSize();
                                         auxWritePtr += adjust;
                                         auxWriteSize -= adjust;
@@ -12176,7 +12214,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             final long dstDataFd = columnFdAndDataSize.get(3L * columnIndex + 1);
                             final long dataVecBytesWritten = columnFdAndDataSize.get(3L * columnIndex + 2);
 
-                            if (rowGroupIndex > 0) {
+                            if (!isFirstChunk) {
                                 // Adjust offsets in the auxiliary vector
                                 columnTypeDriver.shiftCopyAuxVector(-dataVecBytesWritten, srcAuxPtr, 0, rowGroupRowCount - 1, srcAuxPtr, srcAuxSize);
                                 // Remove the extra entry for string columns
@@ -12221,24 +12259,46 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                     || dstTagFixed == ColumnType.SHORT
                                     || dstTagFixed == ColumnType.CHAR;
                             final int colTopRows = (int) rowGroupBuffers.getChunkColumnTop(columnIndex);
+                            assert isFirstChunk || colTopRows == 0 : "leading nulls after the first chunk [colTopRows=" + colTopRows + ']';
                             if (noNullSentinel && colTopRows > 0) {
                                 // No-sentinel columns (BOOLEAN/BYTE/SHORT/CHAR) decode their
                                 // column-top rows to an in-band 0/false the reader cannot tell
-                                // from a real value. Reconstruct the parquet column top in the
-                                // native column version and skip the region in the data file so
-                                // it reads as NULL -- matching native, and so a subsequent
-                                // ALTER ... TYPE SYMBOL (which runs after this parquet->native
-                                // pre-pass) sees the column top instead of a literal 0/false.
+                                // from a real value. Make them part of the native column top
+                                // and skip the region in the data file so it reads as NULL --
+                                // matching native, and so a subsequent ALTER ... TYPE SYMBOL
+                                // (which runs after this parquet->native pre-pass) sees the
+                                // column top instead of a literal 0/false.
                                 final long skipBytes = (long) colTopRows * ColumnType.sizeOf(tableColumnType);
                                 if (srcDataSize > skipBytes) {
                                     appendBuffer(dstFixFd, srcDataPtr + skipBytes, srcDataSize - skipBytes);
                                 }
-                                columnVersionWriter.upsertColumnTop(partitionTimestamp, tableColIdx, colTopRows);
+                                parquetToNativeTops.setQuick(columnIndex, rowGroupFirstRow + colTopRows);
                             } else {
                                 appendBuffer(dstFixFd, srcDataPtr, srcDataSize);
                             }
                         }
                     }
+                }
+            }
+
+            // The native files hold the decoded rows from the column top on. The _cv top can disagree:
+            // versions before the in-place update fix kept a stale top for files the update rewrote
+            // from row 0, and CONVERT TO PARQUET zeroes a top whose row groups the decoder skips.
+            for (int columnIndex = 0; columnIndex < decodedColumnCount; columnIndex++) {
+                final int tableColIdx = parquetDecodedTableColumnIdx.getQuick(columnIndex);
+                long nativeTop = parquetToNativeTops.getQuick(columnIndex);
+                if (nativeTop < 0) {
+                    // no chunk: every row is in the column top
+                    nativeTop = parquetRowCount;
+                }
+                long columnVersionTop = columnVersionWriter.getColumnTop(partitionTimestamp, tableColIdx);
+                if (columnVersionTop < 0) {
+                    // absent from the partition: the column has no rows
+                    columnVersionTop = parquetRowCount;
+                }
+                if (nativeTop != columnVersionTop) {
+                    columnVersionWriter.upsertColumnTop(partitionTimestamp, tableColIdx, nativeTop);
+                    parquetToNativeTopChangedColumns.add(tableColIdx);
                 }
             }
         } catch (CairoException e) {
@@ -13889,13 +13949,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 final String columnName = metadata.getColumnName(columnIndex);
                 final long columnNameTxn = getColumnNameTxn(partitionTimestamp, columnIndex);
 
-                // Prefer linking the existing index files
-                if (ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))) {
+                // Prefer linking the existing index files, unless produceNativeFromParquet() changed
+                // the column top they were built for
+                if (
+                        !parquetToNativeTopChangedColumns.contains(columnIndex)
+                                && ff.exists(keyFileName(indexType, path.trimTo(srcDirLen), columnName, columnNameTxn))
+                ) {
                     linkColumnIndexFiles(srcDirLen, dstDirLen, columnName, columnNameTxn, indexType, partitionTimestamp, parquetNameTxn);
                     continue;
                 }
 
-                // Fallback: rebuild from the freshly decoded native column data
+                // Rebuild from the freshly decoded native column data
                 rebuildColumnIndex(
                         columnIndex,
                         columnName,
@@ -15675,14 +15739,16 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *                       the parquet metadata, so the decoder produces data
      *                       for every column.  Use {@code false} for
      *                       native→parquet conversion, where the encoder
-     *                       preserves the original column_top.  The Rust
-     *                       decoder skips columns whose
-     *                       column_top >= row_group_size (i.e. all-NULL
-     *                       columns), so only columns with partial data
-     *                       (0 < column_top < partitionRowCount) should be
-     *                       zeroed - those are the ones where the encoder
-     *                       fills the top region with NULLs and the decoder
-     *                       produces all rows.
+     *                       preserves the original column_top.  Readers of
+     *                       the parquet partition return NULL for the rows
+     *                       of the column_top, so only columns with partial
+     *                       data (0 < column_top < partitionRowCount) are
+     *                       zeroed; all-NULL columns keep their top. The
+     *                       Rust decoder skips each row group the file's
+     *                       column_top covers entirely, so the zeroed top
+     *                       does not describe what a parquet->native
+     *                       conversion decodes: produceNativeFromParquet()
+     *                       restores the top from the decoded rows.
      */
     private void zeroColumnTopsAfterParquetRewrite(long partitionTimestamp, long partitionRowCount, boolean zeroAllColumns) {
         final int columnCount = metadata.getColumnCount();

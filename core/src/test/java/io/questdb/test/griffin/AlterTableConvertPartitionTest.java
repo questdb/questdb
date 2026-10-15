@@ -27,12 +27,17 @@ package io.questdb.test.griffin;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.SymbolMapWriter;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.RecordCursor;
+import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.MemoryTag;
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
 import io.questdb.std.Files;
@@ -41,6 +46,7 @@ import io.questdb.std.Os;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
@@ -59,6 +65,84 @@ import static io.questdb.cairo.TableUtils.PARQUET_METADATA_FILE_NAME;
 import static io.questdb.cairo.TableUtils.PARQUET_PARTITION_NAME;
 
 public class AlterTableConvertPartitionTest extends AbstractCairoTest {
+    // column, source type, target type, value of row v
+    private static final String[][] LAZY_TYPE_CONVERSIONS = {
+            {"bi", "BYTE", "INT", "(v % 100)::BYTE"},
+            {"il", "INT", "LONG", "CASE WHEN v % 4 = 2 THEN NULL ELSE v * 1000 END"},
+            {"iv", "INT", "VARCHAR", "CASE WHEN v % 4 = 2 THEN NULL ELSE v * 7 END"},
+            {"is", "INT", "STRING", "CASE WHEN v % 4 = 2 THEN NULL ELSE -v END"},
+            {"bs", "BYTE", "STRING", "(v % 100 - 50)::BYTE"},
+            {"vi", "VARCHAR", "INT", "CASE WHEN v % 4 = 2 THEN NULL ELSE (v * 3)::VARCHAR END"},
+            {"sd", "STRING", "DOUBLE", "CASE WHEN v % 4 = 2 THEN NULL ELSE (v || '.5')::STRING END"},
+            {"vd", "VARCHAR", "DECIMAL(18, 2)", "CASE WHEN v % 4 = 2 THEN NULL ELSE (v || '.25')::VARCHAR END"},
+            {"sv", "STRING", "VARCHAR", "CASE WHEN v % 4 = 2 THEN NULL ELSE ('\u00e9\ud834\udd1e' || v)::STRING END"},
+            {"vs", "VARCHAR", "STRING", "CASE WHEN v % 4 = 2 THEN NULL ELSE ('\u042f' || v)::VARCHAR END"},
+            {"yv", "SYMBOL", "VARCHAR", "CASE WHEN v % 4 = 2 THEN NULL ELSE 'k' || (v % 3) END"},
+            {"ys", "SYMBOL", "STRING", "CASE WHEN v % 4 = 2 THEN NULL ELSE 'k' || (v % 2) END"},
+            {"yi", "SYMBOL", "INT", "CASE WHEN v % 4 = 2 THEN NULL ELSE (v % 5)::VARCHAR END"}
+    };
+    private static final String[] ROW_GROUP_TOP_COLUMNS = {
+            "bo BOOLEAN", "bt BYTE", "sh SHORT", "ch CHAR", "i INT", "l LONG", "f FLOAT", "d DOUBLE", "dt DATE", "tm TIMESTAMP",
+            "tn TIMESTAMP_NS", "u UUID", "ip IPv4", "l256 LONG256", "g1 GEOHASH(1c)", "g3 GEOHASH(3c)", "g6 GEOHASH(6c)",
+            "g12 GEOHASH(12c)", "d18 DECIMAL(18, 2)", "d38 DECIMAL(38, 4)", "d76 DECIMAL(76, 10)", "vc VARCHAR", "st STRING",
+            "bin BINARY", "sy SYMBOL", "s1 SYMBOL", "s2 SYMBOL", "s3 SYMBOL", "s4 SYMBOL", "arr DOUBLE[]", "arr2 DOUBLE[][]"
+    };
+    private static final String[] ROW_GROUP_TOP_INDEXES = {
+            "s1 ADD INDEX", "s2 ADD INDEX CAPACITY 2", "s3 ADD INDEX TYPE POSTING", "s4 ADD INDEX TYPE POSTING INCLUDE (d, vc)"
+    };
+    private static final String ROW_GROUP_TOP_LONG_TEXT = "long-\u00e9\ud834\udd1e-".repeat(20);
+    // BOOLEAN, BYTE, SHORT and CHAR, the first columns, have no NULL sentinel
+    private static final int ROW_GROUP_TOP_NO_SENTINEL_COLUMNS = 4;
+    private static final String[] ROW_GROUP_TOP_QUERIES = {
+            "SELECT * FROM {t}",
+            "SELECT * FROM {t} WHERE ts IN '2024-01-01'",
+            "SELECT v, ts, {s} FROM {t} WHERE {s} = 'x'",
+            "SELECT v, ts, {s} FROM {t} WHERE {s} = ''",
+            "SELECT v, ts, {s} FROM {t} WHERE {s} IS NULL",
+            "SELECT v, ts, {s} FROM {t} WHERE {s} IN ('x', 'y')",
+            "SELECT v, ts, {s} FROM {t} WHERE {s} != 'x'",
+            "SELECT v, ts, {s} FROM {t} WHERE {s} = 'x' ORDER BY ts DESC",
+            "SELECT v, ts, {s} FROM {t} LATEST ON ts PARTITION BY {s}",
+            "SELECT v, ts, {s} FROM {t} WHERE {s} = 'y' LATEST ON ts PARTITION BY {s}",
+            "SELECT count() FROM {t} WHERE {s} = 'x'",
+            "SELECT ts, {s}, d, vc FROM {t} WHERE {s} = 'x'",
+            "SELECT ts, {s}, d, vc FROM {t} WHERE {s} IN ('x', 'y')"
+    };
+    // per column of ROW_GROUP_TOP_COLUMNS, the literal of each value class: NULL, zero or empty, the
+    // smallest, the largest, other
+    private static final String[][] ROW_GROUP_TOP_VALUES = {
+            {"NULL", "false", "false", "true", "true"},
+            {"NULL", "0::BYTE", "(-128)::BYTE", "127::BYTE", "7::BYTE"},
+            {"NULL", "0::SHORT", "(-32768)::SHORT", "32767::SHORT", "300::SHORT"},
+            {"NULL", "'a'", "'\u042f'", "'z'", "'\u20ac'"},
+            {"NULL", "0", "-2147483647", "2147483647", "7"},
+            {"NULL", "0", "-9223372036854775807", "9223372036854775807", "42"},
+            {"NULL", "(-0.0)::FLOAT", "(-3.4E38)::FLOAT", "3.4E38::FLOAT", "1.5E-30::FLOAT"},
+            {"NULL", "-0.0", "-1.7976931348623157E308", "1.7976931348623157E308", "4.9E-324"},
+            {"NULL", "'1970-01-01'::DATE", "'1969-12-31T23:59:59.999Z'::DATE", "'9999-12-31'::DATE", "'2024-02-29'::DATE"},
+            {"NULL", "'1970-01-01T00:00:00.000000Z'::TIMESTAMP", "'1900-01-01T00:00:00.000001Z'::TIMESTAMP", "'2262-01-01T00:00:00.000000Z'::TIMESTAMP", "'2024-02-29T12:00:00.000000Z'::TIMESTAMP"},
+            {"NULL", "'1970-01-01T00:00:00.000000000Z'::TIMESTAMP_NS", "'1900-01-01T00:00:00.000000001Z'::TIMESTAMP_NS", "'2262-04-11T00:00:00.000000000Z'::TIMESTAMP_NS", "'2024-02-29T12:00:00.123456789Z'::TIMESTAMP_NS"},
+            {"NULL", "'00000000-0000-0000-0000-000000000000'", "'80000000-0000-0000-0000-000000000001'", "'ffffffff-ffff-ffff-ffff-ffffffffffff'", "'11111111-2222-3333-4444-555555555555'"},
+            {"NULL", "'0.0.0.1'", "'1.2.3.4'", "'255.255.255.255'", "'10.0.0.7'"},
+            {"NULL", "'0x01'::LONG256", "'0x8000000000000000000000000000000000000000000000000000000000000001'::LONG256", "'0x7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff'::LONG256", "'0x2a'::LONG256"},
+            {"NULL", "#0", "#z", "#u", "#s"},
+            {"NULL", "#000", "#zzz", "#u33", "#sp0"},
+            {"NULL", "#000000", "#zzzzzz", "#u33d8b", "#sp052r"},
+            {"NULL", "#000000000000", "#zzzzzzzzzzzz", "#u33d8b121234", "#sp052r0h1234"},
+            {"NULL", "'0'::DECIMAL(18, 2)", "'-9999999999999999.99'::DECIMAL(18, 2)", "'9999999999999999.99'::DECIMAL(18, 2)", "'1.25'::DECIMAL(18, 2)"},
+            {"NULL", "'0'::DECIMAL(38, 4)", "'-" + "9".repeat(34) + ".9999'::DECIMAL(38, 4)", "'" + "9".repeat(34) + ".9999'::DECIMAL(38, 4)", "'12.3456'::DECIMAL(38, 4)"},
+            {"NULL", "'0'::DECIMAL(76, 10)", "'-" + "9".repeat(66) + "." + "9".repeat(10) + "'::DECIMAL(76, 10)", "'" + "9".repeat(66) + "." + "9".repeat(10) + "'::DECIMAL(76, 10)", "'1.0000000001'::DECIMAL(76, 10)"},
+            {"NULL", "''", "'\u00e9\ud834\udd1e'", "'" + ROW_GROUP_TOP_LONG_TEXT + "'", "'vc'"},
+            {"NULL", "''", "'\u042f\ud834\udd1e'", "'" + ROW_GROUP_TOP_LONG_TEXT + "'", "'st'"},
+            {"NULL", "''::BINARY", "'b'::BINARY", "'" + ROW_GROUP_TOP_LONG_TEXT + "'::BINARY", "'xyz'::BINARY"},
+            {"NULL", "''", "'\u00e9'", "'k1'", "'k2'"},
+            {"NULL", "''", "'x'", "'y'", "'x'"},
+            {"NULL", "''", "'x'", "'y'", "'x'"},
+            {"NULL", "''", "'x'", "'y'", "'x'"},
+            {"NULL", "''", "'x'", "'y'", "'x'"},
+            {"NULL", "ARRAY[0.0]", "ARRAY[-1.5, 2.5]", "ARRAY[1.0, 2.0, 3.0]", "ARRAY[4.5]"},
+            {"NULL", "ARRAY[[0.0]]", "ARRAY[[1.0, 2.0], [3.0, 4.0]]", "ARRAY[[-1.5]]", "ARRAY[[5.0, 6.0]]"}
+    };
     private final TestTimestampType timestampType;
 
     public AlterTableConvertPartitionTest() {
@@ -1356,6 +1440,435 @@ public class AlterTableConvertPartitionTest extends AbstractCairoTest {
             assertPartitionExists(tableName, "2024-06-12.6");
             assertPartitionDoesNotExist(tableName, "2024-06-15.3");
         });
+    }
+
+    @Test
+    public void testConvertToNativeAlterColumnTypeTwoPartitionsColumnTops() throws Exception {
+        // ALTER COLUMN TYPE SYMBOL converts both parquet partitions to native in one batch (doCommit=false):
+        // 2024-01-01 with a top of 5 of 8 rows for the a_ columns, 2024-01-02 with 9 of 12 for the b_ ones
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE pt (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO pt SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP) FROM long_sequence(5)");
+            execute("ALTER TABLE pt ADD COLUMN a_bt BYTE");
+            execute("ALTER TABLE pt ADD COLUMN a_st STRING");
+            execute("ALTER TABLE pt ADD COLUMN a_s SYMBOL INDEX");
+            execute("""
+                    INSERT INTO pt SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP), x::BYTE, '\u00e9' || x, 's' || (x % 2)
+                    FROM long_sequence(8) WHERE x > 5""");
+            execute("""
+                    INSERT INTO pt SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-02T00:00:00.000000Z'::TIMESTAMP), x::BYTE, '\u00e9' || x, 's' || (x % 2)
+                    FROM long_sequence(9)""");
+            execute("ALTER TABLE pt ADD COLUMN b_bt BYTE");
+            execute("ALTER TABLE pt ADD COLUMN b_st STRING");
+            execute("ALTER TABLE pt ADD COLUMN b_s SYMBOL INDEX");
+            execute("""
+                    INSERT INTO pt SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-02T00:00:00.000000Z'::TIMESTAMP), x::BYTE, '\u00e9' || x, 's' || (x % 2),
+                    (-x)::BYTE, '\ud834\udd1e' || x, 'q' || (x % 2)
+                    FROM long_sequence(12) WHERE x > 9""");
+            execute("INSERT INTO pt (v, ts, a_s, b_s) VALUES (99, '2024-01-03T00:00:00.000000Z', 's1', 'q1')");
+            execute("CREATE TABLE tw AS (SELECT * FROM pt) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            for (String table : new String[]{"pt", "tw"}) {
+                execute("ALTER TABLE " + table + " ALTER COLUMN v TYPE SYMBOL");
+            }
+            assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
+            assertPartitionFormat("pt", 1, PartitionFormat.NATIVE);
+            Assert.assertEquals(5, getColumnTop("pt", 0, "a_bt"));
+            Assert.assertEquals(4, getColumnTop("pt", 0, "a_st"));
+            Assert.assertEquals(4, getColumnTop("pt", 0, "a_s"));
+            Assert.assertEquals(9, getColumnTop("pt", 1, "b_bt"));
+            Assert.assertEquals(8, getColumnTop("pt", 1, "b_st"));
+            Assert.assertEquals(8, getColumnTop("pt", 1, "b_s"));
+            assertSqlCursors("tw", "pt");
+            for (String sql : new String[]{
+                    "SELECT v, ts, a_s FROM {t} WHERE a_s = 's1'",
+                    "SELECT v, ts, a_s FROM {t} WHERE a_s IS NULL",
+                    "SELECT v, ts, b_s FROM {t} WHERE b_s = 'q0'",
+                    "SELECT v, ts, b_s FROM {t} WHERE b_s IS NULL"
+            }) {
+                assertSqlCursors(sql.replace("{t}", "tw"), sql.replace("{t}", "pt"));
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertSqlCursors("tw", "pt");
+        });
+    }
+
+    @Test
+    public void testConvertToNativeColumnTopDefaultRowGroupSize() throws Exception {
+        // the server default row group size, 100_000 rows: a top of 100_002 rows spans the first row group
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100_000);
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            execute("CREATE TABLE pt (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO pt SELECT x, timestamp_sequence('2024-01-01T00:00:00.000000Z'::TIMESTAMP, 100_000) FROM long_sequence(100_002)");
+            execute("ALTER TABLE pt ADD COLUMN s SYMBOL INDEX");
+            execute("ALTER TABLE pt ADD COLUMN d DOUBLE");
+            execute("ALTER TABLE pt ADD COLUMN vc STRING");
+            execute("""
+                    INSERT INTO pt VALUES
+                    (100_003, '2024-01-01T23:00:00.000000Z', 'x', 1.5, '\u00e9\ud834\udd1e'),
+                    (100_004, '2024-01-01T23:00:01.000000Z', NULL, -0.0, ''),
+                    (100_005, '2024-01-01T23:00:02.000000Z', 'x', NULL, NULL),
+                    (100_006, '2024-01-02T00:00:00.000000Z', 'y', 2.5, 'p2')""");
+            execute("CREATE TABLE tw AS (SELECT * FROM pt) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            for (String column : new String[]{"s", "d", "vc"}) {
+                Assert.assertEquals("column " + column, 100_000, getColumnTop("pt", 0, column));
+            }
+            assertSqlCursors("tw", "pt");
+            assertQuery("SELECT v, ts, s, d, vc FROM pt WHERE s = 'x'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts\ts\td\tvc
+                            100003\t2024-01-01T23:00:00.000000Z\tx\t1.5\t\u00e9\ud834\udd1e
+                            100005\t2024-01-01T23:00:02.000000Z\tx\tnull\t
+                            """);
+            assertQuery("SELECT count() FROM pt WHERE s IS NULL")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("count\n100003\n");
+            assertSqlCursors("SELECT * FROM tw WHERE s::VARCHAR IS NULL", "SELECT * FROM pt WHERE s IS NULL");
+        });
+    }
+
+    @Test
+    public void testConvertToNativeColumnTopSpansRowGroups() throws Exception {
+        // Columns added after `top` of `rows` rows of partition 2024-01-01, row group size 4. CONVERT TO
+        // PARQUET zeroes a top inside the partition, but the file keeps it and the decoder skips every
+        // row group it covers. CONVERT TO NATIVE must restore the top from the first row group it decodes.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            final int[][] topsAndRows = {{3, 8}, {4, 8}, {5, 8}, {9, 12}, {8, 8}, {7, 8}};
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                for (int[] topAndRows : topsAndRows) {
+                    final int top = topAndRows[0];
+                    final int rows = topAndRows[1];
+                    final String context = walMode + ", top " + top + " of " + rows;
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("DROP TABLE IF EXISTS tw");
+                    createRowGroupTopTable("pt", walMode, top, rows, true);
+                    createRowGroupTopTable("tw", "BYPASS WAL", top, rows, false);
+                    execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    drainWalQueue();
+                    assertRowGroupTopQueriesMatchTwin(context + ", parquet", top < rows);
+                    final String fullSql = "SELECT * FROM pt WHERE ts IN '2024-01-01'";
+                    final String nullSql = "SELECT v, ts, s1 FROM pt WHERE s1 IS NULL AND ts IN '2024-01-01'";
+                    try (
+                            RecordCursorFactory fullFactory = select(fullSql);
+                            RecordCursor fullCursor = fullFactory.getCursor(sqlExecutionContext);
+                            RecordCursorFactory nullFactory = select(nullSql);
+                            RecordCursor nullCursor = nullFactory.getCursor(sqlExecutionContext)
+                    ) {
+                        execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                        drainWalQueue();
+                        // cursors opened on the parquet partition keep its rows
+                        assertCursorMatchesQuery(context + ", stale full scan", fullSql.replace("pt", "tw"), fullFactory, fullCursor);
+                        assertCursorMatchesQuery(context + ", stale index scan", "SELECT v, ts, s1 FROM tw WHERE s1::VARCHAR IS NULL AND ts IN '2024-01-01'", nullFactory, nullCursor);
+                    }
+                    assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
+                    assertRowGroupTopColumnTops(context, top, rows);
+                    assertRowGroupTopLiterals(context, top, rows);
+                    assertRowGroupTopQueriesMatchTwin(context + ", native", top < rows);
+                    assertQuery("SELECT v, ts, s1 FROM pt WHERE s1 = 'x'")
+                            .noLeakCheck()
+                            .assertsPlanContaining("Index forward scan on: s1");
+                    sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
+                    try {
+                        assertRowGroupTopQueriesMatchTwin(context + ", native, JIT off", top < rows);
+                    } finally {
+                        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
+                    }
+                    engine.releaseAllReaders();
+                    engine.releaseAllWriters();
+                    assertRowGroupTopColumnTops(context + ", reopen", top, rows);
+                    assertRowGroupTopQueriesMatchTwin(context + ", reopen", top < rows);
+
+                    // a second round trip keeps the data and the tops
+                    execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    drainWalQueue();
+                    assertRowGroupTopQueriesMatchTwin(context + ", parquet again", top < rows);
+                    execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                    drainWalQueue();
+                    assertRowGroupTopColumnTops(context + ", native again", top, rows);
+                    assertRowGroupTopQueriesMatchTwin(context + ", native again", top < rows);
+
+                    // rows inserted into the converted partition land after the restored tops
+                    final String insert = rowGroupTopInsert("pt", top, rows, 2, "2024-01-01T23:");
+                    execute(insert);
+                    execute(insert.replace("INSERT INTO pt ", "INSERT INTO tw "));
+                    drainWalQueue();
+                    assertRowGroupTopQueriesMatchTwin(context + ", after insert", top < rows);
+                    if (walMode.equals("WAL")) {
+                        assertQuery("SELECT suspended FROM wal_tables() WHERE name = 'pt'")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .returns("suspended\nfalse\n");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testConvertToNativeColumnTopSpansRowGroupsLastPartition() throws Exception {
+        // WAL table whose last partition is parquet: the writer reopens the converted partition with the
+        // restored tops and appends after them
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            createRowGroupTopTable("pt", "WAL", 5, 8, true);
+            createRowGroupTopTable("tw", "BYPASS WAL", 5, 8, false);
+            // the last partition, 2024-01-02, gets its own top: late is added after 5 of its 8 rows
+            final String insertBefore = rowGroupTopInsert("pt", 0, 99, 4, "2024-01-02T22:");
+            final String insertAfter = rowGroupTopInsert("pt", 0, 103, 3, "2024-01-02T22:", "7");
+            for (String table : new String[]{"pt", "tw"}) {
+                execute(insertBefore.replace("INSERT INTO pt ", "INSERT INTO " + table + " "));
+                execute("ALTER TABLE " + table + " ADD COLUMN late INT");
+                execute(insertAfter.replace("INSERT INTO pt ", "INSERT INTO " + table + " "));
+            }
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            drainWalQueue();
+            assertPartitionFormat("pt", 1, PartitionFormat.PARQUET);
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01', '2024-01-02'");
+            drainWalQueue();
+            assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
+            assertPartitionFormat("pt", 1, PartitionFormat.NATIVE);
+            assertRowGroupTopColumnTops("last partition", 5, 8);
+            Assert.assertEquals(4, getColumnTop("pt", 1, "late"));
+            assertRowGroupTopQueriesMatchTwin("last partition");
+            assertSqlCursors("SELECT v, ts, late FROM tw", "SELECT v, ts, late FROM pt");
+            final String append = rowGroupTopInsert("pt", 0, 200, 3, "2024-01-02T23:", "8");
+            execute(append);
+            execute(append.replace("INSERT INTO pt ", "INSERT INTO tw "));
+            drainWalQueue();
+            assertRowGroupTopQueriesMatchTwin("last partition, after insert");
+            assertSqlCursors("SELECT v, ts, late FROM tw", "SELECT v, ts, late FROM pt");
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 'pt'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("suspended\nfalse\n");
+        });
+    }
+
+    @Test
+    public void testConvertToNativeLazyTypeChangeColumnTopSpansRowGroups() throws Exception {
+        // ALTER COLUMN TYPE leaves these parquet columns in the old type; CONVERT TO NATIVE decodes each
+        // one into the new type through the fixed->fixed, fixed->var, var->fixed and var->var arms
+        assertLazyTypeChangeColumnTopSpansRowGroups(false);
+    }
+
+    @Test
+    public void testConvertToNativeLazyTypeChangePrepassColumnTopSpansRowGroups() throws Exception {
+        // as above, but a last ALTER COLUMN TYPE SYMBOL converts the parquet partition to native in its
+        // pre-pass, which decodes every lazily changed column
+        assertLazyTypeChangeColumnTopSpansRowGroups(true);
+    }
+
+    private static void assertCursorMatchesQuery(String context, String expectedSql, RecordCursorFactory factory, RecordCursor cursor) throws Exception {
+        final StringSink expected = new StringSink();
+        try (RecordCursorFactory expectedFactory = select(expectedSql); RecordCursor expectedCursor = expectedFactory.getCursor(sqlExecutionContext)) {
+            CursorPrinter.println(expectedCursor, expectedFactory.getMetadata(), expected);
+        }
+        final StringSink actual = new StringSink();
+        CursorPrinter.println(cursor, factory.getMetadata(), actual);
+        TestUtils.assertEquals(context, expected, actual);
+    }
+
+    private static void assertLazyTypeChangeColumnTopSpansRowGroups(boolean isPrepass) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(TestFilesFacadeImpl.INSTANCE, () -> {
+            // the first chunk in row group 1 or 2, and a second chunk after it
+            for (int[] topAndRows : new int[][]{{5, 8}, {9, 12}, {5, 12}}) {
+                final int top = topAndRows[0];
+                final int rows = topAndRows[1];
+                final String context = "top " + top + " of " + rows;
+                // tw, the native twin, gets the same statements without the CONVERT
+                for (String table : new String[]{"pt", "tw"}) {
+                    execute("DROP TABLE IF EXISTS " + table);
+                    execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+                    execute("INSERT INTO " + table + " SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP) FROM long_sequence(" + top + ")");
+                    final StringSink select = new StringSink();
+                    for (String[] conversion : LAZY_TYPE_CONVERSIONS) {
+                        execute("ALTER TABLE " + table + " ADD COLUMN " + conversion[0] + " " + conversion[1]);
+                        select.put(", ").put(conversion[3]);
+                    }
+                    execute("INSERT INTO " + table + " SELECT v, ts" + select + " FROM (SELECT x::INT v, dateadd('h', (x - 1)::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP) ts"
+                            + " FROM long_sequence(" + rows + ") WHERE x > " + top + ")");
+                    execute("INSERT INTO " + table + " SELECT v, ts" + select + " FROM (SELECT 99 v, '2024-01-02T00:00:00.000000Z'::TIMESTAMP ts)");
+                }
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                for (String[] conversion : LAZY_TYPE_CONVERSIONS) {
+                    for (String table : new String[]{"pt", "tw"}) {
+                        execute("ALTER TABLE " + table + " ALTER COLUMN " + conversion[0] + " TYPE " + conversion[2]);
+                    }
+                }
+                assertPartitionFormat("pt", 0, PartitionFormat.PARQUET);
+                assertSqlCursors("tw", "pt");
+                if (isPrepass) {
+                    for (String table : new String[]{"pt", "tw"}) {
+                        execute("ALTER TABLE " + table + " ALTER COLUMN v TYPE SYMBOL");
+                    }
+                } else {
+                    execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                }
+                assertPartitionFormat("pt", 0, PartitionFormat.NATIVE);
+                assertSqlCursors("tw", "pt");
+                for (String[] conversion : LAZY_TYPE_CONVERSIONS) {
+                    Assert.assertEquals(context + ", column " + conversion[0], 4L * (top / 4), getColumnTop("pt", 0, conversion[0]));
+                }
+                engine.releaseAllReaders();
+                assertSqlCursors("tw", "pt");
+            }
+        });
+    }
+
+    private static void assertPartitionFormat(String tableName, int partitionIndex, byte expectedFormat) {
+        try (TableReader reader = getReader(tableName)) {
+            Assert.assertEquals(expectedFormat, reader.getPartitionFormat(partitionIndex));
+        }
+    }
+
+    /**
+     * The tops CONVERT TO NATIVE derives from the decoded row groups of 4 rows: the first row of the first
+     * row group with data for a type with a NULL sentinel, the column top itself for BOOLEAN, BYTE, SHORT
+     * and CHAR, and the row count for a column without rows.
+     */
+    private static void assertRowGroupTopColumnTops(String context, int top, int rows) {
+        for (int c = 0; c < ROW_GROUP_TOP_COLUMNS.length; c++) {
+            final String column = ROW_GROUP_TOP_COLUMNS[c].substring(0, ROW_GROUP_TOP_COLUMNS[c].indexOf(' '));
+            final long expectedTop = top >= rows ? rows : c < ROW_GROUP_TOP_NO_SENTINEL_COLUMNS ? top : 4L * (top / 4);
+            Assert.assertEquals(context + ", column " + column, expectedTop, getColumnTop("pt", 0, column));
+        }
+    }
+
+    /**
+     * The rows of partition 2024-01-01 in the columns without a NULL sentinel, a STRING and an indexed
+     * SYMBOL, from the INSERT literals.
+     */
+    private void assertRowGroupTopLiterals(String context, int top, int rows) throws Exception {
+        final String[][] display = {
+                {"false", "false", "false", "true", "true"},
+                {"0", "0", "-128", "127", "7"},
+                {"0", "0", "-32768", "32767", "300"},
+                {"", "a", "\u042f", "z", "\u20ac"}
+        };
+        final int stColumn = 22;
+        final int s1Column = 25;
+        final StringSink expected = new StringSink();
+        expected.put("v\tbo\tbt\tsh\tch\tst\ts1\n");
+        for (int row = 0; row < rows; row++) {
+            expected.put(row + 1);
+            for (int c = 0; c < ROW_GROUP_TOP_NO_SENTINEL_COLUMNS; c++) {
+                expected.put('\t').put(display[c][row < top ? 0 : (row - top + c) % 5]);
+            }
+            for (int c : new int[]{stColumn, s1Column}) {
+                final String literal = ROW_GROUP_TOP_VALUES[c][row < top ? 0 : (row - top + c) % 5];
+                expected.put('\t').put(literal.equals("NULL") ? "" : literal.substring(1, literal.length() - 1));
+            }
+            expected.put('\n');
+        }
+        try {
+            assertQuery("SELECT v, bo, bt, sh, ch, st, s1 FROM pt WHERE ts IN '2024-01-01'")
+                    .noLeakCheck()
+                    .returns(expected);
+        } catch (AssertionError e) {
+            throw new AssertionError(context, e);
+        }
+    }
+
+    private static void assertRowGroupTopQueriesMatchTwin(String context) throws Exception {
+        assertRowGroupTopQueriesMatchTwin(context, true);
+    }
+
+    /**
+     * Every query of {@link #ROW_GROUP_TOP_QUERIES}, on each indexed symbol of pt, returns what it returns
+     * on the twin tw without indexes. An index-driven LATEST ON drops the NULL key of a partition where
+     * the column has no rows, a separate bug: {@code isLatestOnNullKeyChecked} false skips that query.
+     */
+    private static void assertRowGroupTopQueriesMatchTwin(String context, boolean isLatestOnNullKeyChecked) throws Exception {
+        for (String sql : ROW_GROUP_TOP_QUERIES) {
+            if (!isLatestOnNullKeyChecked && sql.endsWith("LATEST ON ts PARTITION BY {s}") && !sql.contains("WHERE")) {
+                continue;
+            }
+            for (String s : sql.contains("{s}") ? new String[]{"s1", "s2", "s3", "s4"} : new String[]{"s1"}) {
+                final String query = sql.replace("{s}", s);
+                try {
+                    assertSqlCursors(query.replace("{t}", "tw"), query.replace("{t}", "pt"));
+                } catch (AssertionError e) {
+                    throw new AssertionError(context + ": " + query, e);
+                }
+            }
+        }
+    }
+
+    /**
+     * Partition 2024-01-01 gets {@code rows} rows, one per hour, and the columns of
+     * {@link #ROW_GROUP_TOP_COLUMNS} after the first {@code top} of them. 2024-01-02 gets one row. The
+     * twin, without indexes, answers every index query with a full scan.
+     */
+    private static void createRowGroupTopTable(String table, String walMode, int top, int rows, boolean isIndexed) throws Exception {
+        execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("INSERT INTO " + table + " SELECT x::INT, dateadd('h', (x - 1)::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP) FROM long_sequence(" + top + ")");
+        // one column per statement: a WAL table takes one structure change per ALTER
+        for (String column : ROW_GROUP_TOP_COLUMNS) {
+            execute("ALTER TABLE " + table + " ADD COLUMN " + column);
+        }
+        if (isIndexed) {
+            for (String index : ROW_GROUP_TOP_INDEXES) {
+                execute("ALTER TABLE " + table + " ALTER COLUMN " + index);
+            }
+        }
+        if (rows > top) {
+            execute(rowGroupTopInsert(table, top, top, rows - top, "2024-01-01T"));
+        }
+        execute(rowGroupTopInsert(table, 0, 98, 1, "2024-01-02T"));
+        drainWalQueue();
+    }
+
+    private static long getColumnTop(String tableName, int partitionIndex, String columnName) {
+        try (TableReader reader = getReader(tableName)) {
+            final int columnIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(columnName));
+            return reader.getColumnVersionReader().getColumnTop(reader.getPartitionTimestampByIndex(partitionIndex), columnIndex);
+        }
+    }
+
+    /**
+     * Inserts {@code count} rows with v from {@code firstRow + 1}; row {@code r} takes value class
+     * {@code (r - top + c) % 5} in column {@code c} of {@link #ROW_GROUP_TOP_VALUES}. The time is hour
+     * {@code r % 24} of a day prefix ending in T, or minute {@code r % 60} of an hour prefix.
+     */
+    private static String rowGroupTopInsert(String table, int top, int firstRow, int count, String timestampPrefix) {
+        return rowGroupTopInsert(table, top, firstRow, count, timestampPrefix, null);
+    }
+
+    /**
+     * Like {@link #rowGroupTopInsert(String, int, int, int, String)}, with {@code lastColumnValue}, when
+     * not null, for a column added after those of {@link #ROW_GROUP_TOP_COLUMNS}.
+     */
+    private static String rowGroupTopInsert(String table, int top, int firstRow, int count, String timestampPrefix, String lastColumnValue) {
+        final boolean isDayPrefix = timestampPrefix.endsWith("T");
+        final StringSink sql = new StringSink();
+        sql.put("INSERT INTO ").put(table).put(" VALUES ");
+        for (int row = firstRow; row < firstRow + count; row++) {
+            if (row > firstRow) {
+                sql.put(", ");
+            }
+            final int timeUnit = isDayPrefix ? row % 24 : row % 60;
+            sql.put('(').put(row + 1).put(", '").put(timestampPrefix).put(timeUnit < 10 ? "0" : "").put(timeUnit)
+                    .put(isDayPrefix ? ":00:00.000000Z'" : ":00.000000Z'");
+            for (int c = 0; c < ROW_GROUP_TOP_VALUES.length; c++) {
+                sql.put(", ").put(ROW_GROUP_TOP_VALUES[c][(row - top + c) % 5]);
+            }
+            if (lastColumnValue != null) {
+                sql.put(", ").put(lastColumnValue);
+            }
+            sql.put(')');
+        }
+        return sql.toString();
     }
 
     private void assertPartitionDoesNotExist(String tableName, String partition) {

@@ -182,6 +182,43 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     @Test
+    public void testConvertPartitionColumnTopsFuzz() throws Exception {
+        // Row groups of 50..200 rows and frequent ADD COLUMN, CONVERT TO PARQUET and CONVERT TO NATIVE:
+        // a column added to a partition with more rows than a row group gets a top that spans row
+        // groups, which CONVERT TO PARQUET zeroes in _cv and CONVERT TO NATIVE has to restore.
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 50 + rnd.nextInt(151));
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.05,
+                0.2,
+                0.02,
+                0.02,
+                0.05,
+                1.0,
+                0.01,
+                0.0,
+                0.5,
+                0.5,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0,
+                0.0,
+                0.0,
+                0.0, // addCoveringIndexProb
+                0.0 // SET FORMAT PARQUET|NATIVE probability
+        );
+        setFuzzCounts(false, 10_000, 300, 20, 10, 1000, 2_000, 3);
+        runFuzz(rnd);
+    }
+
+    @Test
     public void testConvertPartitionToParquet() throws Exception {
         Rnd rnd = generateRandom(LOG);
         setTestParams(rnd);
