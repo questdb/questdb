@@ -868,6 +868,13 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         }
     }
 
+    /**
+     * The indexed column's index in the table reader.
+     */
+    public int getIndexColumnIndex() {
+        return indexColumnIndex;
+    }
+
     @Override
     public RecordMetadata getMetadata() {
         return metadata;

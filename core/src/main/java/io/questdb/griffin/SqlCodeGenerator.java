@@ -551,6 +551,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     public static boolean ALLOW_FUNCTION_MEMOIZATION = true;
     // the model a GROUP BY being generated reads, see isGroupByInput()
     private IQueryModel groupByNestedModel;
+    // the GROUP BY model whose input groupByNestedModel is
+    private IQueryModel groupByModel;
     private final ArrayColumnTypes arrayColumnTypes = new ArrayColumnTypes();
     // the plan-time row estimates of the ASOF JOIN being compiled, each read once
     private final AsOfJoinRowEstimates asOfJoinRowEstimates = new AsOfJoinRowEstimates();
@@ -12583,11 +12585,14 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      */
     private RecordCursorFactory generateSelectGroupBy(IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
         final IQueryModel prevGroupByNestedModel = groupByNestedModel;
+        final IQueryModel prevGroupByModel = groupByModel;
         groupByNestedModel = model.getNestedModel();
+        groupByModel = model;
         try {
             return generateSelectGroupByChoice(model, executionContext);
         } finally {
             groupByNestedModel = prevGroupByNestedModel;
+            groupByModel = prevGroupByModel;
         }
     }
 
@@ -12617,6 +12622,33 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
     // Whether model is the table a GROUP BY reads, down its chain of nested models: its rows are
     // aggregated, not returned, see scanInPlaceOfFrequentCovering().
+    // Whether the GROUP BY being compiled keys on the column alone: its every column is that column
+    // or an aggregate.
+    private boolean isGroupedByIndexKeyAlone(CharSequence column) {
+        if (groupByModel == null) {
+            return false;
+        }
+        boolean keyed = false;
+        final ObjList<QueryColumn> columns = groupByModel.getBottomUpColumns();
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final ExpressionNode ast = columns.getQuick(i).getAst();
+            if (ast == null) {
+                return false;
+            }
+            if (ast.type == ExpressionNode.LITERAL) {
+                final CharSequence token = ast.token;
+                final int dot = Chars.indexOf(token, '.');
+                if (!Chars.equalsIgnoreCase(dot < 0 ? token : token.subSequence(dot + 1, token.length()), column)) {
+                    return false;
+                }
+                keyed = true;
+            } else if (ast.type != ExpressionNode.FUNCTION || !functionParser.getFunctionFactoryCache().isGroupBy(ast.token)) {
+                return false;
+            }
+        }
+        return keyed;
+    }
+
     private boolean isGroupByInput(IQueryModel model) {
         for (IQueryModel m = groupByNestedModel; m != null; m = m.getNestedModel()) {
             if (m == model) {
@@ -20944,6 +20976,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     ? configuration.getSqlCoveringGroupByScanChoiceMaxSelectivity()
                     : configuration.getSqlCoveringScanChoiceMaxSelectivity();
             if (covering == null) {
+                return coveringPlan;
+            }
+            if (isGroupByInput(model) && isGroupedByIndexKeyAlone(reader.getMetadata().getColumnName(covering.getIndexColumnIndex()))) {
+                // grouped by the index's key alone, a covering frame is one group, aggregated with no
+                // map at all: faster than the scan however many rows the keys select
                 return coveringPlan;
             }
             if (isAsOfInput(model)) {

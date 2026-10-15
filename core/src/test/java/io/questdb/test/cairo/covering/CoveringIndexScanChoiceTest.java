@@ -123,6 +123,33 @@ public class CoveringIndexScanChoiceTest extends AbstractCoveringIndexQueryTest 
     }
 
     @Test
+    public void testGroupByIndexKeyAloneKeepsCovering() throws Exception {
+        // grouped by the index's key alone, a covering frame is one group: the covering plan stays
+        // above the GROUP BY threshold; another key beside it, or none, takes the scan
+        setProperty(PropertyKey.CAIRO_SQL_COVERING_GROUPBY_SCAN_CHOICE_MAX_SELECTIVITY, "0.1");
+        assertMemoryLeak(() -> {
+            createTable();
+            final String[] covering = {
+                    "select sym, avg(v), count() from t where sym = 'F' order by sym",
+                    "select t.sym, sum(v) s from t where sym in ('F', 'R') order by sym",
+            };
+            for (String q : covering) {
+                assertPlanContains(q, "CoveringIndex");
+                assertSameResult(q, q.replace("select ", "select /*+ no_index */ "));
+            }
+            final String[] scans = {
+                    "select sym, s2, avg(v) from t where sym = 'F' order by sym, s2",
+                    "select avg(v) from t where sym = 'F'",
+                    "select sym, timestamp_floor('1h', ts) h, avg(v) from t where sym = 'F' order by sym, h",
+            };
+            for (String q : scans) {
+                assertPlanLacks(q, "CoveringIndex");
+                assertSameResult(q, q.replace("select ", "select /*+ no_index */ "));
+            }
+        });
+    }
+
+    @Test
     public void testCoveringThresholdIsItsOwn() throws Exception {
         // F selects ~20%: above the covering choice's 15% it takes the scan, under a 30% one it
         // keeps the covering plan, whatever the plain index's gather threshold says
