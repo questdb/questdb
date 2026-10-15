@@ -142,6 +142,8 @@ public class TableSequencerImpl implements TableSequencer {
             walIdGenerator.open(path);
             // The txn log is the recovery authority; open it before _meta so a damaged _meta can be rebuilt.
             tableTransactionLog.open(path);
+            // The open may have cut torn records that a scan already published to the tracker.
+            seqTxnTracker.lowerSeqTxn(tableTransactionLog.lastTxn());
             openOrRecoverMetadata(tableTransactionLog.getMaxMetadataVersion());
         } catch (CairoException ex) {
             closeLocked();
@@ -557,6 +559,8 @@ public class TableSequencerImpl implements TableSequencer {
         if (tableTransactionLog.isDropped()) {
             return null;
         }
+        // The reload may have cut torn records the tracker already holds: a promote rescans under the durable policy.
+        seqTxnTracker.lowerSeqTxn(tableTransactionLog.lastTxn());
 
         reconcileMetadataWithCommittedLog(tableTransactionLog.getMaxMetadataVersion());
         long lastTxn = tableTransactionLog.lastTxn();

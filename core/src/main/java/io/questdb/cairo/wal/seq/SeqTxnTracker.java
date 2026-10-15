@@ -378,6 +378,23 @@ public class SeqTxnTracker {
         return suspendedState < 0;
     }
 
+    /**
+     * Lowers seqTxn to the end of the sequencer log when an open or reload of the log has cut records below it, as
+     * after a power loss when a scan published the header's count before the open. A seqTxn above the log's end is a
+     * lag that no record can close. No commit runs during an open or a reload, so only the raisers of a concurrent
+     * scan race this.
+     */
+    public void lowerSeqTxn(long logEnd) {
+        long stxn = seqTxn;
+        while (logEnd < stxn) {
+            if (Unsafe.cas(this, SEQ_TXN_OFFSET, stxn, logEnd)) {
+                metrics.walMetrics().addSeqTxn(logEnd - stxn);
+                break;
+            }
+            stxn = seqTxn;
+        }
+    }
+
     public boolean notifyOnCheck(long newSeqTxn) {
         // Updates seqTxn and returns true if CheckWalTransactionsJob should post notification
         // to run ApplyWal2TableJob for the table

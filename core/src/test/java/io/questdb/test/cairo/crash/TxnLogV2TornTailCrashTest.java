@@ -135,6 +135,36 @@ public class TxnLogV2TornTailCrashTest extends AbstractAdaptiveCrashTest {
     }
 
     /**
+     * The startup scan opens a torn log, and the open fails before it reads the log, so the scan publishes the
+     * header's count. The apply job's open then cuts the torn records. The tracker must come down with the log's end,
+     * or the table shows a lag that never closes while idle. No torn record may be applied, and the next commit must
+     * take the first cut txn and be applied.
+     */
+    @Test
+    public void testScanOpenFailingBeforeTheCut() throws Exception {
+        runWithScanOpenFault("txn_seq" + Files.SEPARATOR + WalUtils.WAL_INDEX_FILE_NAME, token -> {
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            Assert.assertEquals("the scan publishes the header's count", appliedTxns + pendingTxns, tracker.getSeqTxn());
+            assertApplyGoesIdle(token);
+            Assert.assertEquals(tornTxn - 1, engine.getTableSequencerAPI().lastTxn(token));
+            Assert.assertEquals("the cut must lower the tracker to the log's end", appliedTxns, tracker.getSeqTxn());
+            Assert.assertFalse("must not be suspended: " + tracker.getErrorMessage(), tracker.isSuspended());
+            Assert.assertEquals(appliedTxns, tracker.getWriterTxn());
+
+            execute("INSERT INTO t VALUES (100, 100, 100)");
+            drainWalQueue();
+            Assert.assertFalse("must not be suspended: " + tracker.getErrorMessage(), tracker.isSuspended());
+            Assert.assertEquals(tornTxn, tracker.getWriterTxn());
+            final StringBuilder expected = new StringBuilder("v\tc\n");
+            for (int txn = 2; txn <= appliedTxns; txn++) {
+                expected.append(txn).append('\t').append(txn).append('\n');
+            }
+            expected.append("100\t100\n");
+            assertQuery("SELECT v, c FROM t ORDER BY v").expectSize().returns(expected.toString());
+        });
+    }
+
+    /**
      * A NOSYNC run on a log that ADAPTIVE kept durable applies every commit, and a power loss keeps the table's
      * {@code _txn} and the header but tears the same records as {@link #testTornTailIsDroppedAtOpen}. The ADAPTIVE
      * restart scans the records the NOSYNC run wrote. It must keep the ones the table applied, with the table's
