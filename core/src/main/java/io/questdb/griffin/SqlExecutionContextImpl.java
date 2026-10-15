@@ -691,8 +691,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
-    public void setParallelHashJoinGroupByEnabled(boolean enabled) {
-        this.parallelHashJoinGroupByEnabled = enabled;
+    public void setParallelHashJoinGroupByEnabled(boolean isEnabled) {
+        this.parallelHashJoinGroupByEnabled = isEnabled;
     }
 
     @Override

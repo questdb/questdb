@@ -32,6 +32,13 @@ import io.questdb.cairo.ImplicitCastException;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.NetworkSqlExecutionCircuitBreaker;
+import io.questdb.cairo.sql.PageFrame;
+import io.questdb.cairo.sql.PageFrameAddressCache;
+import io.questdb.cairo.sql.PageFrameCursor;
+import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.ParquetDecodeHint;
+import io.questdb.cairo.sql.PartitionFormat;
+import io.questdb.cairo.sql.PartitionFrameCursorFactory;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -78,19 +85,19 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             createTables();
             Assert.assertTrue(new DefaultCairoConfiguration(root).isSqlParallelHashJoinGroupByEnabled());
             Assert.assertTrue(configuration.isSqlParallelHashJoinGroupByEnabled());
-            for (boolean global : new boolean[]{false, true}) {
-                for (boolean experimental : new boolean[]{false, true}) {
-                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, Boolean.toString(global));
-                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED, Boolean.toString(experimental));
-                    Assert.assertEquals(experimental, configuration.isSqlParallelHashJoinGroupByEnabled());
+            for (boolean isGlobal : new boolean[]{false, true}) {
+                for (boolean isExperimental : new boolean[]{false, true}) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_ENABLED, Boolean.toString(isGlobal));
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_ENABLED, Boolean.toString(isExperimental));
+                    Assert.assertEquals(isExperimental, configuration.isSqlParallelHashJoinGroupByEnabled());
                     for (int workers : new int[]{0, 1, 4}) {
                         try (SqlExecutionContextImpl context = context(workers)) {
-                            boolean enabled = global && experimental && workers > 0;
-                            Assert.assertEquals(enabled, context.isParallelHashJoinGroupByEnabled());
+                            boolean isEnabled = isGlobal && isExperimental && workers > 0;
+                            Assert.assertEquals(isEnabled, context.isParallelHashJoinGroupByEnabled());
                             for (String join : JOINS) {
-                                assertDifferential(SELECT + join + " order by country, yr, mo", context, enabled);
-                                assertDifferential(SCALAR_SELECT + join, context, enabled);
-                                assertDifferential("select count(*)" + join, context, enabled);
+                                assertDifferential(SELECT + join + " order by country, yr, mo", context, isEnabled);
+                                assertDifferential(SCALAR_SELECT + join, context, isEnabled);
+                                assertDifferential("select count(*)" + join, context, isEnabled);
                             }
                         }
                     }
@@ -1497,6 +1504,27 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testBuildRunsOnWorkersFromDefaultMinRows() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa holds one row short of the default bound of 300_000 rows, one per key; pb holds
+            // 400_000 rows, one or two for each key of pa, so that the INNER join builds pa.
+            execute("CREATE TABLE pa (k INT, v DOUBLE)");
+            execute("CREATE TABLE pb (k INT, w DOUBLE)");
+            execute("INSERT INTO pa SELECT x::INT, x FROM long_sequence(299_999)");
+            execute("INSERT INTO pb SELECT (x % 300_000 + 1)::INT, x FROM long_sequence(400_000)");
+            final String sql = "SELECT count(*) n, sum(pa.v) v, sum(pb.w) w FROM pa JOIN pb ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // Below the default bound, the owner builds on its own thread.
+                assertBuildRounds(sql, 299_999, 0, context);
+                // From the bound on, the build runs in rounds, over 16 partitions: the power of two
+                // at or above 300_000 rows / 32_768 rows per partition.
+                execute("INSERT INTO pa VALUES (300_000, 300_000)");
+                assertBuildRounds(sql, 300_000, 16, context);
+            }
+        });
+    }
+
+    @Test
     public void testBuildRunsOnWorkersFromMinRows() throws Exception {
         assertMemoryLeak(() -> {
             // pa spreads 1_000 rows over four days, 250 a day, so that its build has four frames;
@@ -1588,10 +1616,46 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPayloadCopyProbeReach() {
+        // Each of a build's keys holds at least one of its K rows, so no key holds more than
+        // K - keys + 1 of them, and a probe of R rows, each of which matches one key's rows, reaches
+        // the F Parquet frames that a copy decodes once R x (K - keys + 1) >= F. A build without
+        // Parquet frames is in reach of any probe, and one with Parquet frames out of reach of an
+        // empty one. A build without rows has no keys.
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(0, 0, 0, 0));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(5, 0, 0, 0));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(0, 2_001, 2_001, 0));
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(0, 2_001, 2_001, 1));
+        // Unique keys hold one row each.
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(19, 2_001, 2_001, 20));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(20, 2_001, 2_001, 20));
+        // 1_999 keys over 2_001 rows: one key may hold 3 rows, although they hold 1.001 on average.
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(6, 2_001, 1_999, 20));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(7, 2_001, 1_999, 20));
+        // A single probe row reaches 20 frames once one key may hold 20 rows.
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, 2_001, 1_982, 20));
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, 2_001, 1_983, 20));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, 2_001, 1_100, 20));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, 2_001, 1, 2_001));
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, 2_001, 1, 2_002));
+        // Products past Long.MAX_VALUE compare exactly. R x (K - keys + 1) of 2^64 would wrap to zero,
+        // of 2^63 and 2^64 - 2 to negative values, and of (2^63 - 1)^2 to one.
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1L << 32, 1L << 32, 1, Long.MAX_VALUE));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(2, 1L << 62, 1, Long.MAX_VALUE));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE - 1, Long.MAX_VALUE));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(Long.MAX_VALUE, Long.MAX_VALUE, 1, Long.MAX_VALUE));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, Long.MAX_VALUE, 1, Long.MAX_VALUE));
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(1, Long.MAX_VALUE, 2, Long.MAX_VALUE));
+        Assert.assertTrue(AsyncHashJoinGroupByAtom.isParquetInProbeReach(Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE));
+        Assert.assertFalse(AsyncHashJoinGroupByAtom.isParquetInProbeReach(Long.MAX_VALUE - 1, Long.MAX_VALUE, Long.MAX_VALUE, Long.MAX_VALUE));
+    }
+
+    @Test
     public void testPayloadCopyRule() throws Exception {
         assertMemoryLeak(() -> {
             Assert.assertEquals(0.4, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByPayloadCopyMinProbeRatio(), 0);
             Assert.assertEquals(0.125, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByPayloadCopyParallelMinProbeRatio(), 0);
+            Assert.assertEquals(300_000, new DefaultCairoConfiguration(root).getSqlParallelHashJoinGroupByBuildParallelMinRows());
             // pb has twice the rows of pa. pa spreads its 1_000 rows over four days, 250 a day.
             execute("CREATE TABLE pa (k INT, l LONG, s SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("CREATE TABLE pb (k INT, v DOUBLE)");
@@ -1692,6 +1756,424 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     assertCopied(factory, true, context);
                 }
                 assertDifferential(narrow, context, true);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetBuild() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa spreads 1_000 rows over four days, 250 a day, and pb 2_000 rows over the same days.
+            execute("CREATE TABLE pa (k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pb (k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO pa SELECT (x % 10)::INT, x, timestamp_sequence('2020-01-01', 345_600_000L) FROM long_sequence(1_000)");
+            execute("INSERT INTO pb SELECT (x % 10)::INT, x, timestamp_sequence('2020-01-01', 172_800_000L) FROM long_sequence(2_000)");
+            // The LEFT join builds pa's 1_000 rows and probes pb's 2_000, or none of them in an interval
+            // without rows; the reversed one builds pb and probes pa. A copied DOUBLE takes 8 bytes a row.
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            // ON filters on the build's columns: the first keeps pa's first three days, 750 rows, and
+            // the second its last day, 250 rows.
+            final String firstDays = sql + " AND pa.v * 2 <= 1_500";
+            final String lastDay = sql + " AND pa.v * 2 > 1_500";
+            final String emptyProbe = " WHERE pb.ts IN '2019-01-01'";
+            final String reversed = "SELECT count(*) n, sum(pb.v) v FROM pa LEFT JOIN pb ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // At a ratio of 8.001, a probe of 2_000 rows repays no copy of a native build of 1_000.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "8.001");
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "8.001");
+                assertPayloadCopy(sql, false, context);
+                // Once pa's first three days are Parquet, the ratios weigh the build's 250 native rows
+                // alone: 2_000 probe rows repay their copy at a ratio of 8, and not at 8.001, on the
+                // owner and on the workers alike.
+                execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-04'");
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "8");
+                assertPayloadCopy(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "8");
+                assertPayloadCopyInRounds(sql, true, context);
+                // The ratios weigh the native rows the build keeps: a build that keeps Parquet rows
+                // alone copies for a probe whose matches land on as many row groups as the copy decodes,
+                // as the 2_000 probe rows' do on pa's three, and one that keeps the native day's rows
+                // alone weighs all of them.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "8.001");
+                assertPayloadCopyInRounds(firstDays, true, context);
+                assertPayloadCopyInRounds(lastDay, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "8.001");
+                assertPayloadCopy(firstDays, true, context);
+                assertPayloadCopy(lastDay, false, context);
+                // A probe without rows lands on no row group, so the ratio weighs all the build's rows,
+                // and even a build of Parquet rows alone keeps row ids.
+                assertPayloadCopy(firstDays + emptyProbe, false, context);
+                // The byte bound still holds.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MIN_PROBE_RATIO, "8");
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 7_999);
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 8_000);
+                assertPayloadCopy(sql, true, context);
+                // Only the build's frames count: the native build of a Parquet probe weighs all its rows.
+                assertPayloadCopy(reversed, false, context);
+                try (RecordCursorFactory factory = engine.select(sql, context)) {
+                    Assert.assertTrue(plan(factory, context).contains("buildPayload: copied when the probe is large enough"));
+                }
+                // Without a decode cache, the readers decode a row group again whenever a match moves
+                // to another one, and the results still match the ordinary plan's.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 0);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 0);
+                assertPayloadCopy(sql, false, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetBuildOutOfProbeReach() throws Exception {
+        assertMemoryLeak(() -> {
+            createParquetRowGroupBuild("k INT", "x::INT", 1);
+            // pb's rows find one build row each, a different one, all of them Parquet rows.
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pb SELECT (x * 101)::INT, x FROM long_sequence(19)");
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                assertBuildFrameCount(sql, 21, context);
+                // Without the copy, the 19 probe rows' matches decode at most 19 row groups, fewer than
+                // the 20 that the copy would decode. The build then weighs all its 2_001 rows, as a
+                // native build does, and the tiny probe keeps row ids, on the owner and on the workers.
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                // At a ratio of 0.0094, 19 probe rows repay the copy of 2_001 rows, and at 0.0095 they
+                // do not, although they would repay the copy of the build's one native row.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0.0094");
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_PARALLEL_MIN_PROBE_RATIO, "0.0095");
+                assertPayloadCopyInRounds(sql, false, context);
+                // A 20th probe row reaches as many row groups as the copy decodes, so the ratio weighs
+                // the build's one native row alone, and the build copies, on the workers and on the
+                // owner alike.
+                execute("INSERT INTO pb VALUES (2_000, 20)");
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, true, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetBuildWithRepeatedKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            // Over its 2_001 rows, pa's k repeats 1_100 keys, 0 to 1_099, its f repeats 20 keys, and its
+            // u is unique but for the key 1, which rows 1, 1_000 and 1_500 hold, in three row groups.
+            createParquetRowGroupBuild(
+                    "k INT, f INT, u INT",
+                    "(x % 1_100)::INT, (x % 20)::INT, (CASE WHEN x IN (1_000, 1_500) THEN 1 ELSE x END)::INT",
+                    1
+            );
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pb SELECT x::INT, x FROM long_sequence(6)");
+            execute("CREATE TABLE pc (k INT, v DOUBLE)");
+            execute("INSERT INTO pc VALUES (7, 1)");
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.u = pb.k";
+            final String fewKeys = "SELECT count(*) n, sum(pa.v) v FROM pc LEFT JOIN pa ON pa.f = pc.k";
+            final String manyKeys = "SELECT count(*) n, sum(pa.v) v FROM pc LEFT JOIN pa ON pa.k = pc.k";
+            final String manyKeysProbe = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                assertBuildFrameCount(sql, 21, context);
+                // u holds 1_999 keys over 2_001 rows, so no key holds more than 2_001 - 1_998 = 3 rows,
+                // and 6 probe rows match at most 18 build rows: they decode fewer row groups than the 20
+                // that the copy decodes, and keep row ids. A 7th probe row may match 21, so the ratio
+                // weighs the build's one native row alone, and the build copies, on the owner and on the
+                // workers alike. The average, 1.001 rows a key, would ask for 20 probe rows.
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                execute("INSERT INTO pb VALUES (7, 7)");
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, true, context);
+                // The rule cannot tell which keys a probe asks for, so it takes the most rows that one
+                // key may hold. k's 1_100 keys may leave 902 rows to one of them, so a single probe row
+                // reaches the 20 row groups, and copies, although each of k's keys holds 1.8 rows, as
+                // the key 7 does. A key that the build repeats 100 times does the same.
+                assertPayloadCopy(manyKeys, true, context);
+                assertPayloadCopy(manyKeysProbe, true, context);
+                assertPayloadCopy(fewKeys, true, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForMostlyNativeBuild() throws Exception {
+        assertMemoryLeak(() -> {
+            createMostlyNativeBuild();
+            // The LEFT join builds pa's 10_101 rows and probes pb's 10, far fewer than the default
+            // ratios ask to repay the copy of a native build: 0.4 of its rows for a copy on the owner,
+            // and 0.125 for one on the workers.
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                assertPayloadCopy(sql, false, context);
+                // pa's first day turns Parquet, 100 of the build's rows. A copy would copy the 10_001
+                // native rows as well, and the ratios weigh those as before, so the tiny probe keeps
+                // row ids, on the owner and on the workers alike.
+                execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-02'");
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                // Once the second day is Parquet too, one native row is left, which the probe's 10 rows
+                // repay, so the build copies, on the workers and on the owner alike.
+                execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-03'");
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, true, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForFilteredParquetBuild() throws Exception {
+        assertMemoryLeak(() -> {
+            createMostlyNativeBuild();
+            execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-02'");
+            // ON filters on the build's columns: the first keeps the 10_001 rows of pa's native days and
+            // none of its Parquet day, the second the Parquet day's 100 rows alone.
+            final String nativeRows = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k AND pa.v * 2 > 1_000";
+            final String parquetRows = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k AND pa.v * 2 < 1_000";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // The ratios weigh the native rows that the build keeps, whatever frames it reads: the
+                // build that reads the Parquet day but keeps none of its rows weighs all of its rows,
+                // as a native build does, and the build that keeps Parquet rows alone copies for the
+                // probe's 10 rows, on the owner and on the workers alike.
+                assertPayloadCopy(nativeRows, false, context);
+                assertPayloadCopy(parquetRows, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(nativeRows, false, context);
+                assertPayloadCopyInRounds(parquetRows, true, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetPartOverReaderShare() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa holds 100 rows on each of its first four days, valued 1 to 400, 10_000 rows on its
+            // fifth, valued 1_001 to 11_000, and one row on its sixth, the last partition, which stays
+            // native. pb holds 10 rows. Both key their rows from 0 to 9.
+            execute("CREATE TABLE pa (k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pa SELECT (x % 10)::INT, x, timestamp_sequence('2020-01-01', 864_000_000L) FROM long_sequence(400)");
+            execute("INSERT INTO pa SELECT (x % 10)::INT, 1_000 + x, timestamp_sequence('2020-01-05', 1_000_000) FROM long_sequence(10_000)");
+            execute("INSERT INTO pa VALUES (0, 1_000_000, '2020-01-06')");
+            execute("INSERT INTO pb SELECT (x % 10)::INT, x FROM long_sequence(10)");
+            execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-05'");
+            // The LEFT join builds pa's 10_401 rows and probes pb's 10, far fewer than the default
+            // ratios ask to repay the copy of its 10_001 native rows. The second keeps one row of each
+            // Parquet day and every native row.
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            final String sparse = sql + " AND (pa.v IN (1, 101, 201, 301) OR pa.v > 1_000)";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // A probe reader decodes the build scan's INT key and DOUBLE payload, 12 bytes a row,
+                // so the four Parquet days decode to 4_800 bytes, which a reader's share of the default
+                // cache holds many times over: the tiny probe keeps row ids.
+                assertPayloadCopy(sql, false, context);
+                assertPayloadCopy(sparse, false, context);
+                // Each of the five slots' readers takes a quarter of the cache, so at 19_200 bytes a
+                // share holds the decoded Parquet days exactly, and the build keeps row ids. At 19_199
+                // bytes it falls short, and every slot whose matches cycle through the days would decode
+                // them again, so the build copies, whatever the ratios.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 19_200);
+                assertPayloadCopy(sql, false, context);
+                assertPayloadCopy(sparse, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 19_199);
+                assertPayloadCopy(sql, true, context);
+                // A reader decodes a Parquet frame whole, so the sparse build, which keeps four Parquet
+                // rows, one in each day, weighs the 400 rows of those days and copies as well.
+                assertPayloadCopy(sparse, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, true, context);
+                assertPayloadCopyInRounds(sparse, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 19_200);
+                assertPayloadCopyInRounds(sql, false, context);
+                assertPayloadCopyInRounds(sparse, false, context);
+                // The byte bound still holds: a copied DOUBLE takes 8 bytes a row.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 19_199);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 10_401 * 8 - 1);
+                assertPayloadCopyInRounds(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_PAYLOAD_COPY_MAX_SIZE, 10_401 * 8);
+                assertPayloadCopyInRounds(sql, true, context);
+                // Without a decode cache, any Parquet frame would decode again whenever a match moves
+                // to another frame, so the build copies. A native build weighs all its rows whatever
+                // the cache, as before: once the days are native again, the tiny probe keeps row ids.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 0);
+                assertPayloadCopyInRounds(sql, true, context);
+                execute("ALTER TABLE pa CONVERT PARTITION TO NATIVE WHERE ts < '2020-01-05'");
+                assertPayloadCopyInRounds(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, false, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetPartOverReaderShareOutOfProbeReach() throws Exception {
+        assertMemoryLeak(() -> {
+            createParquetRowGroupBuild("k INT", "x::INT", 10_001);
+            // pb's rows find one build row each, a different one, all of them Parquet rows.
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pb SELECT (x * 101)::INT, x FROM long_sequence(19)");
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // A probe reader decodes the INT key and the DOUBLE payload, 12 bytes a row, so the
+                // Parquet days decode to 24_000 bytes. Each of the five slots' readers takes a quarter of
+                // the cache, which at 95_999 bytes falls short of them.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 95_999);
+                // Without the copy, the 19 probe rows' matches decode at most 19 row groups, however
+                // often they evict each other, fewer than the 20 that the copy would decode. The build
+                // then weighs all its 12_001 rows, as a native build does, and the tiny probe keeps row
+                // ids, on the owner and on the workers.
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                // A 20th probe row may decode as many row groups as the copy, so the build copies,
+                // however many native rows it holds, on the workers and on the owner alike.
+                execute("INSERT INTO pb VALUES (2_000, 20)");
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, true, context);
+                // A share that holds the Parquet days leaves the ratio to weigh the 10_001 native rows,
+                // which the 20 probe rows do not repay.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 96_000);
+                assertPayloadCopy(sql, false, context);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetPartOverReaderShareWithHotNullKey() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa's keys are unique but for a NULL key on the last row of each of its 20 Parquet row
+            // groups, rows 100, 200 and so on to 2_000.
+            createParquetRowGroupBuild("k INT", "(CASE WHEN x <= 2_000 AND x % 100 = 0 THEN NULL ELSE x END)::INT", 10_001);
+            // pb's one row has a NULL key, which matches the 20 NULL build rows, as NULL keys match in
+            // the ordinary hash join.
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pb VALUES (NULL, 1)");
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // A reader's share of the default cache holds the 24_000 bytes that the Parquet days
+                // decode to, so the ratio weighs the 10_001 native rows, which one probe row does not repay.
+                assertPayloadCopy(sql, false, context);
+                // Each of the five slots' readers takes a quarter of the cache, which at 95_999 bytes falls
+                // short of the Parquet days.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 95_999);
+                // pa's 12_001 rows hold 11_982 keys, the NULL key among them, so no key holds more than
+                // 12_001 - 11_981 = 20 rows, and the probe row may decode as many row groups as the copy
+                // does. This one would: its NULL key walks all 20 row groups, which a share that falls
+                // short of them would decode again for every such probe row. The build copies, on the
+                // owner and on the workers alike, although its keys hold 1.002 rows on average.
+                assertPayloadCopy(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, true, context);
+                assertQuery(sql)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                n\tv
+                                20\t21000.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetPartOverReaderShareWithHotSentinelKey() throws Exception {
+        assertMemoryLeak(() -> {
+            // pa's keys are unique but for the key 0 on every 400th of its Parquet rows, rows 400, 800
+            // and so on to 2_000, one in each of five of its 20 Parquet row groups.
+            createParquetRowGroupBuild("k INT", "(CASE WHEN x <= 2_000 AND x % 400 = 0 THEN 0 ELSE x END)::INT", 10_001);
+            // pb's rows all ask for the key 0.
+            execute("CREATE TABLE pb (k INT, v DOUBLE)");
+            execute("INSERT INTO pb SELECT 0, x FROM long_sequence(3)");
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // Each of the five slots' readers takes a quarter of the cache, which at 95_999 bytes falls
+                // short of the 24_000 bytes that the Parquet days decode to.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 95_999);
+                // pa's 12_001 rows hold 11_997 keys, so no key holds more than 12_001 - 11_996 = 5 rows,
+                // and 3 probe rows match at most 15 build rows: they decode fewer row groups than the 20
+                // that the copy decodes, however often they evict each other. The build then weighs all
+                // its 12_001 rows, as a native build does, and the tiny probe keeps row ids, on the owner
+                // and on the workers.
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                // A 4th probe row may match 20 build rows, as these do, so the build copies, however many
+                // native rows it holds, on the workers and on the owner alike, although its keys hold
+                // 1.0003 rows on average.
+                execute("INSERT INTO pb VALUES (0, 4)");
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, true, context);
+                assertQuery(sql)
+                        .withContext(context)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                n\tv
+                                20\t24000.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetStringKeyOverReaderShare() throws Exception {
+        // A STRING decodes to an 8-byte offset a row, and to its 4-byte length and its UTF-16 chars,
+        // just as the sink stages it: 4 + 68 bytes for 34 chars. With the DOUBLE payload and a byte to
+        // spare, the build counts 8 + 8 + 1 + 72 = 89 bytes a row.
+        assertParquetVarSizeKeyCopy("STRING", "STRING", 34, 89);
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetStringKeyStagedAsVarcharOverReaderShare() throws Exception {
+        // A VARCHAR probe key makes the build's STRING key stage as UTF-8, 4 + 36 bytes for 36 chars,
+        // while a reader decodes it to UTF-16, which takes up to twice the bytes the sink staged:
+        // with the 8-byte offset, the DOUBLE payload and a byte to spare, 8 + 8 + 1 + 80 = 97 bytes a row.
+        assertParquetVarSizeKeyCopy("STRING", "VARCHAR", 36, 97);
+    }
+
+    @Test
+    public void testPayloadCopyRuleForParquetVarcharKeyOverReaderShare() throws Exception {
+        // A VARCHAR decodes to a 16-byte slice entry a row, which points into the decompressed page
+        // that holds its bytes, and the build counts those at the 4-byte header and 36 bytes that the
+        // sink stages for a 36-char key. With the DOUBLE payload and a byte to spare, the build counts
+        // 8 + 16 + 1 + 40 = 65 bytes a row.
+        assertParquetVarSizeKeyCopy("VARCHAR", "VARCHAR", 36, 65);
+    }
+
+    @Test
+    public void testPayloadCopyRuleFollowsPartitionConversion() throws Exception {
+        assertMemoryLeak(() -> {
+            createMostlyNativeBuild();
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                assertDifferential(sql, context, true);
+                try (RecordCursorFactory factory = engine.select(sql, context)) {
+                    final String expected = result(factory, context);
+                    // Each execution weighs the frames that it reads: one factory keeps row ids for
+                    // the native build, copies once pa's first two days are Parquet and a single
+                    // native row is left, and keeps row ids again once the days are native again.
+                    assertCopied(factory, false, context);
+                    execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-03'");
+                    assertCopied(factory, true, context);
+                    Assert.assertEquals(expected, result(factory, context));
+                    execute("ALTER TABLE pa CONVERT PARTITION TO NATIVE WHERE ts < '2020-01-03'");
+                    assertCopied(factory, false, context);
+                    Assert.assertEquals(expected, result(factory, context));
+                }
             }
         });
     }
@@ -2246,6 +2728,16 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         }
     }
 
+    // Checks the page frames that an execution's build reads.
+    private void assertBuildFrameCount(String sql, int frameCount, SqlExecutionContextImpl context) throws Exception {
+        try (RecordCursorFactory factory = engine.select(sql, context);
+             RecordCursor cursor = factory.getCursor(context)) {
+            // The first read builds.
+            Assert.assertTrue(cursor.hasNext());
+            Assert.assertEquals(sql, frameCount, fused(factory).getAtom().getBuildFrameCount());
+        }
+    }
+
     /**
      * Checks the results against the ordinary plan, and where the build ran: in rounds over this many
      * hash partitions, or on the owner for zero.
@@ -2291,6 +2783,65 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
             Assert.assertTrue(atom.isBuiltInRounds());
             Assert.assertEquals(isCopied, atom.isPayloadCopied());
         }
+    }
+
+    // pa holds 100 rows on each of its first four days, which turn Parquet, 10_000 rows on its fifth
+    // and one row on its sixth, which stay native; pb holds 10 rows. Both key their rows by ten strings
+    // of keyLength chars, pa's of the build key type and pb's of the probe key type. The LEFT join
+    // builds pa's 10_401 rows and probes pb's 10, far fewer than the default ratios ask to repay the
+    // copy of its 10_001 native rows. A probe reader decodes the four Parquet days whole, the key and
+    // the DOUBLE payload of 400 rows, which the build counts at rowSize bytes a row from the keys it
+    // staged; the build copies once that is more than a reader's share of the decode cache.
+    private void assertParquetVarSizeKeyCopy(String buildKeyType, String probeKeyType, int keyLength, int rowSize) throws Exception {
+        assertMemoryLeak(() -> {
+            final String key = "lpad((x % 10)::VARCHAR, " + keyLength + ", '0')";
+            execute("CREATE TABLE pa (k " + buildKeyType + ", v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pb (k " + probeKeyType + ", v DOUBLE)");
+            execute("INSERT INTO pa SELECT " + key + "::" + buildKeyType + ", x, timestamp_sequence('2020-01-01', 864_000_000L) FROM long_sequence(400)");
+            execute("INSERT INTO pa SELECT " + key + "::" + buildKeyType + ", 1_000 + x, timestamp_sequence('2020-01-05', 1_000_000) FROM long_sequence(10_000)");
+            execute("INSERT INTO pa SELECT " + key + "::" + buildKeyType + ", 1_000_000, '2020-01-06' FROM long_sequence(1)");
+            execute("INSERT INTO pb SELECT " + key + "::" + probeKeyType + ", x FROM long_sequence(10)");
+            execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-05'");
+            final String sql = "SELECT count(*) n, sum(pa.v) v FROM pb LEFT JOIN pa ON pa.k = pb.k";
+            final long parquetDecodedSize = 400L * rowSize;
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // What a reader's pool counts for the four Parquet days stays within what the build
+                // counts for them, and is more than 50 bytes a row, so a share of 20_000 bytes falls
+                // short of them, although 40 bytes a row, 32 for the key, would fit it.
+                final long decodedSize = decodedParquetSize("SELECT k, v FROM pa", context);
+                Assert.assertTrue("decoded " + decodedSize + ", counted " + parquetDecodedSize, decodedSize <= parquetDecodedSize);
+                Assert.assertTrue("decoded " + decodedSize, decodedSize > 400L * 50);
+                // A reader's share of the default cache holds the Parquet days many times over, so the
+                // tiny probe keeps row ids, on the owner and on the workers.
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                assertPayloadCopyInRounds(sql, false, context);
+                // Each of the five slots' readers takes a quarter of the cache: 20_000 bytes of 80_000,
+                // which the Parquet days decode past, so the build copies, on the workers and on the
+                // owner alike.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 80_000);
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 1_000_000);
+                assertPayloadCopy(sql, true, context);
+                // A share that holds the counted bytes exactly keeps row ids, and one a byte short copies.
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 4 * parquetDecodedSize);
+                assertPayloadCopy(sql, false, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 4 * parquetDecodedSize - 1);
+                assertPayloadCopy(sql, true, context);
+                // A build in rounds of many partitions counts the keys of every partition's key table.
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_PARALLEL_MIN_ROWS, 0);
+                setProperty(PropertyKey.CAIRO_SQL_PARALLEL_HASH_JOIN_GROUPBY_BUILD_ROWS_PER_PARTITION, 1_000);
+                assertPayloadCopyInRounds(sql, true, context);
+                setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, 4 * parquetDecodedSize);
+                assertPayloadCopyInRounds(sql, false, context);
+                try (RecordCursorFactory factory = engine.select(sql, context);
+                     RecordCursor cursor = factory.getCursor(context)) {
+                    Assert.assertTrue(cursor.hasNext());
+                    final AsyncHashJoinGroupByAtom atom = fused(factory).getAtom();
+                    Assert.assertTrue("partitions: " + atom.getBuildPartitionCount(), atom.getBuildPartitionCount() > 1);
+                }
+            }
+        });
     }
 
     // Checks keyed and scalar results against the ordinary plan, the build input in EXPLAIN, and the build's row count.
@@ -2421,7 +2972,7 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         }
     }
 
-    private void assertDifferential(String sql, SqlExecutionContextImpl context, boolean enabled) throws Exception {
+    private void assertDifferential(String sql, SqlExecutionContextImpl context, boolean isEnabled) throws Exception {
         String expected;
         String baselinePlan;
         int[] types;
@@ -2443,8 +2994,8 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         }
         try (RecordCursorFactory factory = engine.select(sql, context)) {
             String plan = plan(factory, context);
-            Assert.assertEquals(sql + "\n" + plan, enabled, plan.contains("Hash Join Group By"));
-            if (!enabled) {
+            Assert.assertEquals(sql + "\n" + plan, isEnabled, plan.contains("Hash Join Group By"));
+            if (!isEnabled) {
                 Assert.assertEquals(sql, baselinePlan, plan);
             }
             Assert.assertEquals(types.length, factory.getMetadata().getColumnCount());
@@ -2505,6 +3056,32 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
         insertCountBuildRows();
     }
 
+    /**
+     * pa holds 100 rows on its first day, valued 1 to 100, 10_000 rows on its second, valued 1_001 to
+     * 11_000, and one row on its third, the last partition, which stays native. pb holds 10 rows. Both
+     * key their rows from 0 to 9.
+     */
+    private void createMostlyNativeBuild() throws Exception {
+        execute("CREATE TABLE pa (k INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE pb (k INT, v DOUBLE)");
+        execute("INSERT INTO pa SELECT (x % 10)::INT, x, timestamp_sequence('2020-01-01', 1_000_000) FROM long_sequence(100)");
+        execute("INSERT INTO pa SELECT (x % 10)::INT, 1_000 + x, timestamp_sequence('2020-01-02', 1_000_000) FROM long_sequence(10_000)");
+        execute("INSERT INTO pa VALUES (0, 1_000_000, '2020-01-03')");
+        execute("INSERT INTO pb SELECT (x % 10)::INT, x FROM long_sequence(10)");
+    }
+
+    // pa holds 2_000 rows over four days, 500 a day, which turn into Parquet row groups of 100 rows, one
+    // build frame each, and nativeRows more on its fifth day, its last partition, which stays native.
+    // Row x holds the keys that keyValues computes from x, and the value x.
+    private void createParquetRowGroupBuild(String keyColumns, String keyValues, long nativeRows) throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        execute("CREATE TABLE pa (" + keyColumns + ", v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("INSERT INTO pa SELECT " + keyValues + ", x, timestamp_sequence('2020-01-01', 172_800_000L) FROM long_sequence(2_000)");
+        execute("INSERT INTO pa SELECT " + keyValues + ", x, ts FROM ("
+                + "SELECT 2_000 + x x, timestamp_sequence('2020-01-05', 1_000_000) ts FROM long_sequence(" + nativeRows + "))");
+        execute("ALTER TABLE pa CONVERT PARTITION TO PARQUET WHERE ts < '2020-01-05'");
+    }
+
     private void createTables() throws Exception {
         execute("create table r (plant_id int, reading_ts timestamp, energy_kwh double, irradiance_wm2 double) timestamp(reading_ts) partition by month");
         execute("create table p (plant_id int, country symbol, installed_kwp double)");
@@ -2537,6 +3114,32 @@ public class HashJoinGroupByPlannerTest extends AbstractCairoTest {
                     timestamp_sequence('2020-01-01', 345_600_000L)
                 FROM long_sequence(1_000)
                 """);
+    }
+
+    // Decodes every Parquet frame of the scan whole into a pool of its own, as a probe reader does,
+    // and returns the bytes that the pool's budget counts for them.
+    private long decodedParquetSize(String scan, SqlExecutionContextImpl context) throws Exception {
+        try (
+                RecordCursorFactory factory = engine.select(scan, context);
+                PageFrameCursor frameCursor = factory.getPageFrameCursor(context, PartitionFrameCursorFactory.ORDER_ASC);
+                PageFrameAddressCache addressCache = new PageFrameAddressCache();
+                PageFrameMemoryPool pool = new PageFrameMemoryPool(configuration, Long.MAX_VALUE)
+        ) {
+            addressCache.of(factory.getMetadata(), frameCursor.getColumnMapping(), frameCursor.isExternal());
+            int frameCount = 0;
+            PageFrame frame;
+            while ((frame = frameCursor.next()) != null) {
+                addressCache.add(frameCount++, frame);
+            }
+            pool.of(addressCache, ParquetDecodeHint.SCATTERED);
+            for (int frameIndex = 0; frameIndex < frameCount; frameIndex++) {
+                if (addressCache.getFrameFormat(frameIndex) == PartitionFormat.PARQUET) {
+                    pool.navigateTo(frameIndex);
+                }
+            }
+            Assert.assertTrue(pool.getCachedFrameCount() > 0);
+            return pool.getCachedBytes();
+        }
     }
 
     private SqlExecutionContextImpl enabledContext() {

@@ -898,7 +898,7 @@ public final class QueryRunner {
      * both type names the operator prints: {@code Async Hash Join Group By}, and
      * {@code Async JIT Hash Join Group By} for a compiled probe filter.
      */
-    static boolean planUsesFusedHashJoin(CharSequence plan) {
+    static boolean isFusedHashJoinPlan(CharSequence plan) {
         return Chars.indexOf(plan, 0, plan.length(), "Hash Join Group By") >= 0;
     }
 
@@ -1447,13 +1447,13 @@ public final class QueryRunner {
             executionContext.setParallelHashJoinGroupByEnabled(true);
         }
         fusedAxisRuns++;
-        if (bF.usesFusedHashJoin) {
+        if (bF.hasFusedHashJoin) {
             return Result.failed(query.sql(), new AssertionError(
                     "the fused hash join GROUP BY is disabled but the plan still uses it: " + query.sql()));
         }
         if (bJ.failure == null) {
             fusedAxisCompletedRuns++;
-            if (bJ.usesFusedHashJoin) {
+            if (bJ.hasFusedHashJoin) {
                 fusedAxisSelected++;
             }
         }
@@ -1576,7 +1576,7 @@ public final class QueryRunner {
             if (Chars.indexOf(plan, 0, plan.length(), "Hash Join Group By Build Choice") >= 0) {
                 buildChoiceRuns++;
             }
-            return Outcome.ok(rowsRead, planUsesIndex(plan), usesParquet, planUsesFusedHashJoin(plan), fpColumnMask);
+            return Outcome.ok(rowsRead, planUsesIndex(plan), usesParquet, isFusedHashJoinPlan(plan), fpColumnMask);
         } catch (CursorCheckException e) {
             throw e;
         } catch (SqlException e) {
@@ -1777,7 +1777,7 @@ public final class QueryRunner {
             boolean hasEarlyExitGroupBy,
             boolean hasBlockingAggregation,
             boolean usesParquet,
-            boolean usesFusedHashJoin,
+            boolean hasFusedHashJoin,
             boolean[] fpColumnMask,
             Throwable failure,
             String exceptionClass,
@@ -1792,8 +1792,8 @@ public final class QueryRunner {
             return new Outcome(rowsRead, hasIndex, hasPushedLimit, hasEarlyExitGroupBy, hasBlockingAggregation, usesParquet, false, EMPTY_FP_MASK, null, null, null);
         }
 
-        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet, boolean usesFusedHashJoin, boolean[] fpColumnMask) {
-            return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, usesFusedHashJoin, fpColumnMask, null, null, null);
+        static Outcome ok(int rowsRead, boolean hasIndex, boolean usesParquet, boolean hasFusedHashJoin, boolean[] fpColumnMask) {
+            return new Outcome(rowsRead, hasIndex, false, false, false, usesParquet, hasFusedHashJoin, fpColumnMask, null, null, null);
         }
     }
 

@@ -1754,8 +1754,8 @@ public class AsyncFilteredRecordCursorFactoryTest extends AbstractCairoTest {
         }
 
         @Override
-        public void setParallelHashJoinGroupByEnabled(boolean enabled) {
-            sqlExecutionContext.setParallelHashJoinGroupByEnabled(enabled);
+        public void setParallelHashJoinGroupByEnabled(boolean isEnabled) {
+            sqlExecutionContext.setParallelHashJoinGroupByEnabled(isEnabled);
         }
 
         @Override

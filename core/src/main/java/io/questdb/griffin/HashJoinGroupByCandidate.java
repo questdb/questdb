@@ -172,7 +172,7 @@ public final class HashJoinGroupByCandidate {
     /**
      * Exact implementations from HashJoinGroupByAggregates, not SQL names or supportsParallelism() alone.
      */
-    public static boolean supportsAggregate(Function function) {
+    public static boolean isSupportedAggregate(Function function) {
         if (!isParallelSafe(function)) {
             return false;
         }
@@ -191,7 +191,7 @@ public final class HashJoinGroupByCandidate {
     /**
      * The fused scan reads page frames directly and does not support covering-index frame descriptors or their decode caches.
      */
-    private static boolean supportsInputFactory(RecordCursorFactory factory) {
+    private static boolean isSupportedInputFactory(RecordCursorFactory factory) {
         for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
             if (current instanceof CoveringIndexRecordCursorFactory) {
                 return false;
@@ -207,8 +207,8 @@ public final class HashJoinGroupByCandidate {
      * against those frames. Execution reads typed logical frame values, including Parquet columns.
      * This check borrows the filter. Transfer follows all capability checks and worker compilation.
      */
-    public static boolean supportsFramedInput(RecordCursorFactory factory) {
-        if (!supportsInputFactory(factory)) {
+    public static boolean isSupportedFramedInput(RecordCursorFactory factory) {
+        if (!isSupportedInputFactory(factory)) {
             return false;
         }
         if (factory.supportsPageFrameCursor()) {
@@ -232,7 +232,7 @@ public final class HashJoinGroupByCandidate {
      * keys, so such a build keeps the ordinary hash join, which translates each build row's key
      * into the probe's dictionary through the row's text.
      */
-    public static boolean supportsTranslatedSymbolBuild(RecordCursorFactory factory) {
+    public static boolean isSupportedTranslatedSymbolBuild(RecordCursorFactory factory) {
         for (RecordCursorFactory current = factory; current != null; current = current.getBaseFactory()) {
             if (current instanceof LiveViewRecordCursorFactory) {
                 return false;
@@ -245,9 +245,9 @@ public final class HashJoinGroupByCandidate {
      * Build payload types: the row heap copies a build column, so only a build column answers to
      * this set. A probe column reaches the joined record straight off its page frame and takes no
      * type check at all, and a key column and a grouping expression answer to
-     * {@link HashJoinGroupByKeys#supportsKeyType(int)} instead.
+     * {@link HashJoinGroupByKeys#isSupportedKeyType(int)} instead.
      */
-    public static boolean supportsValueType(int type) {
+    public static boolean isSupportedValueType(int type) {
         return switch (ColumnType.tagOf(type)) {
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.CHAR,
                  ColumnType.INT, ColumnType.LONG, ColumnType.DATE, ColumnType.TIMESTAMP,
@@ -365,11 +365,11 @@ public final class HashJoinGroupByCandidate {
                         Chars.toString(groupBy.getColumns().getQuick(i).getName()), expression));
                 try (Function function = parser.parseFunction(expression, analyzer.metadata, executionContext)) {
                     if (function instanceof GroupByFunction) {
-                        if (!supportsAggregate(function)) {
+                        if (!isSupportedAggregate(function)) {
                             return null;
                         }
                         hasAggregate = true;
-                    } else if (!HashJoinGroupByKeys.supportsKeyType(function.getType())
+                    } else if (!HashJoinGroupByKeys.isSupportedKeyType(function.getType())
                             || !function.supportsParallelism() || !function.isStableWithinExecution()) {
                         return null;
                     }
@@ -422,8 +422,8 @@ public final class HashJoinGroupByCandidate {
         return baseColumnIndexes.getQuick(resolvedIndex);
     }
 
-    IntList getInputColumns(RecordMetadata metadata, boolean build) {
-        LowerCaseCharSequenceIntHashMap indexes = inputColumns[build ? buildIndex : 1 - buildIndex];
+    IntList getInputColumns(RecordMetadata metadata, boolean isBuildInput) {
+        LowerCaseCharSequenceIntHashMap indexes = inputColumns[isBuildInput ? buildIndex : 1 - buildIndex];
         IntList result = new IntList(metadata.getColumnCount());
         for (int i = 0; i < metadata.getColumnCount(); i++) {
             result.add(indexes.get(metadata.getColumnName(i)));
@@ -650,31 +650,31 @@ public final class HashJoinGroupByCandidate {
          * one factory serves every bind value. An input's own WHERE clause compiles to the same scan,
          * gate included, in both plans.
          */
-        private boolean checkClause(ExpressionNode node, IQueryModel model, int source, boolean postJoin) throws SqlException {
+        private boolean checkClause(ExpressionNode node, IQueryModel model, int source, boolean isPostJoin) throws SqlException {
             hasRowDependentConjunct = false;
             hasRuntimeConstantConjunct = false;
-            return checkFilter(node, model, source, postJoin) && (hasRowDependentConjunct || !hasRuntimeConstantConjunct);
+            return checkFilter(node, model, source, isPostJoin) && (hasRowDependentConjunct || !hasRuntimeConstantConjunct);
         }
 
-        private boolean checkFilter(ExpressionNode node, IQueryModel model, int source, boolean postJoin) throws SqlException {
+        private boolean checkFilter(ExpressionNode node, IQueryModel model, int source, boolean isPostJoin) throws SqlException {
             if (node == null) {
                 return true;
             }
             // Independently single-input conjuncts are legal; a cross-input OR is not.
             // A sub-query predicate is a QUERY node without a token; resolve() rejects it below.
-            if (postJoin && node.type == ExpressionNode.OPERATION && Chars.equalsIgnoreCase(node.token, "and")) {
+            if (isPostJoin && node.type == ExpressionNode.OPERATION && Chars.equalsIgnoreCase(node.token, "and")) {
                 return checkFilter(node.lhs, model, source, true) && checkFilter(node.rhs, model, source, true);
             }
             int payloadSize = requiredBuildColumns.size();
             usedSources = 0;
             ExpressionNode expression = resolve(node, model, source, 0);
-            if (!postJoin) {
+            if (!isPostJoin) {
                 requiredBuildColumns.setPos(payloadSize);
             }
-            if (expression == null || (postJoin && usedSources == 3)) {
+            if (expression == null || (isPostJoin && usedSources == 3)) {
                 return false;
             }
-            if (postJoin) {
+            if (isPostJoin) {
                 resolvedPostJoinFilters.add(expression);
             }
             try (Function function = parser.parseFunction(expression, metadata, executionContext)) {
@@ -693,7 +693,7 @@ public final class HashJoinGroupByCandidate {
                 if (source == -1 && function.isConstant() && !function.getBool(null)) {
                     return false;
                 }
-                if (postJoin && !function.isConstant()) {
+                if (isPostJoin && !function.isConstant()) {
                     if (function.isRuntimeConstant()) {
                         hasRuntimeConstantConjunct = true;
                     } else {
@@ -734,7 +734,7 @@ public final class HashJoinGroupByCandidate {
             final int source = columnSources.getQuick(index);
             // The row heap copies a build column, so only a build column takes the payload type set.
             // A probe column of any type reaches the joined record straight off its page frame.
-            if (!isResolvingInputColumn && source == buildIndex && !supportsValueType(metadata.getColumnType(index))) {
+            if (!isResolvingInputColumn && source == buildIndex && !isSupportedValueType(metadata.getColumnType(index))) {
                 return null;
             }
             usedSources |= 1 << source;

@@ -883,7 +883,7 @@ public class Unordered8Map implements Map, Reopenable {
         public MapValue findValueIn(Map map) {
             final Unordered8Map unorderedMap = (Unordered8Map) map;
             assert unorderedMap.isOpen() && valueSize == unorderedMap.valueSize && entrySize == unorderedMap.entrySize
-                    && sameValueOffsets(unorderedMap.valueOffsets) : "map probe view is not bound to this map's layout";
+                    && hasSameValueOffsets(unorderedMap.valueOffsets) : "map probe view is not bound to this map's layout";
             return lookup(unorderedMap.memStart, unorderedMap.memLimit, unorderedMap.mask, unorderedMap.hasZero, unorderedMap.zeroMemStart);
         }
 
@@ -934,7 +934,7 @@ public class Unordered8Map implements Map, Reopenable {
                 valueSize = map.valueSize;
                 valueOffsets = map.valueOffsets;
                 value = new FlyweightPackedMapValue(valueSize, valueOffsets);
-            } else if (valueSize != map.valueSize || !sameValueOffsets(map.valueOffsets)) {
+            } else if (valueSize != map.valueSize || !hasSameValueOffsets(map.valueOffsets)) {
                 throw CairoException.nonCritical().put("map probe view is bound to a different value layout");
             }
             entrySize = map.entrySize;
@@ -1103,7 +1103,7 @@ public class Unordered8Map implements Map, Reopenable {
             }
         }
 
-        private boolean sameValueOffsets(long[] other) {
+        private boolean hasSameValueOffsets(long[] other) {
             if (valueOffsets == other) {
                 return true;
             }

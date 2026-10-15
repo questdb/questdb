@@ -38,7 +38,7 @@ import org.jetbrains.annotations.TestOnly;
  * <p>
  * Lookups match exact classes, so a subclass or an aggregate added later keeps the ordinary plan
  * until it is reviewed and registered here. The registry lives in this package because most of the
- * classes it names are package-private. HashJoinGroupByCandidate.supportsAggregate() checks the
+ * classes it names are package-private. HashJoinGroupByCandidate.isSupportedAggregate() checks the
  * parallelism and stability of the aggregate and its arguments before it asks the registry.
  */
 public final class HashJoinGroupByAggregates {

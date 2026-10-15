@@ -465,7 +465,7 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     void setParallelGroupByEnabled(boolean parallelGroupByEnabled);
 
-    void setParallelHashJoinGroupByEnabled(boolean enabled);
+    void setParallelHashJoinGroupByEnabled(boolean isEnabled);
 
     void setParallelHorizonJoinEnabled(boolean parallelHorizonJoinEnabled);
 

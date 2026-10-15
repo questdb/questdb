@@ -250,8 +250,8 @@ public class HashJoinGroupByGeneralKeysTest extends AbstractCairoTest {
                         RecordSinkFactory.SINK_TYPE_CHUNKED,
                         RecordSinkFactory.SINK_TYPE_LOOPING}) {
                     setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, sinkType);
-                    for (boolean jit : new boolean[]{false, true}) {
-                        context.setJitMode(jit ? SqlJitMode.JIT_MODE_FORCE_SCALAR
+                    for (boolean isJit : new boolean[]{false, true}) {
+                        context.setJitMode(isJit ? SqlJitMode.JIT_MODE_FORCE_SCALAR
                                 : SqlJitMode.JIT_MODE_DISABLED);
                         for (String on : new String[]{"ka.l=kb.l", "ka.vc=kb.str", "ka.l=kb.l AND ka.sym=kb.sym"}) {
                             // The probe filter narrows the frame before the staged key is built.
@@ -372,7 +372,7 @@ public class HashJoinGroupByGeneralKeysTest extends AbstractCairoTest {
         // The two tables draw from the same seed but write their symbol texts in a different
         // order, so equal text takes different symbol keys in ka and kb.
         for (String name : new String[]{"ka", "kb"}) {
-            boolean reversed = name.equals("kb");
+            boolean isReversed = name.equals("kb");
             execute("INSERT INTO " + name + " (i, l, s, b, c, bo, f, d, dt, ts, tn, ip, u, l256, "
                     + "g1, g2, g4, g8, dec8, dec16, dec32, dec64, dec128, dec256, sym, str, vc, v, t) "
                     + "SELECT rnd_int(0, 2, 1), rnd_int(0, 2, 1)::long, rnd_short(0, 2), rnd_byte(0, 2), "
@@ -390,7 +390,7 @@ public class HashJoinGroupByGeneralKeysTest extends AbstractCairoTest {
                     + "rnd_int(0, 2, 1)::decimal(2,1), rnd_int(0, 2, 1)::decimal(4,1), "
                     + "rnd_int(0, 2, 1)::decimal(9,2), rnd_int(0, 2, 1)::decimal(18,2), "
                     + "rnd_int(0, 2, 1)::decimal(38,2), rnd_int(0, 2, 1)::decimal(50,2), "
-                    + (reversed ? "rnd_symbol('b', 'a', NULL)" : "rnd_symbol('a', 'b', NULL)")
+                    + (isReversed ? "rnd_symbol('b', 'a', NULL)" : "rnd_symbol('a', 'b', NULL)")
                     + ", rnd_str('a', 'b', NULL), rnd_varchar('a', 'b', NULL), "
                     + "x*0.25, timestamp_sequence('2020-01-01', 3600000000) FROM long_sequence(64)");
         }

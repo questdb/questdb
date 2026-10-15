@@ -104,10 +104,10 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
                 // heap, so its branch repeats the planner's non-aggregate output gate rather than
                 // the payload one. The two must agree, or a shape the planner admits fails here.
                 if (flags.getQuick(i) == GroupByUtils.PROJECTION_FUNCTION_FLAG_GROUP_BY) {
-                    if (!HashJoinGroupByCandidate.supportsAggregate(function)) {
+                    if (!HashJoinGroupByCandidate.isSupportedAggregate(function)) {
                         throw SqlException.$(0, "unsupported fused hash join aggregate");
                     }
-                } else if (!HashJoinGroupByKeys.supportsKeyType(function.getType())
+                } else if (!HashJoinGroupByKeys.isSupportedKeyType(function.getType())
                         || !function.supportsParallelism() || !function.isStableWithinExecution()) {
                     throw SqlException.$(0, "unsupported fused hash join grouping function");
                 }
@@ -256,7 +256,7 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
         if (filter != null) {
             filter.init(ownerSource, executionContext);
         }
-        boolean clone = executionContext.getCloneSymbolTables();
+        boolean isCloneSymbolTables = executionContext.getCloneSymbolTables();
         executionContext.setCloneSymbolTables(true);
         try {
             for (int i = 0; i < workerCount; i++) {
@@ -274,7 +274,7 @@ public final class HashJoinGroupByFunctions implements Closeable, SymbolTableSou
                 }
             }
         } finally {
-            executionContext.setCloneSymbolTables(clone);
+            executionContext.setCloneSymbolTables(isCloneSymbolTables);
         }
         // Aggregate owners were initialized above. Initialize only the rewritten
         // output keys here, so parent projections/sorts can immediately resolve symbols.

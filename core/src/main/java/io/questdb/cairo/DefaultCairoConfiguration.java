@@ -1272,7 +1272,7 @@ public class DefaultCairoConfiguration implements CairoConfiguration {
 
     @Override
     public long getSqlParallelHashJoinGroupByBuildParallelMinRows() {
-        return 1_000_000;
+        return 300_000;
     }
 
     @Override

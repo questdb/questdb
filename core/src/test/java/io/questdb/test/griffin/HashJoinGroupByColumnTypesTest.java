@@ -43,7 +43,7 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.context;
  * never reaches the build's row heap - the reducer reads it straight off the page frame - so a
  * probe column of any type may appear in a filter, a grouping key or an aggregate argument. A
  * build column does reach the heap, so it answers to
- * {@link io.questdb.griffin.HashJoinGroupByCandidate#supportsValueType(int)}, which now holds
+ * {@link io.questdb.griffin.HashJoinGroupByCandidate#isSupportedValueType(int)}, which now holds
  * every fixed-size type and leaves out the variable-size ones.
  * <p>
  * The LEFT JOIN in every query pins which input is which: the planner always builds the slave of
@@ -187,8 +187,8 @@ public class HashJoinGroupByColumnTypesTest extends AbstractCairoTest {
             insertRows();
             try (SqlExecutionContextImpl context = context(engine, 4)) {
                 context.changePageFrameSizes(1, 8);
-                for (boolean jit : new boolean[]{false, true}) {
-                    context.setJitMode(jit ? SqlJitMode.JIT_MODE_FORCE_SCALAR : SqlJitMode.JIT_MODE_DISABLED);
+                for (boolean isJit : new boolean[]{false, true}) {
+                    context.setJitMode(isJit ? SqlJitMode.JIT_MODE_FORCE_SCALAR : SqlJitMode.JIT_MODE_DISABLED);
                     for (String on : new String[]{"p.id=b.id", "p.id=b.id AND p.l=b.l"}) {
                         // A wide probe column as the key of the GROUP BY above a staged join key.
                         assertDifferential("SELECT p.vc k, count(*) n, sum(b.v) bv FROM p LEFT JOIN b ON " + on

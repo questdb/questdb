@@ -110,8 +110,8 @@ public class HashJoinGroupByJitFilterTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             createTables();
             try (SqlExecutionContextImpl context = enabledContext()) {
-                for (boolean sharded : new boolean[]{false, true}) {
-                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, sharded ? 1 : Integer.MAX_VALUE);
+                for (boolean isSharded : new boolean[]{false, true}) {
+                    setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, isSharded ? 1 : Integer.MAX_VALUE);
                     for (String join : JOINS) {
                         assertDifferential(KEYED_SELECT + join + " WHERE r.energy_kwh > 50 ORDER BY country", context, JIT);
                         assertDifferential(SCALAR_SELECT + join + " WHERE r.energy_kwh > 50", context, JIT);

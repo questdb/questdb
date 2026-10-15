@@ -5436,7 +5436,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Remap model-output -> base-table indexes into the eventual frame coordinates.
             final IntList probeColumns = hashJoinGroupByFrameColumns(probe, candidate, false);
             final RecordCursorFactory probeInput = hashJoinGroupByFrameInput(probe);
-            if (!HashJoinGroupByCandidate.supportsFramedInput(probeInput)) {
+            if (!HashJoinGroupByCandidate.isSupportedFramedInput(probeInput)) {
                 return null;
             }
             build = generateQuery(candidate.getBuildModel(), executionContext, false);
@@ -5444,11 +5444,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // those rows of the same frames.
             final IntList buildColumns = hashJoinGroupByFrameColumns(build, candidate, true);
             final RecordCursorFactory buildInput = hashJoinGroupByFrameInput(build);
-            if (!HashJoinGroupByCandidate.supportsFramedInput(buildInput)) {
+            if (!HashJoinGroupByCandidate.isSupportedFramedInput(buildInput)) {
                 return null;
             }
             // The build keeps its rows' own SYMBOL keys, so its dictionary must hold each text once.
-            if (candidate.getKeys().hasTranslatedSymbol() && !HashJoinGroupByCandidate.supportsTranslatedSymbolBuild(buildInput)) {
+            if (candidate.getKeys().hasTranslatedSymbol() && !HashJoinGroupByCandidate.isSupportedTranslatedSymbolBuild(buildInput)) {
                 return null;
             }
             final int workerCount = executionContext.getSharedQueryWorkerCount();
@@ -5571,9 +5571,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * the columns of the factory {@link #hashJoinGroupByFrameInput(RecordCursorFactory)} returns.
      * Model output indexes become base-table indexes, and pure projections above a filter peel off.
      */
-    private static IntList hashJoinGroupByFrameColumns(RecordCursorFactory factory, HashJoinGroupByCandidate candidate, boolean build) {
+    private static IntList hashJoinGroupByFrameColumns(RecordCursorFactory factory, HashJoinGroupByCandidate candidate, boolean isBuildInput) {
         RecordCursorFactory input = factory;
-        IntList columns = candidate.getInputColumns(factory.getMetadata(), build);
+        IntList columns = candidate.getInputColumns(factory.getMetadata(), isBuildInput);
         while (!input.supportsPageFrameCursor() && input instanceof SelectedRecordCursorFactory selected) {
             RecordCursorFactory base = selected.getBaseFactory();
             IntList baseColumns = new IntList(base.getMetadata().getColumnCount());

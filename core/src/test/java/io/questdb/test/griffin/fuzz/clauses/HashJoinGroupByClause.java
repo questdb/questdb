@@ -108,7 +108,7 @@ public final class HashJoinGroupByClause {
     private static final String[] FILLS = {"FILL(NULL)", "FILL(PREV)", null, "FILL(NONE)"};
     private static final String[] FLOATING_DDLS = {"FLOAT", "DOUBLE"};
     // Fixed-size column types the build's row heap copies, so either input may carry them:
-    // HashJoinGroupByCandidate.supportsValueType(), minus the DECIMAL widths, whose DDL carries a
+    // HashJoinGroupByCandidate.isSupportedValueType(), minus the DECIMAL widths, whose DDL carries a
     // precision and a scale and which isFusable() matches by kind instead. The fuzz tables carry
     // no GEOHASH column, so that part of the payload set has no fuzz coverage.
     private static final String[] FUSABLE_DDLS = {
@@ -407,7 +407,7 @@ public final class HashJoinGroupByClause {
         }
     }
 
-    private static boolean contains(String[] values, String value) {
+    private static boolean hasValue(String[] values, String value) {
         for (String v : values) {
             if (v.equals(value)) {
                 return true;
@@ -434,14 +434,14 @@ public final class HashJoinGroupByClause {
             return true;
         }
         final String ddl = column.getType().getDdl();
-        return contains(FUSABLE_DDLS, ddl) || (isProbe && contains(PROBE_ONLY_DDLS, ddl));
+        return hasValue(FUSABLE_DDLS, ddl) || (isProbe && hasValue(PROBE_ONLY_DDLS, ddl));
     }
 
     private static FuzzColumn pickColumn(Rnd rnd, ObjList<FuzzColumn> columns, String[] ddls) {
         final ObjList<FuzzColumn> matching = new ObjList<>();
         for (int i = 0, n = columns.size(); i < n; i++) {
             final FuzzColumn c = columns.getQuick(i);
-            if (contains(ddls, c.getType().getDdl())) {
+            if (hasValue(ddls, c.getType().getDdl())) {
                 matching.add(c);
             }
         }

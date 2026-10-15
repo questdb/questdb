@@ -65,18 +65,18 @@ final class HashJoinBuffer implements Closeable {
         this(maxCapacity, true);
     }
 
-    private HashJoinBuffer(long maxCapacity, boolean growable) {
+    private HashJoinBuffer(long maxCapacity, boolean isGrowable) {
         this.maxCapacity = maxCapacity;
-        this.scratch = growable ? new HashJoinBuffer(maxCapacity, false) : null;
+        this.scratch = isGrowable ? new HashJoinBuffer(maxCapacity, false) : null;
     }
 
     /**
      * Allocates the initial block. Clearing checks the breaker once per MiB.
      */
-    void allocate(long size, boolean clear) {
+    void allocate(long size, boolean isCleared) {
         address = Unsafe.malloc(size, MemoryTag.NATIVE_JOIN_MAP, memoryTracker);
         capacity = size;
-        if (clear) {
+        if (isCleared) {
             for (long offset = 0; offset < size; offset += COPY_CHUNK_SIZE) {
                 circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
                 Vect.memset(address + offset, Math.min(size - offset, COPY_CHUNK_SIZE), 0);

@@ -215,13 +215,13 @@ public final class HashJoinGroupByMetadata implements Closeable {
             RecordMetadata resolved = candidate.getResolvedMetadata();
             for (int i = 0; i < resolved.getColumnCount(); i++) {
                 int baseColumn = candidate.getBaseColumnIndex(i);
-                boolean build = candidate.isBuildColumn(i);
-                int column = indexOf(build ? buildBaseColumns : probeBaseColumns, baseColumn);
-                if (column >= 0 && (build ? buildMetadata : probeMetadata).getColumnType(column) != resolved.getColumnType(i)) {
+                boolean isBuildColumn = candidate.isBuildColumn(i);
+                int column = indexOf(isBuildColumn ? buildBaseColumns : probeBaseColumns, baseColumn);
+                if (column >= 0 && (isBuildColumn ? buildMetadata : probeMetadata).getColumnType(column) != resolved.getColumnType(i)) {
                     throw SqlException.$(0, "hash join input mapping type mismatch [column=").put(baseColumn).put(']');
                 }
-                int payload = build ? indexOf(required, baseColumn) : -1;
-                resolvedToJoined.add(build ? (payload < 0 ? -1 : probeColumnCount + payload) : column);
+                int payload = isBuildColumn ? indexOf(required, baseColumn) : -1;
+                resolvedToJoined.add(isBuildColumn ? (payload < 0 ? -1 : probeColumnCount + payload) : column);
             }
             IntList resolvedToBuild = new IntList();
             for (int i = 0; i < resolved.getColumnCount(); i++) {
@@ -427,9 +427,9 @@ public final class HashJoinGroupByMetadata implements Closeable {
                 symbolAsString, stringAsVarchar, timestampAsNanos);
     }
 
-    private static TableColumnMetadata copyColumn(RecordMetadata metadata, int column, boolean symbolTableStatic) {
+    private static TableColumnMetadata copyColumn(RecordMetadata metadata, int column, boolean isSymbolTableStatic) {
         return new TableColumnMetadata(metadata.getColumnName(column), metadata.getColumnType(column),
-                IndexType.NONE, 0, symbolTableStatic, null);
+                IndexType.NONE, 0, isSymbolTableStatic, null);
     }
 
     private static int indexOf(IntList columns, int value) {

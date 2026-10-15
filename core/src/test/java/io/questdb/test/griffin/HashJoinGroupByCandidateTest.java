@@ -87,13 +87,13 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                 for (String expression : new String[]{"sum(d)", "avg(d)", "count()", "count(i)", "count(l)", "count(d)", "count(s)",
                         "sum(coalesce(d, 0.0))", "sum(i)", "avg(l)", "min(d)", "ksum(d)", "stddev(d)", "corr(d, l)", "weighted_avg(i, l)"}) {
                     try (Function function = parser.parseFunction(compiler.testParseExpression(expression, QueryModel.FACTORY.newInstance()), metadata, sqlExecutionContext)) {
-                        Assert.assertTrue(expression, HashJoinGroupByCandidate.supportsAggregate(function));
+                        Assert.assertTrue(expression, HashJoinGroupByCandidate.isSupportedAggregate(function));
                     }
                 }
                 for (String expression : new String[]{"first(d)", "last(d)", "count_distinct(i)", "sum(rnd_double())", "mode(d)",
                         "arg_min(d, l)", "corr(d, rnd_double())", "count(i::short)"}) {
                     try (Function function = parser.parseFunction(compiler.testParseExpression(expression, QueryModel.FACTORY.newInstance()), metadata, sqlExecutionContext)) {
-                        Assert.assertFalse(expression, HashJoinGroupByCandidate.supportsAggregate(function));
+                        Assert.assertFalse(expression, HashJoinGroupByCandidate.isSupportedAggregate(function));
                     }
                 }
             }
@@ -137,11 +137,11 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                     return false;
                 }
             })) {
-                Assert.assertFalse(HashJoinGroupByCandidate.supportsAggregate(aggregate));
+                Assert.assertFalse(HashJoinGroupByCandidate.isSupportedAggregate(aggregate));
             }
             try (Function aggregate = new SumDoubleGroupByFunction(DoubleColumn.newInstance(0)) {
             }) {
-                Assert.assertFalse(HashJoinGroupByCandidate.supportsAggregate(aggregate));
+                Assert.assertFalse(HashJoinGroupByCandidate.isSupportedAggregate(aggregate));
             }
         });
     }
@@ -316,11 +316,11 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             for (String sql : new String[]{"r", "select energy_kwh, plant_id from r", "r where energy_kwh > 0", "r where reading_ts >= '2020-01-01'"}) {
                 try (RecordCursorFactory factory = select(sql)) {
                     // QueryProgress is the public compiler wrapper; it owns the tested factory.
-                    Assert.assertTrue(sql, HashJoinGroupByCandidate.supportsFramedInput(factory.getBaseFactory()));
+                    Assert.assertTrue(sql, HashJoinGroupByCandidate.isSupportedFramedInput(factory.getBaseFactory()));
                 }
             }
             try (RecordCursorFactory factory = select("select * from long_sequence(5)")) {
-                Assert.assertFalse(HashJoinGroupByCandidate.supportsFramedInput(factory.getBaseFactory()));
+                Assert.assertFalse(HashJoinGroupByCandidate.isSupportedFramedInput(factory.getBaseFactory()));
             }
         });
     }
@@ -332,7 +332,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
             execute("insert into r values (1, '2020-01-01', 10, 100, 1, 'a')");
             try (RecordCursorFactory factory = select("select energy_kwh from r")) {
                 for (int pass = 0; pass < 2; pass++) {
-                    Assert.assertTrue(HashJoinGroupByCandidate.supportsFramedInput(factory.getBaseFactory()));
+                    Assert.assertTrue(HashJoinGroupByCandidate.isSupportedFramedInput(factory.getBaseFactory()));
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
                         Assert.assertTrue(cursor.hasNext());
                         Assert.assertEquals(10.0, cursor.getRecord().getDouble(0), 0);
@@ -570,9 +570,9 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         });
     }
 
-    private void assertCandidate(String sql, boolean expected) throws Exception {
+    private void assertCandidate(String sql, boolean isCandidateExpected) throws Exception {
         try (SqlCompiler compiler = engine.getSqlCompiler()) {
-            Assert.assertEquals(sql, expected, candidate(compiler, sql) != null);
+            Assert.assertEquals(sql, isCandidateExpected, candidate(compiler, sql) != null);
         }
         // All supported and rejected SQL still compile through the existing execution path.
         try (RecordCursorFactory ignored = select(sql)) {
@@ -696,7 +696,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         }
     }
 
-    private void assertPlanContains(String sql, String expected, boolean fused) throws Exception {
+    private void assertPlanContains(String sql, String expected, boolean isFused) throws Exception {
         try (RecordCursorFactory factory = select("explain " + sql);
              RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
             StringSink plan = new StringSink();
@@ -704,7 +704,7 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                 plan.put(cursor.getRecord().getStrA(0)).put('\n');
             }
             Assert.assertTrue(plan.toString(), plan.toString().contains(expected));
-            Assert.assertEquals(plan.toString(), fused, plan.toString().contains("Hash Join Group By"));
+            Assert.assertEquals(plan.toString(), isFused, plan.toString().contains("Hash Join Group By"));
         }
     }
 

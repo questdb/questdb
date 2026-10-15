@@ -191,9 +191,9 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 // The SYMBOL key s has a column top on both sides, so null keys above the tops match.
                 for (String key : new String[]{"r.id=p.id", "r.s=p.s"}) {
                     for (String join : JOINS) {
-                        for (boolean keyed : new boolean[]{false, true}) {
-                            String sql = "select " + (keyed ? columns + ", " : "") + AGGREGATES + join.replace("r.id=p.id", key)
-                                    + (keyed ? " order by " + columns : "");
+                        for (boolean isKeyed : new boolean[]{false, true}) {
+                            String sql = "select " + (isKeyed ? columns + ", " : "") + AGGREGATES + join.replace("r.id=p.id", key)
+                                    + (isKeyed ? " order by " + columns : "");
                             try (RecordCursorFactory factory = engine.select(sql, context)) {
                                 fused(factory);
                                 assertAgainstBaseline(sql, factory, context);
@@ -268,10 +268,10 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 for (int jit : new int[]{0, 2}) {
                     context.setJitMode(jit);
                     for (int j = 0; j < 3; j++) {
-                        for (boolean keyed : new boolean[]{false, true}) {
-                            String sql = "select " + (keyed ? "r.s,p.s, " : "") + AGGREGATES + JOINS[j]
+                        for (boolean isKeyed : new boolean[]{false, true}) {
+                            String sql = "select " + (isKeyed ? "r.s,p.s, " : "") + AGGREGATES + JOINS[j]
                                     + " where r.d>0 and r.t>='2020-01-01' and r.t<'2020-01-04'"
-                                    + (keyed ? " order by r.s,p.s" : "");
+                                    + (isKeyed ? " order by r.s,p.s" : "");
                             try (RecordCursorFactory factory = engine.select(sql, context)) {
                                 AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
                                 String explain = plan(factory, context);
@@ -335,7 +335,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
         // although the key sinks stage it.
         for (int type : new int[]{ColumnType.STRING, ColumnType.VARCHAR, ColumnType.BINARY,
                 ColumnType.ARRAY, ColumnType.RECORD, ColumnType.INTERVAL, ColumnType.LONG128}) {
-            Assert.assertFalse(ColumnType.nameOf(type), HashJoinGroupByCandidate.supportsValueType(type));
+            Assert.assertFalse(ColumnType.nameOf(type), HashJoinGroupByCandidate.isSupportedValueType(type));
         }
         // Fixed-size types the row heap copies, each at its own width.
         for (int type : new int[]{ColumnType.IPv4, ColumnType.UUID, ColumnType.LONG256,
@@ -344,7 +344,7 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 ColumnType.getDecimalType(2, 1), ColumnType.getDecimalType(4, 1),
                 ColumnType.getDecimalType(9, 2), ColumnType.getDecimalType(18, 2),
                 ColumnType.getDecimalType(38, 2), ColumnType.getDecimalType(50, 2)}) {
-            Assert.assertTrue(ColumnType.nameOf(type), HashJoinGroupByCandidate.supportsValueType(type));
+            Assert.assertTrue(ColumnType.nameOf(type), HashJoinGroupByCandidate.isSupportedValueType(type));
         }
     }
 
@@ -360,12 +360,12 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 context.with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
                 for (String key : new String[]{"r.id=p.id", "r.k=p.k"}) {
                     for (String join : JOINS) {
-                        for (boolean keyed : new boolean[]{false, true}) {
+                        for (boolean isKeyed : new boolean[]{false, true}) {
                             bindVariableService.setDouble(0, 2);
                             bindVariableService.setStr(1, "old");
-                            String sql = "select " + (keyed ? "r.s, p.s, " : "")
+                            String sql = "select " + (isKeyed ? "r.s, p.s, " : "")
                                     + "count(*) n, sum(r.d*$1) d" + join.replace("r.id=p.id", key) + " where p.s=$2 or p.s is null"
-                                    + (keyed ? " order by r.s,p.s" : "");
+                                    + (isKeyed ? " order by r.s,p.s" : "");
                             try (RecordCursorFactory factory = engine.select(sql, context)) {
                                 fused(factory);
                                 assertAgainstBaseline(sql, factory, context);
@@ -397,9 +397,9 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 }
                 for (String key : new String[]{"r.id=p.id", "r.k=p.k"}) {
                     for (String table : new String[]{"r", "p"}) {
-                        for (boolean keyed : new boolean[]{false, true}) {
-                            String sql = "select " + (keyed ? "r.id, " : "") + AGGREGATES + JOINS[1].replace("r.id=p.id", key)
-                                    + (keyed ? " order by r.id" : "");
+                        for (boolean isKeyed : new boolean[]{false, true}) {
+                            String sql = "select " + (isKeyed ? "r.id, " : "") + AGGREGATES + JOINS[1].replace("r.id=p.id", key)
+                                    + (isKeyed ? " order by r.id" : "");
                             try (RecordCursorFactory factory = engine.select(sql, context)) {
                                 AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
                                 assertAgainstBaseline(sql, factory, context);
@@ -417,9 +417,9 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
                 // recompiled query stages the reconciled VARCHAR key until the key is SYMBOL
                 // again and the build translates it once per distinct key.
                 for (String table : new String[]{"r", "p"}) {
-                    for (boolean keyed : new boolean[]{false, true}) {
-                        String sql = "select " + (keyed ? "p.s, " : "") + AGGREGATES + JOINS[1].replace("r.id=p.id", "r.k=p.k")
-                                + (keyed ? " order by p.s" : "");
+                    for (boolean isKeyed : new boolean[]{false, true}) {
+                        String sql = "select " + (isKeyed ? "p.s, " : "") + AGGREGATES + JOINS[1].replace("r.id=p.id", "r.k=p.k")
+                                + (isKeyed ? " order by p.s" : "");
                         try (RecordCursorFactory factory = engine.select(sql, context)) {
                             AsyncHashJoinGroupByRecordCursorFactory fused = fused(factory);
                             assertAgainstBaseline(sql, factory, context);
@@ -560,11 +560,11 @@ public class HashJoinGroupByQualificationTest extends AbstractCairoTest {
         }
     }
 
-    static void assertDifferential(String sql, SqlExecutionContextImpl context, boolean enabled) throws Exception {
+    static void assertDifferential(String sql, SqlExecutionContextImpl context, boolean isEnabled) throws Exception {
         context.setParallelHashJoinGroupByEnabled(true);
         try (RecordCursorFactory factory = context.getCairoEngine().select(sql, context)) {
             String actualPlan = plan(factory, context);
-            Assert.assertEquals(sql + "\n" + actualPlan, enabled, actualPlan.contains("Hash Join Group By"));
+            Assert.assertEquals(sql + "\n" + actualPlan, isEnabled, actualPlan.contains("Hash Join Group By"));
             assertAgainstBaseline(sql, factory, context);
         }
     }
