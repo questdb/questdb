@@ -46,17 +46,28 @@ public class WindowMinMaxSymbolKeyTest extends AbstractCairoTest {
                     + " FROM long_sequence(200_000)) TIMESTAMP(ts) PARTITION BY HOUR");
             for (String col : new String[]{"f", "d"}) {
                 for (String fn : new String[]{"min", "max"}) {
-                    final String sql = "SELECT ts, sym, " + col + " FROM (SELECT ts, sym, " + col + ", " + fn + "(" + col + ") OVER (PARTITION BY sym) w FROM t) WHERE " + col + " = w";
-                    final StringSink plan = new StringSink();
-                    printSql("EXPLAIN " + sql, plan);
-                    TestUtils.assertContains(plan, "Min/Max Filter");
-                    final StringSink actual = new StringSink();
-                    final StringSink expected = new StringSink();
-                    printSql(sql + " ORDER BY ts", actual);
-                    printSql("SELECT t.ts, t.sym, t." + col + " FROM t JOIN (SELECT sym, " + fn + "(" + col + ") w FROM t) g ON t.sym = g.sym WHERE t." + col + " = g.w ORDER BY t.ts", expected);
-                    TestUtils.assertEquals(expected, actual);
+                    // the filter's frames take its column-wise selection (LookupFilter.filterFrame()),
+                    // either way round, negated, and counted
+                    for (String cmp : new String[]{col + " = w", "w = " + col, col + " != w"}) {
+                        final String rows = "(SELECT ts, sym, " + col + ", " + fn + "(" + col + ") OVER (PARTITION BY sym) w FROM t) WHERE " + cmp;
+                        final String sql = "SELECT ts, sym, " + col + " FROM " + rows;
+                        final StringSink plan = new StringSink();
+                        printSql("EXPLAIN " + sql, plan);
+                        TestUtils.assertContains(plan, "Min/Max Filter");
+                        final String join = "FROM t JOIN (SELECT sym, " + fn + "(" + col + ") w FROM t) g ON t.sym = g.sym WHERE " + cmp.replace(col, "t." + col).replace("w", "g.w");
+                        assertSame(sql + " ORDER BY ts", "SELECT t.ts, t.sym, t." + col + " " + join + " ORDER BY t.ts");
+                        assertSame("SELECT count() FROM " + rows, "SELECT count() " + join);
+                    }
                 }
             }
         });
+    }
+
+    private static void assertSame(String sql, String reference) throws Exception {
+        final StringSink actual = new StringSink();
+        final StringSink expected = new StringSink();
+        printSql(sql, actual);
+        printSql(reference, expected);
+        TestUtils.assertEquals(expected, actual);
     }
 }

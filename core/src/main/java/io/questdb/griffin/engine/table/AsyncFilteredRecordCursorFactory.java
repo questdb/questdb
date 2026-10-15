@@ -433,9 +433,11 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
             }
 
             final Function filter = atom.getFilter(filterId);
+            final boolean isFrameFiltered = filter instanceof FrameRowFilter frameFilter
+                    && frameFilter.filterFrame(frameMemory, frameRowCount, rows);
             if (task.isCountOnly()) {
-                long count = 0;
-                for (long r = 0; r < frameRowCount; r++) {
+                long count = rows.size();
+                for (long r = 0; !isFrameFiltered && r < frameRowCount; r++) {
                     record.setRowIndex(r);
                     if (filter.getBool(record)) {
                         count++;
@@ -443,7 +445,7 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
                 }
                 task.setFilteredRowCount(count);
             } else { // normal filter task
-                for (long r = 0; r < frameRowCount; r++) {
+                for (long r = 0; !isFrameFiltered && r < frameRowCount; r++) {
                     record.setRowIndex(r);
                     if (filter.getBool(record)) {
                         rows.add(r);

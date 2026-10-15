@@ -47,6 +47,7 @@ import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
+import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordBlock;
 import io.questdb.cairo.sql.RecordCursor;
@@ -66,11 +67,16 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.PerWorkerLockOwner;
 import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.BooleanFunction;
+import io.questdb.griffin.engine.functions.ColumnwiseComparison;
 import io.questdb.griffin.engine.functions.FunctionFlags;
+import io.questdb.griffin.engine.functions.columns.ColumnFunction;
+import io.questdb.griffin.engine.functions.columns.DoubleColumn;
+import io.questdb.griffin.engine.functions.columns.FloatColumn;
 import io.questdb.griffin.engine.functions.window.WholePartitionMinMax;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.join.JoinRecord;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
+import io.questdb.griffin.engine.table.FrameRowFilter;
 import io.questdb.griffin.engine.table.SelectedRecord;
 import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.DirectLongList;
@@ -1773,8 +1779,15 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
      * Phase two's filter: the query's filter, compiled against the window's metadata, over the base
      * row joined with its window values. One per slot; each holds its own probe view.
      */
-    private static class LookupFilter extends BooleanFunction {
+    private static class LookupFilter extends BooleanFunction implements FrameRowFilter {
         private final AsyncWindowMinMaxFilterRecordCursorFactory factory;
+        // filterFrame(): the base column the filter compares, read as FLOAT or DOUBLE, with the window
+        // it compares it to, and whether the comparison is negated; frameColumn -1 for a filter that
+        // only getBool() evaluates
+        private final int frameColumn;
+        private final boolean frameColumnIsFloat;
+        private final boolean frameNegated;
+        private final int frameWindow;
         private final Function inner;
         private final boolean ownsInner;
         private final LookupRecord lookupRecord;
@@ -1799,6 +1812,54 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             this.record = new SelectedRecord(factory.crossIndex);
             this.record.of(joinRecord);
             this.symbolTableSource = new RemappedSymbolTableSource(factory.crossIndex, factory.baseColumnCount);
+            // a base column equal to a window of a single SYMBOL key's dense lookup
+            int frameColumn = -1;
+            boolean frameColumnIsFloat = false;
+            int frameWindow = -1;
+            boolean frameNegated = false;
+            if (factory.isAllSymbolKeys && factory.keyColumnArray.length == 1
+                    && inner instanceof ColumnwiseComparison cmp
+                    && cmp.getColumnwiseComparison() == ColumnwiseComparison.CMP_EQ
+                    && cmp.getColumnwiseOperandType() == ColumnType.DOUBLE
+                    && declaresGetBool(inner)) {
+                final int left = joinColumn(factory, cmp.getLeft());
+                final int right = joinColumn(factory, cmp.getRight());
+                final int base = left < factory.baseColumnCount ? left : right;
+                final int window = (left < factory.baseColumnCount ? right : left) - factory.baseColumnCount;
+                final Function baseFunction = left < factory.baseColumnCount ? cmp.getLeft() : cmp.getRight();
+                final Function windowFunction = left < factory.baseColumnCount ? cmp.getRight() : cmp.getLeft();
+                if (left > -1 && right > -1 && base > -1 && base < factory.baseColumnCount && window > -1
+                        && windowFunction.getClass() == DoubleColumn.class && factory.argKinds[window] <= ARG_FLOAT) {
+                    frameColumn = base;
+                    frameColumnIsFloat = baseFunction.getClass() == FloatColumn.class;
+                    frameWindow = window;
+                    frameNegated = cmp.isNegated();
+                }
+            }
+            this.frameColumn = frameColumn;
+            this.frameColumnIsFloat = frameColumnIsFloat;
+            this.frameWindow = frameWindow;
+            this.frameNegated = frameNegated;
+        }
+
+        // whether the class that claims the column-wise comparison declares the getter too
+        private static boolean declaresGetBool(Function function) {
+            try {
+                final Class<?> clazz = function.getClass();
+                return clazz.getMethod("getBool", Record.class).getDeclaringClass()
+                        == clazz.getMethod("getColumnwiseComparison").getDeclaringClass();
+            } catch (NoSuchMethodException e) {
+                return false;
+            }
+        }
+
+        // the joined column a FLOAT or DOUBLE column function reads, or -1 for another function
+        private static int joinColumn(AsyncWindowMinMaxFilterRecordCursorFactory factory, Function function) {
+            if (function.getClass() != DoubleColumn.class && function.getClass() != FloatColumn.class) {
+                return -1;
+            }
+            final int column = ((ColumnFunction) function).getColumnIndex();
+            return column < factory.crossIndex.size() ? factory.crossIndex.getQuick(column) : -1;
         }
 
         @Override
@@ -1828,6 +1889,54 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
                 boundRecord = rec;
             }
             return inner.getBool(record);
+        }
+
+        @Override
+        public boolean filterFrame(PageFrameMemory frameMemory, long frameRowCount, DirectLongList rows) {
+            final AsyncWindowMinMaxFilterRecordCursorFactory factory = this.factory;
+            if (frameColumn < 0 || factory.denseAddr == 0
+                    || frameMemory.getFrameFormat() != PartitionFormat.NATIVE || frameMemory.hasColumnTypeCasts()) {
+                return false;
+            }
+            // getBool()'s bound reads the bound window's argument: here only the compared column
+            final boolean isBounded = factory.boundActive;
+            final int bw = factory.boundWindow;
+            if (isBounded && (factory.argColumns[bw] != frameColumn || (factory.argKinds[bw] == ARG_FLOAT) != frameColumnIsFloat
+                    || factory.argKinds[bw] > ARG_FLOAT)) {
+                return false;
+            }
+            final boolean isBoundMin = isBounded && factory.isMin[bw];
+            final double bound = factory.boundDouble;
+            final long keyAddr = frameMemory.getPageAddress(factory.keyColumnArray[0]);
+            if (keyAddr == 0) {
+                return false;
+            }
+            // as getBool(): the row's key's window value from the dense lookup, against the column as
+            // PageFrameMemoryRecord reads it, NULL where the frame has no data
+            final long valueAddr = frameMemory.getPageAddress(frameColumn);
+            final int count = factory.symbolCounts[0];
+            final long windowAddr = factory.denseAddr + frameWindow * factory.denseSlots * Long.BYTES;
+            final boolean negated = frameNegated;
+            final boolean isFloat = frameColumnIsFloat;
+            final long start = rows.size();
+            for (long r = 0; r < frameRowCount; r++) {
+                final long slot = denseIndex(Unsafe.getInt(keyAddr + (r << 2)), count);
+                if (slot < 0) {
+                    // a key outside the dense lookup: the row path finds it in the map
+                    rows.setPos(start);
+                    return false;
+                }
+                final double value = valueAddr == 0 ? Double.NaN
+                        : isFloat ? Unsafe.getFloat(valueAddr + (r << 2)) : Unsafe.getDouble(valueAddr + (r << 3));
+                if (isBounded && !Numbers.isNull(value)
+                        && (isBoundMin ? value - bound > Numbers.DOUBLE_TOLERANCE : bound - value > Numbers.DOUBLE_TOLERANCE)) {
+                    continue;
+                }
+                if (negated != Numbers.equals(value, Unsafe.getDouble(windowAddr + slot * Long.BYTES))) {
+                    rows.add(r);
+                }
+            }
+            return true;
         }
 
         @Override
