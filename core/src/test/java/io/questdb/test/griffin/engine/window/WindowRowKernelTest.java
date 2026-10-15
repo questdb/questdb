@@ -64,6 +64,16 @@ import java.util.TreeSet;
 public class WindowRowKernelTest extends AbstractCairoTest {
     private static final String IN_LIST = "'BIG', 'K1', 'K2', 'K3', 'K7', 'MISSING', 'K11', 'K12', 'K13', 'K14', 'K15', 'K16', 'K17', 'K18', 'K19'";
     private static final int ROWS = 12_000;
+    // a running sum of any type folds; a bounded frame's DOUBLE avg or sum replays
+    private static final String[] STAND_IN_FUNCTIONS = {
+            "sum(i) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+            "sum(l) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+            "sum(d) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+            "sum(f) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+            "avg(d) OVER (ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)",
+            "avg(f) OVER (ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)",
+            "sum(d) OVER (ORDER BY time ROWS BETWEEN 4 PRECEDING AND CURRENT ROW)"
+    };
     private final String indexType;
 
     public WindowRowKernelTest(String indexType) {
@@ -162,20 +172,28 @@ public class WindowRowKernelTest extends AbstractCairoTest {
         // reads it (AsyncWindowFoldEcho), for the query's thread to compute the function over
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext);
-            // a running sum of any of them folds; a bounded frame's DOUBLE avg or sum replays
-            final String[] functions = {
-                    "sum(i) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
-                    "sum(l) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
-                    "sum(d) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
-                    "sum(f) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
-                    "avg(d) OVER (ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)",
-                    "avg(f) OVER (ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)",
-                    "sum(d) OVER (ORDER BY time ROWS BETWEEN 4 PRECEDING AND CURRENT ROW)"
-            };
-            for (String fn : functions) {
+            for (String fn : STAND_IN_FUNCTIONS) {
+                // one symbol's rows from its index
                 final String query = "SELECT time, " + fn + " w FROM t WHERE sym = 'BIG'";
                 Assert.assertTrue(query, assertKernelMatches(engine, sqlExecutionContext, query) > 0);
             }
+        });
+    }
+
+    @Test
+    public void testFoldedAndReplayedStandInsInSlices() throws Exception {
+        // the rows a compiled filter passes, a slice of a frame at a time, on the workers' slots: a
+        // filtered running sum (a filtered bounded frame takes the serial window)
+        inPool((engine, ctx) -> {
+            createTable(engine, ctx);
+            long kernelTasks = 0;
+            for (String arg : new String[]{"i", "l", "d", "f"}) {
+                final String fn = "sum(" + arg + ") OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)";
+                for (String where : new String[]{"l > 0", "d > 0 AND i != 3"}) {
+                    kernelTasks += assertKernelMatches(engine, ctx, "SELECT time, " + fn + " w FROM t WHERE " + where);
+                }
+            }
+            Assert.assertTrue(kernelTasks > 0);
         });
     }
 

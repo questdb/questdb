@@ -1179,6 +1179,14 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                         sliceRows
                 );
                 prefilterRows.setPos(passed);
+                if (rowKernel != null && rowKernel.isSliceCapable() && carryStage < 0 && groupStage == null && !DEBUG_DISABLE_ROW_KERNELS) {
+                    // the passed rows column-wise; a frame read through a conversion keeps the row path
+                    final long lastOffset = rowKernel.computeSlice(frameMemory, rowLo, prefilterRows, passed, chain, -1, circuitBreaker, sequence);
+                    if (lastOffset != AsyncWindowRowKernel.UNSUPPORTED) {
+                        sliceRowCount = rowKernel.getSliceRowCount();
+                        return lastOffset;
+                    }
+                }
                 int checks = 0;
                 for (long i = 0; i < passed; i++) {
                     if (++checks == CHECK_BATCHES * BATCH_ROWS) {

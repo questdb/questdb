@@ -94,6 +94,8 @@ public class AsyncWindowShardCursor implements RecordCursor {
     // computed by the query's own thread, see chooseMode()
     private final long minRows;
     private final ColumnTypes columnTypes;
+    // whether the worker slots may compute a slice column-wise, see AsyncWindowRowKernel.computeSlice()
+    private final boolean rowKernelsEnabled;
 
     private final int keyColumnIndex;
     private final SelectedRecord record;
@@ -132,6 +134,7 @@ public class AsyncWindowShardCursor implements RecordCursor {
     private int serialFrame;
     private long serialRow;
     private long serialRows;
+    private boolean rowKernelsCompiled;
 
     public AsyncWindowShardCursor(
             @NotNull CairoConfiguration configuration,
@@ -151,6 +154,7 @@ public class AsyncWindowShardCursor implements RecordCursor {
         this.foldCounted = new boolean[splitPlan.getPrefixCount()];
         this.sliceRows = Math.max(1024, configuration.getSqlParallelWindowTaskRows() / 4);
         this.columnTypes = columnTypes;
+        this.rowKernelsEnabled = configuration.isSqlParallelWindowKeyRunsEnabled();
         this.recordSink = recordSink;
         this.scanMetadata = scanMetadata;
         this.keyColumnIndex = keyColumnIndex;
@@ -312,6 +316,11 @@ public class AsyncWindowShardCursor implements RecordCursor {
         atom.getSlot(-1).open(frameCursor, executionContext);
         if (slices) {
             atom.initCompiledPrefilter(frameCursor, executionContext);
+            if (!rowKernelsCompiled) {
+                // the steps are known by the first execution, as for AsyncWindowRecordCursor
+                rowKernelsCompiled = true;
+                atom.compileRowKernels(columnTypes, rowKernelsEnabled);
+            }
         }
     }
 

@@ -133,6 +133,8 @@ public final class AsyncWindowRowKernel {
     private final Node[] outputs;
     private final ObjList<Node> predicates = new ObjList<>();
     private final int[] selected = new int[BATCH_ROWS];
+    // rows emit() appended since computeSlice() began
+    private long sliceRowCount;
     // tasks computed since the last resetCounts(), for tests
     private long taskCount;
 
@@ -300,34 +302,111 @@ public final class AsyncWindowRowKernel {
             }
             evaluate(batch, n, key);
             // the rows from emitFrom on that every filter keeps
-            final int emitLo = (int) Math.min(n, Math.max(0, emitFrom - lo));
-            int m = 0;
-            final ObjList<Node> predicates = this.predicates;
-            final int predicateCount = predicates.size();
-            for (int j = emitLo; j < n; j++) {
-                boolean keep = true;
-                for (int p = 0; p < predicateCount; p++) {
-                    if (!predicates.getQuick(p).bb[j]) {
-                        keep = false;
-                        break;
-                    }
-                }
-                if (keep) {
-                    selected[m++] = j;
-                }
-            }
-            if (m > 0) {
-                final long first = chain.appendFixedRecords(prevOffset, m);
-                prevOffset = first + (m - 1) * stride;
-                long address = chain.addressOf(first);
-                for (int s = 0; s < m; s++) {
-                    writeRow(address, selected[s]);
-                    address += stride;
-                }
-            }
+            prevOffset = emit((int) Math.min(n, Math.max(0, emitFrom - lo)), n, chain, stride, prevOffset);
             lo += n;
         }
         taskCount++;
+        return prevOffset;
+    }
+
+    /**
+     * Computes a slice's rows as {@code AsyncWindowAtom.Slot.computeCompiledSlice} does, over the rows
+     * the compiled prefilter passed, frame rows {@code rowLo + sliceRows[i]} for i below
+     * {@code count}, from the functions' clean state; appends the rows every filter keeps to the
+     * chain after {@code prevOffset}. Returns the offset of the last record appended,
+     * {@code prevOffset} when none was ({@link #getSliceRowCount()} tells how many), or
+     * {@link #UNSUPPORTED} when the frame's columns are read through a type conversion. Only for a
+     * kernel without a key column, see {@link #isSliceCapable()}.
+     */
+    public long computeSlice(
+            PageFrameMemory frameMemory,
+            long rowLo,
+            DirectLongList sliceRows,
+            long count,
+            RecordChain chain,
+            long prevOffset,
+            SqlExecutionCircuitBreaker circuitBreaker,
+            UnorderedPageFrameSequence<?> sequence
+    ) {
+        assert isSliceCapable();
+        sliceRowCount = 0;
+        if (frameMemory.hasColumnTypeCasts()) {
+            return UNSUPPORTED;
+        }
+        final long stride = chain.getFixedRecordStride();
+        for (int c = 0, n = outputOffsets.length; c < n; c++) {
+            outputOffsets[c] = chain.getOffsetOfColumn(0, c);
+        }
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final Node column = columns.getQuick(i);
+            column.address = frameMemory.getPageAddress(column.column);
+        }
+        startLags();
+        final long[] batch = batchRows;
+        final long rowsAddr = sliceRows.getAddress();
+        int batches = 0;
+        for (long lo = 0; lo < count; ) {
+            if (++batches == CHECK_BATCHES) {
+                batches = 0;
+                circuitBreaker.statefulThrowExceptionIfTripped();
+                if (!sequence.isActive()) {
+                    // the round was cancelled: its output will never be read
+                    return prevOffset;
+                }
+            }
+            final int n = (int) Math.min(BATCH_ROWS, count - lo);
+            for (int j = 0; j < n; j++) {
+                batch[j] = rowLo + Unsafe.getLong(rowsAddr + ((lo + j) << 3));
+            }
+            evaluate(batch, n, 0);
+            prevOffset = emit(0, n, chain, stride, prevOffset);
+            lo += n;
+        }
+        taskCount++;
+        return prevOffset;
+    }
+
+    /**
+     * Rows a {@link #computeSlice} appended.
+     */
+    public long getSliceRowCount() {
+        return sliceRowCount;
+    }
+
+    /**
+     * Whether {@link #computeSlice} may compute a slice: the chain reads no key column.
+     */
+    public boolean isSliceCapable() {
+        return keyColumnIndex < 0;
+    }
+
+    // Appends the batch's rows from emitLo to n that every filter keeps to the chain.
+    private long emit(int emitLo, int n, RecordChain chain, long stride, long prevOffset) {
+        int m = 0;
+        final ObjList<Node> predicates = this.predicates;
+        final int predicateCount = predicates.size();
+        for (int j = emitLo; j < n; j++) {
+            boolean keep = true;
+            for (int p = 0; p < predicateCount; p++) {
+                if (!predicates.getQuick(p).bb[j]) {
+                    keep = false;
+                    break;
+                }
+            }
+            if (keep) {
+                selected[m++] = j;
+            }
+        }
+        if (m > 0) {
+            final long first = chain.appendFixedRecords(prevOffset, m);
+            prevOffset = first + (m - 1) * stride;
+            long address = chain.addressOf(first);
+            for (int s = 0; s < m; s++) {
+                writeRow(address, selected[s]);
+                address += stride;
+            }
+            sliceRowCount += m;
+        }
         return prevOffset;
     }
 
