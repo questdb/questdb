@@ -1486,7 +1486,7 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                 sessionStore.destroySession(sessionInfo.getSessionId(), this);
             }
         } else if (
-                // create a session only when requested, replacing a stale cookie, or changing principals
+            // create a session only when requested, replacing a stale cookie, or changing principals
                 (Utf8s.equalsNcAscii(TRUE, sessionParam) && sessionId == null)
                         || (sessionId != null && sessionInfo == null)
                         || (sessionInfo != null && !Chars.equals(sessionInfo.getPrincipal(), securityContext.getSessionPrincipal()))
