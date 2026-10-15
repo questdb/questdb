@@ -9265,14 +9265,18 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             // The parquet O3 update ran in place: processParquetPartition
                             // appended row groups to the existing data.parquet and
                             // published partitionMutates=1 with the new file size. The
-                            // directory and partition name txn stay; only the row count
-                            // and the committed file length move.
+                            // directory and partition name txn stay; the row count, the
+                            // committed file length and the column tops move.
                             txWriter.updatePartitionSizeByRawIndex(partitionIndexRaw, partitionTimestamp, srcDataNewPartitionSize);
                             txWriter.setPartitionParquetGeneratedByRawIndex(partitionIndexRaw, true);
                             txWriter.setPartitionParquetFileSizeByRawIndex(partitionIndexRaw, parquetFileSize);
                             if (Numbers.decodeHighInt(flags) != 0) {
                                 upsertParquetIndexVersions(partitionTimestamp);
                             }
+                            // The Rust updater zeroes column_top of every column in the
+                            // file (update.rs), and updateParquetIndexes() indexed every
+                            // column from row 0, so _cv must not keep a top either.
+                            zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
                             // Native mutate: stamp the apply seqTxn; non-WAL stamps 0 (the cleared
@@ -15571,17 +15575,17 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Commits the new index version of every {@link #parquetIndexVersionChanges} entry of the partition
-     * to _cv, with the column top unchanged.
+     * to _cv, with column top 0: the parquet file updated in place holds every column from row 0, and
+     * O3PartitionJob built the new version from row 0.
      */
     private void upsertParquetIndexVersions(long partitionTimestamp) {
         for (int i = 0, n = parquetIndexVersionChanges.size(); i < n; i += PARQUET_INDEX_VERSION_CHANGE_LONGS) {
             if (parquetIndexVersionChanges.getQuick(i + 3) == partitionTimestamp) {
-                final int columnIndex = (int) parquetIndexVersionChanges.getQuick(i);
                 columnVersionWriter.upsert(
                         partitionTimestamp,
-                        columnIndex,
+                        (int) parquetIndexVersionChanges.getQuick(i),
                         parquetIndexVersionChanges.getQuick(i + 2),
-                        columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex)
+                        0
                 );
             }
         }
@@ -15682,8 +15686,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      *
      * @param zeroAllColumns when {@code true}, zero column tops for ALL
      *                       columns (including ones that had no data at all).
-     *                       Use {@code true} for the O3 parquet-rewrite path
-     *                       where the Rust updater zeros all column_tops in
+     *                       Use {@code true} for the O3 parquet rewrite and
+     *                       update in place, where the Rust updater zeros all column_tops in
      *                       the parquet metadata, so the decoder produces data
      *                       for every column.  Use {@code false} for
      *                       native→parquet conversion, where the encoder
