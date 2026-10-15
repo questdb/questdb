@@ -545,9 +545,9 @@ public class WalSyscallCountTest extends AbstractCairoTest {
     private static String expected(String commitMode, boolean isV2, boolean isCommit, boolean isVarSize, boolean isMixedIO) {
         if (isCommit) {
             // A V2 commit in SYNC msyncs the open part file ahead of the header: one more than base, which
-            // syncs the header alone and leaves the record it publishes to writeback.
+            // syncs the header alone and leaves the record it publishes to writeback. An async sync makes no
+            // msync call, so ASYNC commits make none, as at base.
             return switch (commitMode) {
-                case "async" -> "calls: msyncAsync=5; opened: ";
                 case "sync" -> "calls: msyncSync=" + (isV2 ? 6 : 5) + "; opened: ";
                 default -> "calls: ; opened: ";
             };
@@ -555,7 +555,6 @@ public class WalSyscallCountTest extends AbstractCairoTest {
         // The var-size columns add six files to open, close and sync, and three maps; base reads none of them.
         final int files = isVarSize ? 6 : 0;
         final String msyncs = switch (commitMode) {
-            case "async" -> " msyncAsync=" + (3 + files);
             case "sync" -> " msyncSync=" + (3 + files);
             default -> "";
         };
