@@ -27,6 +27,7 @@ package io.questdb.griffin.engine.functions.conditional;
 import io.questdb.cairo.sql.Function;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * The values a CASE returns, by their role rather than their position: a CASE's
@@ -59,8 +60,13 @@ public interface CaseBranches {
 
     /**
      * The THEN values and the ELSE of a CASE, as {@link CaseCommon#getCaseFunction} hands them to
-     * the function it builds.
+     * the function it builds; and a searched CASE's WHEN conditions, one per THEN value, which it
+     * tests in order, the first that holds picking its THEN, the ELSE when none does (null for a
+     * switch).
      */
-    record Values(@NotNull ObjList<Function> thenValues, @NotNull Function elseValue) {
+    record Values(@NotNull ObjList<Function> thenValues, @NotNull Function elseValue, @Nullable ObjList<Function> conditions) {
+        public Values(@NotNull ObjList<Function> thenValues, @NotNull Function elseValue) {
+            this(thenValues, elseValue, null);
+        }
     }
 }

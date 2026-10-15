@@ -198,6 +198,35 @@ public class WindowRowKernelTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGapsAndIslands() throws Exception {
+        // NYSE TAQ idx 72/73: a run of equal values is a group, numbered by a running sum of a
+        // change flag from a lag; the kernel computes the lag, the flag and the running sum, and the
+        // GROUP BY step reads them row by row, over keys split across tasks
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext);
+            for (String price : new String[]{"f", "d", "i"}) {
+                for (String query : new String[]{gapsAndIslands(price, "sym = 'BIG'", false), gapsAndIslands(price, "sym IN (" + IN_LIST + ")", true)}) {
+                    // an INT value's chain keeps the row path
+                    Assert.assertEquals(query, !"i".equals(price), assertKernelMatches(engine, sqlExecutionContext, query) > 0);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testGapsAndIslandsOnWorkerPool() throws Exception {
+        inPool((engine, ctx) -> {
+            createTable(engine, ctx);
+            long kernelTasks = 0;
+            for (String price : new String[]{"f", "d"}) {
+                kernelTasks += assertKernelMatches(engine, ctx, gapsAndIslands(price, "sym = 'BIG'", false));
+                kernelTasks += assertKernelMatches(engine, ctx, gapsAndIslands(price, "sym IN (" + IN_LIST + ")", true));
+            }
+            Assert.assertTrue(kernelTasks > 0);
+        });
+    }
+
+    @Test
     public void testIdx61() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext);
@@ -332,6 +361,17 @@ public class WindowRowKernelTest extends AbstractCairoTest {
         } finally {
             sqlExecutionContext.setParallelWindowEnabled(false);
         }
+    }
+
+    private static String gapsAndIslands(String price, String where, boolean partitioned) {
+        final String sym = partitioned ? "sym, " : "";
+        final String over = partitioned ? "PARTITION BY sym ORDER BY time" : "ORDER BY time";
+        return "WITH src AS (SELECT sym, time, " + price + " price, l size FROM t WHERE " + where + ")," +
+                " ch AS (SELECT " + sym + "time, price, size, CASE WHEN (price IS NULL) != (lag(price) OVER (" + over + ") IS NULL)" +
+                " OR price != lag(price) OVER (" + over + ") THEN 1 ELSE 0 END AS price_changed FROM src)," +
+                " runs AS (SELECT " + sym + "time, price, size, sum(price_changed) OVER (" + over + " ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS pricegroup FROM ch)" +
+                " SELECT " + sym + "pricegroup, first(price) AS price, min(time) AS FirstTime, max(time) AS LastTime, count() AS cnt, sum(size::double) AS size" +
+                " FROM runs ORDER BY " + sym + "pricegroup";
     }
 
     private static String q61Index(String column) {

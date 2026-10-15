@@ -232,6 +232,13 @@ public class AsyncWindowStage implements QuietCloseable, SymbolTableSource {
     }
 
     /**
+     * The partitioned window functions' groups of a window stage, 0 for none.
+     */
+    public int getMapStatesCount() {
+        return mapStatesCount;
+    }
+
+    /**
      * A projection's column references below this read its own columns, from it on the input's,
      * see {@link #virtual}.
      */

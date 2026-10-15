@@ -553,6 +553,9 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         private int carryStage = -1;
         // the GROUP BY step, which comes last, or null
         private AsyncWindowGroupByStage groupStage;
+        // the record and the symbols the GROUP BY step reads, the step's before it; see computeGroupKernel()
+        private Record groupStageInput;
+        private SymbolTableSource groupStageInputSymbols;
         private int groupStageIndex = -1;
         private final ObjList<Function> functions;
         // the scan's key column, which key runs read once per run rather than once per row
@@ -667,6 +670,10 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
         void addStage(AsyncWindowStage stage) {
             stages.add(stage);
             stageCount++;
+            if (stage instanceof AsyncWindowGroupByStage) {
+                groupStageInput = outputRecord;
+                groupStageInputSymbols = outputSymbols;
+            }
             outputRecord = stage.bind(outputRecord, outputSymbols);
             outputSymbols = stage;
             keyRunFunctions = null;
@@ -883,6 +890,9 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
             if (keyRunFunctions != null) {
                 return computeKeyRuns(rows, keyStarts, emitFrom, chain, circuitBreaker, sequence);
             }
+            if (rowKernel != null && rowKernel.hasGroupInput() && prefilter == null && !DEBUG_DISABLE_ROW_KERNELS && isNativeTask(rows)) {
+                return computeGroupKernel(rows, keyStarts, emitFrom, chain, circuitBreaker, sequence, groupSplit);
+            }
             if (rowKernel != null && carryStage < 0 && groupStage == null && groupSplit == null && prefilter == null && !DEBUG_DISABLE_ROW_KERNELS) {
                 // the record moves to other frames, so a stream on this slot positions it again
                 streamFrameIndex = -1;
@@ -981,6 +991,156 @@ public class AsyncWindowAtom implements StatefulAtom, PerWorkerLockOwner {
                 prevOffset = chain.put(outputRecord, prevOffset);
             }
             return prevOffset;
+        }
+
+        /**
+         * {@link #compute} with the column-wise kernel of a chain that ends in a GROUP BY step (see
+         * {@link AsyncWindowRowKernel#hasGroupInput()}): the kernel computes the window and the steps
+         * before the GROUP BY a batch at a time, and the GROUP BY reads its values row by row, as it
+         * reads the step before it on the row path. The row path's events, a key's start and the
+         * first emitted row, fall on a batch's first row.
+         */
+        private long computeGroupKernel(
+                DirectLongList rows,
+                LongList keyStarts,
+                long emitFrom,
+                RecordChain chain,
+                SqlExecutionCircuitBreaker circuitBreaker,
+                UnorderedPageFrameSequence<?> sequence,
+                @Nullable GroupSplit groupSplit
+        ) {
+            final AsyncWindowRowKernel kernel = rowKernel;
+            final AsyncWindowRowKernel.GroupInputRecord input = kernel.getGroupInput();
+            final AsyncWindowGroupByStage stage = groupStage;
+            final long secondKeyStart = keyStarts.size() > 1 ? keyStarts.getQuick(1) : Long.MAX_VALUE;
+            final int resetStage = resetStage();
+            final int keyStartCount = keyStarts.size();
+            final int keyColumnIndex = kernel.getKeyColumnIndex();
+            streamFrameIndex = -1;
+            chain.rewind(rows.size() - emitFrom);
+            final long[] batch = batchRows;
+            final long rowCount = rows.size();
+            long prevOffset = -1;
+            int frameIndex = -1;
+            int batches = 0;
+            int keyStartIndex = 0;
+            int key = 0;
+            boolean keyPending = true;
+            // the task's first row starts the functions afresh, as the slot's toTop() before the task
+            kernel.startFunctions();
+            stage.bind(input, groupStageInputSymbols);
+            try {
+                long i = 0;
+                while (i < rowCount) {
+                    if (++batches == CHECK_BATCHES) {
+                        batches = 0;
+                        circuitBreaker.statefulThrowExceptionIfTripped();
+                        if (!sequence.isActive()) {
+                            // the round was cancelled: its output will never be read
+                            return prevOffset;
+                        }
+                    }
+                    // a key starts here: its value off its first row; the functions start afresh
+                    // where the row path's resetWindows() starts them
+                    while (keyStartIndex < keyStartCount && keyStarts.getQuick(keyStartIndex) <= i) {
+                        if (keyStarts.getQuick(keyStartIndex) == i) {
+                            keyPending = true;
+                            if (resetAtKeyStarts && i > 0) {
+                                resetWindows();
+                                kernel.startFunctions();
+                            }
+                        }
+                        keyStartIndex++;
+                    }
+                    if (i == emitFrom) {
+                        if (emitFrom > 0 && resetStage > -1) {
+                            // as compute(): the warm-up rows rebuilt the steps before the reset stage
+                            for (int s = resetStage; s < stageCount; s++) {
+                                stages.getQuick(s).toTop();
+                            }
+                            kernel.startStages(resetStage);
+                        }
+                        stage.setRowId(groupSplit != null ? groupSplit.walkBase : 0);
+                        if (groupSplit != null && groupSplit.continuesKey) {
+                            stage.beginHeadCapture(groupSplit.headChain);
+                        }
+                    }
+                    final int batchFrameIndex = KeyMajorPageFrameRecordCursor.toFrameIndex(rows.get(i));
+                    if (batchFrameIndex != frameIndex) {
+                        frameIndex = batchFrameIndex;
+                        final PageFrameMemory frameMemory = pool.navigateTo(frameIndex);
+                        record.init(frameMemory);
+                        kernel.ofGroupFrame(frameMemory);
+                    }
+                    // the rows of one frame and one key run, up to the next event
+                    long hi = Math.min(rowCount, i + BATCH_ROWS);
+                    if (keyStartIndex < keyStartCount) {
+                        hi = Math.min(hi, keyStarts.getQuick(keyStartIndex));
+                    }
+                    if (emitFrom > i) {
+                        hi = Math.min(hi, emitFrom);
+                    }
+                    int n = 0;
+                    for (long r = i; r < hi; r++) {
+                        final long rowId = rows.get(r);
+                        if (KeyMajorPageFrameRecordCursor.toFrameIndex(rowId) != frameIndex) {
+                            break;
+                        }
+                        batch[n++] = KeyMajorPageFrameRecordCursor.toFrameRowIndex(rowId);
+                    }
+                    if (keyPending) {
+                        keyPending = false;
+                        if (keyColumnIndex > -1) {
+                            record.setRowIndex(batch[0]);
+                            key = record.getInt(keyColumnIndex);
+                        }
+                    }
+                    kernel.evaluateGroupBatch(batch, n, key);
+                    for (int j = 0; j < n; j++) {
+                        // a row a filter step drops does not reach the GROUP BY
+                        if (!kernel.isKept(j)) {
+                            continue;
+                        }
+                        input.setRow(j);
+                        final long index = i + j;
+                        if (stage.computeNext() && index >= emitFrom) {
+                            prevOffset = chain.put(outputRecord, prevOffset);
+                            // a group closed by the second key's first row is the first key's last
+                            if (groupSplit != null && index <= secondKeyStart) {
+                                groupSplit.firstKeyGroupRows++;
+                            }
+                        }
+                    }
+                    i += n;
+                }
+                kernel.countTask();
+                if (groupSplit != null) {
+                    return finishGroupSplit(groupSplit, chain, prevOffset, secondKeyStart >= rowCount);
+                }
+                // a GROUP BY step outputs the task's last group now; keys never span tasks then
+                if (flush()) {
+                    prevOffset = chain.put(outputRecord, prevOffset);
+                }
+                return prevOffset;
+            } finally {
+                stage.bind(groupStageInput, groupStageInputSymbols);
+            }
+        }
+
+        // Whether every frame the task's rows are in is a native one, whose columns the kernel reads
+        // as they are.
+        private boolean isNativeTask(DirectLongList rows) {
+            int frameIndex = -1;
+            for (long i = 0, n = rows.size(); i < n; i++) {
+                final int f = KeyMajorPageFrameRecordCursor.toFrameIndex(rows.get(i));
+                if (f != frameIndex) {
+                    frameIndex = f;
+                    if (frameAddressCache.getFrameFormat(f) != PartitionFormat.NATIVE) {
+                        return false;
+                    }
+                }
+            }
+            return true;
         }
 
         // A new key's first row: every window function starts afresh, see setKeyStartReset(). A

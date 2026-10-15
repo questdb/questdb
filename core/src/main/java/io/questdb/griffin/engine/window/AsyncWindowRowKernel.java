@@ -33,11 +33,17 @@ import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.async.UnorderedPageFrameSequence;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.ColumnwiseBooleanOp;
 import io.questdb.griffin.engine.functions.ColumnwiseComparison;
 import io.questdb.griffin.engine.functions.ColumnwiseFunction;
 import io.questdb.griffin.engine.functions.FloatFunction;
+import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.IntFunction;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.functions.MultiArgFunction;
+import io.questdb.griffin.engine.functions.TernaryFunction;
+import io.questdb.griffin.engine.functions.UnaryFunction;
 import io.questdb.griffin.engine.functions.columns.ColumnFunction;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.columns.FloatColumn;
@@ -45,9 +51,14 @@ import io.questdb.griffin.engine.functions.columns.IntColumn;
 import io.questdb.griffin.engine.functions.columns.LongColumn;
 import io.questdb.griffin.engine.functions.columns.SymbolColumn;
 import io.questdb.griffin.engine.functions.columns.TimestampColumn;
+import io.questdb.griffin.engine.functions.conditional.CaseBranches;
+import io.questdb.griffin.engine.functions.conditional.CaseFunction;
+import io.questdb.griffin.engine.functions.groupby.CountLongConstGroupByFunction;
 import io.questdb.griffin.engine.functions.memoization.MemoizerFunction;
+import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.functions.window.LagDoubleFunctionFactory;
 import io.questdb.griffin.engine.functions.window.LagLongFunctionFactory;
+import io.questdb.griffin.engine.functions.window.SumDoubleWindowFunctionFactory;
 import io.questdb.griffin.engine.table.KeyMajorPageFrameRecordCursor;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
@@ -105,13 +116,19 @@ public final class AsyncWindowRowKernel {
     // batches between two checks of the circuit breaker and of the round's cancellation
     private static final int CHECK_BATCHES = 16;
     private static final int K_ADD = 5;
+    private static final int K_BOOL_EQ = 10;
+    private static final int K_CASE = 12;
     private static final int K_COLUMN = 0;
     private static final int K_CONST = 2;
     private static final int K_CONVERT = 3;
     private static final int K_EQ = 8;
+    private static final int K_IS_NULL = 9;
     private static final int K_KEY = 1;
     private static final int K_LAG = 4;
     private static final int K_LT = 7;
+    private static final int K_OR = 11;
+    // a window step's running sum, see SumDoubleWindowFunctionFactory.SumOverUnboundedRowsFrameFunction
+    private static final int K_RUN_SUM = 13;
     private static final int K_SUB = 6;
     // the most rows back a lag may read; a larger offset keeps the row path
     private static final int MAX_LAG_OFFSET = 64;
@@ -126,6 +143,9 @@ public final class AsyncWindowRowKernel {
     private final ObjList<Node> columns = new ObjList<>();
     private final int keyColumnIndex;
     private final ObjList<Node> lags = new ObjList<>();
+    // the record a last GROUP BY step reads, over the chain's columns before it, or null
+    private GroupInputRecord groupInput;
+    private final ObjList<Node> runSums = new ObjList<>();
     // every node, children before their parents
     private final ObjList<Node> nodes = new ObjList<>();
     private final long[] outputOffsets;
@@ -165,21 +185,44 @@ public final class AsyncWindowRowKernel {
         if (mapStateCount > 0) {
             return null;
         }
-        final AsyncWindowRowKernel kernel = new AsyncWindowRowKernel(keyColumnIndex, outputTypes.size());
+        final AsyncWindowGroupByStage groupStage = stages.size() > 0 && stages.getLast() instanceof AsyncWindowGroupByStage g ? g : null;
+        final AsyncWindowRowKernel kernel = new AsyncWindowRowKernel(keyColumnIndex, groupStage == null ? outputTypes.size() : 0);
         final Compiler compiler = new Compiler(kernel, crossIndex);
         // the window's own record, then each step's
         Resolver resolver = new WindowResolver(compiler, functions);
+        // the functions of the last record's columns
+        ObjList<Function> recordFunctions = functions;
         for (int i = 0, n = stages.size(); i < n; i++) {
             final AsyncWindowStage stage = stages.getQuick(i);
             switch (stage.getKind()) {
-                case AsyncWindowStage.KIND_VIRTUAL ->
-                        resolver = new ProjectionResolver(compiler, stage.getFunctions(), stage.getReservedSlots(), resolver);
+                case AsyncWindowStage.KIND_VIRTUAL -> {
+                    resolver = new ProjectionResolver(compiler, stage.getFunctions(), stage.getReservedSlots(), resolver);
+                    recordFunctions = stage.getFunctions();
+                }
+                case AsyncWindowStage.KIND_WINDOW -> {
+                    // a window step after a filter sees only the rows it keeps; the kernel computes
+                    // every row
+                    if (stage.getMapStatesCount() > 0 || kernel.predicates.size() > 0) {
+                        return null;
+                    }
+                    resolver = new WindowStageResolver(compiler, stage.getFunctions(), resolver, i);
+                    recordFunctions = stage.getFunctions();
+                }
                 case AsyncWindowStage.KIND_FILTER -> {
                     final Node predicate = compiler.compileBool(stage.getFunctions().getQuick(0), resolver);
                     if (predicate == null) {
                         return null;
                     }
                     kernel.predicates.add(predicate);
+                }
+                case AsyncWindowStage.KIND_GROUP_BY -> {
+                    // the last step: its input record's columns, which it reads with their own types'
+                    // getters only
+                    if (stage != groupStage || !kernel.compileGroupInput(recordFunctions, resolver, groupStage)) {
+                        return null;
+                    }
+                    kernel.allocate();
+                    return kernel;
                 }
                 default -> {
                     return null;
@@ -417,8 +460,161 @@ public final class AsyncWindowRowKernel {
         return taskCount;
     }
 
+    // a task computed with the kernel, see getTaskCount()
+    void countTask() {
+        taskCount++;
+    }
+
     void resetCounts() {
         taskCount = 0;
+    }
+
+    /**
+     * The scan's key column, which holds one value per key run, or -1.
+     */
+    public int getKeyColumnIndex() {
+        return keyColumnIndex;
+    }
+
+    /**
+     * Whether the chain ends in a GROUP BY step, which the slot computes row by row over
+     * {@link #getGroupInput()}: the kernel computes the steps before it, a batch at a time, see
+     * {@link #evaluateGroupBatch}.
+     */
+    public boolean hasGroupInput() {
+        return groupInput != null;
+    }
+
+    /**
+     * The record the GROUP BY step reads in place of the step before it: the kernel's values of that
+     * step's columns at the row {@link GroupInputRecord#setRow} sets.
+     */
+    public GroupInputRecord getGroupInput() {
+        return groupInput;
+    }
+
+    /**
+     * Computes the steps before the GROUP BY for the batch's frame rows, of the frame
+     * {@link #ofGroupFrame} set and one key run, after the rows before them in the task. Returns
+     * whether every filter keeps the batch's row j, see {@link #isKept}.
+     */
+    public void evaluateGroupBatch(long[] batch, int n, int key) {
+        evaluate(batch, n, key);
+    }
+
+    /**
+     * Whether every filter step keeps the last batch's row j.
+     */
+    public boolean isKept(int j) {
+        final ObjList<Node> predicates = this.predicates;
+        for (int p = 0, k = predicates.size(); p < k; p++) {
+            if (!predicates.getQuick(p).bb[j]) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * The batches from now on are of this frame, a native one.
+     */
+    public void ofGroupFrame(PageFrameMemory frameMemory) {
+        for (int i = 0, n = columns.size(); i < n; i++) {
+            final Node column = columns.getQuick(i);
+            column.address = frameMemory.getPageAddress(column.column);
+        }
+    }
+
+    /**
+     * The window functions and every window step start afresh: the task's first row, a key's.
+     */
+    public void startFunctions() {
+        startLags();
+    }
+
+    /**
+     * The window steps from the given one on start afresh, as the slot's toTop() of them.
+     */
+    public void startStages(int fromStage) {
+        startRunSums(fromStage);
+    }
+
+    // The record a last GROUP BY step reads: the columns of the record before it, by its functions,
+    // each an INT, SYMBOL, LONG, TIMESTAMP, FLOAT or DOUBLE that every column reference of the step's
+    // aggregates reads with its own type's getter, as the step's keys and its head capture do.
+    private boolean compileGroupInput(ObjList<Function> recordFunctions, Resolver resolver, AsyncWindowGroupByStage stage) {
+        final int n = recordFunctions.size();
+        final Node[] nodes = new Node[n];
+        final int[] types = new int[n];
+        for (int c = 0; c < n; c++) {
+            final int type = ColumnType.tagOf(recordFunctions.getQuick(c).getType());
+            final int rep = switch (type) {
+                // a SYMBOL as its key, which the step's keys and head capture read with getInt()
+                case ColumnType.INT, ColumnType.SYMBOL -> V_INT;
+                case ColumnType.LONG, ColumnType.TIMESTAMP -> V_LONG;
+                case ColumnType.FLOAT -> V_FLOAT;
+                case ColumnType.DOUBLE -> V_DOUBLE;
+                default -> -1;
+            };
+            if (rep < 0) {
+                return false;
+            }
+            nodes[c] = resolver.resolve(c, rep);
+            if (nodes[c] == null) {
+                return false;
+            }
+            types[c] = type;
+        }
+        final ObjList<GroupByFunction> functions = stage.getGroupByFunctions();
+        for (int i = 0, k = functions.size(); i < k; i++) {
+            if (!readsOwnTypes(functions.getQuick(i), types)) {
+                return false;
+            }
+        }
+        groupInput = new GroupInputRecord(nodes);
+        return true;
+    }
+
+    // Whether every column reference of the function reads its column with its own type's getter,
+    // through a plain column function, and nothing else of the function reads the record.
+    private static boolean readsOwnTypes(Function function, int[] types) {
+        if (function instanceof ColumnFunction cf) {
+            final int column = cf.getColumnIndex();
+            if (column < 0 || column >= types.length) {
+                return false;
+            }
+            final Class<?> expected = switch (types[column]) {
+                case ColumnType.INT -> IntColumn.class;
+                case ColumnType.LONG -> LongColumn.class;
+                case ColumnType.TIMESTAMP -> TimestampColumn.class;
+                case ColumnType.FLOAT -> FloatColumn.class;
+                case ColumnType.DOUBLE -> DoubleColumn.class;
+                default -> null;
+            };
+            return function.getClass() == expected;
+        }
+        if (function.isConstant() || function.getClass() == CountLongConstGroupByFunction.class) {
+            return true;
+        }
+        if (function instanceof UnaryFunction f) {
+            return readsOwnTypes(f.getArg(), types);
+        }
+        if (function instanceof BinaryFunction f) {
+            return readsOwnTypes(f.getLeft(), types) && readsOwnTypes(f.getRight(), types);
+        }
+        if (function instanceof TernaryFunction f) {
+            return readsOwnTypes(f.getLeft(), types) && readsOwnTypes(f.getCenter(), types) && readsOwnTypes(f.getRight(), types);
+        }
+        if (function instanceof MultiArgFunction f) {
+            final ObjList<Function> args = f.args();
+            for (int i = 0, n = args.size(); i < n; i++) {
+                if (!readsOwnTypes(args.getQuick(i), types)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        return false;
     }
 
     private static double convertToDouble(int fromRep, Node a, int i) {
@@ -466,6 +662,24 @@ public final class AsyncWindowRowKernel {
                 case K_LAG -> lag(node, n);
                 case K_ADD, K_SUB -> arithmetic(node, n);
                 case K_LT, K_EQ -> compare(node, n);
+                case K_IS_NULL -> isNull(node, n);
+                case K_BOOL_EQ -> {
+                    // EqBooleanFunctionFactory.Func
+                    final boolean[] x = node.a.bb, y = node.b.bb, out = node.bb;
+                    final boolean negated = node.negated;
+                    for (int i = 0; i < n; i++) {
+                        out[i] = negated != (x[i] == y[i]);
+                    }
+                }
+                case K_OR -> {
+                    // OrFunctionFactory: both sides are pure, so evaluating the right one always is the same
+                    final boolean[] x = node.a.bb, y = node.b.bb, out = node.bb;
+                    for (int i = 0; i < n; i++) {
+                        out[i] = x[i] || y[i];
+                    }
+                }
+                case K_CASE -> caseOf(node, n);
+                case K_RUN_SUM -> runningSum(node, n);
                 default -> throw new AssertionError("unknown node kind " + node.kind);
             }
         }
@@ -500,6 +714,82 @@ public final class AsyncWindowRowKernel {
                 }
             }
         }
+    }
+
+    // A searched CASE's value: the first condition that holds picks its THEN, else the ELSE, as
+    // CaseFunctionFactory's picker does; each value read with the CASE's own type.
+    private static void caseOf(Node node, int n) {
+        final Node[] conds = node.conds;
+        final Node[] vals = node.vals;
+        final Node otherwise = node.otherwise;
+        final int k = conds.length;
+        for (int i = 0; i < n; i++) {
+            Node picked = otherwise;
+            for (int c = 0; c < k; c++) {
+                if (conds[c].bb[i]) {
+                    picked = vals[c];
+                    break;
+                }
+            }
+            switch (node.rep) {
+                case V_INT -> node.ib[i] = picked.ib[i];
+                case V_LONG -> node.lb[i] = picked.lb[i];
+                case V_FLOAT -> node.fb[i] = picked.fb[i];
+                default -> node.db[i] = picked.db[i];
+            }
+        }
+    }
+
+    // EqDoubleFunctionFactory's IS NULL functions: Numbers.isNull() of a FLOAT or DOUBLE, the
+    // sentinel of an INT or LONG
+    private static void isNull(Node node, int n) {
+        final boolean negated = node.negated;
+        final boolean[] out = node.bb;
+        final Node a = node.a;
+        switch (a.rep) {
+            case V_FLOAT -> {
+                final float[] x = a.fb;
+                for (int i = 0; i < n; i++) {
+                    out[i] = negated != Numbers.isNull(x[i]);
+                }
+            }
+            case V_DOUBLE -> {
+                final double[] x = a.db;
+                for (int i = 0; i < n; i++) {
+                    out[i] = negated != Numbers.isNull(x[i]);
+                }
+            }
+            case V_INT -> {
+                final int[] x = a.ib;
+                for (int i = 0; i < n; i++) {
+                    out[i] = negated != (x[i] == Numbers.INT_NULL);
+                }
+            }
+            default -> {
+                final long[] x = a.lb;
+                for (int i = 0; i < n; i++) {
+                    out[i] = negated != (x[i] == Numbers.LONG_NULL);
+                }
+            }
+        }
+    }
+
+    // SumOverUnboundedRowsFrameFunction.computeNext() over the batch: finite values add up, NULL
+    // until the first
+    private static void runningSum(Node node, int n) {
+        final double[] x = node.a.db, out = node.db;
+        double sum = node.runSum;
+        long count = node.runCount;
+        for (int i = 0; i < n; i++) {
+            final double d = x[i];
+            if (Numbers.isFinite(d)) {
+                sum += d;
+                count++;
+            }
+            out[i] = count != 0 ? sum : Double.NaN;
+        }
+        node.runSum = sum;
+        node.runCount = count;
     }
 
     private static void compare(Node node, int n) {
@@ -657,11 +947,25 @@ public final class AsyncWindowRowKernel {
         }
     }
 
+    // The window functions and the window steps' running sums start afresh, as the slot's
+    // resetWindows() and toTop() start them.
     private void startLags() {
         for (int i = 0, n = lags.size(); i < n; i++) {
             final Node lag = lags.getQuick(i);
             lag.lagCount = 0;
             lag.lagPosition = 0;
+        }
+        startRunSums(0);
+    }
+
+    // The running sums of the window steps from the given one on start afresh, as their toTop().
+    private void startRunSums(int fromStage) {
+        for (int i = 0, n = runSums.size(); i < n; i++) {
+            final Node sum = runSums.getQuick(i);
+            if (sum.stageIndex >= fromStage) {
+                sum.runSum = 0.0;
+                sum.runCount = 0;
+            }
         }
     }
 
@@ -679,6 +983,75 @@ public final class AsyncWindowRowKernel {
                 case V_FLOAT -> Unsafe.putFloat(a, node.fb[j]);
                 default -> Unsafe.putDouble(a, node.db[j]);
             }
+        }
+    }
+
+    /**
+     * The values of the step before a last GROUP BY at a row of the last batch: each column read with
+     * its own type's getter, as the step's record reads it, and with the standard base classes'
+     * conversions (IntFunction's getLong() and getDouble(), LongFunction's and FloatFunction's
+     * getDouble()) for a reader that asks for them.
+     */
+    public static final class GroupInputRecord implements Record {
+        private final Node[] columns;
+        private int row;
+
+        private GroupInputRecord(Node[] columns) {
+            this.columns = columns;
+        }
+
+        @Override
+        public double getDouble(int col) {
+            final Node node = columns[col];
+            return switch (node.rep) {
+                case V_DOUBLE -> node.db[row];
+                default -> convertToDouble(node.rep, node, row);
+            };
+        }
+
+        @Override
+        public float getFloat(int col) {
+            final Node node = columns[col];
+            if (node.rep != V_FLOAT) {
+                throw new UnsupportedOperationException();
+            }
+            return node.fb[row];
+        }
+
+        @Override
+        public int getInt(int col) {
+            final Node node = columns[col];
+            if (node.rep != V_INT) {
+                throw new UnsupportedOperationException();
+            }
+            return node.ib[row];
+        }
+
+        @Override
+        public long getLong(int col) {
+            final Node node = columns[col];
+            return switch (node.rep) {
+                case V_LONG -> node.lb[row];
+                // IntFunction.getLong()
+                case V_INT -> Numbers.intToLong(node.ib[row]);
+                default -> throw new UnsupportedOperationException();
+            };
+        }
+
+        @Override
+        public long getTimestamp(int col) {
+            final Node node = columns[col];
+            if (node.rep != V_LONG) {
+                throw new UnsupportedOperationException();
+            }
+            return node.lb[row];
+        }
+
+        /**
+         * Stands the record on the last batch's row j.
+         */
+        public void setRow(int j) {
+            this.row = j;
         }
     }
 
@@ -726,6 +1099,9 @@ public final class AsyncWindowRowKernel {
         @Nullable
         Node compileBool(Function function, Resolver resolver) {
             function = unwrap(function);
+            if (function instanceof ColumnwiseBooleanOp op && declaresGetter(function, "getColumnwiseBooleanOp", "getBool")) {
+                return compileBooleanOp(op, resolver);
+            }
             if (!(function instanceof ColumnwiseComparison comparison) || !declaresGetter(function, "getColumnwiseComparison", "getBool")) {
                 return null;
             }
@@ -757,6 +1133,98 @@ public final class AsyncWindowRowKernel {
             node.operandRep = operandRep;
             node.negated = comparison.isNegated();
             return add(node);
+        }
+
+        @Nullable
+        private Node compileBooleanOp(ColumnwiseBooleanOp op, Resolver resolver) {
+            final Node node;
+            switch (op.getColumnwiseBooleanOp()) {
+                case ColumnwiseBooleanOp.OP_IS_NULL -> {
+                    final int operandRep;
+                    switch (ColumnType.tagOf(op.getColumnwiseOperandType())) {
+                        case ColumnType.FLOAT -> operandRep = V_FLOAT;
+                        case ColumnType.DOUBLE -> operandRep = V_DOUBLE;
+                        case ColumnType.INT -> operandRep = V_INT;
+                        case ColumnType.LONG -> operandRep = V_LONG;
+                        default -> {
+                            return null;
+                        }
+                    }
+                    final Node a = compile(op.getColumnwiseArg(0), operandRep, resolver);
+                    if (a == null) {
+                        return null;
+                    }
+                    node = new Node(K_IS_NULL, V_BOOL);
+                    node.a = a;
+                }
+                case ColumnwiseBooleanOp.OP_EQ, ColumnwiseBooleanOp.OP_OR -> {
+                    final Node a = compileBool(op.getColumnwiseArg(0), resolver);
+                    final Node b = a != null ? compileBool(op.getColumnwiseArg(1), resolver) : null;
+                    if (b == null) {
+                        return null;
+                    }
+                    node = new Node(op.getColumnwiseBooleanOp() == ColumnwiseBooleanOp.OP_EQ ? K_BOOL_EQ : K_OR, V_BOOL);
+                    node.a = a;
+                    node.b = b;
+                }
+                default -> {
+                    return null;
+                }
+            }
+            node.negated = op.isColumnwiseNegated();
+            return add(node);
+        }
+
+        // A searched CASE of the representation rep: its conditions, its values and its ELSE
+        @Nullable
+        private Node compileCase(CaseFunction function, int rep, Resolver resolver) {
+            final CaseBranches.Values branches = function.branches();
+            final ObjList<Function> conditions = branches.conditions();
+            final ObjList<Function> values = branches.thenValues();
+            if (conditions == null || conditions.size() != values.size() || rep == V_BOOL) {
+                return null;
+            }
+            final int k = conditions.size();
+            final Node[] conds = new Node[k];
+            final Node[] vals = new Node[k];
+            for (int c = 0; c < k; c++) {
+                conds[c] = compileBool(conditions.getQuick(c), resolver);
+                vals[c] = conds[c] != null ? compile(values.getQuick(c), rep, resolver) : null;
+                if (vals[c] == null) {
+                    return null;
+                }
+            }
+            final Node otherwise = compile(branches.elseValue(), rep, resolver);
+            if (otherwise == null) {
+                return null;
+            }
+            final Node node = new Node(K_CASE, rep);
+            node.conds = conds;
+            node.vals = vals;
+            node.otherwise = otherwise;
+            return add(node);
+        }
+
+        // A window step's running sum, SumOverUnboundedRowsFrameFunction exactly: its argument read
+        // with getDouble()
+        @Nullable
+        Node compileRunningSum(Function function, int rep, Resolver input, int stageIndex) {
+            for (int i = 0, n = made.size(); i < n; i++) {
+                final Node m = made.getQuick(i);
+                if (m.kind == K_RUN_SUM && m.function == function) {
+                    return convert(m, rep);
+                }
+            }
+            final Node arg = compile(((BaseWindowFunction) function).getWindowArgument(), V_DOUBLE, input);
+            if (arg == null) {
+                return null;
+            }
+            final Node node = new Node(K_RUN_SUM, V_DOUBLE);
+            node.a = arg;
+            node.function = function;
+            node.stageIndex = stageIndex;
+            kernel.runSums.add(add(node));
+            return convert(node, rep);
         }
 
         // A function of the window or a step, read through the getter of rep, against the
@@ -795,6 +1263,8 @@ public final class AsyncWindowRowKernel {
                 node.a = a;
                 node.b = b;
                 own = add(node);
+            } else if (function instanceof CaseFunction cf && declaresGetter(function, "branches", getterName(ownRep))) {
+                own = compileCase(cf, ownRep, resolver);
             } else {
                 return null;
             }
@@ -1006,6 +1476,8 @@ public final class AsyncWindowRowKernel {
         Node b;
         boolean[] bb;
         int column;
+        // K_CASE: the conditions, their values and the ELSE
+        Node[] conds;
         double[] db;
         double doubleConstant;
         double[] doubleRing;
@@ -1021,6 +1493,12 @@ public final class AsyncWindowRowKernel {
         long[] longRing;
         boolean negated;
         int operandRep;
+        Node otherwise;
+        // K_RUN_SUM: the sum and the count of the finite values so far, and the window step's index
+        long runCount;
+        double runSum;
+        int stageIndex;
+        Node[] vals;
 
         Node(int kind, int rep) {
             this.kind = kind;
@@ -1055,6 +1533,22 @@ public final class AsyncWindowRowKernel {
                 return input.resolve(column - reservedSlots, rep);
             }
             return column < functions.size() ? compiler.compile(functions.getQuick(column), rep, own) : null;
+        }
+    }
+
+    // A window step's record (VirtualRecord): each column is one of its functions over the input,
+    // a running sum or a function of the input's columns.
+    private record WindowStageResolver(Compiler compiler, ObjList<Function> functions, Resolver input, int stageIndex) implements Resolver {
+        @Override
+        public @Nullable Node resolve(int column, int rep) {
+            if (column >= functions.size()) {
+                return null;
+            }
+            final Function function = Compiler.unwrap(functions.getQuick(column));
+            if (function.getClass() == SumDoubleWindowFunctionFactory.SumOverUnboundedRowsFrameFunction.class) {
+                return compiler.compileRunningSum(function, rep, input, stageIndex);
+            }
+            return function instanceof WindowFunction ? null : compiler.compile(function, rep, input);
         }
     }
 
