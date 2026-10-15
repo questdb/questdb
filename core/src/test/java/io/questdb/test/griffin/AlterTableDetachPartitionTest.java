@@ -69,6 +69,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.Nullable;
 import org.junit.AfterClass;
 import org.junit.Assert;
+import org.junit.Assume;
 import org.junit.BeforeClass;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -469,6 +470,9 @@ public class AlterTableDetachPartitionTest extends AbstractAlterTableAttachParti
      */
     @Test
     public void testAttachRetryAfterFailedSoftLinkUnlink() throws Exception {
+        // Windows does not detect a directory soft link (isSoftLink is false), so the ATTACH hard-links a copy of the
+        // source instead of soft-linking it, its cleanup removes that copy, and the retry attaches
+        Assume.assumeFalse(Os.isWindows());
         // Only ADAPTIVE links the source; the other modes rename it
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         final AtomicBoolean isPinFailing = new AtomicBoolean();

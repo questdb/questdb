@@ -865,11 +865,14 @@ public class FuzzRunner {
     }
 
     private void assertMinMaxTimestamp(SqlExecutionContext sqlExecutionContext, String tableName) throws Exception {
+        // No memory usage check: it reads process-wide memory counters, and the shared pool's purge jobs run
+        // alongside these queries, so their scratch buffers would count as the cursor's
         try (TableReader reader = getReader(tableName)) {
             if (reader.getMinTimestamp() != Long.MAX_VALUE) {
                 new QueryAssertion(engine, sqlExecutionContext, () -> {
                 }, "select ts from " + tableName + " order by ts limit 1")
                         .noLeakCheck()
+                        .noMemoryUsageCheck()
                         .timestamp("ts")
                         .expectSize()
                         .returns(
@@ -883,6 +886,7 @@ public class FuzzRunner {
                 new QueryAssertion(engine, sqlExecutionContext, () -> {
                 }, "select ts from " + tableName + " order by ts limit -1")
                         .noLeakCheck()
+                        .noMemoryUsageCheck()
                         .timestamp("ts")
                         .expectSize()
                         .returns(
