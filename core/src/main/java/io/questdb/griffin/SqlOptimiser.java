@@ -2804,7 +2804,8 @@ public class SqlOptimiser implements Mutable {
     // indexed-subquery speedup. Do not widen this gate as a blanket performance optimisation, or disable
     // the rewrite to recover JIT without preserving actual timestamp ordering. Follow-up: combine async/JIT
     // residual filtering with ordered latest-by, retaining interval/index pruning and early exits.
-    // See docs/row-expiry-latest-by.md for the scope, evidence and follow-up validation matrix.
+    // See "Latest-by rewrite scoped to scalar expiry" in docs/row-expiry-limitations.md for the scope,
+    // evidence and follow-up validation matrix.
     //
     // Applies only when the rewrite is provably equivalent:
     //   - the LATEST ON model has no JOIN: with a join, LATEST ON applies to the join output, but the
