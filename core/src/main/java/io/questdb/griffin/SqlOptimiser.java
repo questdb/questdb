@@ -14439,6 +14439,9 @@ public class SqlOptimiser implements Mutable {
                     newNested.setTimestamp(nested.getTimestamp());
                     newNested.setWhereClause(nested.getWhereClause());
                     newNested.copyColumnsFrom(nested, queryColumnPool, expressionNodePool);
+                    // the table's scan is now this model's, and its hints (no_covering, no_index...) go with it
+                    newNested.copyHints(nested.getHints());
+                    newNested.copyHints(model.getHints());
                 }
                 model.setNestedModel(newNested);
             }

@@ -4508,6 +4508,7 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
     }
 
     private static class SingleKeyCoveringPageFrameCursor extends CoveringPageFrameCursor {
+        private static final long DESC_LEAN_FIRST_CHUNK_ROWS = 1024;
         int resolvedKey;
         // Backward-scan state: the partition currently being drained from its
         // high row-range downward, and the exclusive upper bound of the next
@@ -4515,6 +4516,19 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         private int descPartitionIndex = -1;
         private long descPartitionLo;
         private long descSubHi;
+        // Lean backward-scan state: the partition whose key's postings are emitted as metadata-only
+        // chunks from its last posting down, and how many of them are still to emit. A partition the
+        // lean way cannot count (a MIXED layout, a non-posting reader) takes the traverse above.
+        private AbstractPostingIndexReader descLeanReader;
+        private int descLeanPartitionIndex;
+        private long descLeanRemaining;
+        private long descLeanRowLo;
+        private long descLeanNullMax;
+        private long descLeanClampedMax;
+        // the postings of the lean backward scan's next chunk: a negative LIMIT takes few rows from
+        // the last frames, so the scan's first chunk is small and each next one twice the last's,
+        // up to maxRowsPerFrame
+        private long descLeanChunkRows = DESC_LEAN_FIRST_CHUNK_ROWS;
 
         SingleKeyCoveringPageFrameCursor(
                 int indexColumnIndex,
@@ -4572,17 +4586,93 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Override
         void resetIterationState() {
             descPartitionIndex = -1;
+            descLeanRemaining = 0;
+            descLeanReader = null;
+            descLeanChunkRows = DESC_LEAN_FIRST_CHUNK_ROWS;
+        }
+
+        /**
+         * Opens a partition of the lean backward scan: counts the key's postings in
+         * [rowLo, rowHi) from the posting metadata, as the forward lean path does, and prepares
+         * the reader for the workers' detached cursors. False when the partition cannot be
+         * counted that way (not a posting reader, a MIXED layout): the traverse then reads it.
+         */
+        private boolean openLeanDescending(int partitionIndex, long rowLo, long rowHi) {
+            final IndexReader indexReader = tableReader.getIndexReader(partitionIndex, indexColumnIndex, IndexReader.DIR_FORWARD);
+            if (!(indexReader instanceof AbstractPostingIndexReader posting)) {
+                return false;
+            }
+            final int key = TableUtils.toIndexKey(resolvedKey);
+            // the bounds of fillFrameForKeyLean()
+            final long callerHiInclusive = rowHi - 1;
+            final long entryMax = posting.getEntryMaxValue();
+            final long clampedMax = entryMax >= 0 ? Math.min(callerHiInclusive, entryMax) : callerHiInclusive;
+            final long total = posting.countMatchesClamped(key, rowLo, callerHiInclusive, clampedMax);
+            if (total == Numbers.LONG_NULL) {
+                return false;
+            }
+            // what the covering cursor's open does for the workers' detached cursors, and the
+            // per-key genLookup memo: both before the first frame goes to a worker, as the chunks
+            // arrive last first
+            posting.warmForKeys(CoveringPageFrameCursor.NO_KEYS, requiredIncludeIndices);
+            if (total > 0) {
+                posting.populateCacheForKey(key);
+            }
+            descLeanReader = posting;
+            descLeanPartitionIndex = partitionIndex;
+            descLeanRemaining = total;
+            descLeanRowLo = rowLo;
+            descLeanNullMax = callerHiInclusive;
+            descLeanClampedMax = clampedMax;
+            return true;
+        }
+
+        /**
+         * The next chunk of the lean backward scan's partition, the highest not yet emitted: at
+         * most maxRowsPerFrame of the key's postings, as a metadata-only frame whose rows the
+         * worker decodes forward from the chunk's first posting.
+         */
+        private PageFrame nextLeanDescendingChunk() {
+            final long chunkRows = Math.min(descLeanChunkRows, Math.max(1, maxRowsPerFrame));
+            descLeanChunkRows = chunkRows * 2;
+            final int count = (int) Math.min(chunkRows, descLeanRemaining);
+            final long chunkBase = descLeanRemaining - count;
+            final long firstAbs;
+            if (chunkBase == 0) {
+                // no posting of the key precedes the partition's first chunk
+                firstAbs = descLeanRowLo;
+            } else {
+                firstAbs = descLeanReader.selectKthMatch(
+                        TableUtils.toIndexKey(resolvedKey), descLeanRowLo, descLeanNullMax, descLeanClampedMax, chunkBase);
+                if (firstAbs == Numbers.LONG_NULL) {
+                    // countMatchesClamped() and selectKthMatch() share their coverage predicate: a
+                    // counted partition resolves every k below its count
+                    throw CairoException.critical(0)
+                            .put("covering backward scan cannot resolve posting [k=").put(chunkBase)
+                            .put(", partitionIndex=").put(descLeanPartitionIndex).put(']');
+                }
+            }
+            descLeanRemaining = chunkBase;
+            framePostingReader = descLeanReader;
+            framePostingCursorMinValue = descLeanRowLo;
+            return finalizeFrame(count, descLeanPartitionIndex, resolvedKey, firstAbs, descLeanNullMax + 1, false);
         }
 
         /**
          * Backward scan for a negative LIMIT. The partition frame cursor was
          * opened ORDER_DESC, so it yields partitions from latest to earliest.
-         * Within each partition we split the row range [partitionLo,
-         * partitionHi) into sub-frames at most {@code maxRowsPerFrame} rows
-         * wide and emit the highest sub-frame first. Each sub-frame is read
-         * forward (ascending row ids), so rows stay ascending WITHIN a frame
-         * while the frames themselves arrive in descending order -- exactly
-         * what {@link AsyncFilteredNegativeLimitRecordCursor} expects from a
+         * With lean production a partition's postings of the key go out as
+         * metadata-only chunks of at most {@code maxRowsPerFrame} postings, the
+         * last chunk first (the scan's first chunks smaller, see descLeanChunkRows), each found from the posting metadata
+         * ({@link #openLeanDescending}, {@link #nextLeanDescendingChunk}), so
+         * reaching the tail costs O(genCount), not a walk of the key's rows.
+         * Otherwise, or for a partition that cannot be counted that way, we
+         * split the row range [partitionLo, partitionHi) into sub-frames at
+         * most {@code maxRowsPerFrame} rows wide and emit the highest sub-frame
+         * first. Either way each frame is read forward (ascending row ids), so
+         * rows stay ascending WITHIN a frame while the frames themselves arrive
+         * in descending order -- exactly what
+         * {@link AsyncFilteredNegativeLimitRecordCursor} expects from a
          * forward-scan-direction base. Because a sub-frame is at most
          * maxRowsPerFrame row ids wide it holds at most that many matching
          * rows, so a single fill (rowCap = MAX_VALUE) never parks a cursor.
@@ -4590,6 +4680,9 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
         @Nullable
         private PageFrame nextImplDescending() {
             while (true) {
+                if (descLeanRemaining > 0) {
+                    return nextLeanDescendingChunk();
+                }
                 if (descPartitionIndex >= 0) {
                     while (descSubHi > descPartitionLo) {
                         // Math.max(1, ...) keeps each sub-frame at least one row wide
@@ -4622,6 +4715,10 @@ public class CoveringIndexRecordCursorFactory implements RecordCursorFactory {
                     return null;
                 }
                 framePartitionFormat = partFrame.getPartitionFormat();
+                if (leanProduction && openLeanDescending(partFrame.getPartitionIndex(), partFrame.getRowLo(), partFrame.getRowHi())) {
+                    // a partition without the key's postings leaves nothing to emit: on to the next
+                    continue;
+                }
                 descPartitionIndex = partFrame.getPartitionIndex();
                 descPartitionLo = partFrame.getRowLo();
                 descSubHi = partFrame.getRowHi();

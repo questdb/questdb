@@ -2985,6 +2985,34 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && getOrderByDirectionOrDefault(model, 0) == IQueryModel.ORDER_DIRECTION_ASCENDING;
     }
 
+    /**
+     * Whether an unfiltered covering scan's LIMIT is a constant negative one, in the scan's own
+     * order, that the async filter's backward page-frame path serves: the single-key covering scan
+     * only, and no more rows than that path takes (cairo.sql.max.negative.limit), since the serial
+     * Limit takes any.
+     */
+    private boolean isCoveringTailLimit(CoveringIndexRecordCursorFactory covering, IQueryModel model, SqlExecutionContext executionContext) throws SqlException {
+        if (!executionContext.isParallelFilterEnabled()
+                || !covering.supportsNegativeLimitPageFrame()
+                || !coveringScanOrderMatchesQuery(model)) {
+            return false;
+        }
+        final Function limitLo = getLimitLoFunctionOnly(model, executionContext);
+        if (limitLo == null) {
+            return false;
+        }
+        try {
+            if (!limitLo.isConstant()) {
+                return false;
+            }
+            limitLo.init(null, executionContext);
+            final long limit = limitLo.getLong(null);
+            return limit != Numbers.LONG_NULL && limit < 0 && -limit <= configuration.getSqlMaxNegativeLimit();
+        } finally {
+            Misc.free(limitLo);
+        }
+    }
+
     @NotNull
     private RecordCursorFactory createFullFatJoin(
             RecordCursorFactory master,
@@ -18060,7 +18088,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             final RowCursorFactory rcf;
                             Function symbolFunc = intrinsicModel.keyValueFuncs.get(0);
                             try {
-                                if (!SqlHints.hasNoCoveringHint(model) && !model.isUpdate() && executionContext.isCoveringIndexEnabled()) {
+                                // The covering scan reads forward only: an ORDER BY ts DESC over it would be
+                                // sorted in full, where the index's backward scan reads the tail first.
+                                if (indexDirection == IndexReader.DIR_FORWARD
+                                        && !SqlHints.hasNoCoveringHint(model) && !model.isUpdate() && executionContext.isCoveringIndexEnabled()) {
                                     int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
                                     int[] coveringMapping = buildCoveringIndexMapping(
                                             reader, keyReaderColIdx, columnIndexes, queryMeta
@@ -18115,6 +18146,19 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         symbolFunc = null;
                                         if (filter != null) {
                                             return wrapCoveringWithFilter(coveringFactory, filter, intrinsicModel.filter, queryMeta, model, executionContext);
+                                        }
+                                        if (isCoveringTailLimit(coveringFactory, model, executionContext)) {
+                                            // A negative LIMIT reads the tail: the async filter's backward path
+                                            // takes the last rows from the last frames, where the serial cursor
+                                            // would decode every row before them to skip them.
+                                            return wrapCoveringWithFilter(
+                                                    coveringFactory,
+                                                    BooleanConstant.TRUE,
+                                                    expressionNodePool.next().of(CONSTANT, "true", 0, 0),
+                                                    queryMeta,
+                                                    model,
+                                                    executionContext
+                                            );
                                         }
                                         return withParallelCoveredRows(coveringFactory, model, executionContext);
                                     }
@@ -20232,6 +20276,16 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      * non-constant (e.g. bind-variable) limit has an unknown sign at compile
      * time, so we conservatively treat it as possibly negative.
      */
+    // whether a constant LIMIT is negative beyond what the async filter's backward path takes
+    private boolean exceedsNegativeLimitCap(Function limitLoFunction, SqlExecutionContext executionContext) throws SqlException {
+        if (!limitLoFunction.isConstant()) {
+            return false;
+        }
+        limitLoFunction.init(null, executionContext);
+        final long limit = limitLoFunction.getLong(null);
+        return limit != Numbers.LONG_NULL && limit < 0 && -limit > configuration.getSqlMaxNegativeLimit();
+    }
+
     private boolean mayBeNegativeLimit(Function limitLoFunction, SqlExecutionContext executionContext) throws SqlException {
         if (!limitLoFunction.isConstant()) {
             return true;
@@ -20957,8 +21011,10 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 // where LimitRecordCursorFactory computes last-N via size + skip.
                 boolean serialFallback = false;
                 if (pushLimit
-                        && !coveringFactory.supportsNegativeLimitPageFrame()
+                        && (!coveringFactory.supportsNegativeLimitPageFrame() || exceedsNegativeLimitCap(limitLoFunction, executionContext))
                         && mayBeNegativeLimit(limitLoFunction, executionContext)) {
+                    // the backward path also takes no more than cairo.sql.max.negative.limit rows,
+                    // which the serial Limit does not cap
                     pushLimit = false;
                     serialFallback = true;
                 }
