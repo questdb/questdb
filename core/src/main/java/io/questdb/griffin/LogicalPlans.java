@@ -55,6 +55,8 @@ import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.griffin.plan.logical.UnaryPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
+import io.questdb.griffin.plan.logical.WindowPlan;
+import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -81,6 +83,18 @@ public final class LogicalPlans {
             ? TreeWalk.STOP : TreeWalk.CONTINUE;
 
     private LogicalPlans() {
+    }
+
+    /**
+     * True when no expression depends on the order of the rows it is evaluated over, see {@link #isOrderIndependent}.
+     */
+    public static boolean areOrderIndependent(ObjList<? extends BoundExpression> expressions) {
+        for (int i = 0, n = expressions.size(); i < n; i++) {
+            if (!isOrderIndependent(expressions.getQuick(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public static boolean canPushJoinFilter(JoinPlan join, int source, int lastInput) {
@@ -313,6 +327,18 @@ public final class LogicalPlans {
     }
 
     /**
+     * True when the value of an aggregate function depends on the order of its input rows.
+     */
+    public static boolean hasOrderSensitiveAggregate(ObjList<FunctionExpression> aggregates) {
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
+            if (aggregates.getQuick(i).getOverload().isOrderSensitiveAggregate()) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * True when the expression reads a column of an enclosing LATERAL's outer input.
      */
     public static boolean hasOuterColumn(BoundExpression expression) {
@@ -344,10 +370,8 @@ public final class LogicalPlans {
      */
     public static boolean hasSortUnderStableProjects(LogicalPlan plan) {
         while (plan instanceof ProjectPlan project) {
-            for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-                if (!isOrderIndependent(project.getExpressions().getQuick(i))) {
-                    return false;
-                }
+            if (!areOrderIndependent(project.getExpressions())) {
+                return false;
             }
             plan = project.getChild();
         }
@@ -371,20 +395,13 @@ public final class LogicalPlans {
      * arguments of its aggregate functions depend on no row order, and no aggregate function is order-sensitive.
      */
     public static boolean isAggregateOrderIndependent(AggregatePlan aggregate) {
-        for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
-            if (!isOrderIndependent(aggregate.getGroupingExpressions().getQuick(i))) {
-                return false;
-            }
+        if (!areOrderIndependent(aggregate.getGroupingExpressions()) || hasOrderSensitiveAggregate(aggregate.getAggregates())) {
+            return false;
         }
         for (int i = 0, n = aggregate.getAggregates().size(); i < n; i++) {
             final FunctionExpression expression = aggregate.getAggregates().getQuick(i);
-            if (!expression.isAggregate() || expression.getOverload().isOrderSensitiveAggregate()) {
+            if (!expression.isAggregate() || !areOrderIndependent(expression.getArguments())) {
                 return false;
-            }
-            for (int k = 0, count = expression.getArgumentCount(); k < count; k++) {
-                if (!isOrderIndependent(expression.argumentAt(k))) {
-                    return false;
-                }
             }
         }
         return true;
@@ -477,7 +494,21 @@ public final class LogicalPlans {
      * designates no timestamp.
      */
     public static boolean isFirstInputLeading(JoinPlan join) {
-        return join.getOrderedInputs().getQuick(0) == join.getInputs().getQuick(0);
+        return orderedSteps(join).getQuick(0) == join.getInputs().getQuick(0);
+    }
+
+    /**
+     * True when the window's results do not depend on its input's row order: every window orders its rows itself, and
+     * none is a SUBSAMPLE keep flag, which selects among rows of equal timestamp in their input order.
+     */
+    public static boolean isInputOrderIgnored(WindowPlan window) {
+        for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
+            final WindowSpec spec = window.getSpecs().getQuick(i);
+            if (spec.getOrderByColumnIds().size() == 0 || spec.isSubsampleKeepFlag()) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -556,6 +587,14 @@ public final class LogicalPlans {
 
     public static boolean isOrderIndependent(BoundExpression predicate) {
         return isStableWithinExecution(predicate) && (predicate.getFunctionFlags() & BoundExpression.NON_DETERMINISTIC) == 0;
+    }
+
+    /**
+     * True when the projection hands its input's rows on in their order: it declares no designated timestamp and
+     * computes nothing that depends on row order.
+     */
+    public static boolean isOrderTransparent(ProjectPlan project) {
+        return !project.hasTimestampDeclaration() && areOrderIndependent(project.getExpressions());
     }
 
     /**
@@ -638,6 +677,26 @@ public final class LogicalPlans {
             throw new IllegalStateException("join column is outside its inputs");
         }
         return source;
+    }
+
+    /**
+     * The column id of the designated timestamp that the first {@code stepCount} of the join's {@link #orderedSteps}
+     * designate: the first input's while the join leads with it and none of those steps null-extends master rows, unless
+     * the join declares its timestamp explicitly, or replaces the rows with a standalone UNNEST; -1 otherwise.
+     */
+    public static int joinTimestampColumnId(JoinPlan join, int stepCount) {
+        if (!isFirstInputLeading(join)) {
+            return -1;
+        }
+        final ObjList<JoinInput> steps = orderedSteps(join);
+        for (int i = 1; i < stepCount; i++) {
+            final JoinInput step = steps.getQuick(i);
+            if (step.getUnnest() != null && step.getUnnest().isStandalone()
+                    || step.getJoinType().isMasterNulling() && !join.hasExplicitTimestamp()) {
+                return -1;
+            }
+        }
+        return steps.getQuick(0).getSourceOutput().getTimestampColumnId();
     }
 
     /**

@@ -101,7 +101,7 @@ final class DecorrelationDomains implements Mutable {
                         source.isVisible(c), input.getBindingAlias());
             }
         }
-        output.setTimestampIndex(output.getColumnIndexById(ctx.master.getOutput().getTimestampColumnId()));
+        output.setTimestampColumnId(LogicalPlans.joinTimestampColumnId(prefix, prefix.getOrderedInputs().size()));
         return prefix;
     }
 
@@ -178,7 +178,7 @@ final class DecorrelationDomains implements Mutable {
         join.addInput(ctx.planNodes.joinInputs.next().of(domain, JoinKind.CROSS, domainAlias(), position));
         join.getOutput().copyFrom(source.getOutput());
         join.getOutput().addMissingColumnsFrom(domain.getOutput());
-        join.getOutput().setTimestampIndex(source.getOutput().getTimestampIndex());
+        join.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, 2));
         return join;
     }
 

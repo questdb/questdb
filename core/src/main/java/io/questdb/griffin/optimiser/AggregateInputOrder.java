@@ -26,7 +26,6 @@ package io.questdb.griffin.optimiser;
 
 import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.plan.logical.AggregatePlan;
-import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.PlanVisitor;
@@ -79,10 +78,8 @@ final class AggregateInputOrder implements Mutable {
                         ? plan : removeAggregateInputOrder(sort.getChild());
             }
             case WindowPlan window -> {
-                for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
-                    if (window.getSpecs().getQuick(i).getOrderByColumnIds().size() == 0) {
-                        return plan;
-                    }
+                if (!LogicalPlans.isInputOrderIgnored(window)) {
+                    return plan;
                 }
                 final LogicalPlan input = window.getChild();
                 final LogicalPlan replacement = removeAggregateInputOrder(input);
@@ -98,24 +95,12 @@ final class AggregateInputOrder implements Mutable {
                 return plan;
             }
             case ProjectPlan project -> {
-                if (project.hasTimestampDeclaration() || project.hasUpdateConversions()) {
+                if (project.hasUpdateConversions() || !LogicalPlans.isOrderTransparent(project)) {
                     return plan;
                 }
-                for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-                    if (!LogicalPlans.isOrderIndependent(project.getExpressions().getQuick(i))) {
-                        return plan;
-                    }
-                }
                 if (replaceWithUnorderedInput(project)) {
-                    project.getOutput().setTimestampIndex(-1);
-                    final int replacementTimestampId = project.getChild().getOutput().getTimestampColumnId();
-                    for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-                        if (project.getExpressions().getQuick(i) instanceof ColumnExpression column
-                                && column.getColumnId() == replacementTimestampId) {
-                            project.getOutput().setTimestampIndex(i);
-                            break;
-                        }
-                    }
+                    project.getOutput().setTimestampIndex(LogicalPlans.projectedColumnIndex(project,
+                            project.getChild().getOutput().getTimestampColumnId()));
                 }
                 return plan;
             }

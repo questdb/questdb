@@ -354,7 +354,7 @@ public final class SqlBinder implements Mutable {
             join = ctx.planNodes.joins.next().of(position);
             join.addInput(ctx.planNodes.joinInputs.next().of(input, JoinKind.CROSS, inputAlias, position));
             joinBinder.addJoinOutput(join, input.getOutput(), inputAlias);
-            join.getOutput().setTimestampIndex(input.getOutput().getTimestampIndex());
+            join.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, 1));
         }
         for (int i = 0, n = scope.cursorSources.size(); i < n; i++) {
             final CharSequence name = uniqueCursorName(scope.cursorNames.getQuick(i), join.getOutput());

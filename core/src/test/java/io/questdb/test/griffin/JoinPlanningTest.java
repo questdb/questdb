@@ -35,6 +35,37 @@ import org.junit.Assert;
 import org.junit.Test;
 
 public class JoinPlanningTest extends AbstractCairoTest {
+    private static final String LEADING_CROSS_PLAN = """
+            Hash Join Light
+              condition: c.k=b.k
+                Cross Join
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: lp_cross_a
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: lp_cross_b
+                Hash
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: lp_cross_c
+            """;
+    private static final String TRAILING_CROSS_PLAN = """
+            Cross Join
+                Hash Join Light
+                  condition: c.k=b.k
+                    PageFrame
+                        Row forward scan
+                        Frame forward scan on: lp_cross_b
+                    Hash
+                        PageFrame
+                            Row forward scan
+                            Frame forward scan on: lp_cross_c
+                PageFrame
+                    Row forward scan
+                    Frame forward scan on: lp_cross_a
+            """;
+
     @Test
     public void testCompileTimeWhereConjunctsKeepTheirOwnBooleanValidation() throws Exception {
         assertMemoryLeak(() -> {
@@ -385,20 +416,7 @@ public class JoinPlanningTest extends AbstractCairoTest {
             assertQuery(sql).noLeakCheck().noRandomAccess().expectSize().withPlan("""
                     GroupBy vectorized: false
                       values: [sum(a.id)]
-                        Cross Join
-                            Hash Join Light
-                              condition: c.k=b.k
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: lp_cross_b
-                                Hash
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: lp_cross_c
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: lp_cross_a
-                    """).returns("sum\n500500\n");
+                    """ + TRAILING_CROSS_PLAN.indent(4)).returns("sum\n500500\n");
             assertQuery(sql).noLeakCheck().fullFatJoins().noRandomAccess().expectSize().returns("sum\n500500\n");
         });
     }
@@ -423,20 +441,7 @@ public class JoinPlanningTest extends AbstractCairoTest {
                     """;
             assertQuery("SELECT * FROM " + join).noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
                     SelectedRecord
-                        Cross Join
-                            Hash Join Light
-                              condition: c.k=b.k
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: lp_cross_b
-                                Hash
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: lp_cross_c
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: lp_cross_a
-                    """).returns("""
+                    """ + TRAILING_CROSS_PLAN.indent(4)).returns("""
                     id\tts\tk\tk1
                     1\t2020-01-01T00:00:00.000000Z\t2\t2
                     2\t2020-01-01T00:00:01.000000Z\t2\t2
@@ -448,55 +453,17 @@ public class JoinPlanningTest extends AbstractCairoTest {
                                 Encode sort
                                   keys: [ts]
                                     SelectedRecord
-                                        Cross Join
-                                            Hash Join Light
-                                              condition: c.k=b.k
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: lp_cross_b
-                                                Hash
-                                                    PageFrame
-                                                        Row forward scan
-                                                        Frame forward scan on: lp_cross_c
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_cross_a
-                            """).returns("ts\tid\n2020-01-01T00:00:00.000000Z\t1\n");
+                            """ + TRAILING_CROSS_PLAN.indent(12)).returns("ts\tid\n2020-01-01T00:00:00.000000Z\t1\n");
             assertQuery("SELECT DISTINCT a.id FROM " + join).noLeakCheck().assertsPlan("""
                     GroupBy vectorized: false
                       keys: [id]
-                        Cross Join
-                            Hash Join Light
-                              condition: c.k=b.k
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: lp_cross_b
-                                Hash
-                                    PageFrame
-                                        Row forward scan
-                                        Frame forward scan on: lp_cross_c
-                            PageFrame
-                                Row forward scan
-                                Frame forward scan on: lp_cross_a
-                    """);
+                    """ + TRAILING_CROSS_PLAN.indent(4));
             assertQuery("SELECT x.id, q.v FROM (SELECT a.id, a.ts FROM " + join + ") x ASOF JOIN lp_cross_q q")
                     .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
                             SelectedRecord
                                 AsOf Join Fast
                                     SelectedRecord
-                                        Hash Join Light
-                                          condition: c.k=b.k
-                                            Cross Join
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: lp_cross_a
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: lp_cross_b
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: lp_cross_c
+                            """ + LEADING_CROSS_PLAN.indent(12) + """
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: lp_cross_q
@@ -507,20 +474,7 @@ public class JoinPlanningTest extends AbstractCairoTest {
                               fill: none
                               values: [count(*)]
                                 SelectedRecord
-                                    Hash Join Light
-                                      condition: c.k=b.k
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_cross_a
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_cross_b
-                                        Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_cross_c
-                            """).returns("""
+                            """ + LEADING_CROSS_PLAN.indent(8)).returns("""
                             ts\tcount
                             2020-01-01T00:00:00.000000Z\t1
                             2020-01-01T00:00:01.000000Z\t1
@@ -529,130 +483,39 @@ public class JoinPlanningTest extends AbstractCairoTest {
             assertQuery("SELECT twap(a.id, a.ts) FROM " + join).noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
                     GroupBy vectorized: false
                       values: [twap(a.id,a.ts)]
-                        Hash Join Light
-                          condition: c.k=b.k
-                            Cross Join
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: lp_cross_a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: lp_cross_b
-                            Hash
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: lp_cross_c
-                    """).returns("twap\n1.5\n");
+                    """ + LEADING_CROSS_PLAN.indent(4)).returns("twap\n1.5\n");
             assertQuery("SELECT id, ts FROM (SELECT a.id, a.ts, b.k FROM " + join + ") LATEST ON ts PARTITION BY k")
                     .noLeakCheck().inferRandomAccess().sizeMayVary().timestamp("ts").withPlan("""
                             SelectedRecord
                                 LatestBy
                                     SelectedRecord
-                                        Hash Join Light
-                                          condition: c.k=b.k
-                                            Cross Join
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: lp_cross_a
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: lp_cross_b
-                                            Hash
-                                                PageFrame
-                                                    Row forward scan
-                                                    Frame forward scan on: lp_cross_c
-                            """).returns("id\tts\n3\t2020-01-01T00:00:02.000000Z\n");
+                            """ + LEADING_CROSS_PLAN.indent(12)).returns("id\tts\n3\t2020-01-01T00:00:02.000000Z\n");
             assertQuery("SELECT id, sum(id) OVER (ORDER BY ts RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW) s FROM (SELECT a.id, a.ts FROM " + join + ")")
                     .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
                             Window
                               functions: [sum(id) over (range between 1000000 preceding and current row)]
                                 SelectedRecord
-                                    Hash Join Light
-                                      condition: c.k=b.k
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_cross_a
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_cross_b
-                                        Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_cross_c
-                            """).returns("id\ts\n1\t1.0\n2\t3.0\n3\t5.0\n");
+                            """ + LEADING_CROSS_PLAN.indent(8)).returns("id\ts\n1\t1.0\n2\t3.0\n3\t5.0\n");
             assertQuery("SELECT avg(a.id, 'second', 1) OVER (ORDER BY a.ts) e FROM " + join)
                     .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
                             Window
                               functions: [avg(id, 'second', 1.0) over (rows between unbounded preceding and current row)]
                                 SelectedRecord
-                                    Hash Join Light
-                                      condition: c.k=b.k
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_cross_a
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_cross_b
-                                        Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_cross_c
-                            """).returns("e\n1.0\n1.6321205588285577\n2.496785275591945\n");
+                            """ + LEADING_CROSS_PLAN.indent(8)).returns("e\n1.0\n1.6321205588285577\n2.496785275591945\n");
             assertQuery("SELECT sum(a.id) OVER (ORDER BY a.ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) s FROM " + join)
                     .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
                             Window
                               functions: [sum(id) over (range between unbounded preceding and 1 preceding)]
                                 SelectedRecord
-                                    Hash Join Light
-                                      condition: c.k=b.k
-                                        Cross Join
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_cross_a
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_cross_b
-                                        Hash
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: lp_cross_c
-                            """).returns("s\nnull\n1.0\n3.0\n");
+                            """ + LEADING_CROSS_PLAN.indent(8)).returns("s\nnull\n1.0\n3.0\n");
             assertQuery("SELECT first(a.id), last(a.id) FROM " + join).noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
                     GroupBy vectorized: false
                       values: [first(a.id),last(a.id)]
-                        Hash Join Light
-                          condition: c.k=b.k
-                            Cross Join
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: lp_cross_a
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: lp_cross_b
-                            Hash
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: lp_cross_c
-                    """).returns("first\tlast\n1\t3\n");
+                    """ + LEADING_CROSS_PLAN.indent(4)).returns("first\tlast\n1\t3\n");
             assertQuery("SELECT * FROM (SELECT a.id, a.ts FROM " + join + ") TIMESTAMP(ts)")
                     .noLeakCheck().inferRandomAccess().sizeMayVary().timestamp("ts").withPlan("""
                             SelectedRecord
-                                Hash Join Light
-                                  condition: c.k=b.k
-                                    Cross Join
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: lp_cross_a
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: lp_cross_b
-                                    Hash
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: lp_cross_c
-                            """).returns(rows);
+                            """ + LEADING_CROSS_PLAN.indent(4)).returns(rows);
             execute("CREATE TABLE lp_cross_copy AS (SELECT a.id, a.ts FROM " + join + ")");
             assertQuery("SELECT * FROM lp_cross_copy").noLeakCheck().timestamp("ts").expectSize().returns(rows);
         });

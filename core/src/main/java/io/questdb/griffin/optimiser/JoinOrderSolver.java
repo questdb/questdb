@@ -162,9 +162,7 @@ final class JoinOrderSolver implements Mutable {
                 }
                 join.getOrderedInputs().add(input);
             }
-            if (!LogicalPlans.isFirstInputLeading(join)) {
-                join.getOutput().setTimestampIndex(-1);
-            }
+            join.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, bestOrder.size()));
         } finally {
             clear();
         }

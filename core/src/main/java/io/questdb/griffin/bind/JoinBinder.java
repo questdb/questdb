@@ -502,9 +502,7 @@ final class JoinBinder implements Mutable {
             if (hasTemporalStep) {
                 validateProvidedTimestamp(inputs.getQuick(0).getInput());
             }
-            final int firstTimestampId = inputs.getQuick(0).getSourceOutput().getTimestampColumnId();
-            int timestampId = firstTimestampId;
-            boolean hasMasterNullingJoin = false;
+            int timestampId = inputs.getQuick(0).getSourceOutput().getTimestampColumnId();
             for (int i = 1, n = inputs.size(); i < n; i++) {
                 final JoinInput step = inputs.getQuick(i);
                 final JoinDependency dependency = graph.getDependencies().getQuick(i);
@@ -516,14 +514,11 @@ final class JoinBinder implements Mutable {
                 bindJoinOnResidual(scope.joinOnNodes.getQuick(i), join, step, source, i, executionContext);
                 bindJoinResiduals(join, graph, source, i, executionContext);
                 bindTolerance(join, step, joinModel(source, modelBase, i), timestampId);
-                if (step.getJoinType().isMasterNulling() && !join.hasExplicitTimestamp()) {
-                    hasMasterNullingJoin = true;
-                    if (!isJoinedLast(graph, i)) {
-                        timestampId = -1;
-                    }
+                if (step.getJoinType().isMasterNulling() && !join.hasExplicitTimestamp() && !isJoinedLast(graph, i)) {
+                    timestampId = -1;
                 }
             }
-            join.getOutput().setTimestampIndex(hasMasterNullingJoin ? -1 : join.getOutput().getColumnIndexById(firstTimestampId));
+            join.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, inputs.size()));
 
             final int lastInput = inputs.size() - 1;
             bindJoinResiduals(join, graph, source, -1, executionContext);

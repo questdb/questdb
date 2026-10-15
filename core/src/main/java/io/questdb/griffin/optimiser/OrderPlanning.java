@@ -272,24 +272,11 @@ final class OrderPlanning implements OptimiserPass {
                 project.deriveColumnReferenceCounts(columnIds);
             }
             case FilterPlan filter -> replaceReorderedInput(filter, isReordered, isSetBranchReordered);
-            case WindowPlan window -> {
-                boolean isInputReordered = isReordered;
-                for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
-                    isInputReordered &= window.getSpecs().getQuick(i).getOrderByColumnIds().size() > 0
-                            && !window.getSpecs().getQuick(i).isSubsampleKeepFlag();
-                }
-                replaceReorderedInput(window, isInputReordered, false);
-            }
+            case WindowPlan window ->
+                    replaceReorderedInput(window, isReordered && LogicalPlans.isInputOrderIgnored(window), false);
             case JoinPlan join -> {
                 final ObjList<JoinInput> ordered = join.getOrderedInputs();
-                boolean isMasterReordered = isReordered;
-                for (int i = 1, n = ordered.size(); i < n; i++) {
-                    switch (ordered.getQuick(i).getJoinType()) {
-                        case INNER, CROSS, LEFT_OUTER -> {
-                        }
-                        default -> isMasterReordered = false;
-                    }
-                }
+                final boolean isMasterReordered = isReordered && LogicalPlans.isMasterOrderPreserved(join);
                 for (int i = 0, n = ordered.size(); i < n; i++) {
                     final JoinInput input = ordered.getQuick(i);
                     if (input.getInput() != null) {
@@ -320,12 +307,7 @@ final class OrderPlanning implements OptimiserPass {
             return;
         }
         if (plan instanceof ProjectPlan project) {
-            for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-                if (project.getExpressions().getQuick(i) instanceof ColumnExpression column && column.getColumnId() == timestampId) {
-                    project.getOutput().setTimestampIndex(i);
-                    return;
-                }
-            }
+            project.getOutput().setTimestampIndex(LogicalPlans.projectedColumnIndex(project, timestampId));
         } else if (plan instanceof WindowPlan) {
             plan.getOutput().setTimestampColumnId(timestampId);
         }
@@ -438,13 +420,7 @@ final class OrderPlanning implements OptimiserPass {
             }
             return;
         }
-        boolean isInputRowOrderRequired = false;
-        for (int i = 0, n = aggregate.getAggregates().size(); i < n; i++) {
-            if (aggregate.getAggregates().getQuick(i).getOverload().isOrderSensitiveAggregate()) {
-                isInputRowOrderRequired = true;
-                break;
-            }
-        }
+        final boolean isInputRowOrderRequired = LogicalPlans.hasOrderSensitiveAggregate(aggregate.getAggregates());
         int inputOrderColumnId = -1;
         final int orderIndex = aggregate.getAggregates().size() == 0 ? aggregate.getOutput().getColumnIndexById(orderColumnId) : -1;
         if (orderIndex >= 0 && orderIndex < aggregate.getGroupingExpressions().size()

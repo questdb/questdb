@@ -30,9 +30,9 @@ import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.bind.BindVariableServiceImpl;
 
 /**
- * Runs a test step at the points the compiler consults the context once binding is done: as it reads whether the
- * statement requires the designated timestamp of the plan it is about to plan and generate, and each time planning
- * or generation asks whether parallel filters are enabled; so a test can act between binding and a chosen point of
+ * Runs a test step at the points the compiler consults the context once binding is done: each time join ordering or
+ * generation reads whether the statement requires the designated timestamp of its plan, and each time planning or
+ * generation asks whether parallel filters are enabled; so a test can act between binding and a chosen point of
  * generation.
  */
 public class GenerationStepContext extends SqlExecutionContextImpl {

@@ -457,7 +457,6 @@ final class ColumnPruning implements OptimiserPass {
                 }
                 join.visitReads(requiredReads);
                 plan.getOutput().clear();
-                int joinTimestampId = -1;
                 for (int i = 0, n = ordered.size(); i < n; i++) {
                     final JoinInput step = ordered.getQuick(i);
                     if (step.getInput() != null) {
@@ -468,17 +467,11 @@ final class ColumnPruning implements OptimiserPass {
                     final UnnestSpec unnest = step.getUnnest();
                     if (unnest != null && unnest.isStandalone()) {
                         plan.getOutput().clear();
-                        joinTimestampId = -1;
-                    }
-                    if (i == 0) {
-                        joinTimestampId = LogicalPlans.isFirstInputLeading(join) ? input.getTimestampColumnId() : -1;
-                    } else if (step.getJoinType().isMasterNulling() && !join.hasExplicitTimestamp()) {
-                        joinTimestampId = -1;
                     }
                     final OutputSchema prefix = step.getOutput();
                     prefix.copyFrom(plan.getOutput());
                     prefix.addColumnsFrom(input, step.getBindingAlias());
-                    prefix.setTimestampColumnId(joinTimestampId);
+                    prefix.setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, i + 1));
                     plan.getOutput().copyFrom(prefix);
                 }
                 return;

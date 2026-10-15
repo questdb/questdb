@@ -156,19 +156,20 @@ public class ConcurrentWalTableRenameTest extends AbstractCairoTest {
                         SELECT x + 10 x, timestamp_sequence('2022-02-24T04', 100_000_000) ts FROM long_sequence(2)
                     ) TIMESTAMP(ts) PARTITION BY DAY WAL""");
             drainWalQueue();
-            final int[] generations = {0};
+            final int[] steps = {0};
             try (
                     SqlCompiler compiler = engine.getSqlCompiler();
                     GenerationStepContext context = new GenerationStepContext(engine)
             ) {
-                // Every generation, retries included, runs after a rename that binding did not see:
-                // the step swaps once per attempt, as the compiler turns from binding to generation.
+                // The compiler consults the context several times after binding; the step renames at the
+                // first of them only, since a second swap would move the names back to the ones binding saw.
                 context.setStep(() -> {
-                    generations[0]++;
-                    try {
-                        swapTableNames();
-                    } catch (SqlException e) {
-                        throw new RuntimeException(e);
+                    if (steps[0]++ == 0) {
+                        try {
+                            swapTableNames();
+                        } catch (SqlException e) {
+                            throw new RuntimeException(e);
+                        }
                     }
                 });
                 try (RecordCursorFactory factory = compiler.compile(
@@ -176,7 +177,7 @@ public class ConcurrentWalTableRenameTest extends AbstractCairoTest {
                         context
                 ).getRecordCursorFactory()) {
                     context.setStep(null);
-                    Assert.assertTrue(generations[0] > 0);
+                    Assert.assertTrue(steps[0] > 0);
                     try (RecordCursor ignored = factory.getCursor(sqlExecutionContext)) {
                         Assert.fail("cursor must reject names that moved to other tables");
                     } catch (TableReferenceOutOfDateException expected) {

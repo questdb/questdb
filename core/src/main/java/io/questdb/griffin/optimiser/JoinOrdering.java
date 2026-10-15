@@ -115,7 +115,7 @@ final class JoinOrdering implements OptimiserPass {
                     || !LogicalPlans.isAggregateOrderIndependent(aggregate);
             case FilterPlan filter -> isOrderVisible || !LogicalPlans.isOrderIndependent(filter.getPredicate());
             case ProjectPlan project ->
-                    isOrderVisible || project.hasTimestampDeclaration() || !isOrderIndependent(project.getExpressions());
+                    isOrderVisible || !LogicalPlans.isOrderTransparent(project);
             case LimitPlan _, DistinctPlan _ -> isOrderVisible;
             case SetOperationPlan operation ->
                     isOrderVisible && (inputIndex == 0 || operation.getOperation().isUnion());
@@ -123,15 +123,6 @@ final class JoinOrdering implements OptimiserPass {
                     inputIndex == 0 && isOrderVisible || LogicalPlans.consumesInputTimestamp(join, inputIndex);
             default -> true;
         };
-    }
-
-    private static boolean isOrderIndependent(ObjList<BoundExpression> expressions) {
-        for (int i = 0, n = expressions.size(); i < n; i++) {
-            if (!LogicalPlans.isOrderIndependent(expressions.getQuick(i))) {
-                return false;
-            }
-        }
-        return true;
     }
 
     /**

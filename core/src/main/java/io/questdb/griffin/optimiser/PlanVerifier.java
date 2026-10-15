@@ -110,7 +110,7 @@ public final class PlanVerifier {
     public static final String JOIN_ORDER = "ordered join inputs are not a permutation of the inputs";
     public static final String JOIN_OUTPUT = "join output does not list every input column exactly once";
     public static final String JOIN_SCOPE = "join step scope differs from its ordered prefix";
-    public static final String JOIN_TIMESTAMP = "join designated timestamp is not the leading input's";
+    public static final String JOIN_TIMESTAMP = "join designated timestamp is not the one its steps designate";
     public static final String LATEST_BY_ALGORITHM = "LATEST BY over a table scan has an algorithm for a derived input";
     public static final String LIMIT_APPLICATION = "LIMIT application contradicts the sort or the scan under it";
     public static final String NODE_SHARED = "node is reached through two paths";
@@ -617,8 +617,7 @@ public final class PlanVerifier {
                 fail(JOIN_OUTPUT, joinScope.getColumnId(i));
             }
         }
-        if (output.getTimestampIndex() >= 0
-                && output.getTimestampColumnId() != steps.getQuick(0).getSourceOutput().getTimestampColumnId()) {
+        if (output.getTimestampColumnId() != LogicalPlans.joinTimestampColumnId(join, steps.size())) {
             fail(JOIN_TIMESTAMP, output.getTimestampColumnId());
         }
         if (join.getFilterConjunctOrigins().size() != join.getFilterConjuncts().size()) {
