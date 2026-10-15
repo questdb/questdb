@@ -48,6 +48,7 @@ import io.questdb.cairo.sql.WindowSPI;
 import io.questdb.cairo.wal.WalPurgeJob;
 import io.questdb.cairo.wal.WalUtils;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.std.CharSequenceLongHashMap;
@@ -58,14 +59,17 @@ import io.questdb.std.LongList;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Lifecycle and catalogue tests for live views. Complements
@@ -82,6 +86,19 @@ import java.util.concurrent.atomic.AtomicInteger;
  * </ul>
  */
 public class LiveViewTest extends AbstractLiveViewTest {
+
+    // One row per symbol value s<lo>..s<hi - 1>, a second apart from midnight.
+    private static String insertDistinctSymbols(int lo, int hi) {
+        final StringBuilder sql = new StringBuilder("INSERT INTO base (ts, sym, v) VALUES ");
+        for (int i = lo; i < hi; i++) {
+            if (i > lo) {
+                sql.append(", ");
+            }
+            sql.append("('2026-01-01T00:00:").append(i < 10 ? "0" : "").append(i).append(".000000Z', 's")
+                    .append(i).append("', ").append(i).append(')');
+        }
+        return sql.toString();
+    }
 
     // Pin the test clock below all test data before each test. A non-SEED
     // view's lower bound is the CREATE wall-clock moment, and the forward-append
@@ -531,6 +548,100 @@ public class LiveViewTest extends AbstractLiveViewTest {
                     .returns("ts\tlo_sym\thi_sym\tc1\trn\n" +
                             "2026-01-01T00:00:01.000000Z\taa\t\t10\t1\n" +
                             "2026-01-01T00:00:02.000000Z\tbb\t\t20\t2\n");
+            assertNoRefreshFaults("lv");
+        });
+    }
+
+    @Test
+    public void testQueryOverAViewWhoseTableGrowsItsSymbolCapacityPlansAgainstThePooledReader() throws Exception {
+        // The view's table starts at cairo.default.symbol.capacity whatever the base declares, so
+        // the WAL apply that takes it past the auto-scale threshold rewrites its SYMBOL column.
+        // TableWriter.changeSymbolCapacity swaps _meta first, then copies and rebuilds the symbol
+        // files, and only then bumps the metadata version in _txn, so a pooled reader stays one
+        // version behind _meta until the rebuild ends. A query compiled in that window must plan
+        // against the pooled reader it runs on: planning against _meta read from disk failed every
+        // recompile with "too many cached query plan cannot be used because table schema has changed".
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 16);
+        final String[] viewDir = new String[1];
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicInteger midRewriteQueries = new AtomicInteger();
+        final AtomicReference<Throwable> queryError = new AtomicReference<>();
+        final StringSink midRewriteResult = new StringSink();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int copy(LPSZ from, LPSZ to) {
+                // The writer copies the symbol offset file after the _meta swap and before the bump.
+                if (viewDir[0] != null
+                        && Utf8s.containsAscii(from, viewDir[0])
+                        && Utf8s.containsAscii(from, "sym.o")
+                        && isArmed.compareAndSet(true, false)) {
+                    midRewriteQueries.incrementAndGet();
+                    final Thread reader = new Thread(() -> {
+                        try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
+                            TestUtils.printSql(engine, ctx, "SELECT count(), count_distinct(sym) FROM lv", midRewriteResult);
+                        } catch (Throwable th) {
+                            queryError.set(th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    });
+                    reader.start();
+                    try {
+                        reader.join();
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                }
+                return super.copy(from, to);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL CAPACITY 1024, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, sym, v, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base");
+            viewDir[0] = engine.verifyTableName("lv").getDirName();
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // Eight values stay below the 0.8 auto-scale threshold of a 16-value capacity.
+                execute(insertDistinctSymbols(0, 8));
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                drainWalQueue();
+                // Leaves an idle reader at the current metadata version in the pool.
+                assertQuery("SELECT count(), count_distinct(sym) FROM lv")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns("""
+                                count\tcount_distinct
+                                8\t8
+                                """);
+
+                // Twenty values cross the threshold: applying the view's commit grows its capacity.
+                isArmed.set(true);
+                execute(insertDistinctSymbols(8, 20));
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                drainWalQueue();
+            }
+
+            Assert.assertEquals("the query must run while the view's table rewrites its symbol capacity", 1, midRewriteQueries.get());
+            final Throwable th = queryError.get();
+            if (th != null) {
+                throw new AssertionError("a query over the view failed while its table grew the SYMBOL column", th);
+            }
+            TestUtils.assertEquals("""
+                    count\tcount_distinct
+                    20\t20
+                    """, midRewriteResult);
+            assertQuery("SELECT count(), count_distinct(sym) FROM lv")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count\tcount_distinct
+                            20\t20
+                            """);
             assertNoRefreshFaults("lv");
         });
     }

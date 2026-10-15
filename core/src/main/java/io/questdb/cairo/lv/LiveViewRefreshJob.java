@@ -164,6 +164,10 @@ import static io.questdb.cairo.wal.WalUtils.WAL_NAME_BASE;
  * </ul>
  */
 public class LiveViewRefreshJob implements Job, QuietCloseable {
+    // The invalidation reason of a live view whose base materialized view ran a full refresh.
+    // ApplyWal2TableJob sets it when it applies the mat view's TRUNCATE, and drainBaseWal
+    // re-derives it when that invalidation never became durable.
+    public static final String BASE_MAT_VIEW_REBUILT_REASON = "base materialized view was rebuilt";
     private static final Log LOG = LogFactory.getLog(LiveViewRefreshJob.class);
     // Once sparse publication and arithmetic row positions remove both O(state) and
     // O(interval) follow-up walks, reported-density A/Bs validate a four-row effective
@@ -2390,6 +2394,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // table; only then do we advance lvConsumedSeqTxn so base WAL
                 // retention releases.
                 commitLiveViewBlock(instance, walWriter, drainResult.advanceTo);
+                // Count the rows at the commit that made them durable, not at the head seal: a
+                // turn can skip the seal (a failed consumed seqTxn advance) or fail ahead of it,
+                // and the next seal would then find the table ahead of the counter and retire
+                // the timeline.
+                instance.addLvRowsTotal(drainResult.appendedRows);
             }
         }
 
@@ -2513,11 +2522,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             if (lvConsumedPersisted && appendedRows > 0) {
                 // Head-checkpoint write hook. Ordered after the apply's _txn
-                // advance and the lvConsumedSeqTxn publish so the root on disk
-                // reflects state that is also durably committed in the LV's own
-                // table. A failure here does not invalidate the view (the timeline
-                // is derived state): the previously published generation stays
-                // authoritative and the next eligible cycle retries.
+                // advance so the root on disk reflects state that is also durably
+                // committed in the LV's own table. A failure here does not
+                // invalidate the view (the timeline is derived state): the
+                // previously published generation stays authoritative and the next
+                // eligible cycle retries.
+                //
+                // The gate on the consumed seqTxn advance is not what makes the seal
+                // safe: the O3 seals run without it, for the reasons given there. A
+                // turn whose advance failed skips one seal and loses nothing else,
+                // because it counted its rows at the commit; the next cadence seals
+                // them.
                 //
                 // O3 cycles never reach this branch: detect rolls back the
                 // in-WAL-order draft and hands off to o3Replay, which writes
@@ -2831,6 +2846,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         }
                         if (appendedRows > 0) {
                             commitLiveViewBlock(instance, walWriter, effectiveSeqTxn);
+                            // Counted at the commit for the reason incrementalRefresh gives.
+                            instance.addLvRowsTotal(appendedRows);
                         }
                     }
                 }
@@ -3111,6 +3128,23 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // says never happens, and the rows it would then re-emit are the ones this
                         // arm exists to refuse.
                         advanceTo = advanceToBeforeCommit;
+                        // The apply job invalidates the view BEFORE it applies this TRUNCATE, so a
+                        // TRUNCATE the mat view has applied under a view that is still valid is an
+                        // invalidation that never became durable: its _lv.s write failed, and a
+                        // restart loaded the view valid again. The apply job never revisits an
+                        // applied seqTxn, so this stop would hold the view here for good, busy on
+                        // every pass. Re-derive the invalidation instead; refreshInstance runs it
+                        // outside the refresh latch and persists it.
+                        if (!instance.isInvalid()
+                                && !instance.hasPendingInvalidationReason()
+                                && isMatViewTruncateApplied(baseToken, txn)) {
+                            LOG.critical().$("live view stopped at a materialized view TRUNCATE its base already applied, invalidating [view=")
+                                    .$(instance.getLiveViewToken())
+                                    .$(", base=").$(baseToken)
+                                    .$(", truncateSeqTxn=").$(txn)
+                                    .I$();
+                            instance.setPendingInvalidationReason(BASE_MAT_VIEW_REBUILT_REASON);
+                        }
                         break;
                     }
                     // Non-data commit (schema change / DROP PARTITION / TRUNCATE / TTL) —
@@ -3817,6 +3851,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 flushedMaxTs = ts;
             }
             commitLiveViewBlock(instance, walWriter, advanceTo);
+            // Counted at the commit for the reason incrementalRefresh gives: everything from
+            // the apply to the seal below can fail without undoing the committed block.
+            instance.addLvRowsTotal(flushRows);
         } finally {
             // The overlays reference symbolReader, now closed; unbind them so a later
             // flush of a non-SYMBOL view cannot reuse a stale resolver. The pool keeps
@@ -4475,16 +4512,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * holds.
      * <p>
      * The two are the same number by construction on every route into a seal. The
-     * forward paths add what they appended and the apply adds the same rows to the
-     * table; a segment repair and an anchor resume re-seat the counter off the durable
-     * size before they seal. Nothing else may move either side. What breaks that is a
-     * commit whose rows the apply does not keep - a live view's table can carry
-     * {@code (timestamp, key)} dedup keys, and a commit that reaches the apply at the
-     * default mode collapses two output rows sharing the pair into the last one
-     * written, which a view may legitimately emit. The rows are gone and nothing
-     * downstream notices: the seal goes on stamping the count the view emitted into
-     * {@code lvRowPosition}, and a ladder whose positions overstate the output is not
-     * something a later restart can detect, only fail on.
+     * forward paths add what they commit, at the commit, and the apply adds the same
+     * rows to the table; a segment repair and an anchor resume re-seat the counter off
+     * the durable size and add what they replayed before they seal. Nothing else may
+     * move either side. What breaks that is a commit whose rows the apply does not
+     * keep - a live view's table can carry {@code (timestamp, key)} dedup keys, and a
+     * commit that reaches the apply at the default mode collapses two output rows
+     * sharing the pair into the last one written, which a view may legitimately emit.
+     * The rows are gone and nothing downstream notices: the seal goes on stamping the
+     * count the view emitted into {@code lvRowPosition}, and a ladder whose positions
+     * overstate the output is not something a later restart can detect, only fail on.
      * <p>
      * So the drift is caught here, one read before the number becomes durable, rather
      * than at the restart that would have failed on it. A seal that finds it re-seats
@@ -4541,6 +4578,30 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         instance.setHeadCheckpoint(Numbers.LONG_NULL, Numbers.LONG_NULL, Numbers.LONG_NULL, 0L, Numbers.LONG_NULL);
         retireCheckpointTimeline(instance);
         return false;
+    }
+
+    /**
+     * Whether the materialized view {@code baseToken} has applied {@code truncateSeqTxn}. The
+     * tracker's writer txn can trail the durable {@code _txn}, and it reads -1 until an apply
+     * warms it - the state a restart leaves a mat view in that has nothing new to apply - so a
+     * miss is confirmed against the table. A read that fails answers false: the caller then keeps
+     * the stop it takes anyway and asks again on its next pass.
+     */
+    private boolean isMatViewTruncateApplied(TableToken baseToken, long truncateSeqTxn) {
+        if (engine.getTableSequencerAPI().getTxnTracker(baseToken).getWriterTxn() >= truncateSeqTxn) {
+            return true;
+        }
+        try (TableReader reader = engine.getReader(baseToken)) {
+            return reader.getSeqTxn() >= truncateSeqTxn;
+        } catch (CairoException e) {
+            LOG.info().$("could not read the applied seqTxn of a live view's base materialized view [base=")
+                    .$(baseToken)
+                    .$(", truncateSeqTxn=").$(truncateSeqTxn)
+                    .$(", msg=").$safe(e.getFlyweightMessage())
+                    .$(", errno=").$(e.getErrno())
+                    .I$();
+            return false;
+        }
     }
 
     /**
@@ -8750,19 +8811,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // watermark, which the state file records whether or not the advance went
                 // through. Skipping the seal there would leave the splice's newest root below
                 // the frontier under a generation already standing at this commit, so a
-                // restart would fail its own row count and rebuild from the applied base; it
-                // would also leave the lifetime row counter this call advances short of the
-                // table, and the next seal would retire the timeline over the mismatch.
+                // restart would fail its own row count and rebuild from the applied base.
+                //
+                // A keyed resume kept the durable counter in place and owes only exact
+                // inserts, whichever way it published. A whole-range replacement rewound to
+                // the anchor and owes every row above it. The seal reads the lifetime counter
+                // against the table, so it owes them before the seal runs.
+                final long owedRows = isKeyed ? insertedRowDelta : appendedRows;
+                instance.addLvRowsTotal(owedRows);
                 final long headSealStart = System.nanoTime();
                 headSealed = maybeWriteHeadCheckpoint(
                         instance,
                         windowFactory,
                         committedSeqTxn,
                         replayMaxTs,
-                        // A keyed resume kept the durable counter in place and owes only
-                        // exact inserts, whichever way it published. A whole-range
-                        // replacement rewound to the anchor and owes every row above it.
-                        isKeyed ? insertedRowDelta : appendedRows,
+                        owedRows,
                         true,
                         timelineSplice == null || replayMaxTs > timelineSplice.getHeadRootMaxTimestamp()
                 );

@@ -597,9 +597,8 @@ public class LiveViewInstance implements QuietCloseable {
     // matching the effective lvRowPosition of the newest logical checkpoint.
     // Initialised to 0 on construction. The restart restore and the O3 resume
     // replay stamp this from the restored root after a successful restore;
-    // every subsequent {@link #addRowsSinceLastCheckpointWritten(long)} bumps
-    // both this and the cadence counter so writes and restores stay aligned.
-    // Mutated under the refresh latch only.
+    // every subsequent {@link #addLvRowsTotal(long)} bumps it so writes and
+    // restores stay aligned. Mutated under the refresh latch only.
     private long lvRowsTotal;
     // Cumulative count of live-view rows re-emitted by boundary-rebuild O3 replays
     // (o3HeadMissReplay - the full recompute from viewLowerBoundTimestamp). Surfaced
@@ -897,16 +896,25 @@ public class LiveViewInstance implements QuietCloseable {
     }
 
     /**
-     * Accumulates {@code n} into both {@link #rowsSinceLastCheckpointWritten}
-     * (the cadence counter, which resets on each fresh head via
-     * {@link #setHeadCheckpoint(long, long, long, long, long)}) and
-     * {@link #lvRowsTotal} (the lifetime counter, which mirrors
-     * {@code MANIFEST.lvRowPosition} and persists across restarts). Called
-     * from the refresh worker after each successful LV WAL apply commit.
+     * Accumulates {@code n} into {@link #lvRowsTotal}, the lifetime counter, which
+     * mirrors {@code MANIFEST.lvRowPosition} and persists across restarts. The
+     * forward paths call it right after they commit a block to the view's WAL, so
+     * a failure between that commit and the head seal cannot leave the counter
+     * short of the rows the table will hold. Every other path re-seats the counter
+     * or adds to it just before it seals.
+     */
+    public void addLvRowsTotal(long n) {
+        lvRowsTotal += n;
+    }
+
+    /**
+     * Accumulates {@code n} into {@link #rowsSinceLastCheckpointWritten}, the
+     * cadence counter, which resets on each fresh head via
+     * {@link #setHeadCheckpoint(long, long, long, long, long)}. Called from the
+     * head seal, which reads it against the row cadence.
      */
     public void addRowsSinceLastCheckpointWritten(long n) {
         rowsSinceLastCheckpointWritten += n;
-        lvRowsTotal += n;
     }
 
     /**

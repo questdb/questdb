@@ -88,6 +88,83 @@ public class LiveViewMatViewBaseTest extends AbstractLiveViewTest {
     private static final String VIEW_ROWS_QUERY = "SELECT ts, k, s, c FROM lv_on_mv ORDER BY k, ts";
 
     @Test
+    public void testAMatViewRebuildWhoseInvalidationCouldNotPersistStillInvalidatesTheViewAfterARestart() throws Exception {
+        // The apply job invalidates a live view over a mat view when it applies the TRUNCATE a full
+        // refresh starts with, and persists that to _lv.s best effort. The refresh worker stops
+        // every drain at the TRUNCATE until the view is invalid. When the persist failed, a restart
+        // loaded the view valid again, and since the apply job never applies that seqTxn again,
+        // the view stayed active, stuck at the TRUNCATE, and its worker reported work on every
+        // pass. The drain must re-derive the invalidation and make it durable.
+        setProperty(PropertyKey.DEV_MODE_ENABLED, "true");
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            execute("CREATE TABLE base (ts TIMESTAMP, k SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE MATERIALIZED VIEW mvbase AS (" +
+                    "SELECT ts, k, avg(v) AS av FROM base SAMPLE BY 1h) PARTITION BY DAY");
+            drainWalAndMatViewQueues(engine);
+            setCurrentMicros(0L);
+            execute("CREATE LIVE VIEW lv_on_mv FLUSH EVERY 100ms START FROM NOW AS SELECT ts, k, avg(av) OVER (" +
+                    "PARTITION BY k ORDER BY ts ROWS BETWEEN 3 PRECEDING AND CURRENT ROW) AS a FROM mvbase");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("""
+                        INSERT INTO base (ts, k, v) VALUES
+                            ('2026-01-01T00:00:00.000000Z', 'a', 1.0),
+                            ('2026-01-01T01:00:00.000000Z', 'a', 2.0),
+                            ('2026-01-01T02:00:00.000000Z', 'a', 3.0)
+                        """);
+                drainWalAndMatViewQueues(engine);
+                driveRefreshToQuiescence(job);
+            }
+            execute("TRUNCATE TABLE base");
+            execute("INSERT INTO base (ts, k, v) VALUES ('2026-01-01T05:00:00.000000Z', 'a', 100.0)");
+            drainWalQueue();
+            execute("REFRESH MATERIALIZED VIEW mvbase FULL");
+            drainMatViewQueue(engine);
+            // The apply job reaches the mat view's TRUNCATE and invalidates the view, but cannot
+            // write its _lv.s.
+            fault.armViewStateOpen();
+            drainWalQueue();
+            Assert.assertTrue("the invalidation must have tried to persist", fault.hasViewStateOpenFired());
+            final String invalidated = """
+                    view_name\tview_status\tinvalidation_reason
+                    lv_on_mv\tinvalid\tbase materialized view was rebuilt
+                    """;
+            assertQuery("SELECT view_name, view_status, invalidation_reason FROM live_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(invalidated);
+
+            // The restart loads the view from _lv.s, which still says valid.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            int busyPasses = 0;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                for (int i = 0; i < 100; i++) {
+                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+                    drainWalQueue();
+                    if (drainJob(job)) {
+                        busyPasses++;
+                    }
+                }
+            }
+            assertQuery("SELECT view_name, view_status, invalidation_reason FROM live_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(invalidated);
+            Assert.assertTrue("an invalid view must leave its worker idle, busy passes: " + busyPasses, busyPasses < 100);
+
+            // The re-derived invalidation is durable: another restart loads the view invalid
+            // before any refresh pass runs.
+            engine.getLiveViewRegistry().clear();
+            engine.buildViewGraphs();
+            assertQuery("SELECT view_name, view_status, invalidation_reason FROM live_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(invalidated);
+        });
+    }
+
+    @Test
     public void testARebuildOverAMatViewWhoseBacklogIsUnreadableRunsWithoutTheGuard() throws Exception {
         // The backlog of a materialized view may hold a REPLACE_RANGE or a TRUNCATE in any commit
         // the rebuild cannot read, so when its WAL is gone the restatement guard has nothing it

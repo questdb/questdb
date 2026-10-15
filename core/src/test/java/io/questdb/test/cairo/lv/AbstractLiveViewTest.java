@@ -611,9 +611,13 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
 
     /**
      * Runs {@code test}, a test method whose body runs under the plain {@code assertMemoryLeak},
-     * with {@code cairo.commit.mode} set to {@code commitMode}, then asserts that every kind of
-     * checkpoint file in {@code fileKinds} (see {@link LiveViewCheckpointDiskFullFault#kindOf})
-     * was synced with the flag that mode calls for, and never with the other. The test
+     * with {@code cairo.commit.mode} set to {@code commitMode}, then asserts what that mode asks
+     * of every kind of checkpoint file in {@code fileKinds} (see
+     * {@link LiveViewCheckpointDiskFullFault#kindOf}). The sync mode must sync each kind with the
+     * synchronous flag and never with the async one. The async mode must never sync one with the
+     * synchronous flag, which is the wait it exists to avoid. Whether its sync reaches the facade
+     * at all is the mapped memory's choice: since #7912, {@code MemoryCMARWImpl} drops an async
+     * sync, as {@code msync(MS_ASYNC)} has been a no-op on Linux since 2.6.19. The test
      * configuration defaults to nosync, which skips the sync branch of every checkpoint writer.
      */
     protected void assertCheckpointFilesSyncInCommitMode(
@@ -629,15 +633,23 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
         test.run();
         for (int i = 0, n = fileKinds.size(); i < n; i++) {
             final String kind = fileKinds.getQuick(i);
-            Assert.assertTrue(
-                    "the " + commitMode + " commit mode must sync " + kind,
-                    syncs.getSyncCount(kind, isAsync) > 0
-            );
-            Assert.assertEquals(
-                    "the " + commitMode + " commit mode must not sync " + kind + " with the other flag",
-                    0,
-                    syncs.getSyncCount(kind, !isAsync)
-            );
+            if (isAsync) {
+                Assert.assertEquals(
+                        "the async commit mode must not sync " + kind + " synchronously",
+                        0,
+                        syncs.getSyncCount(kind, false)
+                );
+            } else {
+                Assert.assertTrue(
+                        "the sync commit mode must sync " + kind,
+                        syncs.getSyncCount(kind, false) > 0
+                );
+                Assert.assertEquals(
+                        "the sync commit mode must not sync " + kind + " with the async flag",
+                        0,
+                        syncs.getSyncCount(kind, true)
+                );
+            }
         }
     }
 

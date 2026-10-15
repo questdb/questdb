@@ -2992,8 +2992,10 @@ public class CairoEngine implements Closeable, WriterSource {
             // On persist failure the view still flips invalid in-memory: invalidation is a terminal
             // circuit-breaker that must stop the refresh worker even when _lv.s is unwritable (a broken
             // disk is exactly what exhausts the flush-retry budget driving this call). A view
-            // invalidated in-memory only re-derives the same invalid state on restart - it loads valid,
-            // resumes, and hits the same failure - so the terminal outcome is unchanged.
+            // invalidated in-memory only loads valid on restart and resumes. Both callers' causes are
+            // re-checked there: the ahead-of-base guard runs on every scan, and a fault that persists
+            // exhausts the flush-retry budget again. A fault that has cleared lets the view refresh on
+            // from its durable state, which is consistent.
             try (
                     BlockFileWriter blockFileWriter = new BlockFileWriter(configuration.getFilesFacade(), configuration.getCommitMode());
                     Path path = new Path()
@@ -4463,8 +4465,11 @@ public class CairoEngine implements Closeable, WriterSource {
                     // invalidateLiveView: WalPurgeJob releases the floor on the in-memory bit, so
                     // writing the durable state first keeps a concurrent purge from releasing the
                     // floor while _lv.s still records the view as valid. On persist failure the view
-                    // still flips invalid in-memory (best-effort, terminal) and re-derives the same
-                    // state on restart.
+                    // still flips invalid in-memory (best-effort, terminal), but a restart loads it
+                    // valid. Only a cause the restart can see again re-derives the invalidation:
+                    // buildViewGraphs synthesizes one for a dropped or renamed base, and drainBaseWal
+                    // for a mat view TRUNCATE the base already applied. A one-shot cause that the
+                    // apply job never revisits, such as an UPDATE, is lost, and the view resumes.
                     path.of(configuration.getDbRoot()).concat(instance.getLiveViewToken()).concat(LiveViewState.LIVE_VIEW_STATE_FILE_NAME);
                     try {
                         blockFileWriter.of(path.$());

@@ -159,6 +159,26 @@ public class LiveViewCheckpointMetaSegmentWriter implements Closeable {
         // Close before rename: on Windows the rename fails with the file open,
         // and on POSIX it avoids a stale mapping to the pre-rename inode.
         mem.close(true, Vm.TRUNCATE_TO_POINTER);
+        // The close ignores a refused truncate (Vm.bestEffortTruncate). The metadata reader
+        // bounds its reads by page, so a longer file would still restore, but the catalogue
+        // would record a length the file does not have. Fail the seal instead, as the data
+        // segment writer does.
+        final long actualLength = ff.length(tmpPath.$());
+        if (actualLength != total) {
+            final long failedSegmentId = segmentId;
+            ff.removeQuiet(tmpPath.$());
+            isOpen = false;
+            pageHeaderOffset = -1;
+            pageCount = 0;
+            segmentId = -1;
+            throw CairoException.critical(0)
+                    .put("could not truncate live view checkpoint metadata segment to its written length, segmentId=")
+                    .put(failedSegmentId)
+                    .put(", expected=")
+                    .put(total)
+                    .put(", actual=")
+                    .put(actualLength);
+        }
 
         LiveViewCheckpointLayout.metaSegmentPath(finalPath, checkpointsDirCopy, segmentId);
         // Segment ids are allocated past every published one, so the final name

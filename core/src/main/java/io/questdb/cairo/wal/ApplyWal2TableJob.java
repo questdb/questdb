@@ -37,6 +37,7 @@ import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.file.BlockFileWriter;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.mv.MatViewRefreshTask;
 import io.questdb.cairo.mv.MatViewState;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
@@ -870,7 +871,7 @@ public class ApplyWal2TableJob extends AbstractQueueConsumerJob<WalTxnNotificati
                 if (writer.getTableToken().isMatView()) {
                     engine.invalidateLiveViewsForBaseTable(
                             writer.getTableToken(),
-                            "base materialized view was rebuilt"
+                            LiveViewRefreshJob.BASE_MAT_VIEW_REBUILT_REASON
                     );
                 }
                 long txn = writer.getTxn();

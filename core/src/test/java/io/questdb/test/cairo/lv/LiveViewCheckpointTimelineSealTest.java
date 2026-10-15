@@ -385,10 +385,12 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         // commit mode makes part of every seal. The walk fails, one seal at a time, the first two
         // calls of each op one wide seal makes on each kind of file it writes: the open and the
         // growth of its data segment and of its metadata segments, its retirement queue and its
-        // superblock. A full disk is transient, so after each one the seal must have failed
-        // without moving the view: the published generation is still the head and the view stays
-        // active. The next seal must publish and reclaim whatever the failed one staged, and a
-        // restart must restore from the timeline.
+        // superblock. It also refuses the truncate that shrinks a data or metadata segment to the
+        // bytes it wrote when the seal closes it (EIO, or ENOSPC on a copy-on-write filesystem).
+        // A full disk is transient, so after each one the seal must have failed without moving
+        // the view: the published generation is still the head and the view stays active. The
+        // next seal must publish and reclaim whatever the failed one staged, and a restart must
+        // restore from the timeline.
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         // The sweep after a seal writes the retirement queue again, best effort, and
         // testASweepThatCannotWriteItsRetirementQueueLeavesTheSealedHeadInPlace covers it. With
@@ -416,6 +418,19 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                     }
                 }
             }
+            // Only the segments carry a catalogued length. A refused truncate of the retirement
+            // queue leaves a queue that its reader rebuilds from the catalogue, so it does not
+            // fail the seal and the walk leaves it out.
+            final ObjList<String> truncates = fault.getRecorded(LiveViewCheckpointDiskFullFault.OP_TRUNCATE);
+            final ObjList<String> segmentKinds = new ObjList<>();
+            segmentKinds.add(LiveViewCheckpointLayout.DATA_DIR_NAME);
+            segmentKinds.add(LiveViewCheckpointLayout.META_DIR_NAME);
+            for (int k = 0, kn = segmentKinds.size(); k < kn; k++) {
+                final String kind = segmentKinds.getQuick(k);
+                for (int nth = 1, last = Math.min(2, countCalls(truncates, kind)); nth <= last; nth++) {
+                    commit = failWideSealAndRecover(fault, LiveViewCheckpointDiskFullFault.OP_TRUNCATE, kind, nth, commit, failures, reclaimed);
+                }
+            }
             // A seal that fails part-way through a segment fails on the segment's growth, past
             // the open that created it.
             assertWalked(failures, "allocate:data", 2);
@@ -428,10 +443,73 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
             assertWalked(failures, "msync:meta", 1);
             assertWalked(failures, "msync:" + LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME, 1);
             assertWalked(failures, "msync:" + LiveViewCheckpointLayout.TIMELINE_FILE_NAME, 1);
+            assertWalked(failures, "truncate:data", 1);
+            assertWalked(failures, "truncate:meta", 1);
             Assert.assertTrue(
                     "some failed seal must leave files behind for the next one to reclaim, failed " + failures,
                     reclaimed.size() > 0
             );
+        });
+    }
+
+    @Test
+    public void testARefusedDataSegmentTruncateDoesNotBlockAnO3RepairOverALossyBase() throws Exception {
+        // A seal closes its data segment with a truncate back to the bytes it wrote, and the data
+        // segment reader accepts only the exact length the catalogue records. When that truncate
+        // is refused, the seal must fail instead of publishing a root nothing can read. A late
+        // row whose O3 repair resumed from such a root could not restore its anchor and fell back
+        // to rebuilding the whole view from the applied base, and over a base that lost a day the
+        // view still holds, the restatement guard refused that rebuild: invalid / rebuild_blocked.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 0);
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        assertMemoryLeak(fault, () -> {
+            createView(false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('2025-12-31T23:00:00.000000Z', 's1', 5)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+            }
+            int commit = recordWideSeal(fault);
+            // Freeze-and-continue: the view keeps the row of the day its base drops.
+            execute("ALTER TABLE base DROP PARTITION LIST '2025-12-31'");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final long sealFailures = instance.getCheckpointSealFailures();
+                fault.arm(LiveViewCheckpointDiskFullFault.OP_TRUNCATE, LiveViewCheckpointLayout.DATA_DIR_NAME, 1);
+                // The seal of the root at 2026-01-01T00:01:20.
+                commitWideAndRefresh(job, ++commit);
+                fault.disarm();
+                Assert.assertNotNull("the seal must reach its data segment's truncate", fault.getFailedFile());
+                Assert.assertEquals("a refused truncate must fail the seal", sealFailures + 1, instance.getCheckpointSealFailures());
+                commitWideAndRefresh(job, ++commit);
+                commitWideAndRefresh(job, ++commit);
+                // Lands between 00:01:20 and the next root, so the repair resumes below it.
+                setCurrentMicros(currentMicros + 200_000);
+                execute("INSERT INTO base VALUES ('2026-01-01T00:01:30.000000Z', 's7', 777)");
+                driveRefreshToQuiescence(job);
+                assertNoRefreshFaults("lv");
+            }
+            assertQuery("SELECT view_name, view_status, checkpoint_recovery_phase FROM live_views()")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_name\tview_status\tcheckpoint_recovery_phase
+                            lv\tactive\t
+                            """);
+            // The view still holds the dropped day's row.
+            assertQuery("SELECT count() FROM lv WHERE ts < '2026-01-01'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            1
+                            """);
         });
     }
 

@@ -3828,8 +3828,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // Row k draws its key from the first 1 + k / 8 values, so a value new to the view turns
         // up every few rows, all the way through, and older values keep coming back. The values
         // stay below the tables' initial symbol capacity, set above: a capacity growth rewrites
-        // the symbol column, and a reader that spins through such a rewrite can run out of plan
-        // recompile attempts, which is not what this soak is about.
+        // the symbol column and bumps the table's metadata version, and a read that compiled
+        // before the bump gets the stale-plan signal from getCursor. HTTP and PGWire recompile
+        // on it; these readers do not, and that signal is not what this soak is about.
         final int symbolCount = 1 + rowCount / 8;
         final ObjList<String> symbols = new ObjList<>();
         for (int k = 0; k < rowCount; k++) {

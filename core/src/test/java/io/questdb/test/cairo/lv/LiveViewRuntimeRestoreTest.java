@@ -353,6 +353,8 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             + ERRNO_EIO
             + "] could not open read-only \\[file=[^\\]]*created_at\\.d";
     private static final String RESTORED = "live view restored its runtime from the checkpoint timeline";
+    // Logged by a seal that finds the view's lifetime row counter out of step with its table.
+    private static final String ROW_COUNT_RETIRES_THE_TIMELINE = "live view emitted row count does not match its durable output, retiring the timeline";
     // Logged by a whole-view rebuild that runs without the restatement guard.
     private static final String GUARD_STAND_DOWN = "live view rebuild from the applied base runs without the restatement guard";
     // Logged by the rebuild a deduplicating base's restore falls back to when its replay of the raw
@@ -3635,6 +3637,9 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             assertViewRows(sixAccountRows + acctSevenRow + "2026-01-02T10:10:00.000000Z\tacct-8\t512.0\t1\n");
             assertAccountCountsMatchTheBase(sixAccounts + "acct-7\t1\nacct-8\t1\n");
             assertAccountRowsMatchTheBase("acct-3", "2026-01-02T09:20:00.000000Z\tacct-3\n");
+            // The flushes that skipped their seal, or failed ahead of it, counted their rows at the
+            // commit, so no later seal finds the counter short of the table.
+            assertTimelineSurvivesARestart(sixAccountRows + acctSevenRow + "2026-01-02T10:10:00.000000Z\tacct-8\t512.0\t1\n");
         });
     }
 
@@ -4489,6 +4494,26 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             capture.assertOnlyOnce(TIER_TRAILS_REBUILT);
             capture.assertNotLogged(VIEW_BLOCK_PENDING);
         });
+    }
+
+    @Test
+    public void testADedupForwardAppendThatCannotPersistItsWatermarkKeepsItsTimeline() throws Exception {
+        assertForwardAppendThatCannotPersistItsWatermarkKeepsItsTimeline(true, false);
+    }
+
+    @Test
+    public void testADedupForwardAppendThatCannotPersistItsWatermarkKeepsItsTimelineOverALossyBase() throws Exception {
+        assertForwardAppendThatCannotPersistItsWatermarkKeepsItsTimeline(true, true);
+    }
+
+    @Test
+    public void testAnIncrementalApplyThatCannotPersistItsWatermarkKeepsItsTimeline() throws Exception {
+        assertForwardAppendThatCannotPersistItsWatermarkKeepsItsTimeline(false, false);
+    }
+
+    @Test
+    public void testAnIncrementalApplyThatCannotPersistItsWatermarkKeepsItsTimelineOverALossyBase() throws Exception {
+        assertForwardAppendThatCannotPersistItsWatermarkKeepsItsTimeline(false, true);
     }
 
     @Test
@@ -6799,6 +6824,72 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     /**
+     * A forward append over a deduplicating base lands its block and then cannot persist the
+     * consumed watermark, so the turn skips its head seal. The rows are in the view's table all the
+     * same, and the next seal must find the view's lifetime row counter level with it: a counter
+     * that the skipped seal left short made the next seal retire the timeline, and a restart then
+     * rebuilt the view from the applied base, which the restatement guard refuses over a base that
+     * lost rows the view keeps.
+     *
+     * @param isDedupedCommit whether the turn's commit collapses two rows under one key, which
+     *                        sends it through the dedup forward append, rather than one the
+     *                        incremental apply drains from the raw WAL
+     * @param isBaseLossy     whether the base dropped a day the view keeps before the fault
+     */
+    private void assertForwardAppendThatCannotPersistItsWatermarkKeepsItsTimeline(
+            boolean isDedupedCommit,
+            boolean isBaseLossy
+    ) throws Exception {
+        // Every turn that lands rows seals, so the turn after the fault reaches the row check.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("DEDUP UPSERT KEYS(created_at, account_id)");
+            createView();
+            insertAndRefresh(FOUR_ROWS);
+            final String fourRows = """
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+                    2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+                    2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+                    """;
+            if (isBaseLossy) {
+                // Freeze-and-continue: the view keeps day one's rows.
+                dropPartitionAndRefresh("2026-01-01", fourRows);
+            }
+            final String sixRows = fourRows + """
+                    2026-01-02T09:20:00.000000Z\tacct-3\t16.0\t1
+                    2026-01-02T09:30:00.000000Z\tacct-4\t32.0\t1
+                    """;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute(isDedupedCommit
+                        ? "INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-3', 30.0), ('2026-01-02T09:20:00.000000Z', 'acct-3', 16.0)"
+                        : "INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-3', 16.0)");
+                drainWalQueue();
+                fault.armViewStateOpen();
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue("the turn's first write of the view's state file must have been failed", fault.hasViewStateOpenFired());
+                capture.drain();
+                capture.assertLogged(isDedupedCommit
+                        ? "could not advance live view consumed seqTxn after dedup forward append [view=lv, "
+                        : "could not advance live view consumed seqTxn after apply [view=lv, ");
+                assertNoRefreshFaults("lv");
+
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:30:00.000000Z', 'acct-4', 32.0)");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            assertNoRefreshFaults("lv");
+            assertViewRows(sixRows);
+            assertTimelineSurvivesARestart(sixRows);
+            if (!isBaseLossy) {
+                assertViewRowsMatchRecompute(sixRows);
+            }
+        });
+    }
+
+    /**
      * A reader that pins the tier across a mid-drain restore keeps the restore, and the drain
      * behind it, from taking back the ids the discarded turns interned. That drain interns its
      * accounts above them and the flush commits them below, so the lead's ids are out of step
@@ -7021,6 +7112,9 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             assertViewRows(sixAccountRows + acctSevenRow + "2026-01-02T10:10:00.000000Z\tacct-8\t512.0\t1\n");
             assertAccountCountsMatchTheBase(sixAccounts + "acct-7\t1\nacct-8\t1\n");
             assertAccountRowsMatchTheBase("acct-3", "2026-01-02T09:20:00.000000Z\tacct-3\n");
+            // The flushes that skipped their seal, or failed ahead of it, counted their rows at the
+            // commit, so no later seal finds the counter short of the table.
+            assertTimelineSurvivesARestart(sixAccountRows + acctSevenRow + "2026-01-02T10:10:00.000000Z\tacct-8\t512.0\t1\n");
         });
     }
 
@@ -8398,6 +8492,24 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 "restored live view from checkpoint timeline \\[view=lv, .*replayedRows=" + replayedRows + "]"
         );
         capture.assertNotLogged("live view is dropping in-order rows below its START FROM boundary");
+    }
+
+    /**
+     * Asserts that no seal so far found the view's lifetime row counter out of step with its
+     * table, and that a restart then restores the view from its timeline, with nothing rebuilt or
+     * blocked, over {@code expectedRows}.
+     */
+    private void assertTimelineSurvivesARestart(String expectedRows) throws Exception {
+        capture.drain();
+        capture.assertNotLogged(ROW_COUNT_RETIRES_THE_TIMELINE);
+        shutdown();
+        restart();
+        assertRestoredFromTimeline("lv");
+        final LiveViewInstance restored = instance("lv");
+        Assert.assertFalse("the view must keep refreshing", restored.isCheckpointRecoveryBlocked());
+        Assert.assertFalse(restored.isInvalid());
+        assertNoRefreshFaults("lv");
+        assertViewRows(expectedRows);
     }
 
     /**
