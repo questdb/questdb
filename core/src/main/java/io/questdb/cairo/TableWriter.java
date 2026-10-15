@@ -1210,8 +1210,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         // final name of partition folder after attachment
         setPathForNativePartition(path.trimTo(pathSize), timestampType, partitionBy, timestamp, getTxn());
         if (ff.exists(path.$())) {
-            // Very unlikely since txn is part of the folder name
-            return AttachDetachStatus.ATTACH_ERR_DIR_EXISTS;
+            // No committed partition bears the current txn, so an earlier failed attempt of this attach left the
+            // directory. Skipping the attach would lose it, and a later partition could reuse the name.
+            final CairoException e = AttachDetachStatus.ATTACH_ERR_DIR_EXISTS.getException(
+                    0,
+                    AttachDetachStatus.ATTACH_ERR_DIR_EXISTS,
+                    tableToken,
+                    timestampType,
+                    partitionBy,
+                    timestamp
+            ).put(", an earlier failed attach left its directory: remove it and ").put(tableToken.isWal() ? "RESUME WAL" : "attach again")
+                    .put(" [path=").put(path).put(']');
+            path.trimTo(pathSize);
+            LOG.critical().$safe(e.getFlyweightMessage()).$();
+            throw e;
         }
 
         Path detachedPath = Path.PATH.get().of(configuration.getDbRoot()).concat(tableToken);
@@ -1262,25 +1274,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 // in case of an error it has to be clean up
 
                 final boolean isCopied = forceRenamePartitionDir && configuration.attachPartitionCopy() && !isSoftLink; // soft links are read-only, no copy involved
-                if (isCopied) {
-                    // Copy partition if configured to do so, and it's not CSV import
-                    if (ff.copyRecursive(detachedPath.trimTo(detachedRootLen), path, configuration.getMkDirMode()) == 0) {
-                        LOG.info().$("copied partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
-                    } else {
-                        LOG.error().$("could not copy [errno=").$(ff.errno()).$(", from=").$(detachedPath).$(", to=").$(path).I$();
-                        return AttachDetachStatus.ATTACH_ERR_COPY;
-                    }
-                } else if (defersPartitionMoves()) {
-                    // A crash before a save point covers this attach rewinds below it, and the WAL replay must find
-                    // .attachable again, so it stays until then.
-                    if (!linkAttachable(detachedPath.trimTo(detachedRootLen), isSoftLink)) {
-                        LOG.error().$("could not link [errno=").$(ff.errno()).$(", from=").$(detachedPath).$(", to=").$(path).I$();
-                        ff.unlinkOrRemove(path, LOG);
-                        return AttachDetachStatus.ATTACH_ERR_COPY;
-                    }
-                    keepsAttachable = true;
-                    LOG.info().$("linked partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
-                } else {
+                // A rename moves the source whole or not at all. A copy or a link builds the destination file by file,
+                // so its failure has a partial destination to remove.
+                final boolean isRenamed = !isCopied && !defersPartitionMoves();
+                if (isRenamed) {
                     if (ff.rename(detachedPath.trimTo(detachedRootLen).$(), path.$()) == FILES_RENAME_OK) {
                         LOG.info().$("renamed partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
                     } else {
@@ -1291,6 +1288,25 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 final int partitionPathLen = path.size();
                 try {
+                    if (isCopied) {
+                        // Copy partition if configured to do so, and it's not CSV import
+                        if (ff.copyRecursive(detachedPath.trimTo(detachedRootLen), path, configuration.getMkDirMode()) == 0) {
+                            LOG.info().$("copied partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
+                        } else {
+                            LOG.error().$("could not copy [errno=").$(ff.errno()).$(", from=").$(detachedPath).$(", to=").$(path).I$();
+                            return AttachDetachStatus.ATTACH_ERR_COPY;
+                        }
+                    } else if (!isRenamed) {
+                        // A crash before a save point covers this attach rewinds below it, and the WAL replay must find
+                        // .attachable again, so it stays until then.
+                        if (!linkAttachable(detachedPath.trimTo(detachedRootLen), isSoftLink)) {
+                            LOG.error().$("could not link [errno=").$(ff.errno()).$(", from=").$(detachedPath).$(", to=").$(path).I$();
+                            return AttachDetachStatus.ATTACH_ERR_COPY;
+                        }
+                        keepsAttachable = true;
+                        LOG.info().$("linked partition dir [from=").$(detachedPath).$(", to=").$(path).I$();
+                    }
+
                     // pin column versions
                     // the dir traversal will attempt to populate the column versions, we need to maintain the timestamp
                     // of the attached partition
@@ -1364,7 +1380,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 } finally {
                     path.trimTo(partitionPathLen);
                     if (!checkPassed) {
-                        attachPartitionRevertDir(isCopied, detachedPath.trimTo(detachedRootLen));
+                        attachPartitionRevertDir(isRenamed, detachedPath.trimTo(detachedRootLen));
                     }
                 }
             } else {
@@ -2301,6 +2317,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         long partitionNameTxn = txWriter.getPartitionNameTxn(partitionIndex);
         final long detachTxn = getTxn() + 1;
         Path detachedPath = Path.PATH.get();
+        // The length of this attempt's temporary detached copy until the commit names it, 0 when there is none to undo
+        int undoDetachedPathLen = 0;
 
         try {
             // path: partition folder to be detached
@@ -2346,6 +2364,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
 
                 // Hard link partition folder recursive to partition.detached
+                undoDetachedPathLen = detachedPathLen;
                 if (ff.hardLinkDirRecursive(path, detachedPath, detachedMkDirMode) != 0) {
                     if (ff.isCrossDeviceCopyError(ff.errno())) {
                         // Cross drive operation. Make full copy to another device.
@@ -2414,6 +2433,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             }
 
             if (attachDetachStatus == AttachDetachStatus.OK) {
+                // From here the commit may name the temporary copy, and writer open settles it by the committed txn
+                undoDetachedPathLen = 0;
                 // find out if we are removing min partition
                 long nextMinTimestamp = minTimestamp;
                 if (timestamp == txWriter.getPartitionTimestampByIndex(0)) {
@@ -2449,18 +2470,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                 }
                 // return at the end of the method after removing partition directory
             } else {
+                return attachDetachStatus;
+            }
+        } finally {
+            if (undoDetachedPathLen > 0) {
                 // rollback detached copy
-                detachedPath.trimTo(detachedPathLen).slash().$();
-                if (ff.rmdir(detachedPath)) {
+                detachedPath.trimTo(undoDetachedPathLen).slash().$();
+                if (!ff.rmdir(detachedPath) && ff.exists(detachedPath.$())) {
                     LOG.error()
                             .$("could not rollback detached copy (rmdir) [errno=").$(ff.errno())
                             .$(", undo=").$(detachedPath)
                             .$(", original=").$(path)
                             .I$();
                 }
-                return attachDetachStatus;
             }
-        } finally {
             path.trimTo(pathSize);
             other.trimTo(pathSize);
         }
@@ -5791,9 +5814,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
     }
 
-    private void attachPartitionRevertDir(boolean isCopied, Path detachedPath) {
-        if (isCopied) {
-            if (!ff.rmdir(path.slash())) {
+    private void attachPartitionRevertDir(boolean isRenamed, Path detachedPath) {
+        if (!isRenamed) {
+            // A copied or linked destination is this attempt's own: the destination did not exist before it, and the
+            // source is untouched. A soft link is unlinked, not followed.
+            if (!ff.unlinkOrRemove(path, LOG) && ff.exists(path.$())) {
                 LOG.error().$("could not remove partition dir copy [errno=").$(ff.errno()).$(", path=").$(path).I$();
             }
         } else if (ff.rename(path.$(), detachedPath.$()) != FILES_RENAME_OK) {
@@ -10883,6 +10908,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     }
 
     private void openPartition(long timestamp, long rowCount) {
+        // Every operation returns with path at the table root; a leak would create the partition inside another one
+        assert path.size() == pathSize;
         try {
             timestamp = txWriter.getPartitionTimestampByTimestamp(timestamp);
             lastOpenPartitionTxnName = setStateForTimestamp(path, timestamp);
