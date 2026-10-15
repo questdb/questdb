@@ -37,6 +37,7 @@ import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.cairo.lv.LiveViewRefreshStats;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -74,7 +75,11 @@ import org.junit.Test;
 import java.util.Arrays;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.Phaser;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
@@ -186,6 +191,13 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             0, 1, 2, 3, 4, 5, 6,
             RANGE_SUM_VARIANT, RANGE_AVG_VARIANT, RANGE_FIRST_VALUE_VARIANT,
             LAG_VARIANT, LAG_OFFSET_VARIANT
+    };
+    // The anchor shapes testFuzzConcurrentWritersAnchored drives over runConcurrentWriterFuzz,
+    // one run each: zone-less and zoned daily anchors, twice over. Each draws a wall time its
+    // zone's fall-back does not repeat, so the bucket oracle stays exact.
+    private static final int[] CONCURRENT_WRITER_ANCHOR_MODES = {
+            LiveViewFuzzAnchor.DAILY_PLAIN, LiveViewFuzzAnchor.DAILY_ZONED,
+            LiveViewFuzzAnchor.DAILY_PLAIN, LiveViewFuzzAnchor.DAILY_ZONED
     };
     // Partitioned (PARTITION BY sym ORDER BY ts) variants driven over a DEDUP base
     // by runDedupFuzz. Their output is a deterministic function of the deduped base
@@ -423,8 +435,36 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 // so the apply-ahead re-sequencing path is exercised every run.
                 final boolean concurrentRefresh = variant == 5 || rnd.nextBoolean();
                 runConcurrentWriterFuzz(rnd, variant, 200 + rnd.nextInt(300),
-                        2 + rnd.nextInt(3), concurrentRefresh, rnd.nextBoolean());
+                        2 + rnd.nextInt(3), concurrentRefresh, rnd.nextBoolean(), null);
             }
+        });
+    }
+
+    @Test
+    public void testFuzzConcurrentWritersAnchored() throws Exception {
+        // testFuzzConcurrentWriters over anchored windows, zone-less and zoned, each run with a
+        // concurrent refresh driver and a backfilling writer. The streaming writers commit the
+        // rows in timestamp order; the backfilling writer holds back a share of them and commits
+        // each one only once the stream has moved past it. Every writer commits once per refresh
+        // tick, and half the late commits land behind the tick's streaming ones, so a drain
+        // meets in-order rows and a late row into a closed anchor segment in one pass. That
+        // interleave is where a per-segment loop over a runtime still holding the drain's
+        // in-order rows folded them twice, and inflated count and sum: the deterministic cases
+        // are the testInOrderRowsCoalescedWithALateCommit* family in
+        // LiveViewCheckpointSegmentRepairTest. A later repair of the same segment can heal such
+        // a row before the run ends, so the refresh driver also compares the view with the
+        // recompute between ticks, whenever the view has caught up with the base. The repair
+        // knobs are drawn per run with the per-segment loop on (see LiveViewFuzzKnobs).
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        assertMemoryLeak(() -> {
+            long segmentRepairs = 0;
+            for (int i = 0; i < CONCURRENT_WRITER_ANCHOR_MODES.length; i++) {
+                segmentRepairs += runConcurrentWriterFuzz(rnd, rnd.nextInt(ANCHORED_VARIANT_COUNT), 300 + rnd.nextInt(300),
+                        2 + rnd.nextInt(2), true, rnd.nextBoolean(),
+                        LiveViewFuzzAnchor.draw(rnd, CONCURRENT_WRITER_ANCHOR_MODES[i]));
+            }
+            // A batch whose late rows never reached a closed segment raced nothing this test is about.
+            Assert.assertTrue("the late rows must have repaired closed anchor segments", segmentRepairs > 0);
         });
     }
 
@@ -959,6 +999,16 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         row.append();
     }
 
+    // Arrives at the current phase of a backfilling run's ticks and waits for every other
+    // party to arrive. runConcurrentWriterFuzz runs each tick as two phases: in the first,
+    // every writer still running makes its commit for the tick; in the second, the refresh
+    // driver drains them while the writers wait. A party that leaves deregisters, and one that
+    // fails terminates the phaser, so no party waits on it. Bounded, so a stalled party fails
+    // the run instead of hanging it.
+    private static void arriveAndAwaitTick(Phaser ticks) throws InterruptedException, TimeoutException {
+        ticks.awaitAdvanceInterruptibly(ticks.arrive(), REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+    }
+
     // Asserts the view has a checkpoint timeline on disk for a restart to restore from.
     // Without one, LiveViewRefreshJob.tryRestoreFromTimeline rebuilds from the applied
     // base instead, so a crash-recovery arm that needs the restore path checks this
@@ -1077,6 +1127,25 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         assertViewWindowJoinMatchesCopy("lv", "base", "sym", "i", "t.rn > 0");
     }
 
+    // Waits until every streaming writer still running has committed in the current tick of
+    // runConcurrentWriterFuzz. Each commits once per tick, so the wait ends inside the tick;
+    // the bound fails a stalled stream instead of hanging the run.
+    private static void awaitTickStreamCommits(
+            AtomicInteger tickStreamCommits,
+            AtomicInteger streamingWritersDone,
+            int numStreamingWriters,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        final long deadlineNanos = System.nanoTime() + REFRESH_TICK_WAIT_NANOS;
+        while (tickStreamCommits.get() < numStreamingWriters - streamingWritersDone.get() && errors.isEmpty()) {
+            if (System.nanoTime() >= deadlineNanos) {
+                throw new AssertionError("the streaming writers did not commit within "
+                        + (REFRESH_TICK_WAIT_NANOS / 1_000_000_000L) + 's');
+            }
+            Os.pause();
+        }
+    }
+
     // Boundaries [0, ..., len] splitting a segment of length len into 1..~10
     // contiguous commits.
     private static int[] commitBounds(Rnd rnd, int len) {
@@ -1180,6 +1249,15 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 return cursor.leadRowsServed();
             }
         }
+    }
+
+    // The first row at or above from that isHeldBack marks, or rowCount when none is left.
+    private static int nextHeldBackRow(boolean[] isHeldBack, int from, int rowCount) {
+        int k = from;
+        while (k < rowCount && !isHeldBack[k]) {
+            k++;
+        }
+        return k;
     }
 
     // Returns the projection (SELECT list) for the given non-decimal window-query
@@ -1843,6 +1921,75 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         }
     }
 
+    // A writer thread that commits the rows the streaming writers hold back, each one late, on
+    // the ticks of runConcurrentWriterFuzz (see arriveAndAwaitTick). Every tick it commits the
+    // next batch of its rows the stream has moved lagRows past, if there is one, and then
+    // waits the tick out. The held-back rows go in ascending ts order, so each lands below the
+    // stream's head, and a lag past a day jump puts it in a closed anchor segment. Once the
+    // stream has finished it commits a batch per tick until its rows run out.
+    // <p>
+    // Half of its commits wait for every streaming commit of the tick first. A refresh task
+    // names the commit that queued it, so the first commit of a tick drains alone and the task
+    // re-queued behind it carries the rest together: a late commit behind the stream's meets a
+    // drain that has already fed in-order rows. The other half race the stream. Like
+    // newConcurrentWriterThread, it awaits the barrier before its first write and clears
+    // thread-locals on exit for the leak check.
+    private Thread newBackfillWriterThread(
+            boolean[] isHeldBack,
+            int fromIndex,
+            int rowCount,
+            int lagRows,
+            int batch,
+            long orderSeed,
+            long[] tsv,
+            int[] symIdx,
+            long[] iv,
+            double[] xv,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            Phaser ticks,
+            AtomicInteger streamedTo,
+            AtomicInteger tickStreamCommits,
+            AtomicInteger streamingWritersDone,
+            int numStreamingWriters,
+            AtomicLong backfilledRows,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        return new Thread(() -> {
+            final Rnd orderRnd = new Rnd(orderSeed, orderSeed >>> 1);
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                barrier.await();
+                int k = nextHeldBackRow(isHeldBack, fromIndex, rowCount);
+                while (k < rowCount && errors.isEmpty()) {
+                    final boolean isStreamDone = streamingWritersDone.get() == numStreamingWriters;
+                    if (isStreamDone || streamedTo.get() >= k + lagRows) {
+                        if (!isStreamDone && orderRnd.nextBoolean()) {
+                            awaitTickStreamCommits(tickStreamCommits, streamingWritersDone, numStreamingWriters, errors);
+                        }
+                        int rows = 0;
+                        while (rows < batch && k < rowCount && (isStreamDone || streamedTo.get() >= k + lagRows)) {
+                            appendRow(walWriter, tsv[k], symIdx[k], iv[k], xv[k]);
+                            rows++;
+                            k = nextHeldBackRow(isHeldBack, k + 1, rowCount);
+                        }
+                        walWriter.commit();
+                        backfilledRows.addAndGet(rows);
+                    }
+                    // The commit phase, then the drain phase.
+                    arriveAndAwaitTick(ticks);
+                    arriveAndAwaitTick(ticks);
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+                barrier.reset();
+                ticks.forceTermination();
+            } finally {
+                ticks.arriveAndDeregister();
+                Path.clearThreadLocals();
+            }
+        }, "lv-cw-backfill-writer");
+    }
+
     // A writer thread that owns its own WalWriter and ingests the round-robin slice
     // [fromIndex+writerId, rowCount) with stride numWriters, committing every batch
     // rows. The slices are disjoint and globally ts-ordered, so timestamps stay
@@ -1949,6 +2096,74 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 Path.clearThreadLocals();
             }
         }, "lv-rvr-reader");
+    }
+
+    // A streaming writer of a backfilling run (see runConcurrentWriterFuzz). It owns its own
+    // WalWriter, and once per tick (see arriveAndAwaitTick) claims the next batch of rows the
+    // backfilling writer does not hold back, appends and commits them under streamLock, raises
+    // streamedTo to the batch's last row and counts the commit into tickStreamCommits. The lock
+    // keeps the stream in timestamp order across writers, so every streaming commit is an
+    // in-order one and the late rows are the backfilling writer's alone. It counts itself into
+    // streamingWritersDone on exit, failed or not, so the backfilling writer never waits on a
+    // stream that has stopped. It awaits the barrier before its first write and clears
+    // thread-locals on exit for the leak check.
+    private Thread newStreamingWriterThread(
+            int writerId,
+            int rowCount,
+            int batch,
+            long[] tsv,
+            int[] symIdx,
+            long[] iv,
+            double[] xv,
+            boolean[] isHeldBack,
+            AtomicInteger nextStreamRow,
+            Object streamLock,
+            Phaser ticks,
+            AtomicInteger streamedTo,
+            AtomicInteger tickStreamCommits,
+            AtomicInteger streamingWritersDone,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        return new Thread(() -> {
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                barrier.await();
+                boolean isStreamLeft = true;
+                while (isStreamLeft && errors.isEmpty()) {
+                    synchronized (streamLock) {
+                        int k = nextStreamRow.get();
+                        int rows = 0;
+                        int lastRow = -1;
+                        while (rows < batch && k < rowCount) {
+                            if (!isHeldBack[k]) {
+                                appendRow(walWriter, tsv[k], symIdx[k], iv[k], xv[k]);
+                                lastRow = k;
+                                rows++;
+                            }
+                            k++;
+                        }
+                        nextStreamRow.set(k);
+                        walWriter.commit();
+                        if (lastRow > -1) {
+                            streamedTo.set(lastRow);
+                        }
+                        isStreamLeft = k < rowCount;
+                    }
+                    tickStreamCommits.incrementAndGet();
+                    // The commit phase, then the drain phase.
+                    arriveAndAwaitTick(ticks);
+                    arriveAndAwaitTick(ticks);
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+                ticks.forceTermination();
+            } finally {
+                streamingWritersDone.incrementAndGet();
+                ticks.arriveAndDeregister();
+                Path.clearThreadLocals();
+            }
+        }, "lv-cw-stream-writer-" + writerId);
     }
 
     // One refresh cycle with the flush held off, then the lead-ordering check;
@@ -2656,22 +2871,60 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
     // trigger - the apply-ahead path); otherwise the refresh runs single-threaded
     // after the writers join. Either way the view is quiesced before the exact-
     // equality recompute oracle.
-    private void runConcurrentWriterFuzz(
+    // <p>
+    // With an anchor (see testFuzzConcurrentWritersAnchored) the run is an
+    // ANCHORED_VARIANT_COUNT shape over the anchor's named window, over a key indexed in most
+    // runs, under the repair knobs drawn for it. Its streaming writers commit an in-order
+    // stream (see newStreamingWriterThread) and a backfilling writer commits a share of the
+    // suffix late, behind them (see newBackfillWriterThread), all paced to the refresh
+    // driver's ticks. Between ticks the driver also checks a view caught up with the base
+    // against the recompute, and the run ends by asserting that the backfill and those
+    // checks happened.
+    //
+    // Returns the closed anchor segments the run's refresh job repaired over their own range.
+    private long runConcurrentWriterFuzz(
             Rnd rnd,
             int variant,
             int rowCount,
             int numWriters,
             boolean concurrentRefresh,
-            boolean seed
+            boolean seed,
+            @Nullable LiveViewFuzzAnchor anchor
     ) throws Exception {
+        Assert.assertTrue("an anchored run paces its writers to a concurrent refresh driver", anchor == null || concurrentRefresh);
         // A concurrent refresh driver advances the flush clock in an unbounded loop while
         // ingestion is in flight, so - unlike the single-threaded fuzz arms, which sit a day
         // below the data - the clock is pinned a full YEAR below the data start. A START FROM
         // NOW view resolves its boundary from that clock, and the year of headroom keeps the
         // boundary below every row for the whole run (a 250ms-per-advance loop never climbs a
-        // year), so only an explicit-boundary run excludes any row.
-        setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
-        final long dataStart = MicrosTimestampDriver.floor("2027-01-01T00:00:00.000000Z");
+        // year), so only an explicit-boundary run excludes any row. An anchored run's data
+        // starts where its shape needs it, a day above the clock the anchor pins; the boundary
+        // resolves at CREATE, before the driver moves the clock at all.
+        final long dataStart;
+        final StringSink knobLog = new StringSink();
+        if (anchor != null) {
+            setCurrentMicros(anchor.clockMicros);
+            dataStart = anchor.dataStartMicros;
+            // The per-segment loop stays on: it is the route that repairs a closed anchor
+            // segment's late row on its own, and the late rows are what the backfilling
+            // writer brings. A turn drains every commit a tick lands at the default budget,
+            // so it can feed a streaming commit before it meets the late one; a budget of one
+            // commit never does. Half the runs truncate at every segment repair rather than
+            // splice: a truncate drops the root at the frontier, and the seal behind the
+            // segment then freezes whatever runtime the loop kept, which is where a runtime
+            // still holding the drain's in-order rows got folded twice.
+            final LiveViewFuzzKnobs knobs = LiveViewFuzzKnobs.randomize(rnd);
+            knobs.isPerSegment = true;
+            knobs.turnMaxCommits = LiveViewFuzzKnobs.DEFAULT;
+            if (rnd.nextBoolean()) {
+                knobs.maxChainedBoundaries = 0;
+            }
+            knobs.apply(AbstractLiveViewTest::setProperty);
+            knobs.toSink(knobLog);
+        } else {
+            setCurrentMicros(MicrosTimestampDriver.floor("2026-01-01T00:00:00.000000Z"));
+            dataStart = MicrosTimestampDriver.floor("2027-01-01T00:00:00.000000Z");
+        }
 
         final int n = 1 + rnd.nextInt(MAX_FRAME);
         final int symCount = 1 + rnd.nextInt(SYMBOLS.length);
@@ -2679,16 +2932,18 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
         final int baseStepMax = stepMode == 0 ? 5_000_000 : stepMode == 1 ? 60_000_000 : 900_000_000;
         final int dayJumpEvery = stepMode == 0 ? 20 : 12;
         final boolean withWhere = rnd.nextInt(3) == 0;
+        final boolean isIndexed = anchor != null && rnd.nextInt(4) != 0;
 
         execute("DROP LIVE VIEW IF EXISTS lv");
         execute("DROP TABLE IF EXISTS base");
-        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL" + (isIndexed ? " INDEX" : "")
+                + ", i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
 
         // Ascending timestamps, with ties across keys for every variant partitioned by sym
-        // (all but 5): (ts, sym) stays unique, so ts is a total order within each partition.
-        // The round-robin slices put the rows of one tie group on different writers. Random
-        // symbols and values with occasional NULLs.
-        final int tiePct = variant == 5 ? 0 : tiePct(rnd);
+        // (all but 5, and every anchored shape): (ts, sym) stays unique, so ts is a total
+        // order within each partition. The round-robin slices put the rows of one tie group on
+        // different writers. Random symbols and values with occasional NULLs.
+        final int tiePct = anchor == null && variant == 5 ? 0 : tiePct(rnd);
         final LiveViewFuzzRows rows = LiveViewFuzzRows.generate(rnd, rowCount, symCount, dataStart, baseStepMax, dayJumpEvery, tiePct);
         final long[] tsv = rows.tsv;
         final int[] symIdx = rows.symIdx;
@@ -2697,25 +2952,48 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         // Pre-CREATE history: the earliest rows [0, preCount), committed by a single writer in
         // ts order. Committed history at CREATE puts the view in SEEDING under every start
-        // mode; the boundary decides how much of it the sweep emits.
-        final int preCount = seed ? rnd.nextInt(rowCount + 1) : 0;
+        // mode; the boundary decides how much of it the sweep emits. An anchored run keeps at
+        // least half the rows for its concurrent phase, which is what the run is about.
+        final int preCount = seed ? rnd.nextInt(anchor != null ? rowCount / 2 : rowCount + 1) : 0;
         final int startMode = rnd.nextInt(START_FROM_MODES);
         final long boundary = startBoundary(rnd, startMode, tsv, false);
-        final String viewSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL);
-        final String oracleSql = "SELECT " + projection(variant, n) + " FROM base" + whereTail(withWhere, boundary);
+        final String projection = anchor != null ? anchoredViewProjection(variant) : projection(variant, n);
+        final String oracleProjection = anchor != null ? anchoredOracleProjection(variant, anchor.bucket) : projection;
+        final String window = anchor != null ? " WINDOW w AS (PARTITION BY sym ORDER BY ts " + anchor.clause + ")" : "";
+        final String viewSql = "SELECT " + projection + " FROM base" + whereTail(withWhere, Numbers.LONG_NULL) + window;
+        final String oracleSql = "SELECT " + oracleProjection + " FROM base" + whereTail(withWhere, boundary);
         final String createSql = "CREATE LIVE VIEW lv FLUSH EVERY 100ms "
                 + startFromClause(startMode, boundary, false)
                 + "AS " + viewSql;
+
+        // The backfilling writer's share of the concurrent suffix, and how far behind the
+        // stream it commits each of its rows. With a day jump every dayJumpEvery rows on
+        // average, most of those rows land in a closed anchor segment.
+        final boolean[] isHeldBack = anchor != null ? new boolean[rowCount] : null;
+        final int backfillPct = 10 + rnd.nextInt(21);
+        final int backfillLagRows = 2 * dayJumpEvery + rnd.nextInt(4 * dayJumpEvery);
+        if (isHeldBack != null) {
+            for (int k = preCount; k < rowCount; k++) {
+                isHeldBack[k] = rnd.nextInt(100) < backfillPct;
+            }
+        }
 
         LOG.info().$("LV concurrent-writer fuzz: variant=").$(variant).$(", rows=").$(rowCount)
                 .$(", tiePct=").$(tiePct).$(", ties=").$(rows.getTieCount())
                 .$(", n=").$(n).$(", writers=").$(numWriters).$(", symCount=").$(symCount)
                 .$(", stepMode=").$(stepMode).$(", concurrentRefresh=").$(concurrentRefresh)
                 .$(", preCount=").$(preCount).$(", startMode=").$(startMode).$(", boundary=").$(boundary)
-                .$(", where=").$(withWhere).$(", sql=").$(viewSql).$();
+                .$(", where=").$(withWhere).$(", indexed=").$(isIndexed)
+                .$(", anchor=").$(anchor != null ? anchor.clause : "none")
+                .$(", backfillPct=").$(isHeldBack != null ? backfillPct : 0)
+                .$(", backfillLagRows=").$(backfillLagRows)
+                .$(", knobs=[").$(knobLog).$("], sql=").$(viewSql).$();
 
         final TableToken baseToken = engine.verifyTableName("base");
         final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final AtomicLong backfilledRows = new AtomicLong();
+        final AtomicLong midRunRecomputeChecks = new AtomicLong();
+        final long segmentRepairs;
         LiveViewRefreshJob job = null;
         try {
             if (preCount > 0) {
@@ -2738,18 +3016,42 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
             // Concurrent suffix [preCount, rowCount): numWriters threads each own a
             // WalWriter and commit a disjoint round-robin slice in parallel, with an
-            // optional refresh driver racing them.
+            // optional refresh driver racing them; or, in an anchored run, stream it in
+            // order beside the backfilling writer.
             if (preCount < rowCount) {
                 final int driverCount = concurrentRefresh ? 1 : 0;
-                final CyclicBarrier barrier = new CyclicBarrier(numWriters + driverCount);
+                final int backfillWriterCount = isHeldBack != null ? 1 : 0;
+                final CyclicBarrier barrier = new CyclicBarrier(numWriters + driverCount + backfillWriterCount);
                 final AtomicBoolean ingesting = new AtomicBoolean(true);
+                final AtomicInteger streamedTo = new AtomicInteger(-1);
+                final AtomicInteger streamingWritersDone = new AtomicInteger();
+                // A backfilling run's ticks, one commit per writer each, so every drain reads
+                // the commits of one tick together (see arriveAndAwaitTick). The driver is a
+                // party, and so is every writer until it leaves. Unpaced without a backfill.
+                final Phaser ticks = isHeldBack != null ? new Phaser(numWriters + 2) : null;
+                // The streaming commits of the current tick; the driver resets it between the
+                // tick's two phases, while every writer waits.
+                final AtomicInteger tickStreamCommits = new AtomicInteger();
 
+                // Without a backfill, round-robin slices; with one, an in-order stream the
+                // writers claim batch by batch, so the late rows are the backfilling writer's.
+                final AtomicInteger nextStreamRow = new AtomicInteger(preCount);
+                final Object streamLock = new Object();
                 final Thread[] writers = new Thread[numWriters];
                 for (int w = 0; w < numWriters; w++) {
                     final int batch = 5 + rnd.nextInt(20);
-                    writers[w] = newConcurrentWriterThread(
+                    writers[w] = isHeldBack != null
+                            ? newStreamingWriterThread(
+                            w, rowCount, batch, tsv, symIdx, iv, xv, isHeldBack, nextStreamRow, streamLock,
+                            ticks, streamedTo, tickStreamCommits, streamingWritersDone, baseToken, barrier, errors)
+                            : newConcurrentWriterThread(
                             w, numWriters, preCount, rowCount, batch, tsv, symIdx, iv, xv, baseToken, barrier, errors);
                 }
+                final Thread backfillWriter = isHeldBack != null ? newBackfillWriterThread(
+                        isHeldBack, preCount, rowCount, backfillLagRows, 1 + rnd.nextInt(3), rnd.nextLong(), tsv, symIdx, iv, xv,
+                        baseToken, barrier, ticks, streamedTo, tickStreamCommits, streamingWritersDone, numWriters,
+                        backfilledRows, errors
+                ) : null;
 
                 // Only the driver touches the clock during the concurrent phase; the
                 // final quiescence drive runs after it has joined.
@@ -2758,12 +3060,31 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                     try {
                         barrier.await();
                         while (ingesting.get()) {
+                            if (ticks != null) {
+                                // The commit phase: every writer still running has committed.
+                                arriveAndAwaitTick(ticks);
+                                tickStreamCommits.set(0);
+                            }
                             setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
                             drainWalQueue();
                             drainJob(driverJob);
+                            if (ticks != null) {
+                                // The writers wait, so the base holds still: a view caught up with
+                                // it must already equal the recompute. A later repair of the same
+                                // segment can heal a wrong row before the run ends, so the
+                                // run-end oracle alone misses what this sees.
+                                if (assertTierReadConsistent("lv", "base", oracleSql, "1, 2") == TIER_READ_RECOMPUTE) {
+                                    midRunRecomputeChecks.incrementAndGet();
+                                }
+                                // The drain phase: the writers may commit again.
+                                arriveAndAwaitTick(ticks);
+                            }
                         }
                     } catch (Throwable th) {
                         errors.add(th);
+                        if (ticks != null) {
+                            ticks.forceTermination();
+                        }
                     } finally {
                         Path.clearThreadLocals();
                     }
@@ -2772,11 +3093,17 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
                 for (Thread t : writers) {
                     t.start();
                 }
+                if (backfillWriter != null) {
+                    backfillWriter.start();
+                }
                 if (driver != null) {
                     driver.start();
                 }
                 for (Thread t : writers) {
                     t.join();
+                }
+                if (backfillWriter != null) {
+                    backfillWriter.join();
                 }
                 ingesting.set(false);
                 if (driver != null) {
@@ -2791,6 +3118,21 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
             // Quiesce single-threaded, then assert the differential oracle below.
             drainWalQueue();
             driveRefreshToQuiescence(job);
+            segmentRepairs = job.getStatsForTest().get(LiveViewRefreshStats.SEGMENT_REPAIR_COUNT);
+            if (anchor != null) {
+                LOG.info().$("LV concurrent-writer fuzz done: backfilledRows=").$(backfilledRows.get())
+                        .$(", midRunRecomputeChecks=").$(midRunRecomputeChecks.get())
+                        .$(", segmentRepairs=").$(segmentRepairs)
+                        .$(", segmentYields=").$(job.getStatsForTest().get(LiveViewRefreshStats.SEGMENT_YIELD_COUNT))
+                        .$(", keyedSegments=").$(job.getStatsForTest().get(LiveViewRefreshStats.KEYED_REPLAY_SEGMENT_COUNT)).$();
+                // The run's own evidence: without it a run whose backfill never landed, or whose
+                // view never caught up with the base between ticks, passes having raced nothing.
+                Assert.assertTrue("the backfilling writer must have committed late rows", backfilledRows.get() > 0);
+                Assert.assertTrue(
+                        "the driver must have compared a caught-up view with the recompute mid-run",
+                        midRunRecomputeChecks.get() > 0
+                );
+            }
         } finally {
             Misc.free(job);
         }
@@ -2811,6 +3153,7 @@ public class LiveViewFuzzTest extends AbstractLiveViewTest {
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");
+        return segmentRepairs;
     }
 
     // Differential fuzz for a DEDUP UPSERT KEYS(ts, sym) base. Mirrors runFuzz's

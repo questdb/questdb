@@ -171,9 +171,6 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // The filtered read the parallel-filter soak routes through the tier's page frame. The
     // predicate keeps every row of the (ts, i, rn) view - see readFilteredRowNumberViewOnce.
     private static final String FILTERED_VIEW_SQL = "SELECT * FROM lv WHERE rn > 0";
-    // How long a paced writer waits for the refresh driver's next tick before giving up on
-    // it. Generous: it bounds a stalled driver, it does not pace anything itself.
-    private static final long REFRESH_TICK_WAIT_NANOS = 30_000_000_000L;
     // Refresh passes the parallel-filter soak's driver runs per tick, matching drainJob's
     // own bound - the driver inlines that loop to sample the tier between passes.
     private static final int REFRESH_PASSES_PER_TICK = 64;
@@ -1665,24 +1662,6 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 Path.clearThreadLocals();
             }
         }, "lv-refresh-driver");
-    }
-
-    // Waits for the refresh driver to complete one more tick than it had when called.
-    // Bounded: a driver that has stopped ticking must fail the run loudly rather than
-    // silently drop the paced writer's intended refresh/writer overlap. The caller runs on
-    // a writer thread whose try/catch routes any throw into the shared errors queue, so a
-    // timeout surfaces as a test failure instead of a vacuous pass (or a hang).
-    private static void awaitRefreshTick(AtomicLong refreshTicks, ConcurrentLinkedQueue<Throwable> errors) {
-        final long seen = refreshTicks.get();
-        final long deadlineNanos = System.nanoTime() + REFRESH_TICK_WAIT_NANOS;
-        while (refreshTicks.get() == seen && errors.isEmpty()) {
-            if (System.nanoTime() >= deadlineNanos) {
-                throw new AssertionError("refresh driver did not tick within "
-                        + (REFRESH_TICK_WAIT_NANOS / 1_000_000_000L)
-                        + "s; the paced writer lost its intended refresh/writer overlap");
-            }
-            Os.pause();
-        }
     }
 
     // Builds a writer thread that owns its own WalWriter and ingests a round-robin

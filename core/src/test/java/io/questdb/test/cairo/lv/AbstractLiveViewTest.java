@@ -65,6 +65,8 @@ import org.junit.Before;
 
 import java.io.File;
 import java.lang.reflect.Field;
+import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Shared driver helpers for the live view tests. Every test in this package advances a live view by
@@ -90,6 +92,9 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     // shows up as a failing expectation instead of passing silently.
     protected static final long REFRESH_RETRY_BACKOFF_BASE_MICROS = 100_000;
     protected static final long REFRESH_RETRY_BACKOFF_MAX_MICROS = 5_000_000;
+    // How long a paced writer waits for the refresh driver's next tick before giving up on
+    // it. Generous: it bounds a stalled driver, it does not pace anything itself.
+    protected static final long REFRESH_TICK_WAIT_NANOS = 30_000_000_000L;
     // Bounds drainJobThroughRetryBackoff. A streak ends within this many waits under any budget the
     // tests set: the default count budget allows 5 faulting turns, and the 60s default duration
     // budget about 18 at the capped wait.
@@ -114,6 +119,26 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
         TableWriter.Row row = walWriter.newRow(ts);
         row.putLong(1, x);
         row.append();
+    }
+
+    /**
+     * Waits for the refresh driver to complete one more tick than it had when called.
+     * Bounded: a driver that has stopped ticking must fail the run loudly rather than
+     * silently drop the paced writer's intended refresh/writer overlap. The caller runs on
+     * a writer thread whose try/catch routes any throw into the shared errors queue, so a
+     * timeout surfaces as a test failure instead of a vacuous pass (or a hang).
+     */
+    protected static void awaitRefreshTick(AtomicLong refreshTicks, ConcurrentLinkedQueue<Throwable> errors) {
+        final long seen = refreshTicks.get();
+        final long deadlineNanos = System.nanoTime() + REFRESH_TICK_WAIT_NANOS;
+        while (refreshTicks.get() == seen && errors.isEmpty()) {
+            if (System.nanoTime() >= deadlineNanos) {
+                throw new AssertionError("refresh driver did not tick within "
+                        + (REFRESH_TICK_WAIT_NANOS / 1_000_000_000L)
+                        + "s; the paced writer lost its intended refresh/writer overlap");
+            }
+            Os.pause();
+        }
     }
 
     /**
