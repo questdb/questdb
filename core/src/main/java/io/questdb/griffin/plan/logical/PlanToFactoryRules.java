@@ -296,11 +296,15 @@ public final class PlanToFactoryRules {
     }
 
     /**
-     * True when the factory of a relational join step can keep its master's designated timestamp: the step neither
-     * null-extends its master nor drives the join with the smaller input. A markout step designates none.
+     * True when the factory of the relational join step at {@code position} of the join's ordered inputs can keep its
+     * master's designated timestamp: the join leads with its first input, see {@link LogicalPlans#isFirstInputLeading},
+     * and the step neither null-extends its master nor drives the join with the smaller input. A markout step
+     * designates none.
      */
-    public static boolean isMasterTimestampKept(JoinInput step) {
-        return !step.getJoinType().isMasterNulling() && step.getMasterSide() != JoinInput.MasterSide.SMALLER;
+    public static boolean isMasterTimestampKept(JoinPlan join, int position) {
+        final JoinInput step = join.getOrderedInputs().getQuick(position);
+        return LogicalPlans.isFirstInputLeading(join) && !step.getJoinType().isMasterNulling()
+                && step.getMasterSide() != JoinInput.MasterSide.SMALLER;
     }
 
     /**

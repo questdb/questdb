@@ -471,7 +471,7 @@ final class ColumnPruning implements OptimiserPass {
                         joinTimestampId = -1;
                     }
                     if (i == 0) {
-                        joinTimestampId = input.getTimestampColumnId();
+                        joinTimestampId = LogicalPlans.isFirstInputLeading(join) ? input.getTimestampColumnId() : -1;
                     } else if (step.getJoinType().isMasterNulling() && !join.hasExplicitTimestamp()) {
                         joinTimestampId = -1;
                     }

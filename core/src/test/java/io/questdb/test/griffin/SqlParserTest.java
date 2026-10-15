@@ -989,20 +989,14 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testAggregateFunctionExpr() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("select sum(max(x) + 2), abs(x) from long_sequence(10)")
-                    .noLeakCheck()
-                    .fails(11, "Aggregate function cannot be passed as an argument");
-        });
+        assertQuery("select sum(max(x) + 2), abs(x) from long_sequence(10)")
+                .fails(11, "Aggregate function cannot be passed as an argument");
     }
 
     @Test
     public void testAggregateOperationExpr() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("select sum(max(x) + 2), x + 1 from long_sequence(10)")
-                    .noLeakCheck()
-                    .fails(11, "Aggregate function cannot be passed as an argument");
-        });
+        assertQuery("select sum(max(x) + 2), x + 1 from long_sequence(10)")
+                .fails(11, "Aggregate function cannot be passed as an argument");
     }
 
     @Test
@@ -5868,11 +5862,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testCursorInSelectWithAggregation() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("select sum((pg_catalog.pg_class()).oid + 1) - 20, pg_catalog.pg_class().relnamespace from long_sequence(2)")
-                    .noLeakCheck()
-                    .fails(12, "expression type mismatch, expected: RECORD, actual: CURSOR");
-        });
+        assertQuery("select sum((pg_catalog.pg_class()).oid + 1) - 20, pg_catalog.pg_class().relnamespace from long_sequence(2)")
+                .fails(12, "expression type mismatch, expected: RECORD, actual: CURSOR");
     }
 
     @Test
@@ -7262,18 +7253,15 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testFilter1() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(100000)) where rnd<0.9999")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            VirtualRecord
-                              functions: [x,x+10::timestamp]
-                                Filter filter: rnd<0.9999
-                                    VirtualRecord
-                                      functions: [x,rnd_double()]
-                                        long_sequence count: 100000
-                            """);
-        });
+        assertQuery("select x, cast(x+10 as timestamp) from (select x, rnd_double() rnd from long_sequence(100000)) where rnd<0.9999")
+                .assertsPlan("""
+                        VirtualRecord
+                          functions: [x,x+10::timestamp]
+                            Filter filter: rnd<0.9999
+                                VirtualRecord
+                                  functions: [x,rnd_double()]
+                                    long_sequence count: 100000
+                        """);
     }
 
     @Test
@@ -11535,25 +11523,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testJoinWithFunction() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery(
-                    "with x as (select rnd_int() a, rnd_symbol(4,4,4,2) s from long_sequence(10)) " +
-                            "select * from x x1 join x x2 on (s)"
-            )
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            SelectedRecord
-                                Hash Join
-                                  condition: x2.s=x1.s
+        assertQuery(
+                "with x as (select rnd_int() a, rnd_symbol(4,4,4,2) s from long_sequence(10)) " +
+                        "select * from x x1 join x x2 on (s)"
+        )
+                .assertsPlan("""
+                        SelectedRecord
+                            Hash Join
+                              condition: x2.s=x1.s
+                                VirtualRecord
+                                  functions: [rnd_int(),rnd_symbol(4,4,4,2)]
+                                    long_sequence count: 10
+                                Hash
                                     VirtualRecord
                                       functions: [rnd_int(),rnd_symbol(4,4,4,2)]
                                         long_sequence count: 10
-                                    Hash
-                                        VirtualRecord
-                                          functions: [rnd_int(),rnd_symbol(4,4,4,2)]
-                                            long_sequence count: 10
-                            """);
-        });
+                        """);
     }
 
     @Test
@@ -12363,17 +12348,88 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testMoveOrderByFlat() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery(
-                    """
-                            select L.transactionid::varchar::bigint as transaction_id
-                            from pg_catalog.pg_locks L
-                            where L.transactionid is not null
-                            order by pg_catalog.age(L.transactionid) desc
-                            limit 1"""
-            )
-                    .noLeakCheck()
-                    .withPlan("""
+        assertQuery(
+                """
+                        select L.transactionid::varchar::bigint as transaction_id
+                        from pg_catalog.pg_locks L
+                        where L.transactionid is not null
+                        order by pg_catalog.age(L.transactionid) desc
+                        limit 1"""
+        )
+                .withPlan("""
+                        SelectedRecord
+                            Encode sort light lo: 1
+                              keys: [age desc]
+                                VirtualRecord
+                                  functions: [transactionid::varchar::long,0L]
+                                    Filter filter: transactionid!=null
+                                        Empty table
+                        """)
+                .returns("transaction_id\n");
+    }
+
+    @Test
+    public void testMoveOrderByFlatInUnion() throws Exception {
+        assertQuery(
+                """
+                        select * from pg_catalog.pg_locks l1 \
+                        union all \
+                        select *
+                        from pg_catalog.pg_locks L
+                        where L.transactionid is not null
+                        order by pg_catalog.age(transactionid) desc
+                        limit 1"""
+        )
+                .withPlan("""
+                        SelectedRecord
+                            Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                                Encode sort
+                                  keys: [age desc]
+                                    VirtualRecord
+                                      functions: [locktype,database,relation,page,tuple,virtualxid,transactionid,classid,objid,objsubid,virtualtransaction,pid,mode,granted,fastpath,waitstart,0L]
+                                        Union All
+                                            Empty table
+                                            Filter filter: transactionid!=null
+                                                Empty table
+                        """)
+                .returns("locktype\tdatabase\trelation\tpage\ttuple\tvirtualxid\ttransactionid\tclassid\tobjid\tobjsubid\tvirtualtransaction\tpid\tmode\tgranted\tfastpath\twaitstart\n");
+    }
+
+    @Test
+    public void testMoveOrderByFlatWildcard() throws Exception {
+        assertQuery(
+                """
+                        select *
+                        from pg_catalog.pg_locks L
+                        where L.transactionid is not null
+                        order by pg_catalog.age(L.transactionid) desc
+                        limit 1"""
+        )
+                .withPlan("""
+                        SelectedRecord
+                            Encode sort light lo: 1
+                              keys: [age desc]
+                                VirtualRecord
+                                  functions: [locktype,database,relation,page,tuple,virtualxid,transactionid,classid,objid,objsubid,virtualtransaction,pid,mode,granted,fastpath,waitstart,0L]
+                                    Filter filter: transactionid!=null
+                                        Empty table
+                        """)
+                .returns("locktype\tdatabase\trelation\tpage\ttuple\tvirtualxid\ttransactionid\tclassid\tobjid\tobjsubid\tvirtualtransaction\tpid\tmode\tgranted\tfastpath\twaitstart\n");
+    }
+
+    @Test
+    public void testMoveOrderBySubQuery() throws Exception {
+        assertQuery(
+                """
+                        select transaction_id + 1 from (select L.transactionid::varchar::bigint as transaction_id
+                        from pg_catalog.pg_locks L
+                        where L.transactionid is not null
+                        order by pg_catalog.age(L.transactionid) desc
+                        limit 1)"""
+        )
+                .withPlan("""
+                        VirtualRecord
+                          functions: [transaction_id+1]
                             SelectedRecord
                                 Encode sort light lo: 1
                                   keys: [age desc]
@@ -12381,91 +12437,8 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                       functions: [transactionid::varchar::long,0L]
                                         Filter filter: transactionid!=null
                                             Empty table
-                            """)
-                    .returns("transaction_id\n");
-        });
-    }
-
-    @Test
-    public void testMoveOrderByFlatInUnion() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery(
-                    """
-                            select * from pg_catalog.pg_locks l1 \
-                            union all \
-                            select *
-                            from pg_catalog.pg_locks L
-                            where L.transactionid is not null
-                            order by pg_catalog.age(transactionid) desc
-                            limit 1"""
-            )
-                    .noLeakCheck()
-                    .withPlan("""
-                            SelectedRecord
-                                Limit value: 1 skip-rows-max: 0 take-rows-max: 1
-                                    Encode sort
-                                      keys: [age desc]
-                                        VirtualRecord
-                                          functions: [locktype,database,relation,page,tuple,virtualxid,transactionid,classid,objid,objsubid,virtualtransaction,pid,mode,granted,fastpath,waitstart,0L]
-                                            Union All
-                                                Empty table
-                                                Filter filter: transactionid!=null
-                                                    Empty table
-                            """)
-                    .returns("locktype\tdatabase\trelation\tpage\ttuple\tvirtualxid\ttransactionid\tclassid\tobjid\tobjsubid\tvirtualtransaction\tpid\tmode\tgranted\tfastpath\twaitstart\n");
-        });
-    }
-
-    @Test
-    public void testMoveOrderByFlatWildcard() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery(
-                    """
-                            select *
-                            from pg_catalog.pg_locks L
-                            where L.transactionid is not null
-                            order by pg_catalog.age(L.transactionid) desc
-                            limit 1"""
-            )
-                    .noLeakCheck()
-                    .withPlan("""
-                            SelectedRecord
-                                Encode sort light lo: 1
-                                  keys: [age desc]
-                                    VirtualRecord
-                                      functions: [locktype,database,relation,page,tuple,virtualxid,transactionid,classid,objid,objsubid,virtualtransaction,pid,mode,granted,fastpath,waitstart,0L]
-                                        Filter filter: transactionid!=null
-                                            Empty table
-                            """)
-                    .returns("locktype\tdatabase\trelation\tpage\ttuple\tvirtualxid\ttransactionid\tclassid\tobjid\tobjsubid\tvirtualtransaction\tpid\tmode\tgranted\tfastpath\twaitstart\n");
-        });
-    }
-
-    @Test
-    public void testMoveOrderBySubQuery() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery(
-                    """
-                            select transaction_id + 1 from (select L.transactionid::varchar::bigint as transaction_id
-                            from pg_catalog.pg_locks L
-                            where L.transactionid is not null
-                            order by pg_catalog.age(L.transactionid) desc
-                            limit 1)"""
-            )
-                    .noLeakCheck()
-                    .withPlan("""
-                            VirtualRecord
-                              functions: [transaction_id+1]
-                                SelectedRecord
-                                    Encode sort light lo: 1
-                                      keys: [age desc]
-                                        VirtualRecord
-                                          functions: [transactionid::varchar::long,0L]
-                                            Filter filter: transactionid!=null
-                                                Empty table
-                            """)
-                    .returns("column\n");
-        });
+                        """)
+                .returns("column\n");
     }
 
     @Test
@@ -16065,16 +16038,13 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testRegexOnFunction() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("(select rnd_str() a from long_sequence(100)) where a ~ '^W'")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            Filter filter: a ~ ^W
-                                VirtualRecord
-                                  functions: [memoize(rnd_str(3,10,0))]
-                                    long_sequence count: 100
-                            """);
-        });
+        assertQuery("(select rnd_str() a from long_sequence(100)) where a ~ '^W'")
+                .assertsPlan("""
+                        Filter filter: a ~ ^W
+                            VirtualRecord
+                              functions: [memoize(rnd_str(3,10,0))]
+                                long_sequence count: 100
+                        """);
     }
 
     @Test
@@ -17018,25 +16988,22 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSampleByOfSubQuery() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("""
-                    select sum(x), t from\s
-                    (select *, timestamp_sequence(0, 2_000_000) t from long_sequence(10)) timestamp(t)
-                    sample by 1s fill(null)""")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            SelectedRecord
-                                Sample By Fill
-                                  stride: '1s'
-                                  fill: null
-                                    Sample By
-                                      fill: none
-                                      values: [sum(x)]
-                                        VirtualRecord
-                                          functions: [x,timestamp_sequence(0,2000000)]
-                                            long_sequence count: 10
-                            """);
-        });
+        assertQuery("""
+                select sum(x), t from\s
+                (select *, timestamp_sequence(0, 2_000_000) t from long_sequence(10)) timestamp(t)
+                sample by 1s fill(null)""")
+                .assertsPlan("""
+                        SelectedRecord
+                            Sample By Fill
+                              stride: '1s'
+                              fill: null
+                                Sample By
+                                  fill: none
+                                  values: [sum(x)]
+                                    VirtualRecord
+                                      functions: [x,timestamp_sequence(0,2000000)]
+                                        long_sequence count: 10
+                        """);
     }
 
     @Test
@@ -17719,15 +17686,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectAliasIgnoreColumn() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("select 3 x from long_sequence(2)")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            VirtualRecord
-                              functions: [3]
-                                long_sequence count: 2
-                            """);
-        });
+        assertQuery("select 3 x from long_sequence(2)")
+                .assertsPlan("""
+                        VirtualRecord
+                          functions: [3]
+                            long_sequence count: 2
+                        """);
     }
 
     @Test
@@ -18315,22 +18279,19 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectNoFromUnion() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("select a, sum(b) from (select 1 a, 1 b union all select 333, 1) x")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            GroupBy vectorized: false
-                              keys: [a]
-                              values: [sum(b)]
-                                Union All
-                                    VirtualRecord
-                                      functions: [1,1]
-                                        long_sequence count: 1
-                                    VirtualRecord
-                                      functions: [333,1]
-                                        long_sequence count: 1
-                            """);
-        });
+        assertQuery("select a, sum(b) from (select 1 a, 1 b union all select 333, 1) x")
+                .assertsPlan("""
+                        GroupBy vectorized: false
+                          keys: [a]
+                          values: [sum(b)]
+                            Union All
+                                VirtualRecord
+                                  functions: [1,1]
+                                    long_sequence count: 1
+                                VirtualRecord
+                                  functions: [333,1]
+                                    long_sequence count: 1
+                        """);
     }
 
     @Test
@@ -18479,15 +18440,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectVirtualAliasClash() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("select x+x x, x from long_sequence(1) z")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            VirtualRecord
-                              functions: [x+x,x]
-                                long_sequence count: 1
-                            """);
-        });
+        assertQuery("select x+x x, x from long_sequence(1) z")
+                .assertsPlan("""
+                        VirtualRecord
+                          functions: [x+x,x]
+                            long_sequence count: 1
+                        """);
     }
 
     @Test
@@ -20101,15 +20059,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testUndefinedBindVariables() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("select $1+1, $2, $3 from long_sequence(10)")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            VirtualRecord
-                              functions: [$0::int+1,$1::string,$2::string]
-                                long_sequence count: 10
-                            """);
-        });
+        assertQuery("select $1+1, $2, $3 from long_sequence(10)")
+                .assertsPlan("""
+                        VirtualRecord
+                          functions: [$0::int+1,$1::string,$2::string]
+                            long_sequence count: 10
+                        """);
     }
 
     @Test

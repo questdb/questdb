@@ -260,6 +260,27 @@ public class SymbolIndexOwnershipTest extends AbstractCairoTest {
             }
         }
 
+        void assertCursorFails(String sql) throws SqlException {
+            filters.clear();
+            try (SqlCompilerImpl compiler = new SqlCompilerImpl(engine)) {
+                try (RecordCursorFactory factory = compiler.compile(sql, context).getRecordCursorFactory()) {
+                    isArmed = true;
+                    try (RecordCursor ignore = factory.getCursor(context)) {
+                        Assert.fail("expected cursor failure: " + sql);
+                    } catch (RuntimeException e) {
+                        Assert.assertSame(sql, failure, e);
+                    } finally {
+                        isArmed = false;
+                    }
+                    if (filters.size() > 0) {
+                        assertRetained(filters);
+                    }
+                }
+                Assert.assertEquals(sql, sql.contains("lp_index_filter"), filters.size() > 0);
+                assertClosedOnce(filters);
+            }
+        }
+
         @Override
         public void close() {
             context.close();

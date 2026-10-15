@@ -589,7 +589,11 @@ final class FilterPushdown implements OptimiserPass {
             return;
         }
         final int index = target.getOutput().getColumnIndexById(slaveId);
-        if (index < 0 || target.getOutput().getColumnType(index) != column.getDataType()) {
+        if (index < 0) {
+            return;
+        }
+        final int slaveType = target.getOutput().getColumnType(index);
+        if (slaveType != column.getDataType() && !LogicalPlans.isJoinKeyTypeCompatible(column.getDataType(), slaveType)) {
             return;
         }
         mappingProjection.clear();
@@ -600,7 +604,10 @@ final class FilterPushdown implements OptimiserPass {
         if (((FunctionExpression) predicate).argumentAt(1) == column) {
             derived = context.getRewriter().commuteEquality(derived);
         }
-        if (pushSourceJoinFilter(slave, derived) && slave.isSubquery()) {
+        final BoundExpression slaveFilter = slaveType == column.getDataType() ? derived : context.bindCall(derived.getName(),
+                derived.getPosition(), narrowingColumns.next().of(slaveId, slaveType, column.getPosition()), derived.argumentAt(1),
+                target.getOutput());
+        if (pushSourceJoinFilter(slave, slaveFilter) && slave.isSubquery()) {
             slave.unqualifySlaveKeyName(keyIndex);
         }
     }

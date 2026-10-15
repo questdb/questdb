@@ -939,7 +939,7 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 if (value == Numbers.LONG_NULL || driver.isExactFrom(value, type)) {
                     replaceTemporalConstant(args, i, driver.ceilFrom(value, type), operandType, true);
                     isMatchable = true;
-                } else if (ColumnType.isTimestamp(operandType) && args.size() == 3
+                } else if (args.size() == 3
                         && ColumnType.isVarcharOrString(args.getQuick(3 - i).getType())
                         && textConstantType(args, 3 - i, driver) == ColumnType.UNDEFINED) {
                     replaceTemporalConstant(args, i, value, type, true);

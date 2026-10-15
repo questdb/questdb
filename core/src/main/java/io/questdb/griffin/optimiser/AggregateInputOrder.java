@@ -28,7 +28,6 @@ import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.FilterPlan;
-import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -52,29 +51,10 @@ final class AggregateInputOrder implements Mutable {
     }
 
     private static boolean isUnorderedAggregate(AggregatePlan aggregate) {
-        for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
-            if (!LogicalPlans.isOrderIndependent(aggregate.getGroupingExpressions().getQuick(i))) {
-                return false;
-            }
-        }
         // Key-only grouping and an explicit GROUP BY clause keep their input order, including
         // beneath an outer ORDER BY. Only an aggregate with inferred keys drops it.
-        if (aggregate.getAggregates().size() == 0 || aggregate.hasExplicitGrouping()) {
-            return false;
-        }
-        for (int i = 0, n = aggregate.getAggregates().size(); i < n; i++) {
-            final FunctionExpression expression = aggregate.getAggregates().getQuick(i);
-            if (!expression.isAggregate()
-                    || expression.getOverload().isOrderSensitiveAggregate()) {
-                return false;
-            }
-            for (int k = 0, count = expression.getArgumentCount(); k < count; k++) {
-                if (!LogicalPlans.isOrderIndependent(expression.argumentAt(k))) {
-                    return false;
-                }
-            }
-        }
-        return true;
+        return aggregate.getAggregates().size() > 0 && !aggregate.hasExplicitGrouping()
+                && LogicalPlans.isAggregateOrderIndependent(aggregate);
     }
 
     private int collectOrderedBranchAggregate(LogicalPlan plan) {

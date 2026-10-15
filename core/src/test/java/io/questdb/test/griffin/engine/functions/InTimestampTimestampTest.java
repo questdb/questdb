@@ -239,6 +239,51 @@ public class InTimestampTimestampTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPrunedDatePointListKeepsVariableTextSemantics() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE test (id INT, dt DATE, s STRING, v VARCHAR)");
+            execute("""
+                    INSERT INTO test VALUES
+                        (1, '2024-01-01T00:00:00.000Z', '2024-01-01', '2024-01-01'),
+                        (2, '2024-01-01T00:00:00.001Z', '2024-01-01', '2024-01-01'),
+                        (3, '2024-01-02T00:00:00.000Z', '2024-01-01', '2024-01-01'),
+                        (4, NULL, NULL, NULL)
+                    """);
+            for (int type = 0; type < 2; type++) {
+                final String column = type == 0 ? "s" : "v";
+                for (int constantType = 0; constantType < 3; constantType++) {
+                    final String suffix = switch (constantType) {
+                        case 0 -> "::TIMESTAMP";
+                        case 1 -> "::TIMESTAMP_NS";
+                        default -> "";
+                    };
+                    final String impossible = "'2024-01-01T00:00:00.000500'" + suffix;
+                    for (int order = 0; order < 3; order++) {
+                        final String list = switch (order) {
+                            case 0 -> column + ", " + impossible;
+                            case 1 -> impossible + ", " + column;
+                            default -> impossible + ", " + column + ", " + impossible;
+                        };
+                        assertQuery("SELECT id, dt IN (" + list + ") AS matched, dt NOT IN (" + list + ") AS not_matched FROM test ORDER BY id")
+                                .noLeakCheck()
+                                .expectSize()
+                                .returns("""
+                                        id\tmatched\tnot_matched
+                                        1\ttrue\tfalse
+                                        2\tfalse\ttrue
+                                        3\tfalse\ttrue
+                                        4\ttrue\tfalse
+                                        """);
+                        assertQuery("SELECT id FROM test WHERE dt IN (" + list + ") ORDER BY id")
+                                .noLeakCheck()
+                                .returns("id\n1\n4\n");
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
     public void testPrunedPointListKeepsBindVariableSemantics() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE test (id INT, ts TIMESTAMP)");

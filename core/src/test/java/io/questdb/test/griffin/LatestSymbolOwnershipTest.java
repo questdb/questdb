@@ -30,25 +30,25 @@ import org.junit.Test;
 
 public class LatestSymbolOwnershipTest extends AbstractCairoTest {
     @Test
-    public void testIndexedKeyConstructionFailureClosesEveryInputOnce() throws Exception {
+    public void testDeferredKeyCursorFailureClosesEveryInputOnce() throws Exception {
         assertMemoryLeak(() -> {
             try (ConstructionFailureEngine failing = new ConstructionFailureEngine(temp.newFolder().getAbsolutePath())) {
                 failing.createRows();
-                failing.assertConstructionFails("SELECT * FROM lp_index_keys WHERE s='A' AND lp_index_filter(id) LATEST ON ts PARTITION BY s");
-                failing.assertConstructionFails("SELECT * FROM lp_index_keys WHERE s='A' LATEST ON ts PARTITION BY s");
-                failing.context.getBindVariableService().setStr(0, "A");
-                failing.assertConstructionFails("SELECT s,id,ts FROM lp_covering_keys WHERE s=$1 LATEST ON ts PARTITION BY s");
+                failing.assertCursorFails("SELECT * FROM lp_latest_keys WHERE s='A' AND lp_index_filter(id) LATEST ON ts PARTITION BY s");
+                failing.assertCursorFails("SELECT * FROM lp_latest_keys WHERE s='A' LATEST ON ts PARTITION BY s");
             }
         });
     }
 
     @Test
-    public void testResolvedKeyConstructionFailureClosesEveryInputOnce() throws Exception {
+    public void testIndexedKeyFailureClosesEveryInputOnce() throws Exception {
         assertMemoryLeak(() -> {
             try (ConstructionFailureEngine failing = new ConstructionFailureEngine(temp.newFolder().getAbsolutePath())) {
                 failing.createRows();
-                failing.assertConstructionFails("SELECT * FROM lp_latest_keys WHERE s='A' AND lp_index_filter(id) LATEST ON ts PARTITION BY s");
-                failing.assertConstructionFails("SELECT * FROM lp_latest_keys WHERE s='A' LATEST ON ts PARTITION BY s");
+                failing.assertCursorFails("SELECT * FROM lp_index_keys WHERE s='A' AND lp_index_filter(id) LATEST ON ts PARTITION BY s");
+                failing.assertConstructionFails("SELECT * FROM lp_index_keys WHERE s='A' LATEST ON ts PARTITION BY s");
+                failing.context.getBindVariableService().setStr(0, "A");
+                failing.assertConstructionFails("SELECT s,id,ts FROM lp_covering_keys WHERE s=$1 LATEST ON ts PARTITION BY s");
             }
         });
     }

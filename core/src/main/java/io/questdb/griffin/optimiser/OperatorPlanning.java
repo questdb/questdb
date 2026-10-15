@@ -119,31 +119,6 @@ final class OperatorPlanning implements Mutable {
         undecidedSteps.clear();
     }
 
-    /**
-     * True when the node reads the designated timestamp of its input at {@code inputIndex}, the ordered input of a
-     * join: the master of a join with a temporal step and the slave of each such step, the master and slaves of a
-     * horizon or window join, and the input of a SAMPLE BY over its designated timestamp.
-     */
-    private static boolean consumesInputTimestamp(LogicalPlan plan, int inputIndex) {
-        return switch (plan) {
-            case JoinPlan join -> {
-                final ObjList<JoinInput> ordered = join.getOrderedInputs();
-                if (inputIndex > 0) {
-                    yield ordered.getQuick(inputIndex).getJoinType().isTemporal();
-                }
-                for (int i = 1, n = ordered.size(); i < n; i++) {
-                    if (ordered.getQuick(i).getJoinType().isTemporal()) {
-                        yield true;
-                    }
-                }
-                yield false;
-            }
-            case SampleByPlan sample -> sample.isTimestampRequired();
-            case HorizonJoinPlan _, WindowJoinPlan _ -> true;
-            default -> false;
-        };
-    }
-
     private static boolean hasEarlyExit(ObjList<FunctionExpression> aggregates) {
         for (int i = 0, n = aggregates.size(); i < n; i++) {
             if ((aggregates.getQuick(i).getFunctionFlags() & BoundExpression.EARLY_EXIT) == 0) {
@@ -176,15 +151,6 @@ final class OperatorPlanning implements Mutable {
             final int sourceId = mode == FillPlan.FILL_PREV ? targets.getQuick(i) : fill.getSourceColumnIds().getQuick(i);
             if (targets.indexOf(sourceId, 0, n) >= 0
                     && !SampleByFillRecordCursorFactory.isPrevSlotEligible(ColumnType.tagOf(input.getColumnType(input.getColumnIndexById(sourceId))))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private static boolean hasTimestampAggregate(ObjList<FunctionExpression> aggregates) {
-        for (int i = 0, n = aggregates.size(); i < n; i++) {
-            if ((aggregates.getQuick(i).getFunctionFlags() & (BoundExpression.ASCENDING_TIMESTAMP | BoundExpression.TIMESTAMP_ARGUMENT)) != 0) {
                 return true;
             }
         }
@@ -581,7 +547,7 @@ final class OperatorPlanning implements Mutable {
         }
         final LogicalPlan base = PlanToFactoryRules.aggregateBase(aggregate);
         readOrder(base, false, true);
-        if (hasTimestampAggregate(aggregate.getAggregates())) {
+        if (LogicalPlans.hasTimestampAggregate(aggregate.getAggregates())) {
             final LogicalPlan input = LogicalPlans.skipRenames(aggregate.getChild());
             final int baseTimestampIndex = timestampIndex(base);
             final int timestampIndex = base != input ? PlanToFactoryRules.projectedTimestampIndex((ProjectPlan) input, baseTimestampIndex) : baseTimestampIndex;
@@ -634,7 +600,7 @@ final class OperatorPlanning implements Mutable {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
         for (int i = 0, n = ordered.size(); i < n; i++) {
             final JoinInput step = ordered.getQuick(i);
-            if (step.getInput() != null && consumesInputTimestamp(join, i)) {
+            if (step.getInput() != null && LogicalPlans.consumesInputTimestamp(join, i)) {
                 validateConsumedTimestamp(step.getInput());
             }
         }
@@ -1250,12 +1216,12 @@ final class OperatorPlanning implements Mutable {
 
     /**
      * True when the node requires the designated timestamp of its input at {@code inputIndex}, the ordered input of
-     * a join: it consumes it, see {@link #consumesInputTimestamp}, or its own consumer requires its timestamp,
+     * a join: it consumes it, see {@link LogicalPlans#consumesInputTimestamp}, or its own consumer requires its timestamp,
      * {@code isTimestampRequired}, and its factory designates that input's, see
      * {@link PhysicalProperties#timestampSource}. A sort designates its own key, so it requires nothing of its input.
      */
     boolean requiresInputTimestamp(LogicalPlan plan, int inputIndex, boolean isTimestampRequired) {
-        return consumesInputTimestamp(plan, inputIndex)
+        return LogicalPlans.consumesInputTimestamp(plan, inputIndex)
                 || isTimestampRequired && PhysicalProperties.timestampSource(plan) == inputIndex;
     }
 

@@ -41,9 +41,9 @@ import io.questdb.std.ObjectPool;
 
 /**
  * Selects the order of a join of more than two inputs from the {@link JoinGraph} binding collected for it, with the
- * first input fixed when its order carries semantics, and publishes the keys, join types and ordered inputs ({@link #order(JoinPlan)}). Dependencies
- * come from the statement's plan-node pools; the lists it owns stay until {@link #clear()}, and the borrowed ones are
- * temporaries of one ordering.
+ * first input fixed when its order carries semantics, and publishes the keys, join types and ordered inputs
+ * ({@link #order(JoinPlan, boolean)}). Dependencies come from the statement's plan-node pools; the lists it owns stay
+ * until {@link #clear()}, and the borrowed ones are temporaries of one ordering.
  */
 final class JoinOrderSolver implements Mutable {
     private final ObjList<JoinKind> bestJoinTypes = new ObjList<>();
@@ -112,12 +112,13 @@ final class JoinOrderSolver implements Mutable {
     }
 
     /**
-     * Selects the order of a join binding left a graph for and publishes
-     * the keys, join types and ordered inputs; the caller places the graph's filter conjuncts. An input binding added
-     * after the graph joins as an unkeyed CROSS step.
+     * Selects the order of a join binding left a graph for and publishes the keys, join types and ordered inputs; the
+     * caller places the graph's filter conjuncts. An input binding added after the graph joins as an unkeyed CROSS
+     * step. The first input stays first when the join designates its timestamp and a part of the query sees the join's
+     * order, {@code isOrderVisible}; when the order leads with another input, the join designates no timestamp.
      */
-    void order(JoinPlan join) {
-        of(join, join.getGraph());
+    void order(JoinPlan join, boolean isOrderVisible) {
+        of(join, join.getGraph(), isOrderVisible);
         try {
             for (int i = dependencies.size(), n = join.getInputs().size(); i < n; i++) {
                 dependencies.add(null);
@@ -160,6 +161,9 @@ final class JoinOrderSolver implements Mutable {
                     }
                 }
                 join.getOrderedInputs().add(input);
+            }
+            if (!LogicalPlans.isFirstInputLeading(join)) {
+                join.getOutput().setTimestampIndex(-1);
             }
         } finally {
             clear();
@@ -282,22 +286,22 @@ final class JoinOrderSolver implements Mutable {
         return retained;
     }
 
-    private void of(JoinPlan join, JoinGraph graph) {
+    private void of(JoinPlan join, JoinGraph graph, boolean isOrderVisible) {
         clear();
         children.clear();
         childrenPool.clear();
         joinTypes.clear();
         this.graph = graph;
         this.dependencies = graph.getDependencies();
-        isFirstInputFixed = join.hasExplicitTimestamp() || graph.getLateralDependencies().size() > 0
-                || graph.getOrderingConstraints().size() > 0;
+        isFirstInputFixed = isOrderVisible && join.getOutput().getTimestampIndex() >= 0 || join.hasExplicitTimestamp()
+                || graph.getLateralDependencies().size() > 0 || graph.getOrderingConstraints().size() > 0;
         final ObjList<JoinInput> inputs = join.getInputs();
         for (int i = 0, n = inputs.size(); i < n; i++) {
             final JoinInput input = inputs.getQuick(i);
             children.add(childrenPool.next());
             joinTypes.add(input.getJoinType());
             isFirstInputFixed = isFirstInputFixed || input.getJoinType().isBarrier() || input.isDependent()
-                    || input.getSourceOutput().getTimestampIndex() >= 0 || !LogicalPlans.isResultStable(input.getInput(), true);
+                    || !LogicalPlans.isResultStable(input.getInput(), true);
         }
         for (int i = 0, n = graph.getResiduals().size(); !isFirstInputFixed && i < n; i++) {
             isFirstInputFixed = !LogicalPlans.isOrderIndependent(graph.getResiduals().getQuick(i));

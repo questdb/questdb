@@ -140,6 +140,87 @@ public class TransitiveFilterTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMixedTypeJoinKeysTakeMasterKeyFacts() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_trans_m(k STRING,ks SYMBOL,ts TIMESTAMP)");
+            execute("CREATE TABLE lp_trans_s(k SYMBOL INDEX,ks STRING,tn TIMESTAMP_NS,v LONG)");
+            execute("INSERT INTO lp_trans_m VALUES ('hit','hit','2024-01-01T00:00:00.000001Z'),('absent','absent','2024-01-02T00:00:00Z')");
+            execute("INSERT INTO lp_trans_s VALUES ('hit','hit','2024-01-01T00:00:00.000001Z',1),('miss','miss','2024-01-03T00:00:00Z',2)");
+            assertRowsAndPlan("SELECT b.v FROM lp_trans_m a JOIN lp_trans_s b ON a.k=b.k WHERE a.k='hit'",
+                    "v\n1\n",
+                    """
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: b.k=a.k
+                                    Async Filter workers: 1
+                                      filter: k='hit'
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_m
+                                    Hash
+                                        DeferredSingleSymbolFilterPageFrame
+                                            Index forward scan on: k deferred: true
+                                              filter: k='hit'
+                                            Frame forward scan on: lp_trans_s
+                            """);
+            assertRowsAndPlan("SELECT b.v FROM lp_trans_m a JOIN lp_trans_s b ON a.ks=b.ks WHERE a.ks='hit'",
+                    "v\n1\n",
+                    """
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: b.ks=a.ks
+                                    Async JIT Filter workers: 1
+                                      filter: ks='hit'
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_m
+                                    Hash
+                                        Async Filter workers: 1
+                                          filter: ks='hit'
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_trans_s
+                            """);
+            assertRowsAndPlan("SELECT b.v FROM lp_trans_m a JOIN lp_trans_s b ON a.ts=b.tn WHERE a.ts='2024-01-01T00:00:00.000001Z'",
+                    "v\n1\n",
+                    """
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: b.tn=a.ts
+                                    Async JIT Filter workers: 1
+                                      filter: 2024-01-01T00:00:00.000001Z=ts
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_m
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: 2024-01-01T00:00:00.000001000Z=tn
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_trans_s
+                            """);
+            execute("CREATE TABLE lp_trans_n(ts TIMESTAMP_NS,v INT)");
+            execute("INSERT INTO lp_trans_n VALUES ('2024-01-01T00:00:00.000000001Z',1)");
+            execute("CREATE TABLE lp_trans_u(ts TIMESTAMP,v INT)");
+            execute("INSERT INTO lp_trans_u VALUES ('2024-01-01T00:00:00Z',2)");
+            assertRowsAndPlan("SELECT b.v FROM lp_trans_n a JOIN lp_trans_u b ON a.ts=b.ts WHERE a.ts='2024-01-01T00:00:00.000000001Z'::TIMESTAMP_NS",
+                    "v\n",
+                    """
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: b.ts=a.ts
+                                    Async Filter workers: 1
+                                      filter: 2024-01-01T00:00:00.000000001Z=ts
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_n
+                                    Hash
+                                        Empty table
+                            """);
+        });
+    }
+
+    @Test
     public void testOnlyOriginalFactsPropagateAndSlaveFactsDoNotReverse() throws Exception {
         assertMemoryLeak(() -> {
             createRows();

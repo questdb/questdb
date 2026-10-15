@@ -3590,6 +3590,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final int selectTextPosition = createTableOp.getSelectTextPosition();
         final boolean ogAllowNonDeterministic = executionContext.allowNonDeterministicFunctions();
+        if (createMatViewOp != null) {
+            executionContext.pushTimestampRequiredFlag(createTableOp.isTimestampRequired());
+        }
         try {
             if (createMatViewOp != null) {
                 executionContext.setAllowNonDeterministicFunction(false);
@@ -3642,24 +3645,20 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 throw th;
             }
 
-            if (createMatViewOp != null) {
-                executionContext.pushTimestampRequiredFlag(createTableOp.isTimestampRequired());
-            }
             try {
                 compiledQuery.ofSelect(generateSelectWithRetries(queryModel, executionContext, false), cacheable);
             } catch (SqlException e) {
                 e.setPosition(e.getPosition() + selectTextPosition);
                 throw e;
-            } finally {
-                if (createMatViewOp != null) {
-                    executionContext.popTimestampRequiredFlag();
-                }
             }
         } catch (Throwable th) {
             QueryProgress.logError(th, -1, sqlText, executionContext, beginNanos);
             throw th;
         } finally {
             executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
+            if (createMatViewOp != null) {
+                executionContext.popTimestampRequiredFlag();
+            }
         }
     }
 
@@ -6056,9 +6055,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private void optimiseSubquery(Subquery subquery, SqlExecutionContext executionContext) throws SqlException {
         final int depth = scopes.enter(subquery.getDepth());
+        executionContext.pushTimestampRequiredFlag(false);
         try {
             subquery.setRoot(optimiser.optimise(subquery.getRoot(), executionContext));
         } finally {
+            executionContext.popTimestampRequiredFlag();
             scopes.enter(depth);
         }
         assert subquery.getRoot().getOutput().hasColumnTypesOf(subquery.getOutputMetadata().getMetadata())

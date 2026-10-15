@@ -464,7 +464,7 @@ public final class PhysicalProperties {
             final JoinInput step = ordered.getQuick(i);
             final JoinKind joinType = step.getJoinType();
             if (joinType.isRelational()) {
-                timestampIndex = chooseTimestamp(markout(step), -1, PlanToFactoryRules.isMasterTimestampKept(step) ? timestampIndex : -1);
+                timestampIndex = chooseTimestamp(markout(step), -1, PlanToFactoryRules.isMasterTimestampKept(join, i) ? timestampIndex : -1);
             } else if (joinType.isMasterNulling()) {
                 timestampIndex = -1;
             }

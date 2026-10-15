@@ -1016,17 +1016,20 @@ final class JoinFactoryGenerator {
     }
 
     /**
-     * Consumes both input factories on entry, including failure.
+     * Joins the step at {@code position} of the join's ordered inputs to its master. Consumes both input factories on
+     * entry, including failure.
      */
     RecordCursorFactory generate(
             GenerationFrame frame,
-            JoinInput step,
+            JoinPlan join,
+            int position,
             OutputSchema masterOutput,
             CharSequence masterAlias,
             RecordCursorFactory master,
             RecordCursorFactory slave,
             SqlExecutionContext executionContext
     ) throws SqlException {
+        final JoinInput step = join.getOrderedInputs().getQuick(position);
         JoinRecordMetadata metadata = null;
         Function onFilter = null;
         RecordCursorFactory result = null;
@@ -1051,7 +1054,7 @@ final class JoinFactoryGenerator {
             final int markoutTimestampIndex = masterOutput.getColumnIndexById(step.getMarkoutTimestampColumnId());
             final boolean isMarkout = step.getAlgorithm() == JoinInput.Algorithm.MARKOUT;
             metadata = createJoinMetadata(masterAlias, masterMetadata, step.getBindingAlias(),
-                    slaveMetadata, isMarkout || !PlanToFactoryRules.isMasterTimestampKept(step) ? -1 : masterMetadata.getTimestampIndex());
+                    slaveMetadata, isMarkout || !PlanToFactoryRules.isMasterTimestampKept(join, position) ? -1 : masterMetadata.getTimestampIndex());
             final BoundExpression onResidual = step.getOnResidual();
             if (onResidual != null) {
                 onFilter = functionInstantiator.instantiate(onResidual, step.getOutput(), metadata, executionContext);
@@ -1193,7 +1196,7 @@ final class JoinFactoryGenerator {
                         generateTemporal(frame, step, masterOutput, masterAlias, master, slave, slave.getMetadata(), null, null,
                                 executionContext);
                 case SPLICE -> generateSplice(frame, step, masterOutput, masterAlias, master, slave, executionContext);
-                default -> generate(frame, step, masterOutput, masterAlias, master, slave, executionContext);
+                default -> generate(frame, join, i, masterOutput, masterAlias, master, slave, executionContext);
             };
             masterOutput = step.getOutput();
             masterAlias = null;

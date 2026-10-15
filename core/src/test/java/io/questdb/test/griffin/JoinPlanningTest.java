@@ -361,11 +361,11 @@ public class JoinPlanningTest extends AbstractCairoTest {
                                 .withCompiler(compiler).noLeakCheck().assertsPlanContaining("condition: c.k=b.k\n            Cross Join");
                     }
                     assertQuery("SELECT a.ts,a.id FROM lp_cross_ts a CROSS JOIN lp_cross_b b JOIN lp_cross_c c ON b.k=c.k")
-                            .withCompiler(compiler).noLeakCheck().timestamp("ts").noRandomAccess().expectSize(isFullFat).returns("""
+                            .withCompiler(compiler).noLeakCheck().noRandomAccess().expectSize(isFullFat).returns("""
                                     ts\tid
                                     2020-01-01T00:00:00.000000Z\t1
-                                    2020-01-01T00:00:00.000000Z\t1
                                     2020-01-02T00:00:00.000000Z\t2
+                                    2020-01-01T00:00:00.000000Z\t1
                                     2020-01-02T00:00:00.000000Z\t2
                                     """);
                     assertQuery("SELECT sum(a.id) FROM lp_cross_a a CROSS JOIN lp_cross_b b JOIN lp_cross_c c ON b.k=c.k")
@@ -400,6 +400,261 @@ public class JoinPlanningTest extends AbstractCairoTest {
                                 Frame forward scan on: lp_cross_a
                     """).returns("sum\n500500\n");
             assertQuery(sql).noLeakCheck().fullFatJoins().noRandomAccess().expectSize().returns("sum\n500500\n");
+        });
+    }
+
+    @Test
+    public void testDisconnectedTimestampedLeadingCrossTrailsUnlessOrderIsVisible() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_cross_a (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE lp_cross_b (k INT)");
+            execute("CREATE TABLE lp_cross_c (k INT)");
+            execute("CREATE TABLE lp_cross_q (v INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO lp_cross_a VALUES (1, '2020-01-01T00:00:00Z'), (2, '2020-01-01T00:00:01Z'), (3, '2020-01-01T00:00:02Z')");
+            execute("INSERT INTO lp_cross_b VALUES (1), (2), (3)");
+            execute("INSERT INTO lp_cross_c VALUES (2)");
+            execute("INSERT INTO lp_cross_q VALUES (10, '2020-01-01T00:00:00Z'), (20, '2020-01-01T00:00:01.500000Z')");
+            final String join = "lp_cross_a a CROSS JOIN lp_cross_b b JOIN lp_cross_c c ON b.k=c.k";
+            final String rows = """
+                    id\tts
+                    1\t2020-01-01T00:00:00.000000Z
+                    2\t2020-01-01T00:00:01.000000Z
+                    3\t2020-01-01T00:00:02.000000Z
+                    """;
+            assertQuery("SELECT * FROM " + join).noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                    SelectedRecord
+                        Cross Join
+                            Hash Join Light
+                              condition: c.k=b.k
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_cross_b
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_cross_c
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: lp_cross_a
+                    """).returns("""
+                    id\tts\tk\tk1
+                    1\t2020-01-01T00:00:00.000000Z\t2\t2
+                    2\t2020-01-01T00:00:01.000000Z\t2\t2
+                    3\t2020-01-01T00:00:02.000000Z\t2\t2
+                    """);
+            assertQuery("SELECT a.ts, a.id FROM " + join + " ORDER BY a.ts LIMIT 1")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().timestamp("ts").withPlan("""
+                            Limit value: 1 skip-rows-max: 0 take-rows-max: 1
+                                Encode sort
+                                  keys: [ts]
+                                    SelectedRecord
+                                        Cross Join
+                                            Hash Join Light
+                                              condition: c.k=b.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_cross_b
+                                                Hash
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: lp_cross_c
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_a
+                            """).returns("ts\tid\n2020-01-01T00:00:00.000000Z\t1\n");
+            assertQuery("SELECT DISTINCT a.id FROM " + join).noLeakCheck().assertsPlan("""
+                    GroupBy vectorized: false
+                      keys: [id]
+                        Cross Join
+                            Hash Join Light
+                              condition: c.k=b.k
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_cross_b
+                                Hash
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_cross_c
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: lp_cross_a
+                    """);
+            assertQuery("SELECT x.id, q.v FROM (SELECT a.id, a.ts FROM " + join + ") x ASOF JOIN lp_cross_q q")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                            SelectedRecord
+                                AsOf Join Fast
+                                    SelectedRecord
+                                        Hash Join Light
+                                          condition: c.k=b.k
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_cross_a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_cross_b
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_cross_c
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: lp_cross_q
+                            """).returns("id\tv\n1\t10\n2\t10\n3\t20\n");
+            assertQuery("SELECT a.ts, count() FROM " + join + " SAMPLE BY 1s ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().timestamp("ts").withPlan("""
+                            Sample By
+                              fill: none
+                              values: [count(*)]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: c.k=b.k
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_c
+                            """).returns("""
+                            ts\tcount
+                            2020-01-01T00:00:00.000000Z\t1
+                            2020-01-01T00:00:01.000000Z\t1
+                            2020-01-01T00:00:02.000000Z\t1
+                            """);
+            assertQuery("SELECT twap(a.id, a.ts) FROM " + join).noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                    GroupBy vectorized: false
+                      values: [twap(a.id,a.ts)]
+                        Hash Join Light
+                          condition: c.k=b.k
+                            Cross Join
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_cross_a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_cross_b
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_cross_c
+                    """).returns("twap\n1.5\n");
+            assertQuery("SELECT id, ts FROM (SELECT a.id, a.ts, b.k FROM " + join + ") LATEST ON ts PARTITION BY k")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().timestamp("ts").withPlan("""
+                            SelectedRecord
+                                LatestBy
+                                    SelectedRecord
+                                        Hash Join Light
+                                          condition: c.k=b.k
+                                            Cross Join
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_cross_a
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_cross_b
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: lp_cross_c
+                            """).returns("id\tts\n3\t2020-01-01T00:00:02.000000Z\n");
+            assertQuery("SELECT id, sum(id) OVER (ORDER BY ts RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW) s FROM (SELECT a.id, a.ts FROM " + join + ")")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                            Window
+                              functions: [sum(id) over (range between 1000000 preceding and current row)]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: c.k=b.k
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_c
+                            """).returns("id\ts\n1\t1.0\n2\t3.0\n3\t5.0\n");
+            assertQuery("SELECT avg(a.id, 'second', 1) OVER (ORDER BY a.ts) e FROM " + join)
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                            Window
+                              functions: [avg(id, 'second', 1.0) over (rows between unbounded preceding and current row)]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: c.k=b.k
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_c
+                            """).returns("e\n1.0\n1.6321205588285577\n2.496785275591945\n");
+            assertQuery("SELECT sum(a.id) OVER (ORDER BY a.ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) s FROM " + join)
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                            Window
+                              functions: [sum(id) over (range between unbounded preceding and 1 preceding)]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: c.k=b.k
+                                        Cross Join
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_a
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_b
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_cross_c
+                            """).returns("s\nnull\n1.0\n3.0\n");
+            assertQuery("SELECT first(a.id), last(a.id) FROM " + join).noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                    GroupBy vectorized: false
+                      values: [first(a.id),last(a.id)]
+                        Hash Join Light
+                          condition: c.k=b.k
+                            Cross Join
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_cross_a
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_cross_b
+                            Hash
+                                PageFrame
+                                    Row forward scan
+                                    Frame forward scan on: lp_cross_c
+                    """).returns("first\tlast\n1\t3\n");
+            assertQuery("SELECT * FROM (SELECT a.id, a.ts FROM " + join + ") TIMESTAMP(ts)")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().timestamp("ts").withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: c.k=b.k
+                                    Cross Join
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_cross_a
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_cross_b
+                                    Hash
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_cross_c
+                            """).returns(rows);
+            execute("CREATE TABLE lp_cross_copy AS (SELECT a.id, a.ts FROM " + join + ")");
+            assertQuery("SELECT * FROM lp_cross_copy").noLeakCheck().timestamp("ts").expectSize().returns(rows);
         });
     }
 

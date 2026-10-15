@@ -37,6 +37,7 @@ import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.GroupingPlan;
+import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -46,12 +47,14 @@ import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.SampleByPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.TypeExpression;
 import io.questdb.griffin.plan.logical.UnaryPlan;
+import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.std.Chars;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
@@ -230,6 +233,31 @@ public final class LogicalPlans {
         return predicate instanceof ConstantExpression constant ? constant.getLongValue() != 0 ? 1 : 0 : -1;
     }
 
+    /**
+     * True when the node reads the designated timestamp of its input at {@code inputIndex}, an index of the join's
+     * {@link #orderedSteps}: the master of a join with a temporal step and the slave of each such step, the master and
+     * slaves of a horizon or window join, and the input of a SAMPLE BY over its designated timestamp.
+     */
+    public static boolean consumesInputTimestamp(LogicalPlan plan, int inputIndex) {
+        return switch (plan) {
+            case JoinPlan join -> {
+                final ObjList<JoinInput> steps = orderedSteps(join);
+                if (inputIndex > 0) {
+                    yield steps.getQuick(inputIndex).getJoinType().isTemporal();
+                }
+                for (int i = 1, n = steps.size(); i < n; i++) {
+                    if (steps.getQuick(i).getJoinType().isTemporal()) {
+                        yield true;
+                    }
+                }
+                yield false;
+            }
+            case SampleByPlan sample -> sample.isTimestampRequired();
+            case HorizonJoinPlan _, WindowJoinPlan _ -> true;
+            default -> false;
+        };
+    }
+
     public static void deriveColumnReferenceCounts(LogicalPlan plan, IntHashSet columnIds) {
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
             final LogicalPlan input = plan.inputAt(i);
@@ -327,6 +355,42 @@ public final class LogicalPlans {
     }
 
     /**
+     * True when an aggregate function reads the designated timestamp of its input or requires its ascending order.
+     */
+    public static boolean hasTimestampAggregate(ObjList<FunctionExpression> aggregates) {
+        for (int i = 0, n = aggregates.size(); i < n; i++) {
+            if ((aggregates.getQuick(i).getFunctionFlags() & (BoundExpression.ASCENDING_TIMESTAMP | BoundExpression.TIMESTAMP_ARGUMENT)) != 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * True when the values of the aggregate do not depend on the order of its input rows: its grouping keys and the
+     * arguments of its aggregate functions depend on no row order, and no aggregate function is order-sensitive.
+     */
+    public static boolean isAggregateOrderIndependent(AggregatePlan aggregate) {
+        for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
+            if (!isOrderIndependent(aggregate.getGroupingExpressions().getQuick(i))) {
+                return false;
+            }
+        }
+        for (int i = 0, n = aggregate.getAggregates().size(); i < n; i++) {
+            final FunctionExpression expression = aggregate.getAggregates().getQuick(i);
+            if (!expression.isAggregate() || expression.getOverload().isOrderSensitiveAggregate()) {
+                return false;
+            }
+            for (int k = 0, count = expression.getArgumentCount(); k < count; k++) {
+                if (!isOrderIndependent(expression.argumentAt(k))) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
+    /**
      * True when the projection selects each of its columns as a distinct plain column reference.
      */
     public static boolean isColumnOnlyProjection(ProjectPlan project) {
@@ -405,6 +469,15 @@ public final class LogicalPlans {
         }
         final FunctionExpression call = aggregates.getQuick(0);
         return call.getArgumentCount() == 0 && call.isAggregate() && SqlKeywords.isCountKeyword(call.getName());
+    }
+
+    /**
+     * True when the join runs its first input first. Join ordering leads with another input only when the join
+     * designates no timestamp or no part of the query sees the join's order, and a join that leads with another input
+     * designates no timestamp.
+     */
+    public static boolean isFirstInputLeading(JoinPlan join) {
+        return join.getOrderedInputs().getQuick(0) == join.getInputs().getQuick(0);
     }
 
     /**
