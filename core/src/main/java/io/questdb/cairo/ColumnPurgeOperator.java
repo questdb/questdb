@@ -234,8 +234,8 @@ public class ColumnPurgeOperator implements Closeable {
                     // .pc<N>.<columnVersion>.<C>.<sealTxn>; if one exists
                     // the purge is not complete and must retry, otherwise
                     // the caller's "files all gone" shortcut leaks them.
-                    sealedPostingFileScanProbe.of(columnVersion);
-                    PostingIndexUtils.scanSealedFiles(ff, path, pathTrimToPartition, columnName, sealedPostingFileScanProbe);
+                    sealedPostingFileScanProbe.clear();
+                    PostingIndexUtils.scanSealedFiles(ff, path, pathTrimToPartition, columnName, columnVersion, sealedPostingFileScanProbe);
                     if (sealedPostingFileScanProbe.hasMatch()) {
                         return true;
                     }
@@ -566,37 +566,31 @@ public class ColumnPurgeOperator implements Closeable {
 
     /**
      * Reusable {@link PostingIndexUtils.SealedFileVisitor} that flags
-     * whether any sealed POSTING file (.pv or .pc&lt;N&gt;) for a target
-     * columnVersion exists in the scanned partition. Stateful but
-     * non-allocating: callers call {@link #of(long)} to reset state for
-     * a new probe, run {@link PostingIndexUtils#scanSealedFiles}, then
-     * read {@link #hasMatch()}.
+     * whether any sealed POSTING file (.pv or .pc&lt;N&gt;) of the column
+     * version {@link PostingIndexUtils#scanSealedFiles} scans exists in the
+     * scanned partition. Stateful but non-allocating: callers call
+     * {@link #clear()} to reset state for a new probe, run
+     * {@link PostingIndexUtils#scanSealedFiles}, then read {@link #hasMatch()}.
      */
     private static final class SealedPostingFileScanProbe implements PostingIndexUtils.SealedFileVisitor {
-        private long columnVersion;
         private boolean hasMatch;
+
+        public void clear() {
+            hasMatch = false;
+        }
 
         public boolean hasMatch() {
             return hasMatch;
         }
 
-        public void of(long columnVersion) {
-            this.columnVersion = columnVersion;
-            this.hasMatch = false;
+        @Override
+        public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+            hasMatch = true;
         }
 
         @Override
-        public void onCoverDataFile(int includeIdx, long postingColumnNameTxn, long coveredColumnNameTxn, long sealTxn) {
-            if (postingColumnNameTxn == columnVersion) {
-                hasMatch = true;
-            }
-        }
-
-        @Override
-        public void onValueFile(long postingColumnNameTxn, long sealTxn) {
-            if (postingColumnNameTxn == columnVersion) {
-                hasMatch = true;
-            }
+        public void onValueFile(long sealTxn) {
+            hasMatch = true;
         }
     }
 
