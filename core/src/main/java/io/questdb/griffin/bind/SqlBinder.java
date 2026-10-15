@@ -284,8 +284,8 @@ public final class SqlBinder implements Mutable {
     // expanded the view; any other table, e.g. one a caller substitutes into the view, is read as the caller.
     private static boolean isVisible(QueryModel source, TableToken token, SqlExecutionContext executionContext) throws SqlException {
         final ExpressionNode view = source.getViewNameExpr();
-        return view != null && TableUtils.getTableFunctionView(view, executionContext).isDependency(token)
-                || executionContext.getSecurityContext().isTableVisible(token);
+        return executionContext.getSecurityContext().isTableVisible(token)
+                || view != null && TableUtils.getTableFunctionView(view, executionContext).isDependency(token);
     }
 
     private static SetOperationKind setOperationKind(int modelOperation) {

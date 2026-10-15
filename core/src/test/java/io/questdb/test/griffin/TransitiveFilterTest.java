@@ -820,6 +820,84 @@ public class TransitiveFilterTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testTemporalJoinSlavesTakeMasterKeyFacts() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_trans_t(s SYMBOL,d DOUBLE,ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO lp_trans_t VALUES
+                    ('a',1,'2024-01-01T00:00:01Z'),('b',2,'2024-01-01T00:00:02Z'),('a',3,'2024-01-01T00:00:03Z'),
+                    ('b',4,'2024-01-01T00:00:04Z'),('a',5,'2024-01-01T00:00:05Z')
+                    """);
+            assertRowsAndPlan("SELECT t.ts,u.d FROM lp_trans_t t LT JOIN lp_trans_t u ON t.s=u.s WHERE t.s='a'",
+                    """
+                            ts\td
+                            2024-01-01T00:00:01.000000Z\tnull
+                            2024-01-01T00:00:03.000000Z\t1.0
+                            2024-01-01T00:00:05.000000Z\t3.0
+                            """,
+                    """
+                            SelectedRecord
+                                Lt Join Light
+                                  condition: u.s=t.s
+                                    Async JIT Filter workers: 1
+                                      filter: s='a'
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_t
+                                    Async JIT Filter workers: 1
+                                      filter: s='a'
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_t
+                            """);
+            assertRowsAndPlan("SELECT t.ts,u.d,v.d vd FROM lp_trans_t t ASOF JOIN lp_trans_t u ON t.s=u.s "
+                            + "JOIN lp_trans_t v ON t.s=v.s WHERE t.s='a' AND v.d<2",
+                    """
+                            ts\td\tvd
+                            2024-01-01T00:00:01.000000Z\t1.0\t1.0
+                            2024-01-01T00:00:03.000000Z\t3.0\t1.0
+                            2024-01-01T00:00:05.000000Z\t5.0\t1.0
+                            """,
+                    """
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: v.s=t.s
+                                  symbolKeyJoin: true
+                                    Filtered AsOf Join Fast
+                                      filter: s='a'
+                                        Async JIT Filter workers: 1
+                                          filter: s='a'
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_trans_t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_t
+                                    Hash
+                                        Async JIT Filter workers: 1
+                                          filter: (d<2 and s='a')
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: lp_trans_t
+                            """);
+            assertQuery("SELECT t.ts,u.d FROM lp_trans_t t SPLICE JOIN lp_trans_t u ON t.s=u.s WHERE t.s='a'")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Filter filter: t.s='a'
+                                    Splice Join
+                                      condition: u.s=t.s
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_trans_t
+                            """);
+        });
+    }
+
     private void assertRowsAndPlan(String sql, String rows, String plan) throws Exception {
         assertQuery(sql).noLeakCheck().withPlan(plan).inferRandomAccess().inferTimestamp().sizeMayVary().returns(rows);
     }

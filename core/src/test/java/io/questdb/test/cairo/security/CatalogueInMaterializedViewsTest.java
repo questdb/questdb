@@ -45,6 +45,7 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TableFunctionTestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -254,7 +255,7 @@ public class CatalogueInMaterializedViewsTest extends AbstractCairoTest {
                 Assert.assertTrue(constructions.get() > 0);
                 Assert.assertEquals(constructions.get(), closes.get());
             } finally {
-                engine.getFunctionFactoryCache().getFactories().remove("admin_flag");
+                TableFunctionTestUtils.unregister(engine, "admin_flag");
             }
         });
     }
@@ -368,7 +369,7 @@ public class CatalogueInMaterializedViewsTest extends AbstractCairoTest {
                 Assert.assertNull(engine.getTableTokenIfExists("mv"));
                 Assert.assertEquals(constructions.get(), closes.get());
             } finally {
-                engine.getFunctionFactoryCache().getFactories().remove("admin_flag");
+                TableFunctionTestUtils.unregister(engine, "admin_flag");
             }
         });
     }

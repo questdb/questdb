@@ -67,9 +67,7 @@ public final class SqlExecutionRequirements implements Mutable {
     private final ObjList<String> deferredNames = new ObjList<>();
     private final IntList deferredPositions = new IntList();
     private final ObjList<String> deferredViewNames = new ObjList<>();
-    private int flags;
     private int liveWalProgressPosition = -1;
-    private int nonDeterministicCallIndex = -1;
 
     /**
      * Throws when a materialized or live view may not store the result of a function, or a SHOW
@@ -94,11 +92,10 @@ public final class SqlExecutionRequirements implements Mutable {
             @Nullable SqlExecutionContext.TableFunctionView view,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        checkStoredView0(requirements, position, name, isStatement, viewNameOf(view), isAlterable(view), executionContext);
+        checkStoredView(requirements, position, name, isStatement, viewNameOf(view), isAlterable(view), executionContext);
     }
 
     public void add(int requirements, int position) {
-        flags |= requirements;
         if ((requirements & REQUIRES_LIVE_WAL_PROGRESS) != 0 && liveWalProgressPosition < 0) {
             liveWalProgressPosition = position;
         }
@@ -108,20 +105,28 @@ public final class SqlExecutionRequirements implements Mutable {
      * Decides the functions and SHOW statements {@link #defer} recorded while CREATE MATERIALIZED VIEW bound its SQL,
      * in the order the materialized view rejects them: of the table functions and SHOW statements, an administrative
      * one first, then a catalogue one from a view users may alter, then any other catalogue one; then the first
-     * other function the view may not store, in the order binding created them.
+     * other function the view may not store, in the order binding created them, unless binding created a
+     * non-deterministic function before it, which the materialized view rejects instead.
      *
-     * @return true when that other function comes after the first non-deterministic function binding created, which
-     * the caller reports instead, see {@link #markNonDeterministicCall()}
+     * @param nonDeterministicCallIndex    the number of functions and SHOW statements recorded before binding created
+     *                                     its first non-deterministic function, or -1 when it created none
+     * @param nonDeterministicCallPosition the position of that non-deterministic function
+     * @param nonDeterministicCallName     the name of that non-deterministic function
      * @throws SqlException when the materialized view may not store the result of a recorded function or statement
      */
-    public boolean checkStoredView(SqlExecutionContext executionContext) throws SqlException {
+    public void checkDeferred(
+            int nonDeterministicCallIndex,
+            int nonDeterministicCallPosition,
+            @Nullable CharSequence nonDeterministicCallName,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
         int alterableSource = -1;
         int catalogueSource = -1;
         for (int i = 0, n = deferred.size(); i < n; i++) {
             final int requirements = deferred.getQuick(i);
             if ((requirements & IS_SOURCE) != 0) {
                 if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
-                    checkStoredView(i, executionContext);
+                    checkDeferredAt(i, executionContext);
                 }
                 if (catalogueSource < 0) {
                     catalogueSource = i;
@@ -132,21 +137,20 @@ public final class SqlExecutionRequirements implements Mutable {
             }
         }
         if (catalogueSource > -1) {
-            checkStoredView(alterableSource > -1 ? alterableSource : catalogueSource, executionContext);
+            checkDeferredAt(alterableSource > -1 ? alterableSource : catalogueSource, executionContext);
         }
         for (int i = 0, n = deferred.size(); i < n; i++) {
             if ((deferred.getQuick(i) & IS_SOURCE) == 0) {
                 try {
-                    checkStoredView(i, executionContext);
+                    checkDeferredAt(i, executionContext);
                 } catch (SqlException e) {
                     if (nonDeterministicCallIndex > -1 && nonDeterministicCallIndex <= i) {
-                        return true;
+                        throw SqlException.nonDeterministicColumn(nonDeterministicCallPosition, nonDeterministicCallName, objectKind(executionContext));
                     }
                     throw e;
                 }
             }
         }
-        return false;
     }
 
     @Override
@@ -155,14 +159,12 @@ public final class SqlExecutionRequirements implements Mutable {
         deferredNames.clear();
         deferredPositions.clear();
         deferredViewNames.clear();
-        flags = NONE;
         liveWalProgressPosition = -1;
-        nonDeterministicCallIndex = -1;
     }
 
     /**
      * Records a function, or a SHOW statement, the materialized view may not store, for
-     * {@link #checkStoredView(SqlExecutionContext)} to decide once binding finished.
+     * {@link #checkDeferred} to decide once binding finished.
      *
      * @param view the view that the function or statement is written in, or null when the compiled
      *             SQL itself writes it; a system view counts as the compiled SQL
@@ -177,7 +179,7 @@ public final class SqlExecutionRequirements implements Mutable {
         if ((requirements & STORED_VIEW_REQUIREMENTS) == 0) {
             return;
         }
-        deferred.add((requirements & STORED_VIEW_REQUIREMENTS) | (isStatement ? IS_STATEMENT : 0) | (isAlterable(view) ? IS_VIEW_ALTERABLE : 0));
+        deferred.add((requirements & STORED_VIEW_REQUIREMENTS) | (isStatement ? IS_STATEMENT | IS_SOURCE : 0) | (isAlterable(view) ? IS_VIEW_ALTERABLE : 0));
         deferredNames.add(Chars.toString(name));
         deferredPositions.add(position);
         deferredViewNames.add(viewNameOf(view));
@@ -190,20 +192,11 @@ public final class SqlExecutionRequirements implements Mutable {
         return deferred.size();
     }
 
-    public int getPosition(int requirement) {
-        if (requirement == REQUIRES_LIVE_WAL_PROGRESS && (flags & REQUIRES_LIVE_WAL_PROGRESS) != 0) {
-            return liveWalProgressPosition;
-        }
-        return -1;
-    }
-
     /**
-     * Records that binding created its first non-deterministic function after the functions deferred so far.
+     * The position of the first function that requires {@link #REQUIRES_LIVE_WAL_PROGRESS}, or -1.
      */
-    public void markNonDeterministicCall() {
-        if (nonDeterministicCallIndex < 0) {
-            nonDeterministicCallIndex = deferred.size();
-        }
+    public int getLiveWalProgressPosition() {
+        return liveWalProgressPosition;
     }
 
     /**
@@ -216,7 +209,7 @@ public final class SqlExecutionRequirements implements Mutable {
         }
     }
 
-    private static void checkStoredView0(
+    private static void checkStoredView(
             int requirements,
             int position,
             CharSequence name,
@@ -225,7 +218,7 @@ public final class SqlExecutionRequirements implements Mutable {
             boolean isViewAlterable,
             SqlExecutionContext executionContext
     ) throws SqlException {
-        final CharSequence objectKind = executionContext.isLiveViewCompile() ? "live view" : "materialized view";
+        final CharSequence objectKind = objectKind(executionContext);
         if ((requirements & REQUIRES_ENTERPRISE_SECURITY_CONTEXT) != 0) {
             throw SqlException.functionNotAllowed(position)
                     .put("administrative function cannot be used in ")
@@ -280,13 +273,17 @@ public final class SqlExecutionRequirements implements Mutable {
         return view != null && !view.definition().getViewToken().isSystem();
     }
 
+    private static CharSequence objectKind(SqlExecutionContext executionContext) {
+        return executionContext.isLiveViewCompile() ? "live view" : "materialized view";
+    }
+
     private static @Nullable String viewNameOf(@Nullable SqlExecutionContext.TableFunctionView view) {
         return view != null ? view.definition().getViewToken().getTableName() : null;
     }
 
-    private void checkStoredView(int index, SqlExecutionContext executionContext) throws SqlException {
+    private void checkDeferredAt(int index, SqlExecutionContext executionContext) throws SqlException {
         final int requirements = deferred.getQuick(index);
-        checkStoredView0(requirements, deferredPositions.getQuick(index), deferredNames.getQuick(index),
+        checkStoredView(requirements, deferredPositions.getQuick(index), deferredNames.getQuick(index),
                 (requirements & IS_STATEMENT) != 0, deferredViewNames.getQuick(index), (requirements & IS_VIEW_ALTERABLE) != 0,
                 executionContext);
     }

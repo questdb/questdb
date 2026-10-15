@@ -153,10 +153,7 @@ public final class TableFunctionSources implements Closeable, Mutable {
         try {
             final CharSequence statement = objectDisclosingStatement(model.getShowKind());
             if (statement != null) {
-                final FunctionResolver resolver = parser.getFunctionResolver();
-                final int deferredCount = resolver.getExecutionRequirements().getDeferredCount();
-                resolver.addObjectDisclosingStatement(model.getModelPosition(), statement, executionContext);
-                resolver.getExecutionRequirements().markSources(deferredCount);
+                parser.getFunctionResolver().addObjectDisclosingStatement(model.getModelPosition(), statement, executionContext);
             }
             resources.own(slot, new CursorFunction(createShowFactory(model, executionContext, callback, path())));
             parser.getFunctionResolver().markCursorFunctionInstantiated();

@@ -17755,15 +17755,12 @@ public class SqlParserTest extends AbstractSqlParserTest {
 
     @Test
     public void testSelectColumnWithAlias() throws Exception {
-        assertMemoryLeak(() -> {
-            assertQuery("select x a, rnd_int() c from long_sequence(5)")
-                    .noLeakCheck()
-                    .assertsPlan("""
-                            VirtualRecord
-                              functions: [x,rnd_int()]
-                                long_sequence count: 5
-                            """);
-        });
+        assertQuery("select x a, rnd_int() c from long_sequence(5)")
+                .assertsPlan("""
+                        VirtualRecord
+                          functions: [x,rnd_int()]
+                            long_sequence count: 5
+                        """);
     }
 
     @Test

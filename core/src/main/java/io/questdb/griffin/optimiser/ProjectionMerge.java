@@ -280,7 +280,7 @@ final class ProjectionMerge implements OptimiserPass {
                 boundary = limit;
                 input = limit.getChild();
             }
-            if (!(input instanceof ProjectPlan inner) || !LogicalPlans.isColumnProjection(inner)) {
+            if (!(input instanceof ProjectPlan inner) || !LogicalPlans.isColumnProjection(inner) && !inner.hasPrunedComputedColumns()) {
                 return project;
             }
             // Generation elides an identity declaration over an undesignated input, which
@@ -316,6 +316,9 @@ final class ProjectionMerge implements OptimiserPass {
             }
             if (inner.hasTimestampDeclaration() && project.getOutput().getTimestampIndex() >= 0) {
                 project.markTimestampDeclaration();
+            }
+            if (inner.hasPrunedComputedColumns()) {
+                project.setPrunedComputedColumns(true);
             }
             // Pruning already resolved duplicate timestamp aliases. Keep the outer
             // schema exactly. Order-sensitive rules have finished, so a declaration

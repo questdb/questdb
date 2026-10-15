@@ -32,12 +32,10 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.PageFrameCursor;
 import io.questdb.cairo.sql.Record;
-import io.questdb.cairo.sql.RowCursorFactory;
 import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.griffin.engine.functions.StrFunction;
 import io.questdb.griffin.engine.table.DeferredSingleSymbolFilterPageFrameRecordCursorFactory;
 import io.questdb.griffin.engine.table.DeferredSymbolIndexRowCursorFactory;
-import io.questdb.griffin.engine.table.SymbolIndexRowCursorFactory;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
@@ -52,68 +50,55 @@ public class DeferredSingleSymbolFilterOwnershipTest extends AbstractCairoTest {
     public void testCloseFailuresPreservePrimaryAndReleaseKeyOnce() throws Exception {
         assertMemoryLeak(() -> {
             createTable();
-            for (int mode = 0; mode < 2; mode++) {
-                final RuntimeException frameFailure = new RuntimeException("frame close");
-                final RuntimeException keyFailure = new RuntimeException("key close");
-                final TrackingKey key = new TrackingKey(keyFailure);
-                final DeferredSingleSymbolFilterPageFrameRecordCursorFactory factory = createFactory(key, mode == 1, frameFailure);
+            final RuntimeException frameFailure = new RuntimeException("frame close");
+            final RuntimeException keyFailure = new RuntimeException("key close");
+            final TrackingKey key = new TrackingKey(keyFailure);
+            final DeferredSingleSymbolFilterPageFrameRecordCursorFactory factory = createFactory(key, frameFailure);
+            try {
+                assertRows(factory);
+            } finally {
                 try {
-                    assertRows(factory);
-                } finally {
-                    try {
-                        factory.close();
-                        Assert.fail("expected frame close failure");
-                    } catch (RuntimeException e) {
-                        Assert.assertSame(frameFailure, e);
-                        Assert.assertEquals(1, e.getSuppressed().length);
-                        Assert.assertSame(keyFailure, e.getSuppressed()[0]);
-                    }
+                    factory.close();
+                    Assert.fail("expected frame close failure");
+                } catch (RuntimeException e) {
+                    Assert.assertSame(frameFailure, e);
+                    Assert.assertEquals(1, e.getSuppressed().length);
+                    Assert.assertSame(keyFailure, e.getSuppressed()[0]);
                 }
-                Assert.assertEquals(1, key.closeCount);
-                factory.close();
-                Assert.assertEquals(1, key.closeCount);
             }
+            Assert.assertEquals(1, key.closeCount);
+            factory.close();
+            Assert.assertEquals(1, key.closeCount);
         });
     }
 
     @Test
     public void testDeferredKeySurvivesFrameConversionAndClosesOnce() throws Exception {
-        assertMemoryLeak(() -> assertReadAndClose(true));
-    }
-
-    @Test
-    public void testResolvedBorrowedKeySurvivesFrameConversionAndClosesOnce() throws Exception {
-        assertMemoryLeak(() -> assertReadAndClose(false));
-    }
-
-    private void assertReadAndClose(boolean isDeferred) throws Exception {
-        createTable();
-        final TrackingKey key = new TrackingKey(null);
-        try (DeferredSingleSymbolFilterPageFrameRecordCursorFactory factory = createFactory(key, isDeferred, null)) {
-            assertRows(factory);
-            final SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexPageFrameCursorFactory();
-            try (PageFrameCursor frames = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
-                Assert.assertNotNull(frames.next());
-                Assert.assertEquals(1, symbolFilter.getColumnIndex());
-                Assert.assertEquals(TableUtils.toIndexKey(0), symbolFilter.getSymbolFilterKey());
-            } finally {
-                factory.revertFromSampleByIndexPageFrameCursorFactory();
+        assertMemoryLeak(() -> {
+            createTable();
+            final TrackingKey key = new TrackingKey(null);
+            try (DeferredSingleSymbolFilterPageFrameRecordCursorFactory factory = createFactory(key, null)) {
+                assertRows(factory);
+                final SingleSymbolFilter symbolFilter = factory.convertToSampleByIndexPageFrameCursorFactory();
+                try (PageFrameCursor frames = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
+                    Assert.assertNotNull(frames.next());
+                    Assert.assertEquals(1, symbolFilter.getColumnIndex());
+                    Assert.assertEquals(TableUtils.toIndexKey(0), symbolFilter.getSymbolFilterKey());
+                } finally {
+                    factory.revertFromSampleByIndexPageFrameCursorFactory();
+                }
+                assertRows(factory);
+                Assert.assertEquals(0, key.closeCount);
             }
-            assertRows(factory);
-            Assert.assertEquals(0, key.closeCount);
-        }
-        Assert.assertEquals(1, key.closeCount);
+            Assert.assertEquals(1, key.closeCount);
+        });
     }
 
     private void assertRows(DeferredSingleSymbolFilterPageFrameRecordCursorFactory factory) throws Exception {
         assertRowsOnly(factory, "id\ts\n1\tA\n3\tA\n");
     }
 
-    private DeferredSingleSymbolFilterPageFrameRecordCursorFactory createFactory(
-            TrackingKey key,
-            boolean isDeferred,
-            RuntimeException frameFailure
-    ) {
+    private DeferredSingleSymbolFilterPageFrameRecordCursorFactory createFactory(TrackingKey key, RuntimeException frameFailure) {
         try (TableReader reader = engine.getReader("key_ownership")) {
             final GenericRecordMetadata metadata = GenericRecordMetadata.copyOf(reader.getMetadata());
             final IntList columnIndexes = new IntList();
@@ -133,11 +118,9 @@ public class DeferredSingleSymbolFilterOwnershipTest extends AbstractCairoTest {
                     }
                 }
             };
-            final RowCursorFactory rows = isDeferred
-                    ? new DeferredSymbolIndexRowCursorFactory(1, key, IndexReader.DIR_FORWARD)
-                    : new SymbolIndexRowCursorFactory(1, reader.getSymbolMapReader(1).keyOf("A"), IndexReader.DIR_FORWARD, key);
             return new DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
-                    configuration, 1, key, rows, metadata, frames, false, columnIndexes, columnSizes, true
+                    configuration, 1, key, new DeferredSymbolIndexRowCursorFactory(1, key, IndexReader.DIR_FORWARD),
+                    metadata, frames, false, columnIndexes, columnSizes, true
             );
         }
     }

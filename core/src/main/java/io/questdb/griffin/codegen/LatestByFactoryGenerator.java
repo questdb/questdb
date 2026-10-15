@@ -140,25 +140,24 @@ final class LatestByFactoryGenerator {
             boolean hasOnlySymbolKeys
     ) {
         final ListColumnFilter listColumnFilterA = frame.listColumnFilterA;
-        final IntList partitionByColumnIndexes;
+        if (hasOnlySymbolKeys) {
+            final IntList partitionByColumnIndexes = new IntList(listColumnFilterA.size());
+            for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
+                partitionByColumnIndexes.add(listColumnFilterA.getColumnIndexFactored(i));
+            }
+            return new LatestByAllSymbolsFilteredRecordCursorFactory(configuration, metadata, frames,
+                    partitionByColumnIndexes, symbolCounts, filter, columnIndexes, columnSizeShifts);
+        }
         final RecordSink sink;
         try {
-            partitionByColumnIndexes = hasOnlySymbolKeys ? new IntList(listColumnFilterA.size()) : null;
-            sink = hasOnlySymbolKeys ? null : RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA);
+            sink = RecordSinkFactory.getInstance(configuration, asm, metadata, listColumnFilterA);
         } catch (Throwable th) {
             Misc.free(frames, th);
             Misc.free(filter, th);
             throw th;
         }
-        if (partitionByColumnIndexes == null) {
-            return new LatestByAllFilteredRecordCursorFactory(configuration, metadata, frames,
-                    sink, frame.keyTypes, filter, columnIndexes, columnSizeShifts);
-        }
-        for (int i = 0, n = listColumnFilterA.size(); i < n; i++) {
-            partitionByColumnIndexes.add(listColumnFilterA.getColumnIndexFactored(i));
-        }
-        return new LatestByAllSymbolsFilteredRecordCursorFactory(configuration, metadata, frames,
-                partitionByColumnIndexes, symbolCounts, filter, columnIndexes, columnSizeShifts);
+        return new LatestByAllFilteredRecordCursorFactory(configuration, metadata, frames,
+                sink, frame.keyTypes, filter, columnIndexes, columnSizeShifts);
     }
 
     /**

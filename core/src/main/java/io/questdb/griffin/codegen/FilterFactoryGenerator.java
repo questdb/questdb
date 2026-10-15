@@ -67,6 +67,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Mutable;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
 import org.jetbrains.annotations.Nullable;
@@ -80,6 +81,8 @@ final class FilterFactoryGenerator {
     private final FunctionInstantiator functionInstantiator;
     private final MemoryCARW jitIRMem;
     private final CompiledFilterIRSerializer jitIRSerializer;
+    private final IntHashSet latestByColumns = new IntHashSet();
+    private final ReaderSymbolTables readerSymbolTables = new ReaderSymbolTables();
     private final PageFrameReduceTaskFactory reduceTaskFactory;
     private boolean enableJitNullChecks = true;
 
@@ -276,18 +279,7 @@ final class FilterFactoryGenerator {
         try {
             Throwable cleanupFailure = null;
             try {
-                final SymbolTableSource symbolTables = new SymbolTableSource() {
-                    @Override
-                    public SymbolTable getSymbolTable(int columnIndex) {
-                        return reader.getSymbolTable(columnIndexes.getQuick(columnIndex));
-                    }
-
-                    @Override
-                    public SymbolTable newSymbolTable(int columnIndex) {
-                        return reader.newSymbolTable(columnIndexes.getQuick(columnIndex));
-                    }
-                };
-                jitIRSerializer.of(jitIRMem, executionContext, metadata, input, symbolTables, bindVarFunctions);
+                jitIRSerializer.of(jitIRMem, executionContext, metadata, input, readerSymbolTables.of(reader, columnIndexes), bindVarFunctions);
                 final int jitOptions = jitIRSerializer.serialize(predicate,
                         executionContext.getJitMode() == SqlJitMode.JIT_MODE_FORCE_SCALAR, enableJitDebug, enableJitNullChecks);
                 compiledFilter = new CompiledFilter();
@@ -296,13 +288,14 @@ final class FilterFactoryGenerator {
                 cleanupFailure = th;
                 throw th;
             } finally {
+                readerSymbolTables.clear();
                 clearJitScratch(cleanupFailure);
             }
-            final IntHashSet columns = new IntHashSet();
-            collectColumnIndexes(predicate, input, columns);
-            final IntList filterColumnIndexes = new IntList(columns.size());
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                filterColumnIndexes.add(columns.get(i));
+            latestByColumns.clear();
+            collectColumnIndexes(predicate, input, latestByColumns);
+            final IntList filterColumnIndexes = new IntList(latestByColumns.size());
+            for (int i = 0, n = latestByColumns.size(); i < n; i++) {
+                filterColumnIndexes.add(latestByColumns.get(i));
             }
             return new LatestByCompiledFilter(configuration, filter, compiledFilter, bindVarFunctions, filterColumnIndexes);
         } catch (SqlException | LimitOverflowException decline) {
@@ -571,5 +564,32 @@ final class FilterFactoryGenerator {
                 reduceTaskFactory, workers, limit, limitPosition,
                 executionContext.getSharedQueryWorkerCount(), enablePreTouch
         );
+    }
+
+    private static final class ReaderSymbolTables implements SymbolTableSource, Mutable {
+        private IntList columnIndexes;
+        private TableReader reader;
+
+        @Override
+        public void clear() {
+            columnIndexes = null;
+            reader = null;
+        }
+
+        @Override
+        public SymbolTable getSymbolTable(int columnIndex) {
+            return reader.getSymbolTable(columnIndexes.getQuick(columnIndex));
+        }
+
+        @Override
+        public SymbolTable newSymbolTable(int columnIndex) {
+            return reader.newSymbolTable(columnIndexes.getQuick(columnIndex));
+        }
+
+        ReaderSymbolTables of(TableReader reader, IntList columnIndexes) {
+            this.reader = reader;
+            this.columnIndexes = columnIndexes;
+            return this;
+        }
     }
 }

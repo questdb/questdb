@@ -851,8 +851,9 @@ final class Decorrelation implements OptimiserPass {
             first.setInput(domains.crossDomain(first.getInput(), domain, source.getPosition()));
             join.addMissingInputColumns();
         } else {
+            final int inputCount = join.getInputs().size();
             final JoinInput step = domains.insertDomainStep(join, domain, join.getOrderedInputs().size(), source.getPosition());
-            for (int i = 1, n = join.getInputs().size(); i < n; i++) {
+            for (int i = 1; i < inputCount; i++) {
                 final JoinInput input = join.getInputs().getQuick(i);
                 input.setPostJoinFilter(domains.moveDomainConjuncts(input.getPostJoinFilter(), step));
                 input.setOnResidual(domains.moveDomainConjuncts(input.getOnResidual(), step));

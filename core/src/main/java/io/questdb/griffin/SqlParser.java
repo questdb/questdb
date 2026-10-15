@@ -1626,11 +1626,11 @@ public class SqlParser {
     }
 
     // Whether a FROM or JOIN reference to the object should expand as a view. A view the principal
-    // may not see stays unexpanded: it reaches the optimiser as a plain table reference, which fails
-    // there exactly like a missing table does, at the same stage and echoing the name as spelled in
-    // the statement. Only references the statement itself makes are subject to the check; the
-    // objects a view reads are accessed through the view, so references inside a view definition
-    // being expanded always resolve.
+    // may not see stays unexpanded: it reaches SqlBinder.bindSourceWithHints as a plain table
+    // reference, which fails there exactly like a missing table does, at the same stage and echoing
+    // the name as spelled in the statement. Only references the statement itself makes are subject to
+    // the check; the objects a view reads are accessed through the view, so references inside a view
+    // definition being expanded always resolve.
     private boolean isExpandableView(@Nullable TableToken tableToken) {
         if (tableToken == null || !tableToken.isView()) {
             return false;

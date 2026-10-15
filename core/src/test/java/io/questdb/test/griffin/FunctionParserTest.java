@@ -1855,7 +1855,7 @@ public class FunctionParserTest extends BaseFunctionFactoryTest {
         try (Function function = parser.getFunctionResolver().createFunction(overload, 17, "+", args, argPositions, sqlExecutionContext)) {
             assertEquals(1, constructionCount.get());
             assertEquals(0, args.size());
-            assertEquals(17, parser.getFunctionResolver().getExecutionRequirements().getPosition(SqlExecutionRequirements.REQUIRES_LIVE_WAL_PROGRESS));
+            assertEquals(17, parser.getFunctionResolver().getExecutionRequirements().getLiveWalProgressPosition());
             parser.clear();
             assertEquals(42, function.getInt(null));
         }

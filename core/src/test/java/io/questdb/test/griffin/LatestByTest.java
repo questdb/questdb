@@ -841,6 +841,36 @@ public class LatestByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestByOrOnTextKeysStaysFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE text_or (s STRING, vc VARCHAR, y SYMBOL INDEX, v DOUBLE, ts "
+                    + timestampType.getTypeName() + ") TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO text_or VALUES
+                    ('ab', 'ab', 'ab', 1, '2024-01-01T00:00:00Z'),
+                    ('cd', 'cd', 'cd', 2, '2024-01-01T01:00:00Z'),
+                    (NULL, NULL, NULL, 3, '2024-01-02T00:00:00Z'),
+                    ('ab', 'ab', 'ab', 4, '2024-01-02T01:00:00Z'),
+                    ('ef', 'ef', 'ef', 5, '2024-01-03T00:00:00Z')
+                    """);
+            for (String key : new String[]{"s", "vc"}) {
+                assertQuery("SELECT v FROM text_or WHERE " + key + " = 'ab' OR " + key + " = 'cd' LATEST ON ts PARTITION BY " + key)
+                        .noLeakCheck().withPlanContaining("LatestByAllFiltered", "filter: (" + key + "='ab' or " + key + "='cd')")
+                        .sizeMayVary().returns("v\n2.0\n4.0\n");
+                assertQuery("SELECT v FROM text_or WHERE " + key + " = 'ab' OR " + key + " = NULL LATEST ON ts PARTITION BY " + key)
+                        .noLeakCheck().withPlanContaining("LatestByAllFiltered", "filter: (" + key + "='ab' or " + key + " is null)")
+                        .sizeMayVary().returns("v\n3.0\n4.0\n");
+            }
+            assertQuery("SELECT v FROM text_or WHERE y = 'ab' OR y = 'cd' LATEST ON ts PARTITION BY y")
+                    .noLeakCheck().withPlanContaining("Index backward scan on: y", "symbolFilter: y in ['ab','cd']")
+                    .sizeMayVary().returns("v\n2.0\n4.0\n");
+            assertQuery("SELECT v FROM text_or WHERE y = 'ab' OR y = NULL LATEST ON ts PARTITION BY y")
+                    .noLeakCheck().withPlanContaining("Index backward scan on: y", "symbolFilter: y in ['ab',null]")
+                    .sizeMayVary().returns("v\n3.0\n4.0\n");
+        });
+    }
+
+    @Test
     public void testLatestByOrPreservesPredicateScope() throws Exception {
         assertMemoryLeak(() -> {
             createLatestKeyFixture("direct_or", "");

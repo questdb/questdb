@@ -2883,6 +2883,25 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testOuterOnlyFilterOverInnerJoinBody() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE o (k INT)");
+            execute("CREATE TABLE a (k INT)");
+            execute("CREATE TABLE b (k INT)");
+            execute("INSERT INTO o VALUES (1), (2)");
+            execute("INSERT INTO a VALUES (10)");
+            execute("INSERT INTO b VALUES (10), (20)");
+            assertQuery("SELECT o.k, s.k FROM o CROSS JOIN LATERAL (SELECT a.k FROM a JOIN b ON a.k = b.k WHERE o.k <> 2) s ORDER BY o.k")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            k\tk1
+                            1\t10
+                            """);
+        });
+    }
+
+    @Test
     public void testOuterTimestampComparedWithTimestampNs() throws Exception {
         // #7803 section 12
         assertMemoryLeak(() -> {

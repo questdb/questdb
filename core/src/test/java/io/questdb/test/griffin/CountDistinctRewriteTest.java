@@ -258,32 +258,59 @@ public class CountDistinctRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestOnSelectsRowsBeforeNullArgumentFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE cd_latest_null (ts TIMESTAMP,k INT,x VARCHAR) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO cd_latest_null VALUES (0,1,'p'),(1,2,'q'),(2,1,null),(3,3,'q'),(4,2,null)");
+            assertCountDistinct("SELECT count(DISTINCT x) c FROM cd_latest_null LATEST ON ts PARTITION BY k", "c\n1\n", """
+                    Count
+                        GroupBy vectorized: false
+                          keys: [x]
+                            Filter filter: x is not null
+                                LatestByAllFiltered
+                                    Row backward scan
+                                    Frame backward scan on: cd_latest_null
+                    """);
+            assertCountDistinct("SELECT count_distinct(x) c FROM cd_latest_null WHERE k!=3 LATEST ON ts PARTITION BY k", "c\n0\n", """
+                    Count
+                        GroupBy vectorized: false
+                          keys: [x]
+                            Filter filter: x is not null
+                                LatestByAllFiltered
+                                    Row backward scan
+                                      filter: k!=3
+                                    Frame backward scan on: cd_latest_null
+                    """);
+        });
+    }
+
+    @Test
     public void testLatestWhereAndUnionKeepTheirOccurrenceBoundaries() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE cd_latest (ts TIMESTAMP,k SYMBOL,x INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO cd_latest VALUES (0,'a',1),(1,'b',2),(2,'a',null),(3,'b',2)");
             assertCountDistinct("SELECT count_distinct(x) c FROM cd_latest LATEST ON ts PARTITION BY k", """
                     c
-                    2
-                    """, """
-                    Count
-                        GroupBy vectorized: false
-                          keys: [x]
-                            LatestByDeferredListValuesFiltered
-                              filter: x!=null
-                                Frame backward scan on: cd_latest
-                    """);
-            assertCountDistinct("SELECT count_distinct(x) c FROM cd_latest WHERE k='a' LATEST ON ts PARTITION BY k", """
-                    c
                     1
                     """, """
                     Count
                         GroupBy vectorized: false
                           keys: [x]
-                            LatestByValueDeferredFiltered
-                              filter: x!=null
-                              symbolFilter: k='a'
-                                Frame backward scan on: cd_latest
+                            Filter filter: x!=null
+                                LatestByDeferredListValuesFiltered
+                                    Frame backward scan on: cd_latest
+                    """);
+            assertCountDistinct("SELECT count_distinct(x) c FROM cd_latest WHERE k='a' LATEST ON ts PARTITION BY k", """
+                    c
+                    0
+                    """, """
+                    Count
+                        GroupBy vectorized: false
+                          keys: [x]
+                            Filter filter: x!=null
+                                LatestByValueDeferredFiltered
+                                  symbolFilter: k='a'
+                                    Frame backward scan on: cd_latest
                     """);
             assertCountDistinct("SELECT count_distinct(x) c FROM cd_latest UNION ALL SELECT count_distinct(x) c FROM cd_latest WHERE x=1",
                     "c\n2\n1\n", """
@@ -341,46 +368,35 @@ public class CountDistinctRewriteTest extends AbstractCairoTest {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE cd_jit (ts TIMESTAMP,k SYMBOL,x INT) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO cd_jit VALUES (0,'a',1),(1,'b',2),(2,'a',null),(3,'b',2)");
-            final int oldMode = sqlExecutionContext.getJitMode();
-            sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_ENABLED);
-            try {
-                final String groupByPlan = """
-                        Count
-                            Async JIT Group By workers: 1
-                              keys: [x]
-                              filter: x!=null
-                                PageFrame
-                                    Row forward scan
-                                    Frame forward scan on: cd_jit
-                        """;
-                assertQuery("SELECT count_distinct(x) c FROM cd_jit")
-                        .noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().withPlan(groupByPlan).returns("c\n2\n");
-                assertQuery("SELECT count() c FROM (SELECT x FROM cd_jit WHERE x != null GROUP BY x)")
-                        .noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().withPlan(groupByPlan).returns("c\n2\n");
-                assertQuery("SELECT count_distinct(x) c FROM cd_jit LATEST ON ts PARTITION BY k")
-                        .noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().withPlan("""
-                                Count
-                                    GroupBy vectorized: false
-                                      keys: [x]
-                                        LatestByDeferredListValuesFiltered
-                                          jit: true
-                                          filter: x!=null
-                                            Frame backward scan on: cd_jit
-                                """).returns("c\n2\n");
-                assertQuery("SELECT count_distinct(x) c FROM cd_jit WHERE k='a' LATEST ON ts PARTITION BY k")
-                        .noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().withPlan("""
-                                Count
-                                    GroupBy vectorized: false
-                                      keys: [x]
-                                        LatestByValueDeferredFiltered
-                                          jit: true
-                                          filter: x!=null
-                                          symbolFilter: k='a'
-                                            Frame backward scan on: cd_jit
-                                """).returns("c\n1\n");
-            } finally {
-                sqlExecutionContext.setJitMode(oldMode);
-            }
+            final String groupByPlan = """
+                    Count
+                        Async JIT Group By workers: 1
+                          keys: [x]
+                          filter: x!=null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: cd_jit
+                    """;
+            assertCountDistinct("SELECT count_distinct(x) c FROM cd_jit", "c\n2\n", groupByPlan, SqlJitMode.JIT_MODE_ENABLED);
+            assertCountDistinct("SELECT count() c FROM (SELECT x FROM cd_jit WHERE x != null GROUP BY x)", "c\n2\n", groupByPlan,
+                    SqlJitMode.JIT_MODE_ENABLED);
+            assertCountDistinct("SELECT count_distinct(x) c FROM cd_jit LATEST ON ts PARTITION BY k", "c\n1\n", """
+                    Count
+                        GroupBy vectorized: false
+                          keys: [x]
+                            Filter filter: x!=null
+                                LatestByDeferredListValuesFiltered
+                                    Frame backward scan on: cd_jit
+                    """, SqlJitMode.JIT_MODE_ENABLED);
+            assertCountDistinct("SELECT count_distinct(x) c FROM cd_jit WHERE k='a' LATEST ON ts PARTITION BY k", "c\n0\n", """
+                    Count
+                        GroupBy vectorized: false
+                          keys: [x]
+                            Filter filter: x!=null
+                                LatestByValueDeferredFiltered
+                                  symbolFilter: k='a'
+                                    Frame backward scan on: cd_jit
+                    """, SqlJitMode.JIT_MODE_ENABLED);
         });
     }
 
@@ -431,13 +447,12 @@ public class CountDistinctRewriteTest extends AbstractCairoTest {
     }
 
     private void assertCountDistinct(String sql, String expectedRows, String expectedPlan) throws Exception {
-        final int oldMode = sqlExecutionContext.getJitMode();
-        sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-        try {
-            assertQuery(sql).noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().withPlan(expectedPlan).returns(expectedRows);
-        } finally {
-            sqlExecutionContext.setJitMode(oldMode);
-        }
+        assertCountDistinct(sql, expectedRows, expectedPlan, SqlJitMode.JIT_MODE_DISABLED);
+    }
+
+    private void assertCountDistinct(String sql, String expectedRows, String expectedPlan, int jitMode) throws Exception {
+        sqlExecutionContext.setJitMode(jitMode);
+        assertQuery(sql).noLeakCheck().inferTimestamp().inferRandomAccess().sizeMayVary().withPlan(expectedPlan).returns(expectedRows);
     }
 
     private void assertErrorRecovers(SqlCompilerImpl compiler, String sql, int position, String message) throws Exception {

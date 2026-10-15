@@ -414,14 +414,14 @@ public final class BoundExpressionRewriter implements Mutable {
             collectKeyEqualities(call.argumentAt(1), columnId);
             return;
         }
-        final int keyIndex = LogicalPlans.isKeyColumn(call.argumentAt(0), columnId) ? 1 : 0;
+        final int valueIndex = LogicalPlans.isKeyColumn(call.argumentAt(0), columnId) ? 1 : 0;
         if (tmpArguments.getQuick(0) == null) {
-            final BoundExpression column = call.argumentAt(1 - keyIndex);
+            final BoundExpression column = call.argumentAt(1 - valueIndex);
             tmpArguments.setQuick(0, column);
             tmpPositions.setQuick(0, column.getPosition());
         }
-        tmpArguments.add(call.argumentAt(keyIndex));
-        tmpPositions.add(call.getArgumentPosition(keyIndex));
+        tmpArguments.add(call.argumentAt(valueIndex));
+        tmpPositions.add(call.getArgumentPosition(valueIndex));
     }
 
     private BoundExpression conjunction(FunctionFactoryDescriptor overload, BoundExpression left, BoundExpression right, int position) {

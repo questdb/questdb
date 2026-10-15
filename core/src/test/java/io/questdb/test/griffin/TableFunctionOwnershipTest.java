@@ -103,7 +103,7 @@ import static org.junit.Assert.fail;
  *     refuses a factory whose columns changed since binding ({@code *ProjectionFailure*}).</li>
  * </ul>
  * {@code CreateMatViewTest} covers the rejection of a materialized view's query in
- * {@code SqlCompilerImpl#compileMatViewQuery}.
+ * {@code SqlCompilerImpl#compileCreateSelect}.
  * <p>
  * Binding also opens the table function of every sub-query it binds, and code generation takes over
  * only the ones the plan reads. The {@code testSubQueryNeverGenerated*} tests cover the factories

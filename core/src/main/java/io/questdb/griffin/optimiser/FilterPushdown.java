@@ -197,25 +197,8 @@ final class FilterPushdown implements OptimiserPass {
 
     private static boolean hasMasterNullingJoin(JoinPlan join) {
         for (int i = 1, n = join.getInputs().size(); i < n; i++) {
-            final JoinKind type = join.getInputs().getQuick(i).getJoinType();
-            if (type == JoinKind.RIGHT_OUTER || type == JoinKind.FULL_OUTER) {
+            if (join.getInputs().getQuick(i).getJoinType().isMasterNulling()) {
                 return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * Whether a join step is neither INNER, CROSS nor LEFT/RIGHT/FULL OUTER, so equality facts cannot cross it.
-     */
-    private static boolean hasNonTransitiveJoin(JoinPlan join) {
-        for (int i = 1, n = join.getInputs().size(); i < n; i++) {
-            switch (join.getInputs().getQuick(i).getJoinType()) {
-                case INNER, CROSS, LEFT_OUTER, RIGHT_OUTER, FULL_OUTER -> {
-                }
-                default -> {
-                    return true;
-                }
             }
         }
         return false;
@@ -624,15 +607,15 @@ final class FilterPushdown implements OptimiserPass {
 
     private void deriveTransitiveFilters(JoinPlan join, BoundExpression pushedPredicate) throws SqlException {
         final boolean isInnerRegion = isInnerJoinRegion(join);
-        if (hasNonTransitiveJoin(join)) {
-            return;
-        }
         if (pushedPredicate == null) {
             collectTransitiveFacts(join, isInnerRegion);
         }
         // Only original facts are consulted; a derived slave filter cannot pin another key.
         for (int i = 0, n = join.getInputs().size(); i < n; i++) {
             final JoinInput slave = join.getInputs().getQuick(i);
+            if (slave.getJoinType() == JoinKind.SPLICE) {
+                continue;
+            }
             for (int k = 0, count = slave.getMasterKeyColumnIds().size(); k < count; k++) {
                 final int masterId = slave.getMasterKeyColumnIds().getQuick(k);
                 if (pushedPredicate != null) {
@@ -809,13 +792,6 @@ final class FilterPushdown implements OptimiserPass {
         }
         return call.argumentAt(1) instanceof ConstantExpression constant && constant.isLiteral()
                 && ColumnType.tagOf(constant.getDataType()) != ColumnType.NULL;
-    }
-
-    private BoundExpression latestKeyList(LatestByPlan latest, BoundExpression selector) {
-        if (!(selector instanceof FunctionExpression call) || !call.isOr()) {
-            return selector;
-        }
-        return context.getRewriter().keyEqualityOrToIn(call, latest.getKeyColumnIds().getQuick(0));
     }
 
     /**
@@ -1034,8 +1010,7 @@ final class FilterPushdown implements OptimiserPass {
                 return result;
             } else if (input instanceof LatestByPlan latest) {
                 final BoundExpression selector = isOrderCrossed ? null : latestKeySelector(latest, filter, result);
-                final BoundExpression keys = selector == null ? null : latestKeyList(latest, selector);
-                if (keys == null) {
+                if (selector == null) {
                     // LATEST BY already emits rows in ascending timestamp order.
                     if (parent instanceof SortPlan sort && crossedProject != null && crossedProject.getChild() == sort) {
                         if (sort.getColumnIds().size() == 1
@@ -1047,7 +1022,7 @@ final class FilterPushdown implements OptimiserPass {
                     return result;
                 }
                 final LogicalPlan scan = input.inputAt(0);
-                final FilterPlan pushed = filters.next().of(scan, keys, keys.getPosition());
+                final FilterPlan pushed = filters.next().of(scan, selector, selector.getPosition());
                 input.replaceInput(0, pushed);
                 final BoundExpression residual = context.getRewriter().removeConjunct(filter.getPredicate(), selector);
                 if (residual != null) {

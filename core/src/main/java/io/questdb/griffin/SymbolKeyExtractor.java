@@ -120,8 +120,8 @@ public final class SymbolKeyExtractor implements Mutable {
     public BoundExpression extract(BoundExpression predicate, int candidateColumnId, BoundExpressionRewriter rewriter) {
         clear();
         columnId = candidateColumnId;
-        final boolean isKeyOrRead = columnId >= 0 && predicate != null && predicate.walk(WITHIN_CALLS);
-        return extractKeys(isKeyOrRead ? keyEqualityOrsToIn(predicate, rewriter) : predicate, rewriter);
+        final boolean isKeyOrRewritable = columnId >= 0 && predicate != null && predicate.walk(WITHIN_CALLS);
+        return extractKeys(isKeyOrRewritable ? keyEqualityOrsToIn(predicate, rewriter) : predicate, rewriter);
     }
 
     public BoundExpression extractIndexed(BoundExpression predicate, OutputSchema input, IntList indexes,
@@ -271,7 +271,7 @@ public final class SymbolKeyExtractor implements Mutable {
             return;
         }
         if (isKeySubquery(call)) {
-            if (isKeyColumn(call.argumentAt(0))) {
+            if (LogicalPlans.isKeyColumn(call.argumentAt(0), columnId)) {
                 startKey();
                 subquery = (CursorExpression) call.argumentAt(1);
                 mark(call);
@@ -280,7 +280,7 @@ public final class SymbolKeyExtractor implements Mutable {
         }
         if (isEquals(call) || isNotEquals(call)) {
             for (int i = 0; i < 2; i++) {
-                if (isKeyColumn(call.argumentAt(i))) {
+                if (LogicalPlans.isKeyColumn(call.argumentAt(i), columnId)) {
                     final BoundExpression value = call.argumentAt(1 - i);
                     if (isKeyValue(value)) {
                         if (isEquals(call)) {
@@ -293,12 +293,12 @@ public final class SymbolKeyExtractor implements Mutable {
                 }
             }
         } else if (isIn(call)) {
-            if (isKeyColumn(call.argumentAt(0))) {
+            if (LogicalPlans.isKeyColumn(call.argumentAt(0), columnId)) {
                 analyzeIn(call);
             }
         } else if (isNot(call)) {
             final FunctionExpression inner = (FunctionExpression) call.argumentAt(0);
-            if (isKeyColumn(inner.argumentAt(0))) {
+            if (LogicalPlans.isKeyColumn(inner.argumentAt(0), columnId)) {
                 analyzeNotIn(call, inner);
             }
         }
@@ -426,7 +426,7 @@ public final class SymbolKeyExtractor implements Mutable {
                 final FunctionExpression conjunct = (FunctionExpression) excludedConjuncts.getQuick(i);
                 final FunctionExpression call = isNot(conjunct) ? (FunctionExpression) conjunct.argumentAt(0) : conjunct;
                 if (call.getArgumentCount() == 2) {
-                    final BoundExpression value = isKeyColumn(call.argumentAt(0)) ? call.argumentAt(1) : call.argumentAt(0);
+                    final BoundExpression value = LogicalPlans.isKeyColumn(call.argumentAt(0), columnId) ? call.argumentAt(1) : call.argumentAt(0);
                     excludeIncluded(value);
                 } else {
                     for (int k = 1, m = call.getArgumentCount(); k < m && !isFalse; k++) {
@@ -492,10 +492,6 @@ public final class SymbolKeyExtractor implements Mutable {
         return false;
     }
 
-    private boolean isKeyColumn(BoundExpression expression) {
-        return isKeyOperand(expression) && ((ColumnExpression) expression).getColumnId() == columnId;
-    }
-
     private boolean isNullKey(BoundExpression value) {
         return !isBind(value) && charCodeOf(value) < 0 && textOf(value, keyText) == null;
     }
@@ -549,7 +545,7 @@ public final class SymbolKeyExtractor implements Mutable {
     private void removeIncludedConjuncts(BoundExpression key) {
         for (int i = includedConjuncts.size() - 1; i > -1; i--) {
             if (includedConjuncts.getQuick(i) instanceof FunctionExpression call && call.getArgumentCount() == 2) {
-                final BoundExpression value = isKeyColumn(call.argumentAt(0)) ? call.argumentAt(1) : call.argumentAt(0);
+                final BoundExpression value = LogicalPlans.isKeyColumn(call.argumentAt(0), columnId) ? call.argumentAt(1) : call.argumentAt(0);
                 if (isKeyValue(value) && !isBind(value) && isSameKey(value, key)) {
                     includedConjuncts.remove(i);
                 }

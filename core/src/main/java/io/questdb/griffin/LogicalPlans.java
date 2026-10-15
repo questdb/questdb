@@ -416,23 +416,24 @@ public final class LogicalPlans {
     }
 
     /**
-     * The direct reference to the column.
+     * Whether a join can key a master column of one type on a slave column of the other.
+     */
+    public static boolean isJoinKeyTypeCompatible(int masterType, int slaveType) {
+        return masterType == slaveType
+                || ColumnType.isSymbolOrStringOrVarchar(masterType) && ColumnType.isSymbolOrStringOrVarchar(slaveType)
+                || ColumnType.isTimestamp(masterType) && ColumnType.isTimestamp(slaveType);
+    }
+
+    /**
+     * The direct reference to the SYMBOL column.
      */
     public static boolean isKeyColumn(BoundExpression expression, int columnId) {
-        return expression instanceof ColumnExpression column && column.isDirectReference() && column.getColumnId() == columnId;
+        return expression instanceof ColumnExpression column && column.isDirectReference() && column.getColumnId() == columnId
+                && ColumnType.isSymbol(column.getDataType());
     }
 
     /**
-     * An equality between the direct reference to the column and a key literal.
-     */
-    public static boolean isKeyEquality(BoundExpression expression, int columnId) {
-        return expression instanceof FunctionExpression call && "=".equals(call.getName()) && call.getArgumentCount() == 2
-                && (isKeyColumn(call.argumentAt(0), columnId) && isKeyLiteral(call.argumentAt(1))
-                || isKeyColumn(call.argumentAt(1), columnId) && isKeyLiteral(call.argumentAt(0)));
-    }
-
-    /**
-     * A key equality, see {@link #isKeyEquality}, or an OR of them on the same column.
+     * An equality between the direct reference to the column and a key literal, or an OR of them on the same column.
      */
     public static boolean isKeyEqualityOr(BoundExpression expression, int columnId) {
         if (expression instanceof FunctionExpression call && call.isOr()) {
@@ -452,15 +453,6 @@ public final class LogicalPlans {
             case ColumnType.NULL, ColumnType.CHAR, ColumnType.STRING, ColumnType.VARCHAR, ColumnType.SYMBOL -> true;
             default -> false;
         };
-    }
-
-    /**
-     * Whether a join can key a master column of one type on a slave column of the other.
-     */
-    public static boolean isJoinKeyTypeCompatible(int masterType, int slaveType) {
-        return masterType == slaveType
-                || ColumnType.isSymbolOrStringOrVarchar(masterType) && ColumnType.isSymbolOrStringOrVarchar(slaveType)
-                || ColumnType.isTimestamp(masterType) && ColumnType.isTimestamp(slaveType);
     }
 
     /**
@@ -868,6 +860,15 @@ public final class LogicalPlans {
             return 0;
         }
         return aggregate.getGroupingExpressions().size() == 0 || !isParallelGroupByEnabled ? SEQUENCE_STABLE : RESULT_STABLE;
+    }
+
+    /**
+     * An equality between the direct reference to the column and a key literal.
+     */
+    private static boolean isKeyEquality(BoundExpression expression, int columnId) {
+        return expression instanceof FunctionExpression call && "=".equals(call.getName()) && call.getArgumentCount() == 2
+                && (isKeyColumn(call.argumentAt(0), columnId) && isKeyLiteral(call.argumentAt(1))
+                || isKeyColumn(call.argumentAt(1), columnId) && isKeyLiteral(call.argumentAt(0)));
     }
 
     private static boolean isStable(BoundExpression expression) {

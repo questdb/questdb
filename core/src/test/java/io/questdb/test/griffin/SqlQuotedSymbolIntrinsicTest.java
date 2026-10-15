@@ -152,8 +152,8 @@ public class SqlQuotedSymbolIntrinsicTest extends AbstractCairoTest {
     }
 
     private void assertIndexedAndScalar(String predicate, String expected) throws Exception {
-        assertQuery("SELECT id FROM quoted_keys WHERE " + predicate + " ORDER BY id").sizeMayVary().returns(expected);
-        assertQuery("SELECT /*+ no_index */ id FROM quoted_keys WHERE " + predicate + " ORDER BY id").sizeMayVary().returns(expected);
+        assertQuery("SELECT id FROM quoted_keys WHERE " + predicate + " ORDER BY id").noLeakCheck().sizeMayVary().returns(expected);
+        assertQuery("SELECT /*+ no_index */ id FROM quoted_keys WHERE " + predicate + " ORDER BY id").noLeakCheck().sizeMayVary().returns(expected);
     }
 
     private void createRows() throws Exception {

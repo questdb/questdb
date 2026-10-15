@@ -330,8 +330,9 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
         return false;
     }
 
-    // compile of a materialized view's SELECT at CREATE. It decides the functions the view may not store
-    // once binding finished, see SqlExecutionRequirements.checkStoredView(SqlExecutionContext).
+    // Returns true while CREATE MATERIALIZED VIEW binds its SELECT. FunctionResolver then defers the checks of the
+    // functions the view may not store, which the compiler decides once binding finished, see
+    // SqlExecutionRequirements.checkDeferred().
     default boolean isMatViewCompile() {
         return false;
     }

@@ -2327,8 +2327,12 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                     .withPlanNotContaining("Sort")
                     .returns("sym\tv\naa\t1\nab\t3\n");
             assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' ORDER BY ts DESC LIMIT 1")
-                    .expectSize()
-                    .withPlanContaining("Async Top K")
+                    .withPlanContaining("limit: 1", "Row backward scan")
+                    .withPlanNotContaining("Top K", "AdaptiveSymbolPattern")
+                    .returns("sym\tv\nab\t3\n");
+            assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' AND v != 1 ORDER BY ts DESC LIMIT 1")
+                    .withPlanContaining("limit: 1", "Row backward scan")
+                    .withPlanNotContaining("Top K", "AdaptiveSymbolPattern")
                     .returns("sym\tv\nab\t3\n");
             assertQuery("SELECT sym, v FROM t WHERE sym LIKE 'a%' ORDER BY ts DESC LIMIT -1")
                     .expectSize()

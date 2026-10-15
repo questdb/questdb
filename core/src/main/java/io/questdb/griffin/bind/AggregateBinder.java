@@ -46,7 +46,6 @@ import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
-import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
@@ -1555,9 +1554,8 @@ final class AggregateBinder implements Mutable {
             throw SqlException.$(argument.position, "unsupported type of expression");
         }
         final LogicalPlan input = aggregate.getChild();
-        final LogicalPlan filterInput = input instanceof LatestByPlan latest ? latest.getChild() : input;
         if (argument.type == ExpressionNode.LITERAL
-                && ColumnType.isSymbol(filterInput.getOutput().getColumnType(ctx.bindColumnIndex(argument, filterInput.getOutput(), source)))) {
+                && ColumnType.isSymbol(input.getOutput().getColumnType(ctx.bindColumnIndex(argument, input.getOutput(), source)))) {
             return false;
         }
 
@@ -1567,22 +1565,16 @@ final class AggregateBinder implements Mutable {
         notNull.paramCount = 2;
         notNull.lhs = ctx.bindingExpressions.next().of(ExpressionNode.CONSTANT, "null", 0, 0);
         notNull.rhs = argument;
-        BoundExpression predicate = binder.bindPredicate(notNull, filterInput, source, executionContext);
-        LogicalPlan filtered = filterInput;
+        BoundExpression predicate = binder.bindPredicate(notNull, input, source, executionContext);
+        LogicalPlan filtered = input;
         if (filtered instanceof FilterPlan previous) {
             predicate = ctx.expressionRewriter.combineConjunction(previous.getPredicate(), predicate, 0);
             filtered = previous.getChild();
         }
         final FilterPlan filter = ctx.planNodes.filters.next().of(filtered, predicate, 0);
-        if (input instanceof LatestByPlan) {
-            input.replaceInput(0, filter);
-            filtered = input;
-        } else {
-            filtered = filter;
-        }
 
-        final BoundExpression key = ctx.functionBinder.bind(argument, filtered.getOutput(), sourceAlias(source), executionContext);
-        final AggregatePlan distinct = ctx.planNodes.aggregates.next().of(filtered, expression.position);
+        final BoundExpression key = ctx.functionBinder.bind(argument, filter.getOutput(), sourceAlias(source), executionContext);
+        final AggregatePlan distinct = ctx.planNodes.aggregates.next().of(filter, expression.position);
         distinct.getGroupingExpressions().add(key);
         scope.resetAliases();
         final CharSequence name = SqlUtil.createColumnAlias(ctx.characterStore, argument.token,

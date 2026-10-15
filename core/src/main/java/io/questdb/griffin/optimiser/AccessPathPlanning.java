@@ -343,7 +343,7 @@ final class AccessPathPlanning {
             scan.setAccessPath(ScanPlan.AccessPath.LATEST_BY_STATIC_SYMBOL, residual);
             return;
         }
-        boolean hasOnlySymbolKeys = true;
+        boolean hasOnlySymbolKeys = hasKey;
         for (int i = 0, n = keyIds.size(); i < n; i++) {
             hasOnlySymbolKeys &= ColumnType.isSymbol(table.getColumnType(tableColumnIndex(output, keyIds.getQuick(i))));
         }
@@ -355,8 +355,7 @@ final class AccessPathPlanning {
      * pattern conjunct can drive the scan.
      */
     private boolean planPattern(ScanPlan scan, BoundExpression residual) {
-        if (scan.isNativeTimestampOrderRequested() && scan.getLimitLo() == null
-                && scan.getRequestedOrder().getDirections().getQuick(0) == SortDirection.DESCENDING) {
+        if (scan.isNativeTimestampOrderRequested() && scan.getRequestedOrder().getDirections().getQuick(0) == SortDirection.DESCENDING) {
             return false;
         }
         final OutputSchema output = scan.getOutput();

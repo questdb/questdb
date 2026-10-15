@@ -163,6 +163,7 @@ public class FunctionResolver implements Mutable {
     private final Long256Impl long256Sink = new Long256Impl();
     private boolean cursorFunctionInstantiated;
     private int executionRequirementPosition = -1;
+    private int nonDeterministicCallIndex = -1;
     private String nonDeterministicCallName;
     private int nonDeterministicCallPosition = -1;
     private FunctionFactoryDescriptor selectedOverload;
@@ -397,14 +398,15 @@ public class FunctionResolver implements Mutable {
      * @throws SqlException when a materialized or live view may not store the result of the statement
      */
     public void addObjectDisclosingStatement(int position, CharSequence statement, SqlExecutionContext executionContext) throws SqlException {
-        checkStoredView(SqlExecutionRequirements.DISCLOSES_OBJECTS, position, statement, true, executionContext);
+        admitStoredView(SqlExecutionRequirements.DISCLOSES_OBJECTS, position, statement, true, executionContext);
     }
 
     /**
-     * Applies, in construction order, the checks constructing the overload would for a call the binder types
-     * without constructing it: the admission checks, then the factory's checks of its arguments
-     * ({@link FunctionFactory#isConstructionDeferrable}), then records the execution requirements. Returns false,
-     * recording nothing, when the call must be constructed now. The caller keeps ownership of the arguments.
+     * Applies the checks constructing the overload would for a call the binder types without constructing it: the
+     * factory's checks of its arguments ({@link FunctionFactory#isConstructionDeferrable}), then the checks of a
+     * materialized or live view that stores its result, then records the execution requirements. Returns false,
+     * checking and recording nothing more, when the call must be constructed now. The caller keeps ownership of the
+     * arguments.
      */
     public boolean admitUnconstructed(
             FunctionFactoryDescriptor overload,
@@ -415,7 +417,6 @@ public class FunctionResolver implements Mutable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         final FunctionFactory factory = overload.getFactory();
-        checkStoredView(factory.getExecutionRequirements(), position, name, false, executionContext);
         final boolean isDeferrable;
         try {
             isDeferrable = factory.isConstructionDeferrable(position, args, argPositions, configuration);
@@ -428,14 +429,27 @@ public class FunctionResolver implements Mutable {
         if (!isDeferrable) {
             return false;
         }
+        admitStoredView(factory.getExecutionRequirements(), position, name, false, executionContext);
         executionRequirements.add(factory.getExecutionRequirements(), requirementPosition(position));
         return true;
+    }
+
+    /**
+     * Decides the functions and SHOW statements deferred while CREATE MATERIALIZED VIEW bound its SQL, see
+     * {@link SqlExecutionRequirements#checkDeferred}.
+     *
+     * @throws SqlException when the materialized view may not store the result of a deferred function or statement,
+     *                      or for the first non-deterministic function binding created before it
+     */
+    public void checkDeferred(SqlExecutionContext executionContext) throws SqlException {
+        executionRequirements.checkDeferred(nonDeterministicCallIndex, nonDeterministicCallPosition, nonDeterministicCallName, executionContext);
     }
 
     @Override
     public void clear() {
         executionRequirements.clear();
         executionRequirementPosition = -1;
+        nonDeterministicCallIndex = -1;
         nonDeterministicCallName = null;
         nonDeterministicCallPosition = -1;
         cursorFunctionInstantiated = false;
@@ -748,7 +762,7 @@ public class FunctionResolver implements Mutable {
     ) throws SqlException {
         final FunctionFactory factory = overload.getFactory();
         try {
-            checkStoredView(factory.getExecutionRequirements(), position, name, false, executionContext);
+            admitStoredView(factory.getExecutionRequirements(), position, name, false, executionContext);
         } catch (Throwable th) {
             Misc.freeObjList(args, th);
             throw th;
@@ -792,9 +806,9 @@ public class FunctionResolver implements Mutable {
         }
         assert declaredType == ColumnType.UNDEFINED || declaredType == function.getType() : "function type differs from the result type its factory declares";
         if (nonDeterministicCallPosition < 0 && !executionContext.allowNonDeterministicFunctions() && function.isNonDeterministic()) {
+            nonDeterministicCallIndex = executionRequirements.getDeferredCount();
             nonDeterministicCallName = Chars.toString(name);
             nonDeterministicCallPosition = position;
-            executionRequirements.markNonDeterministicCall();
         }
         executionRequirements.add(factory.getExecutionRequirements(), requirementPosition(position));
         if (args != null) {
@@ -1439,7 +1453,7 @@ public class FunctionResolver implements Mutable {
         ex.put(ColumnType.nameOf(arg.getType()));
     }
 
-    private void checkStoredView(int requirements, int position, CharSequence name, boolean isStatement, SqlExecutionContext executionContext)
+    private void admitStoredView(int requirements, int position, CharSequence name, boolean isStatement, SqlExecutionContext executionContext)
             throws SqlException {
         if (requirements == SqlExecutionRequirements.NONE || executionContext.allowNonDeterministicFunctions()) {
             return;

@@ -209,6 +209,39 @@ public class TopKTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPrunedComputedProjectionKeepsPageFrameSource() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_top_pruned(a INT,b INT)");
+            execute("INSERT INTO lp_top_pruned VALUES (3,20),(1,40),(2,30),(4,10)");
+            final boolean wasParallel = sqlExecutionContext.isParallelTopKEnabled();
+            sqlExecutionContext.setParallelTopKEnabled(true);
+            try {
+                assertQuery("SELECT * FROM (SELECT b,a FROM (SELECT a+1 aa,a,b FROM lp_top_pruned)) ORDER BY a,b LIMIT 2")
+                        .noLeakCheck()
+                        .withPlan("""
+                                VirtualRecord
+                                  functions: [b,a]
+                                    Async Top K lo: 2 workers: 1
+                                      filter: null
+                                      keys: [a, b]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: lp_top_pruned
+                                """)
+                        .expectSize()
+                        .returns("b\ta\n40\t1\n30\t2\n");
+                assertQuery("SELECT * FROM (SELECT b,a FROM (SELECT a+1 aa,a,b FROM lp_top_pruned) WHERE a > 1) ORDER BY a,b LIMIT 2")
+                        .noLeakCheck()
+                        .withPlanContaining("Top K lo: 2")
+                        .expectSize()
+                        .returns("b\ta\n30\t2\n20\t3\n");
+            } finally {
+                sqlExecutionContext.setParallelTopKEnabled(wasParallel);
+            }
+        });
+    }
+
+    @Test
     public void testRuntimeConstantGateStaysOnPageFrameSource() throws Exception {
         assertMemoryLeak(() -> {
             createRows();

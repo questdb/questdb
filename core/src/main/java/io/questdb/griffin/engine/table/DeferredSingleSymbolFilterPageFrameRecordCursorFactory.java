@@ -25,7 +25,6 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameCursor;
@@ -44,11 +43,10 @@ import io.questdb.std.Misc;
 import org.jetbrains.annotations.NotNull;
 
 public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends PageFrameRecordCursorFactory {
-    private final boolean isSymbolFunctionOwner;
     private final int symbolColumnIndex;
     private final SingleSymbolFilter symbolFilter;
+    private final Function symbolFunc;
     private boolean convertedToFrame;
-    private Function symbolFunc;
     private int symbolKey;
 
     public DeferredSingleSymbolFilterPageFrameRecordCursorFactory(
@@ -77,10 +75,6 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
                 false
         );
         this.symbolFunc = symbolFunc;
-        // Resolved symbol row factories borrow their function; deferred factories own it.
-        this.isSymbolFunctionOwner = !(rowCursorFactory instanceof FunctionBasedRowCursorFactory functionBased)
-                || rowCursorFactory instanceof SymbolFunctionRowCursorFactory
-                || functionBased.getFunction() != symbolFunc;
         symbolKey = SymbolTable.VALUE_NOT_FOUND;
         this.symbolColumnIndex = symbolColumnIndex;
 
@@ -100,22 +94,6 @@ public class DeferredSingleSymbolFilterPageFrameRecordCursorFactory extends Page
     public SingleSymbolFilter convertToSampleByIndexPageFrameCursorFactory() {
         convertedToFrame = true;
         return symbolFilter;
-    }
-
-    @Override
-    protected void _close() {
-        final Function symbolFunc = this.symbolFunc;
-        this.symbolFunc = null;
-        Throwable failure = null;
-        try {
-            super._close();
-        } catch (Throwable th) {
-            failure = th;
-        }
-        if (isSymbolFunctionOwner) {
-            failure = Misc.freeBestEffort(failure, symbolFunc);
-        }
-        CairoException.rethrowCleanupFailure(failure);
     }
 
     @Override

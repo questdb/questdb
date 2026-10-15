@@ -98,11 +98,7 @@ class LatestByAllSymbolsFilteredRecordCursor extends AbstractDescendingRecordLis
             try {
                 super.close();
             } catch (Throwable th) {
-                if (failure == null) {
-                    failure = th;
-                } else if (failure != th) {
-                    failure.addSuppressed(th);
-                }
+                failure = Misc.foldCleanupFailure(failure, th);
             }
             CairoException.rethrowCleanupFailure(failure);
         }

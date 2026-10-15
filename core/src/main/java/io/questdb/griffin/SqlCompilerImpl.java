@@ -2463,9 +2463,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         } finally {
             functionParser.swapCompiler(previous);
         }
-        if (functionResolver.getExecutionRequirements().checkStoredView(executionContext)) {
-            nonDeterministicCalls.rejectCreated(functionResolver, executionContext);
-        }
     }
 
     private Function bindStatementExpression(ExpressionNode expression, RecordMetadata metadata, int preferredType, SqlExecutionContext executionContext) throws SqlException {
@@ -3596,7 +3593,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         try {
             if (createMatViewOp != null) {
                 executionContext.setAllowNonDeterministicFunction(false);
-                executionContext.setMatViewCompile(true);
             }
             final QueryModel queryModel;
             final boolean cacheable;
@@ -3607,7 +3603,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(startPos, "SELECT query expected");
                     }
                     queryModel = (QueryModel) executionModel;
-                    bindQuery(queryModel, executionContext);
+                    if (createMatViewOp != null) {
+                        executionContext.setMatViewCompile(true);
+                        try {
+                            bindQuery(queryModel, executionContext);
+                        } finally {
+                            executionContext.setMatViewCompile(false);
+                        }
+                        functionResolver.checkDeferred(executionContext);
+                    } else {
+                        bindQuery(queryModel, executionContext);
+                    }
                 } catch (SqlException e) {
                     e.setPosition(e.getPosition() + selectTextPosition);
                     throw e;
@@ -3654,7 +3660,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw th;
         } finally {
             executionContext.setAllowNonDeterministicFunction(ogAllowNonDeterministic);
-            executionContext.setMatViewCompile(false);
         }
     }
 
@@ -6620,9 +6625,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             updateColumnNames.add(updateMetadata.getColumnName(i));
         }
 
-        final int liveWalProgressPosition = functionResolver.getExecutionRequirements().getPosition(
-                SqlExecutionRequirements.REQUIRES_LIVE_WAL_PROGRESS
-        );
+        final int liveWalProgressPosition = functionResolver.getExecutionRequirements().getLiveWalProgressPosition();
         if (!executionContext.isWalApplication() && liveWalProgressPosition >= 0) {
             recordCursorFactory.close();
             throw SqlException.position(liveWalProgressPosition)
