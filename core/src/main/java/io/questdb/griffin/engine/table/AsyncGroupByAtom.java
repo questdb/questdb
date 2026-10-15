@@ -51,6 +51,7 @@ import io.questdb.griffin.engine.functions.PerWorkerFunctionList;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.groupby.GroupByAllocator;
 import io.questdb.griffin.engine.groupby.GroupByAllocatorFactory;
+import io.questdb.griffin.engine.functions.groupby.WelfordBatchFusion;
 import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdaterFactory;
@@ -85,6 +86,8 @@ public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, Per
     private final RecordSink ownerMapSink;
     private final ObjList<GroupByAllocator> perWorkerAllocators;
     private final GroupByBatchKernels.PerWorker perWorkerBatchKernels;
+    // per slot, the owner's first: see getWelfordFusion()
+    private final WelfordBatchFusion[] welfordFusions;
     private final ObjList<DirectLongList> perWorkerBatchLists;
     private final ObjList<FlyweightPackedMapValue> perWorkerBatchMapValues;
     private final ObjList<ObjList<GroupByFunction>> perWorkerGroupByFunctions;
@@ -253,6 +256,7 @@ public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, Per
             final GroupByBatchKernels.Program kernelProgram = configuration.isSqlParallelGroupByBatchKernelsEnabled()
                     ? GroupByBatchKernels.compile(ownerGroupByFunctions, batchSize, workerCount + 1)
                     : null;
+            welfordFusions = new WelfordBatchFusion[workerCount + 1];
             ownerBatchKernels = kernelProgram != null ? kernelProgram.newInstance(ownerGroupByFunctions) : null;
             if (ownerBatchKernels != null) {
                 // the workers' evaluators are made on each slot's first use
@@ -346,6 +350,19 @@ public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, Per
     @TestOnly
     public long[] getBatchKernelCounts() {
         return GroupByBatchKernels.getCounts(ownerBatchKernels, perWorkerBatchKernels);
+    }
+
+    /**
+     * Returns the slot's fused pass over its Welford aggregates' kernels, made on its first use, so only
+     * the slot's holder may call this.
+     */
+    public WelfordBatchFusion getWelfordFusion(int slotId) {
+        final int i = slotId + 1;
+        WelfordBatchFusion fusion = welfordFusions[i];
+        if (fusion == null) {
+            welfordFusions[i] = fusion = new WelfordBatchFusion();
+        }
+        return fusion;
     }
 
     /**

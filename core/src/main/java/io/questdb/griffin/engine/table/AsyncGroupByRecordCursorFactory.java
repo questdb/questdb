@@ -55,6 +55,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
+import io.questdb.griffin.engine.functions.groupby.WelfordBatchFusion;
 import io.questdb.griffin.engine.groupby.GroupByBatchKernels;
 import io.questdb.griffin.engine.groupby.GroupByFunctionsUpdater;
 import io.questdb.griffin.engine.groupby.GroupByRecordCursorFactory;
@@ -408,15 +409,23 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
             return;
         }
         final int capacity = kernels.getCapacity();
+        // two or more Welford aggregates run in one pass, see WelfordBatchFusion
+        final WelfordBatchFusion fusion = WelfordBatchFusion.countFusable(functions) > 1 ? atom.getWelfordFusion(slotId) : null;
         for (long p = 1; p < frameRowCount; p += capacity) {
             final int n = (int) Math.min(capacity, frameRowCount - p);
             kernels.of(record, GroupByBatchKernels.MODE_RANGE, 0, p, n);
+            if (fusion != null) {
+                fusion.clear();
+            }
             for (int i = 0; i < functionCount; i++) {
                 final GroupByFunction function = functions.getQuick(i);
                 final GroupByBatchKernels.Args args = !kernels.isKernel(i)
                         ? null
                         : function.supportsRawKernelArgs() ? kernels.prepareRaw(i) : kernels.prepare(i);
-                if (args != null) {
+                if (fusion != null && args != null && WelfordBatchFusion.isFusable(function)) {
+                    // run with the batch's other Welford aggregates, after the loop
+                    fusion.add(function, args);
+                } else if (args != null) {
                     function.computeBatchKernel(mapValue, n, args);
                 } else {
                     for (long r = p, hi = p + n; r < hi; r++) {
@@ -424,6 +433,9 @@ public class AsyncGroupByRecordCursorFactory extends AbstractRecordCursorFactory
                         function.computeNext(mapValue, record, baseRowId + r);
                     }
                 }
+            }
+            if (fusion != null && fusion.size() > 0) {
+                fusion.run(mapValue, n);
             }
         }
     }

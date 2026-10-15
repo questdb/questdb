@@ -58,33 +58,7 @@ public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements 
         double sum = mapValue.getDouble(valueIndex);
         double weightSum = mapValue.getDouble(valueIndex + 1);
         if (sampleType == ColumnType.DOUBLE && weightType == ColumnType.DOUBLE) {
-            // four independent sums, so that the adds overlap rather than wait on one another
-            double s1 = 0, s2 = 0, s3 = 0, w1 = 0, w2 = 0, w3 = 0;
-            int i = 0;
-            for (final int n4 = rowCount & ~3; i < n4; i += 4) {
-                final long o = (long) i << 3;
-                final double x0 = Unsafe.getDouble(samplesAddr + o), y0 = Unsafe.getDouble(weightsAddr + o);
-                final double x1 = Unsafe.getDouble(samplesAddr + o + 8), y1 = Unsafe.getDouble(weightsAddr + o + 8);
-                final double x2 = Unsafe.getDouble(samplesAddr + o + 16), y2 = Unsafe.getDouble(weightsAddr + o + 16);
-                final double x3 = Unsafe.getDouble(samplesAddr + o + 24), y3 = Unsafe.getDouble(weightsAddr + o + 24);
-                if (Numbers.isFinite(x0) && Numbers.isFinite(y0) && y0 != 0.0) {
-                    sum += x0 * y0;
-                    weightSum += y0;
-                }
-                if (Numbers.isFinite(x1) && Numbers.isFinite(y1) && y1 != 0.0) {
-                    s1 += x1 * y1;
-                    w1 += y1;
-                }
-                if (Numbers.isFinite(x2) && Numbers.isFinite(y2) && y2 != 0.0) {
-                    s2 += x2 * y2;
-                    w2 += y2;
-                }
-                if (Numbers.isFinite(x3) && Numbers.isFinite(y3) && y3 != 0.0) {
-                    s3 += x3 * y3;
-                    w3 += y3;
-                }
-            }
-            for (; i < rowCount; i++) {
+            for (int i = 0; i < rowCount; i++) {
                 final double sample = Unsafe.getDouble(samplesAddr + ((long) i << 3));
                 final double weight = Unsafe.getDouble(weightsAddr + ((long) i << 3));
                 if (Numbers.isFinite(sample) && Numbers.isFinite(weight) && weight != 0.0) {
@@ -92,46 +66,17 @@ public class WeightedAvgDoubleGroupByFunction extends DoubleFunction implements 
                     weightSum += weight;
                 }
             }
-            sum += (s1 + s2) + s3;
-            weightSum += (w1 + w2) + w3;
         } else if (sampleType == ColumnType.FLOAT && weightType == ColumnType.INT) {
-            // a NULL int weight is NaN, and so not finite; four independent sums, see above
-            double s1 = 0, s2 = 0, s3 = 0, w1 = 0, w2 = 0, w3 = 0;
-            int i = 0;
-            for (final int n4 = rowCount & ~3; i < n4; i += 4) {
-                final long o = (long) i << 2;
-                final double x0 = Unsafe.getFloat(samplesAddr + o), x1 = Unsafe.getFloat(samplesAddr + o + 4);
-                final double x2 = Unsafe.getFloat(samplesAddr + o + 8), x3 = Unsafe.getFloat(samplesAddr + o + 12);
-                final int y0 = Unsafe.getInt(weightsAddr + o), y1 = Unsafe.getInt(weightsAddr + o + 4);
-                final int y2 = Unsafe.getInt(weightsAddr + o + 8), y3 = Unsafe.getInt(weightsAddr + o + 12);
-                if (y0 != Numbers.INT_NULL && y0 != 0 && Numbers.isFinite(x0)) {
-                    sum += x0 * y0;
-                    weightSum += y0;
-                }
-                if (y1 != Numbers.INT_NULL && y1 != 0 && Numbers.isFinite(x1)) {
-                    s1 += x1 * y1;
-                    w1 += y1;
-                }
-                if (y2 != Numbers.INT_NULL && y2 != 0 && Numbers.isFinite(x2)) {
-                    s2 += x2 * y2;
-                    w2 += y2;
-                }
-                if (y3 != Numbers.INT_NULL && y3 != 0 && Numbers.isFinite(x3)) {
-                    s3 += x3 * y3;
-                    w3 += y3;
-                }
-            }
-            for (; i < rowCount; i++) {
+            for (int i = 0; i < rowCount; i++) {
                 final double sample = Unsafe.getFloat(samplesAddr + ((long) i << 2));
                 final int w = Unsafe.getInt(weightsAddr + ((long) i << 2));
+                // a NULL int weight is NaN, and so not finite
                 if (w != Numbers.INT_NULL && w != 0 && Numbers.isFinite(sample)) {
                     final double weight = w;
                     sum += sample * weight;
                     weightSum += weight;
                 }
             }
-            sum += (s1 + s2) + s3;
-            weightSum += (w1 + w2) + w3;
         } else {
             for (int i = 0; i < rowCount; i++) {
                 final double sample = GroupByBatchKernels.rawDouble(samplesAddr, sampleType, i);
