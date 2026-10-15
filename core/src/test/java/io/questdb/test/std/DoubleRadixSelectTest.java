@@ -37,8 +37,17 @@ public class DoubleRadixSelectTest {
 
     @Test
     public void testSelectsAsASortDoes() {
+        assertSelectsAsASortDoes(200_000);
+    }
+
+    @Test
+    public void testSelectsAsASortDoesWideFirstStep() {
+        // above 2^18 values the first step counts by the keys' 16 highest bits
+        assertSelectsAsASortDoes(600_000);
+    }
+
+    private static void assertSelectsAsASortDoes(int n) {
         final Rnd rnd = new Rnd();
-        final int n = 200_000;
         final long ptr = Unsafe.malloc(8L * n, MemoryTag.NATIVE_DEFAULT);
         try {
             final double[] values = new double[n];

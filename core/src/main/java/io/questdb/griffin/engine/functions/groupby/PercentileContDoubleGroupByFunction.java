@@ -27,7 +27,6 @@ package io.questdb.griffin.engine.functions.groupby;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
-import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlUtil;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -44,18 +43,22 @@ public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGro
     }
 
     @Override
-    public double getDouble(Record record) {
-        long listPtr = record.getLong(valueIndex);
-        if (listPtr <= 0) {
-            return Double.NaN;
-        }
-        listA.of(listPtr);
-        int size = listA.size();
-        if (size == 0) {
-            return Double.NaN;
-        }
-        double percentile = SqlUtil.validatePercentile(percentileFunc.getDouble(record), percentilePos);
+    public String getName() {
+        return "percentile_cont";
+    }
 
+    @Override
+    public void setEmpty(MapValue mapValue) {
+        mapValue.putLong(valueIndex, 0L);
+    }
+
+    @Override
+    public void toPlan(PlanSink sink) {
+        sink.val("percentile_cont(").val(arg).val(',').val(percentileFunc).val(')');
+    }
+
+    @Override
+    protected double select(int size, double percentile) {
         // Calculate the continuous percentile position
         double position = percentile * (size - 1);
         int lowerIndex = (int) Math.floor(position);
@@ -85,20 +88,4 @@ public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGro
         // Perform linear interpolation between the two adjacent values
         return SqlUtil.interpolatePercentile(listA.getQuick(lowerIndex), listA.getQuick(upperIndex), position - lowerIndex);
     }
-
-    @Override
-    public String getName() {
-        return "percentile_cont";
-    }
-
-    @Override
-    public void setEmpty(MapValue mapValue) {
-        mapValue.putLong(valueIndex, 0L);
-    }
-
-    @Override
-    public void toPlan(PlanSink sink) {
-        sink.val("percentile_cont(").val(arg).val(',').val(percentileFunc).val(')');
-    }
-
 }

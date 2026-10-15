@@ -33,8 +33,11 @@ import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.RecordSinkFactory;
 import io.questdb.cairo.Reopenable;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.map.MapRecord;
+import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrameMemoryPool;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.cairo.sql.SymbolTableSource;
@@ -61,6 +64,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.DirectLongList;
 import io.questdb.std.DirectLongLongSortedList;
 import io.questdb.std.IntHashSet;
+import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
@@ -96,6 +100,10 @@ public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, Per
     // Initialized lazily.
     private final ObjList<DirectLongLongSortedList> perWorkerLongTopKLists;
     private final ObjList<RecordSink> perWorkerMapSinks;
+    // the indexes of the GROUP BY functions whose results finalizeShard() computes on the workers
+    private final IntList finalizableFunctionIndexes = new IntList();
+    // the finalizable functions' state past which shouldShardToFinalize()
+    private final long finalizeShardingBytes;
     private final GroupByShardingContext shardingCtx;
     // the column index of the only GROUP BY key when it is a plain column, else -1
     private final int singleKeyColumnIndex;
@@ -165,6 +173,7 @@ public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, Per
             }
 
             perWorkerLocks = new PerWorkerLocks(configuration, workerCount);
+            finalizeShardingBytes = 10L * Double.BYTES * configuration.getGroupByShardingThreshold();
 
             final ColumnTypes storedKeyTypes = new ArrayColumnTypes().addAll(keyTypes);
             final ColumnTypes storedValueTypes = new ArrayColumnTypes().addAll(valueTypes);
@@ -177,6 +186,14 @@ public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, Per
                     perWorkerLocks,
                     workerCount
             );
+            for (int i = 0, n = ownerGroupByFunctions.size(); i < n; i++) {
+                if (ownerGroupByFunctions.getQuick(i).isFinalizable()) {
+                    finalizableFunctionIndexes.add(i);
+                }
+            }
+            if (finalizableFunctionIndexes.size() > 0) {
+                shardingCtx.setShardFinalizer(this::finalizeShard);
+            }
 
             final Class<RecordSink> sinkClass = RecordSinkFactory.getInstanceClass(
                     configuration,
@@ -419,6 +436,25 @@ public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, Per
         return shardingCtx.getFragment(slotId);
     }
 
+    /**
+     * Computes the results of the finalizable GROUP BY functions for the groups of a merged shard, see
+     * {@link GroupByFunction#finalizeValue}; with the functions of the slot that merged it.
+     */
+    public void finalizeShard(int slotId, Map destShard) {
+        if (destShard.size() == 0) {
+            return;
+        }
+        final ObjList<GroupByFunction> groupByFunctions = getGroupByFunctions(slotId);
+        final RecordCursor cursor = destShard.getCursor();
+        final MapRecord record = destShard.getRecord();
+        while (cursor.hasNext()) {
+            final MapValue value = record.getValue();
+            for (int i = 0, n = finalizableFunctionIndexes.size(); i < n; i++) {
+                groupByFunctions.getQuick(finalizableFunctionIndexes.getQuick(i)).finalizeValue(value);
+            }
+        }
+    }
+
     public GroupByFunctionsUpdater getFunctionUpdater(int slotId) {
         return shardingCtx.getFunctionUpdater(slotId);
     }
@@ -530,6 +566,25 @@ public class AsyncGroupByAtom implements StatefulAtom, FrameDecodeAheadAtom, Per
 
     public boolean isSharded() {
         return shardingCtx.isSharded();
+    }
+
+    /**
+     * Whether this GROUP BY, not sharded as it aggregated, merges as shards nonetheless: its finalizable
+     * functions hold more state than about ten times the sharding threshold of 8-byte values, which
+     * one thread would merge and finish one group after another, see
+     * {@link GroupByShardingContext#shardAfterAggregation()}.
+     */
+    public boolean shouldShardToFinalize() {
+        if (finalizableFunctionIndexes.size() == 0 || shardingCtx.isSharded()) {
+            return false;
+        }
+        long allocated = ownerAllocator.allocated();
+        if (perWorkerAllocators != null) {
+            for (int i = 0, n = perWorkerAllocators.size(); i < n; i++) {
+                allocated += perWorkerAllocators.getQuick(i).allocated();
+            }
+        }
+        return allocated > finalizeShardingBytes;
     }
 
     public void setGroupedByGatherKey(boolean groupedByGatherKey) {

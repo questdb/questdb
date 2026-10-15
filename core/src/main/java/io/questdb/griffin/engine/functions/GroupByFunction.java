@@ -403,6 +403,25 @@ public interface GroupByFunction extends Function, Mutable {
         return false;
     }
 
+    /**
+     * Whether {@link #finalizeValue} computes this function's result ahead of its getter; false by
+     * default.
+     */
+    default boolean isFinalizable() {
+        return false;
+    }
+
+    /**
+     * Computes the group's result from its merged state, in place, for the getter to read rather than
+     * compute. A parallel GROUP BY calls it on its workers, for each group of a merged shard, when
+     * {@link #isFinalizable} and the result costs more than reading it (a selection over the group's
+     * values). Called once per group, after its last merge: the value takes no further computes or merges.
+     *
+     * @param mapValue the group's merged value
+     */
+    default void finalizeValue(MapValue mapValue) {
+    }
+
     default boolean isInterpolationSupported() {
         return false;
     }

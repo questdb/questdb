@@ -91,6 +91,8 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     private final PerWorkerLocks perWorkerLocks;
     private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
     private final ColumnTypes valueTypes;
+    // finishes each destination shard's groups after its merge, see setShardFinalizer()
+    private ShardFinalizer shardFinalizer;
     volatile boolean sharded;
     boolean shardedHint;
     // false for a GROUP BY whose workers' maps hold mostly disjoint groups, see setShardingAllowed()
@@ -180,6 +182,27 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
     }
 
     /**
+     * Sets what finishes each destination shard's groups once merged, on the thread that merged it.
+     */
+    public void setShardFinalizer(ShardFinalizer shardFinalizer) {
+        this.shardFinalizer = shardFinalizer;
+    }
+
+    /**
+     * Shards the aggregated, not yet merged maps of a GROUP BY that did not reach the sharding threshold
+     * as it aggregated, so that {@link #mergeShards} merges, and finishes, the groups on the workers: for
+     * groups whose merge and result cost more than their count suggests, such as a percentile's values.
+     *
+     * @return whether the maps are now to be merged as shards
+     */
+    public boolean shardAfterAggregation() {
+        if (!sharded && shardingAllowed && !shardingDisabled) {
+            sharded = true;
+        }
+        return sharded;
+    }
+
+    /**
      * Scales the map size (and function cardinality) past which this GROUP BY shards. An index
      * gather grouped by its key column and other columns gives each task whole keys, so the
      * workers' maps hold mostly disjoint groups, and its unsharded reduce probes a run of rows
@@ -203,6 +226,9 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
 
     public void mergeShard(int slotId, int shardIndex) {
         mergeShard(shardIndex, getFunctionUpdater(slotId));
+        if (shardFinalizer != null) {
+            shardFinalizer.finalizeShard(slotId, destShards.getQuick(shardIndex));
+        }
     }
 
     public void release(int slotId) {
@@ -557,5 +583,10 @@ public class GroupByShardingContext implements QuietCloseable, Mutable {
         for (int i = 0, n = perWorkerFragments.size(); i < n; i++) {
             perWorkerFragments.getQuick(i).shard();
         }
+    }
+
+    @FunctionalInterface
+    public interface ShardFinalizer {
+        void finalizeShard(int slotId, Map destShard);
     }
 }

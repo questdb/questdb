@@ -232,6 +232,10 @@ class AsyncGroupByRecordCursor implements RecordCursor {
         final AsyncGroupByAtom atom = frameSequence.getAtom();
 
         final GroupByShardingContext shardingCtx = atom.getShardingContext();
+        if (atom.shouldShardToFinalize()) {
+            // the groups' merges and results are worth spreading over the workers, however few the groups
+            shardingCtx.shardAfterAggregation();
+        }
         if (!atom.isSharded()) {
             // No sharding was necessary, so the maps are small, and we merge them ourselves.
             ownerMap = shardingCtx.mergeOwnerMap();

@@ -68,6 +68,22 @@ public class GroupByDoubleList {
         setSize(newSize);
     }
 
+    /**
+     * Appends the value to the list at {@code ptr} (not 0) when the list has room for it, with no list
+     * flyweight or allocator; else leaves it, for {@link #add(double)} to grow it.
+     *
+     * @return whether the value was appended
+     */
+    public static boolean tryAppend(long ptr, double value) {
+        final int size = Unsafe.getUnsafe().getInt(ptr + SIZE_OFFSET);
+        if (size < Unsafe.getUnsafe().getInt(ptr)) {
+            Unsafe.getUnsafe().putDouble(ptr + HEADER_SIZE + 8L * size, value);
+            Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, size + 1);
+            return true;
+        }
+        return false;
+    }
+
     public long add(GroupByDoubleList that) {
         return add(that, 0, that.size());
     }
