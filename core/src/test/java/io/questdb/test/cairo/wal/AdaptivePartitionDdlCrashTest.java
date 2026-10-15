@@ -226,6 +226,12 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                     }
                     continue;
                 }
+                if (history == History.ATTACH_SECOND_SAVE_POINT_FAILS_THEN_KILLED) {
+                    if (operation.keepsAttachable() && !operation.failsPartWay()) {
+                        params.add(new Object[]{history, operation, OperationPath.WAL});
+                    }
+                    continue;
+                }
                 if (history == History.COPY_SECOND_SAVE_POINT_FAILS) {
                     if (operation == Operation.COPY_INTO_EXISTING_TABLE) {
                         params.add(new Object[]{history, operation, OperationPath.OWN});
@@ -329,6 +335,16 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
                 e = apply(e);
                 if (operation == Operation.RESUME_WAL_FROM_TXN) {
                     Assert.assertFalse("the transaction must be skipped", snapshot(e).contains("skipped"));
+                }
+                if (history == History.ATTACH_SECOND_SAVE_POINT_FAILS_THEN_KILLED) {
+                    // Rows into the attached partition queue behind the suspended table, then a kill with the fault
+                    // lifted. The writer open at the restart re-queues the source, both save points cover the ATTACH,
+                    // the source goes, and the rows apply.
+                    e.execute("INSERT INTO t VALUES ('" + PARTITION + "T03:00:00.000000Z', 's14', 14), ('" + PARTITION + "T04:00:00.000000Z', 's15', 15)");
+                    TestUtils.drainWalQueue(e);
+                    e = crash(e);
+                    Assert.assertFalse("the restart must finish the ATTACH", e.getTableSequencerAPI().isSuspended(e.verifyTableName("t")));
+                    Assert.assertFalse("the source must go once both save points cover the ATTACH", attachableExists(e));
                 }
                 if (!history.cleanRestart() && !history.killed() && !(operation.isNoOpConversionFailure() && path == OperationPath.WAL)) {
                     insertDay(e, "2024-01-05", 40);
@@ -687,7 +703,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             } finally {
                 endOperation();
             }
-            if (requiresDurableCompletion() && history.failsSavePoint()) {
+            if (requiresDurableCompletion() && history.failsSavePoint() && history != History.ATTACH_SECOND_SAVE_POINT_FAILS_THEN_KILLED) {
                 // Retry with the fault lifted. The killed history still restarts from its frozen pre-retry image.
                 if (operation == Operation.FORCE_DROP) {
                     try (TableWriter writer = e.getWriter(e.verifyTableName("t"), "test")) {
@@ -953,7 +969,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
     private void startOperation() {
         savePoints.set(0);
         if (history.failsSavePoint()) {
-            failSavePointsAfter = history == History.COPY_SECOND_SAVE_POINT_FAILS ? 1 : 0;
+            failSavePointsAfter = history == History.COPY_SECOND_SAVE_POINT_FAILS || history == History.ATTACH_SECOND_SAVE_POINT_FAILS_THEN_KILLED ? 1 : 0;
         }
         crossDevice = operation == Operation.ATTACH_CROSS_DEVICE || operation == Operation.DETACH_CROSS_DEVICE;
         killAfterMove = history == History.KILLED_BEFORE_TXN || history == History.KILLED_BEFORE_TXN_NOSYNC;
@@ -976,6 +992,10 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         SAVE_POINT_FAILS,
         // COPY publishes its first generation, but the second fails: it must truncate the import and report failure.
         COPY_SECOND_SAVE_POINT_FAILS,
+        // A WAL ATTACH that keeps its source publishes the first save point that covers it and the second fails,
+        // which suspends the table; rows queue behind it and the process is killed. The writer open at the restart
+        // re-queues the source and finishes the ATTACH.
+        ATTACH_SECOND_SAVE_POINT_FAILS_THEN_KILLED,
         // As SAVE_POINT_FAILS with the periodic save point off: the next apply batch must still take one.
         SAVE_POINT_FAILS_NO_PERIODIC,
         // The save point after the operation fails, nothing is written after it, and the restart is clean: the
@@ -1010,7 +1030,8 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
         }
 
         boolean failsSavePoint() {
-            return this == SAVE_POINT_FAILS || this == COPY_SECOND_SAVE_POINT_FAILS || this == SAVE_POINT_FAILS_NO_PERIODIC || this == SAVE_POINT_FAILS_THEN_KILLED || cleanRestart();
+            return this == SAVE_POINT_FAILS || this == COPY_SECOND_SAVE_POINT_FAILS || this == ATTACH_SECOND_SAVE_POINT_FAILS_THEN_KILLED
+                    || this == SAVE_POINT_FAILS_NO_PERIODIC || this == SAVE_POINT_FAILS_THEN_KILLED || cleanRestart();
         }
 
         boolean killed() {
