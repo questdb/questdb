@@ -251,7 +251,7 @@ final class SampleByFactoryGenerator {
             final boolean isSampleBySource = algorithm == FillPlan.Algorithm.SAMPLE_BY_ROWS;
             if (ParanoiaState.PLAN_PARANOIA_MODE && (isSampleBySource != (groupByFactory instanceof SampleByFillNoneRecordCursorFactory
                     || groupByFactory instanceof SampleByFillNoneNotKeyedRecordCursorFactory)
-                    || (algorithm == FillPlan.Algorithm.SORTED) != (groupByFactory.getMetadata().getTimestampIndex() != timestampIndex))) {
+                    || (algorithm == FillPlan.Algorithm.SORTED) == (groupByFactory.getMetadata().getTimestampIndex() == timestampIndex))) {
                 throw new AssertionError("recorded fill algorithm differs from the generator's choice");
             }
             final IntList keyColIndices = new IntList();

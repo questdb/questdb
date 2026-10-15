@@ -2235,13 +2235,7 @@ final class JoinFactoryGenerator {
         );
     }
 
-    private static final class JoinCondition implements Plannable {
-        private final String text;
-
-        private JoinCondition(String text) {
-            this.text = text;
-        }
-
+    private record JoinCondition(String text) implements Plannable {
         @Override
         public void toPlan(PlanSink sink) {
             sink.val(text);

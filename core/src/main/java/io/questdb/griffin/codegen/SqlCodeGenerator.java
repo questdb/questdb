@@ -522,12 +522,12 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 yield sampleByGenerator.generateFill(frame, fill, fill.getChild().getOutput(), base, executionContext);
             }
             case ScanPlan scan -> scanGenerator.generateScan(frame, scan, executionContext);
-            case FunctionSourcePlan source -> scanGenerator.generateFunctionSource(frame, source, executionContext);
+            case FunctionSourcePlan source -> scanGenerator.generateFunctionSource(source, executionContext);
             case DistinctPlan distinct -> aggregateGenerator.generateDistinct(frame, distinct, null, executionContext);
             case LimitPlan limit when LogicalPlans.hasSortUnderStableProjects(limit.getChild()) ->
                     sortGenerator.generateSortedLimit(frame, limit.getChild(), limit, executionContext);
-            case AggregatePlan aggregate when PlanToFactoryRules.aggregateFactory(aggregate) == PlanToFactoryRules.AggregateFactory.POSTING_DISTINCT ->
-                    scanGenerator.generatePostingDistinct(frame, aggregate, executionContext);
+            case AggregatePlan aggregate when PlanToFactoryRules.postingDistinctScan(aggregate) instanceof ScanPlan scan ->
+                    scanGenerator.generatePostingDistinct(frame, aggregate, scan, executionContext);
             case AggregatePlan aggregate -> aggregateGenerator.generateAggregate(frame, aggregate, executionContext);
             case JoinPlan join -> joinGenerator.generateJoin(frame, join, executionContext);
             case WindowJoinPlan windowJoin ->

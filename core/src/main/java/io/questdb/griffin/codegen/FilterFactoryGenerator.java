@@ -268,7 +268,7 @@ final class FilterFactoryGenerator {
             IntList columnIndexes,
             boolean isUpdate,
             SqlExecutionContext executionContext
-    ) throws SqlException {
+    ) {
         if (!configuration.isSqlLatestByJitEnabled() || executionContext.getJitMode() == SqlJitMode.JIT_MODE_DISABLED
                 || !JitUtil.isJitSupported() || filter.isConstant() || filter.isRuntimeConstant()
                 || !filter.isStableWithinExecution() || isUpdate && !executionContext.isWalApplication()) {

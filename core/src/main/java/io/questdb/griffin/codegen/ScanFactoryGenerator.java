@@ -261,7 +261,7 @@ final class ScanFactoryGenerator {
 
     private static int requestedDirection(ScanPlan scan) {
         final SortKeys requestedOrder = scan.getRequestedOrder();
-        return SqlCodeGenerator.queryModelDirection(requestedOrder.size() == 0 ? SortDirection.ASCENDING : requestedOrder.getDirections().getQuick(0));
+        return SqlCodeGenerator.queryModelDirection(requestedOrder.isEmpty() ? SortDirection.ASCENDING : requestedOrder.getDirections().getQuick(0));
     }
 
     private static Record.CharSequenceFunction subqueryKeyGetter(int type) {
@@ -354,7 +354,7 @@ final class ScanFactoryGenerator {
             if (ParanoiaState.PLAN_PARANOIA_MODE && filter != null && filter.isConstant()) {
                 throw new AssertionError("index access path residual folds to a constant");
             }
-            instantiateKeys(frame, values, keys, scan, metadata, executionContext);
+            instantiateKeys(values, keys, scan, metadata, executionContext);
             if (!isExcluded && isCovering) {
                 coveringMapping = buildCoveringMapping(reader, indexes.getQuick(keyIndex), indexes);
             }
@@ -422,8 +422,8 @@ final class ScanFactoryGenerator {
                 filter = filterGenerator.compileLatestBy(filter, residual, scan.getOutput(), metadata, reader, indexes,
                         scan.isUpdate(), executionContext);
             }
-            instantiateKeys(frame, scan.getIndexKeys(), keys, scan, metadata, executionContext);
-            instantiateKeys(frame, scan.getExcludedKeys(), excludedKeys, scan, metadata, executionContext);
+            instantiateKeys(scan.getIndexKeys(), keys, scan, metadata, executionContext);
+            instantiateKeys(scan.getExcludedKeys(), excludedKeys, scan, metadata, executionContext);
             frames = newFrames(scan, buildIntervals(scanIntervals, reader), readerMetadata, frameOrder(scan));
             if (residual != null && (residual.getFunctionFlags() & (BoundExpression.CONSTANT | BoundExpression.RUNTIME_CONSTANT)) == 0) {
                 configurePushdown(frame, frames, residual, scan, metadata, indexes, reader, executionContext);
@@ -701,7 +701,7 @@ final class ScanFactoryGenerator {
         return generateReaderScan(frame, scan, executionContext, scanIntervals, latest, planTables.of(scan));
     }
 
-    private void instantiateKeys(GenerationFrame frame, ObjList<BoundExpression> values, ObjList<Function> keys, ScanPlan scan,
+    private void instantiateKeys(ObjList<BoundExpression> values, ObjList<Function> keys, ScanPlan scan,
                                  RecordMetadata metadata, SqlExecutionContext executionContext) throws SqlException {
         keys.checkCapacity(keys.size() + values.size());
         for (int i = 0, n = values.size(); i < n; i++) {
@@ -818,7 +818,7 @@ final class ScanFactoryGenerator {
         return SqlCodeGenerator.clearAfter(frame.intervals, factory);
     }
 
-    RecordCursorFactory generateFunctionSource(GenerationFrame frame, FunctionSourcePlan plan, SqlExecutionContext executionContext) throws SqlException {
+    RecordCursorFactory generateFunctionSource(FunctionSourcePlan plan, SqlExecutionContext executionContext) throws SqlException {
         final RecordCursorFactory base = functionSources.takeFactory(plan, executionContext);
         final GenericRecordMetadata metadata;
         final IntList mapping;
@@ -872,9 +872,8 @@ final class ScanFactoryGenerator {
      * Builds the DISTINCT of the aggregate's single key from the posting index its scan reads, see
      * {@link PlanToFactoryRules#postingDistinctScan}.
      */
-    RecordCursorFactory generatePostingDistinct(GenerationFrame frame, AggregatePlan aggregate, SqlExecutionContext executionContext)
+    RecordCursorFactory generatePostingDistinct(GenerationFrame frame, AggregatePlan aggregate, ScanPlan scan, SqlExecutionContext executionContext)
             throws SqlException {
-        final ScanPlan scan = PlanToFactoryRules.postingDistinctScan(aggregate);
         final BoundExpression predicate = aggregate.getChild() instanceof FilterPlan filter ? filter.getPredicate() : null;
         final RecordCursorFactory factory;
         try {
@@ -1011,7 +1010,7 @@ final class ScanFactoryGenerator {
                 new AdaptiveSymbolPatternRecordCursorFactory.NonOwningPartitionFrameCursorFactory(frames);
         RecordCursorFactory coveringDelegate = null;
         RecordCursorFactory indexDelegate = null;
-        RecordCursorFactory scanDelegate = null;
+        RecordCursorFactory scanDelegate;
         boolean isSelfFiltering = false;
         try {
             indexDelegate = new SymbolPatternIndexRecordCursorFactory(configuration, metadata, sharedFrames, keyColumnIndex,
@@ -1024,21 +1023,18 @@ final class ScanFactoryGenerator {
             scanDelegate = new PageFrameRecordCursorFactory(configuration, metadata, sharedFrames,
                     new PageFrameRowCursorFactory(frames.getOrder()), false, null, true, columnIndexes, columnSizeShifts, true, false);
             if (coveringDelegate == null && isParallel) {
-                final RecordCursorFactory unfiltered = scanDelegate;
                 final ObjList<Function> scanWorkerFilters = workerFilters;
                 final Function scanLimit = limit;
-                scanDelegate = null;
                 workerFilters = null;
                 limit = null;
                 isSelfFiltering = true;
                 scanDelegate = new AsyncFilteredRecordCursorFactory(executionContext.getCairoEngine(), configuration,
-                        executionContext.getMessageBus(), unfiltered, filter, filterColumnIndexes, reduceTaskFactory, scanWorkerFilters,
+                        executionContext.getMessageBus(), scanDelegate, filter, filterColumnIndexes, reduceTaskFactory, scanWorkerFilters,
                         scanLimit, limitPosition, executionContext.getSharedQueryWorkerCount(), isPreTouchEnabled);
             }
         } catch (Throwable th) {
             Misc.free(coveringDelegate, th);
             Misc.free(indexDelegate, th);
-            Misc.free(scanDelegate, th);
             Misc.free(frames, th);
             Misc.freeObjList(workerFilters, th);
             Misc.free(limit, th);

@@ -343,7 +343,6 @@ final class SetOperationFactoryGenerator {
             case DECIMAL128 -> new CastDecimalToStrFunctionFactory.Func128(DecimalColumn.newInstance(i, fromType));
             case DECIMAL256 -> new CastDecimalToStrFunctionFactory.Func(DecimalColumn.newInstance(i, fromType));
             case INTERVAL -> new CastIntervalToStrFunctionFactory.Func(IntervalColumn.newInstance(i, fromType));
-            case BINARY -> throw unvalidatedCast();
             case ARRAY -> {
                 if (decodeArrayElementType(fromType) != DOUBLE) {
                     throw unvalidatedCast();
@@ -395,7 +394,6 @@ final class SetOperationFactoryGenerator {
                     CastGeoHashToGeoHashFunctionFactory.getGeoIntToVarcharCastFunction(GeoIntColumn.newInstance(i, fromType), getGeoHashBits(fromType));
             case GEOLONG ->
                     CastGeoHashToGeoHashFunctionFactory.getGeoLongToVarcharCastFunction(GeoLongColumn.newInstance(i, fromType), getGeoHashBits(fromType));
-            case BINARY -> throw unvalidatedCast();
             case ARRAY -> {
                 if (decodeArrayElementType(fromType) != DOUBLE) {
                     throw unvalidatedCast();
