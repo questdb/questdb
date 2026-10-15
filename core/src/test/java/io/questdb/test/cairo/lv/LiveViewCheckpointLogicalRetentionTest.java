@@ -43,6 +43,7 @@ import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
+import io.questdb.std.ObjList;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Zip;
 import io.questdb.std.str.LPSZ;
@@ -59,6 +60,7 @@ import org.junit.Test;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntSupplier;
 
 /**
  * Acceptance coverage for the retention rule the versioned timeline replaced the
@@ -114,6 +116,16 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
     // commit this is also the epoch's logical entry count - eight times the retained
     // ring's former default count bound, which is the retention the timeline replaced.
     private static final int SEALS = 64;
+    // The checkpoint files a splicing EOF repair and the seals around it write: the repair's
+    // marker and descriptor, the seals' segments and retirement queue, and the superblock.
+    private static final ObjList<String> SPLICE_SYNCED_FILE_KINDS = new ObjList<>(
+            LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME,
+            LiveViewCheckpointLayout.REPAIR_DIR_NAME,
+            LiveViewCheckpointLayout.DATA_DIR_NAME,
+            LiveViewCheckpointLayout.META_DIR_NAME,
+            LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME,
+            LiveViewCheckpointLayout.TIMELINE_FILE_NAME
+    );
     private static final String VIEW_SQL = "SELECT ts, sym, sum(x) OVER (" +
             "PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW" +
             ") AS s FROM base";
@@ -206,6 +218,24 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
             );
             assertViewMatchesRecompute();
         });
+    }
+
+    @Test
+    public void testEofRepairPreservedTimelineRestoresAfterRestartInAsyncCommitMode() throws Exception {
+        assertCheckpointFilesSyncInCommitMode(
+                "async",
+                SPLICE_SYNCED_FILE_KINDS,
+                this::testEofRepairPreservedTimelineRestoresAfterRestart
+        );
+    }
+
+    @Test
+    public void testEofRepairPreservedTimelineRestoresAfterRestartInSyncCommitMode() throws Exception {
+        assertCheckpointFilesSyncInCommitMode(
+                "sync",
+                SPLICE_SYNCED_FILE_KINDS,
+                this::testEofRepairPreservedTimelineRestoresAfterRestart
+        );
     }
 
     @Test
@@ -1129,7 +1159,6 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
         // and retires the whole timeline ahead of the replacement commit, so no root above
         // the floor outlives the output it describes. The repair itself goes through, and
         // the post-replay seal opens a fresh history that a restart restores from.
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
         final AtomicBoolean isArmed = new AtomicBoolean();
         final AtomicInteger markerAttempts = new AtomicInteger();
         final TestFilesFacadeImpl ff = new TestFilesFacadeImpl() {
@@ -1142,52 +1171,31 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                 return super.rename(from, to);
             }
         };
-        assertMemoryLeak(ff, () -> {
-            createView();
-            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
-                final LiveViewInstance instance = buildHistory(job);
-                final long resetsBefore = instance.getCheckpointTimelineResets();
+        assertTruncateThatCannotWriteItsMarkerRetiresTheTimeline(
+                ff,
+                () -> isArmed.set(true),
+                () -> isArmed.set(false),
+                markerAttempts::get
+        );
+    }
 
-                isArmed.set(true);
-                correct(job, instance, SEALS * 10 - 5, 800);
-                isArmed.set(false);
-
-                Assert.assertEquals("the truncate attempts its marker once", 1, markerAttempts.get());
-                Assert.assertEquals(
-                        "a truncate that cannot write its marker must retire the timeline",
-                        resetsBefore + 1,
-                        instance.getCheckpointTimelineResets()
-                );
-                try (Path dir = checkpointsDir(instance)) {
-                    Assert.assertFalse(
-                            "a retired timeline owes no marker",
-                            LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir)
-                    );
-                }
-                // Retired, not preserved: the post-replay seal opens a fresh history instead
-                // of carrying the generation and the id space forward, and the oldest boundary
-                // goes with the timeline it belonged to.
-                Assert.assertEquals("the post-replay seal must open a fresh history", 1, generation(instance));
-                final long entries = assertEpochRetainsEveryEntry(instance, 0, "after the retire");
-                Assert.assertTrue(
-                        "no entry of the retired history may survive [entries=" + entries + ']',
-                        entries < SEALS
-                );
-                Assert.assertFalse(
-                        "the oldest boundary must go with the retired timeline",
-                        findsEntry(instance, ts(timestamp(10)), 0, new LiveViewCheckpointTimelineEntry())
-                );
-                assertViewMatchesRecompute();
-            }
-
-            engine.getLiveViewRegistry().clear();
-            engine.buildViewGraphs();
-            try (LiveViewRefreshJob resumed = new LiveViewRefreshJob(0, engine, 1)) {
-                driveRefreshToQuiescence(resumed);
-            }
-            assertRestoredFromTimeline("lv");
-            assertViewMatchesRecompute();
-        });
+    @Test
+    public void testEofRepairRetiresTheTimelineWhenTheTruncateRunsOutOfDiskSpaceForItsMarker() throws Exception {
+        // The same truncate on a full disk: the marker's staged file opens, and reserving the
+        // blocks its body needs fails. The write leaves that empty staged file behind, and a
+        // staged marker with no final name reads as a live repair, so the retire has to take it
+        // with the timeline or every restart after it rebuilds.
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        assertTruncateThatCannotWriteItsMarkerRetiresTheTimeline(
+                fault,
+                () -> fault.arm(
+                        LiveViewCheckpointDiskFullFault.OP_ALLOCATE,
+                        LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME,
+                        1
+                ),
+                fault::disarm,
+                () -> fault.getFailedFile() != null ? 1 : 0
+        );
     }
 
     @Test
@@ -1468,6 +1476,64 @@ public class LiveViewCheckpointLogicalRetentionTest extends AbstractLiveViewTest
                 2026-01-01T00:01:45.000000Z\tb\t24.0
                 """);
         assertNoRefreshFaults("lv");
+    }
+
+    /**
+     * Runs the EOF correction whose repair the chain budget sends to the truncate, with
+     * {@code arm} making the truncate's marker write fail on {@code ff}, and asserts the
+     * truncate retires the whole timeline ahead of its commit and the repair's post-replay seal
+     * opens a fresh history that a restart restores from. {@code markerAttempts} reports how
+     * many marker writes the fault met.
+     */
+    private void assertTruncateThatCannotWriteItsMarkerRetiresTheTimeline(
+            FilesFacade ff,
+            Runnable arm,
+            Runnable disarm,
+            IntSupplier markerAttempts
+    ) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(ff, () -> {
+            createView();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = buildHistory(job);
+                final long resetsBefore = instance.getCheckpointTimelineResets();
+
+                arm.run();
+                correct(job, instance, SEALS * 10 - 5, 800);
+                disarm.run();
+
+                Assert.assertEquals("the truncate attempts its marker once", 1, markerAttempts.getAsInt());
+                Assert.assertEquals(
+                        "a truncate that cannot write its marker must retire the timeline",
+                        resetsBefore + 1,
+                        instance.getCheckpointTimelineResets()
+                );
+                try (Path dir = checkpointsDir(instance)) {
+                    Assert.assertFalse(
+                            "a retired timeline owes no marker",
+                            LiveViewCheckpointRepairMarker.exists(configuration.getFilesFacade(), dir)
+                    );
+                }
+                // Retired, not preserved: the post-replay seal opens a fresh history instead
+                // of carrying the generation and the id space forward, and the oldest boundary
+                // goes with the timeline it belonged to.
+                Assert.assertEquals("the post-replay seal must open a fresh history", 1, generation(instance));
+                final long entries = assertEpochRetainsEveryEntry(instance, 0, "after the retire");
+                Assert.assertTrue(
+                        "no entry of the retired history may survive [entries=" + entries + ']',
+                        entries < SEALS
+                );
+                Assert.assertFalse(
+                        "the oldest boundary must go with the retired timeline",
+                        findsEntry(instance, ts(timestamp(10)), 0, new LiveViewCheckpointTimelineEntry())
+                );
+                assertViewMatchesRecompute();
+            }
+
+            restartAndRefresh();
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
     }
 
     // The live view must equal the same window recomputed directly over the base table.

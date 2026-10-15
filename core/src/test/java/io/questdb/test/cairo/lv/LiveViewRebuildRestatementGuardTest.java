@@ -312,6 +312,15 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     // the log lines and the operator reasons a deferral or a refusal publishes.
     private static final String DRIFT_CAUSE = "base table metadata change";
     private static final String MID_DRAIN_CAUSE = "mid-drain refresh failure";
+    // The checkpoint files a truncating repair and the seals around it write: the repair's
+    // marker, the seals' metadata segments and retirement queue, and the superblock. The view's
+    // fused anchored state is inline in its metadata, so it writes no data segment.
+    private static final ObjList<String> TRUNCATE_SYNCED_FILE_KINDS = new ObjList<>(
+            LiveViewCheckpointLayout.REPAIRING_MARKER_FILE_NAME,
+            LiveViewCheckpointLayout.META_DIR_NAME,
+            LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME,
+            LiveViewCheckpointLayout.TIMELINE_FILE_NAME
+    );
     private static final String VIEW_ROWS_QUERY = "SELECT created_at, account_id, cumulative_sum, cumulative_count FROM lv";
     private static final LogCapture capture = new LogCapture();
 
@@ -888,6 +897,24 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             assertViewRows(CORRECTED_ROWS);
             assertNoRefreshFaults("lv");
         });
+    }
+
+    @Test
+    public void testATruncatingRepairThatResumesInProcessTruncatesAtItsCommitInAsyncCommitMode() throws Exception {
+        assertCheckpointFilesSyncInCommitMode(
+                "async",
+                TRUNCATE_SYNCED_FILE_KINDS,
+                this::testATruncatingRepairThatResumesInProcessTruncatesAtItsCommit
+        );
+    }
+
+    @Test
+    public void testATruncatingRepairThatResumesInProcessTruncatesAtItsCommitInSyncCommitMode() throws Exception {
+        assertCheckpointFilesSyncInCommitMode(
+                "sync",
+                TRUNCATE_SYNCED_FILE_KINDS,
+                this::testATruncatingRepairThatResumesInProcessTruncatesAtItsCommit
+        );
     }
 
     @Test
@@ -4682,24 +4709,6 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
             driveRefreshToQuiescence(job);
         }
         assertNoRefreshFaults("lv");
-    }
-
-    /**
-     * Removes every WAL directory of the base table, which is what a restore that captured the
-     * applied table and not its WAL leaves behind.
-     */
-    private void removeBaseWal(String baseTableName) {
-        final TableToken baseToken = engine.verifyTableName(baseTableName);
-        final File baseDir = new File(engine.getConfiguration().getDbRoot(), baseToken.getDirName());
-        final File[] walDirs = baseDir.listFiles(f -> f.isDirectory() && f.getName().startsWith(WalUtils.WAL_NAME_BASE));
-        Assert.assertNotNull(walDirs);
-        Assert.assertTrue("the base must have a WAL to lose", walDirs.length > 0);
-        for (File walDir : walDirs) {
-            try (Path p = new Path()) {
-                p.of(walDir.getAbsolutePath());
-                Assert.assertTrue("could not remove " + walDir, engine.getConfiguration().getFilesFacade().rmdir(p));
-            }
-        }
     }
 
     /**

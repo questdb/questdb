@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.SqlJitMode;
 import io.questdb.cairo.TableReader;
@@ -43,6 +44,7 @@ import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.engine.QueryProgress;
@@ -61,6 +63,7 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Before;
 
+import java.io.File;
 import java.lang.reflect.Field;
 
 /**
@@ -580,6 +583,38 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * Runs {@code test}, a test method whose body runs under the plain {@code assertMemoryLeak},
+     * with {@code cairo.commit.mode} set to {@code commitMode}, then asserts that every kind of
+     * checkpoint file in {@code fileKinds} (see {@link LiveViewCheckpointDiskFullFault#kindOf})
+     * was synced with the flag that mode calls for, and never with the other. The test
+     * configuration defaults to nosync, which skips the sync branch of every checkpoint writer.
+     */
+    protected void assertCheckpointFilesSyncInCommitMode(
+            String commitMode,
+            ObjList<String> fileKinds,
+            TestUtils.LeakProneCode test
+    ) throws Exception {
+        final boolean isAsync = "async".equals(commitMode);
+        Assert.assertTrue("not a syncing commit mode: " + commitMode, isAsync || "sync".equals(commitMode));
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, commitMode);
+        final LiveViewCheckpointDiskFullFault syncs = new LiveViewCheckpointDiskFullFault();
+        ff = syncs;
+        test.run();
+        for (int i = 0, n = fileKinds.size(); i < n; i++) {
+            final String kind = fileKinds.getQuick(i);
+            Assert.assertTrue(
+                    "the " + commitMode + " commit mode must sync " + kind,
+                    syncs.getSyncCount(kind, isAsync) > 0
+            );
+            Assert.assertEquals(
+                    "the " + commitMode + " commit mode must not sync " + kind + " with the other flag",
+                    0,
+                    syncs.getSyncCount(kind, !isAsync)
+            );
+        }
+    }
+
+    /**
      * Asserts the named view refreshed without a single faulting cycle.
      * <p>
      * Any test whose oracle compares the live view against a from-base recompute of its own SELECT
@@ -784,6 +819,24 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
             }
         }
         return ladder;
+    }
+
+    /**
+     * Removes every WAL directory of the base table, which is what a restore that captured the
+     * applied table and not its WAL leaves behind.
+     */
+    protected void removeBaseWal(String baseTableName) {
+        final TableToken baseToken = engine.verifyTableName(baseTableName);
+        final File baseDir = new File(engine.getConfiguration().getDbRoot(), baseToken.getDirName());
+        final File[] walDirs = baseDir.listFiles(f -> f.isDirectory() && f.getName().startsWith(WalUtils.WAL_NAME_BASE));
+        Assert.assertNotNull(walDirs);
+        Assert.assertTrue("the base must have a WAL to lose", walDirs.length > 0);
+        for (File walDir : walDirs) {
+            try (Path p = new Path()) {
+                p.of(walDir.getAbsolutePath());
+                Assert.assertTrue("could not remove " + walDir, engine.getConfiguration().getFilesFacade().rmdir(p));
+            }
+        }
     }
 
     /**

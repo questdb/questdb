@@ -54,20 +54,26 @@ import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.engine.functions.window.BaseWindowFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntList;
+import io.questdb.std.LongHashSet;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.Path;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.io.File;
 import java.lang.ref.WeakReference;
 import java.util.Arrays;
 
@@ -80,6 +86,16 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
     // LiveViewCheckpointRingSeal.MIN_SHARED_CHUNK_ROWS, so the chunk each seal writes
     // carries enough rows to be worth a later root's reference.
     private static final int DENSE_ROWS_PER_COMMIT = 100;
+    // Keys one wide commit gives a row each. Enough that a seal of them outgrows the first
+    // mapping of its data segment and of one of its metadata segments, so a walk over the
+    // seal's calls reaches the growth of each as well as its open.
+    private static final int DISK_FULL_KEYS = 4_000;
+    // Seconds between two wide commits. Inside the view's 30-second frame, so from the second
+    // seal on each key's ring holds two rows.
+    private static final int DISK_FULL_STRIDE_SECONDS = 20;
+    private static final String RANGE_VIEW_SQL = "SELECT ts, sym, sum(x) OVER (" +
+            "PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW" +
+            ") s FROM base";
     // From the third seal on, every ring commit adds one shared chunk - a timestamp page
     // and a value page - to each key, so from the second commit on a key's frozen holder
     // names 2 * (c - 1) state pages after commit c: 2 * 19 * 2_048 = 77_824 references
@@ -359,6 +375,116 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                 Assert.assertTrue(instance.getHeadCheckpointBaseSeqTxn() > -1);
                 Assert.assertTrue(instance.getCheckpointTimelineWalPurgeFloor() > -1);
             }
+        });
+    }
+
+    @Test
+    public void testASealThatRunsOutOfDiskSpaceKeepsItsHeadAndTheNextSealReclaimsWhatItStaged() throws Exception {
+        // A full disk reaches a seal through the mapped memory every checkpoint file is written
+        // through: a refused allocate, a failed mmap or mremap, or a failed msync, which the sync
+        // commit mode makes part of every seal. The walk fails, one seal at a time, the first two
+        // calls of each op one wide seal makes on each kind of file it writes: the open and the
+        // growth of its data segment and of its metadata segments, its retirement queue and its
+        // superblock. A full disk is transient, so after each one the seal must have failed
+        // without moving the view: the published generation is still the head and the view stays
+        // active. The next seal must publish and reclaim whatever the failed one staged, and a
+        // restart must restore from the timeline.
+        setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
+        // The sweep after a seal writes the retirement queue again, best effort, and
+        // testASweepThatCannotWriteItsRetirementQueueLeavesTheSealedHeadInPlace covers it. With
+        // the sweep off, every op the walk fails belongs to the seal.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_PURGE_INTERVAL, 0);
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        assertMemoryLeak(fault, () -> {
+            createView(false);
+            int commit = recordWideSeal(fault);
+            final ObjList<String> failures = new ObjList<>();
+            final ObjList<String> reclaimed = new ObjList<>();
+            final IntList ops = new IntList();
+            ops.add(LiveViewCheckpointDiskFullFault.OP_ALLOCATE);
+            ops.add(LiveViewCheckpointDiskFullFault.OP_MMAP);
+            ops.add(LiveViewCheckpointDiskFullFault.OP_MREMAP);
+            ops.add(LiveViewCheckpointDiskFullFault.OP_MSYNC);
+            for (int i = 0, n = ops.size(); i < n; i++) {
+                final int op = ops.getQuick(i);
+                final ObjList<String> calls = fault.getRecorded(op);
+                final ObjList<String> kinds = fileKinds(calls);
+                for (int k = 0, kn = kinds.size(); k < kn; k++) {
+                    final String kind = kinds.getQuick(k);
+                    for (int nth = 1, last = Math.min(2, countCalls(calls, kind)); nth <= last; nth++) {
+                        commit = failWideSealAndRecover(fault, op, kind, nth, commit, failures, reclaimed);
+                    }
+                }
+            }
+            // A seal that fails part-way through a segment fails on the segment's growth, past
+            // the open that created it.
+            assertWalked(failures, "allocate:data", 2);
+            assertWalked(failures, "allocate:meta", 2);
+            assertWalked(failures, "allocate:" + LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME, 1);
+            assertWalked(failures, "mremap:data", 1);
+            assertWalked(failures, "mremap:meta", 1);
+            assertWalked(failures, "mmap:" + LiveViewCheckpointLayout.TIMELINE_FILE_NAME, 1);
+            assertWalked(failures, "msync:data", 1);
+            assertWalked(failures, "msync:meta", 1);
+            assertWalked(failures, "msync:" + LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME, 1);
+            assertWalked(failures, "msync:" + LiveViewCheckpointLayout.TIMELINE_FILE_NAME, 1);
+            Assert.assertTrue(
+                    "some failed seal must leave files behind for the next one to reclaim, failed " + failures,
+                    reclaimed.size() > 0
+            );
+        });
+    }
+
+    @Test
+    public void testASweepThatCannotWriteItsRetirementQueueLeavesTheSealedHeadInPlace() throws Exception {
+        // The sweep a seal runs once it has published rewrites the retirement queue with what it
+        // could not unlink, best effort: a full disk there costs one deferred collection. The seal
+        // writes the queue first, so the second write in the turn is the sweep's. The generation
+        // the seal published must stand, the turn must not fault, and the next seal and sweep
+        // must collect what the failed one left.
+        final LiveViewCheckpointDiskFullFault fault = new LiveViewCheckpointDiskFullFault();
+        assertMemoryLeak(fault, () -> {
+            createView(false);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                appendAndRefresh(job, 10, 1);
+                appendAndRefresh(job, 20, 2);
+                final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                final long generation = durableGeneration(instance);
+
+                fault.arm(
+                        LiveViewCheckpointDiskFullFault.OP_ALLOCATE,
+                        LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME,
+                        2
+                );
+                final LogCapture capture = new LogCapture();
+                capture.start();
+                try {
+                    appendAndRefresh(job, 30, 3);
+                    capture.drain();
+                } finally {
+                    capture.stop();
+                }
+                fault.disarm();
+                Assert.assertEquals(LiveViewCheckpointLayout.RETIREMENT_QUEUE_TMP_FILE_NAME, fault.getFailedFile());
+                capture.assertLogged("could not sweep live view checkpoint segments [view=lv");
+                Assert.assertEquals("the sweep's fault must not fail the seal", 0, instance.getCheckpointSealFailures());
+                Assert.assertEquals("the seal ahead of the sweep must publish", generation + 1, durableGeneration(instance));
+                assertNoRefreshFaults("lv");
+                assertViewActive();
+
+                appendAndRefresh(job, 40, 4);
+                Assert.assertEquals(0, instance.getCheckpointSealFailures());
+                Assert.assertEquals(generation + 2, durableGeneration(instance));
+                Assert.assertEquals(
+                        "the next sweep must collect what the failed one left",
+                        "[]",
+                        uncataloguedCheckpointFiles(instance).toString()
+                );
+            }
+            restartCycle();
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
         });
     }
 
@@ -995,6 +1121,262 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
         });
     }
 
+    private static void assertWalked(ObjList<String> failures, String failure, int minCount) {
+        int count = 0;
+        for (int i = 0, n = failures.size(); i < n; i++) {
+            if (failure.equals(failures.getQuick(i))) {
+                count++;
+            }
+        }
+        Assert.assertTrue(
+                "the walk must fail " + failure + " at least " + minCount + " time(s), it failed " + failures,
+                count >= minCount
+        );
+    }
+
+    private static boolean isCataloguedSegment(String dirName, String fileName, LongHashSet catalogued) {
+        final String prefix;
+        if (dirName.equals(LiveViewCheckpointLayout.DATA_DIR_NAME)) {
+            prefix = LiveViewCheckpointLayout.DATA_SEGMENT_PREFIX;
+        } else if (dirName.equals(LiveViewCheckpointLayout.META_DIR_NAME)) {
+            prefix = LiveViewCheckpointLayout.META_SEGMENT_PREFIX;
+        } else {
+            return false;
+        }
+        if (!fileName.startsWith(prefix) || fileName.endsWith(LiveViewCheckpointLayout.TMP_SUFFIX)) {
+            return false;
+        }
+        try {
+            return catalogued.contains(Numbers.parseLong(fileName, prefix.length(), fileName.length()));
+        } catch (NumericException e) {
+            return false;
+        }
+    }
+
+    private static int countCalls(ObjList<String> calls, String kind) {
+        int count = 0;
+        for (int i = 0, n = calls.size(); i < n; i++) {
+            if (kind.equals(LiveViewCheckpointDiskFullFault.kindOf(calls.getQuick(i)))) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    /**
+     * The kinds of file the calls are made on (see {@link LiveViewCheckpointDiskFullFault#kindOf}),
+     * each once, in the order the calls first reach them.
+     */
+    private static ObjList<String> fileKinds(ObjList<String> calls) {
+        final ObjList<String> kinds = new ObjList<>();
+        for (int i = 0, n = calls.size(); i < n; i++) {
+            final String kind = LiveViewCheckpointDiskFullFault.kindOf(calls.getQuick(i));
+            if (kinds.indexOf(kind) < 0) {
+                kinds.add(kind);
+            }
+        }
+        return kinds;
+    }
+
+    private void assertViewActive() throws Exception {
+        assertQuery("SELECT view_name, view_status FROM live_views()")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        view_name\tview_status
+                        lv\tactive
+                        """);
+    }
+
+    private void assertViewMatchesRecompute() throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + RANGE_VIEW_SQL + ") ORDER BY 2, 1",
+                "(lv) ORDER BY 2, 1",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv");
+    }
+
+    /**
+     * Commits one row for each of {@link #DISK_FULL_KEYS} keys, all at the {@code commit}-th
+     * stride past midnight, and drains the refresh, which seals them.
+     */
+    private void commitWideAndRefresh(LiveViewRefreshJob job, int commit) throws Exception {
+        setCurrentMicros(currentMicros + 200_000);
+        execute(
+                "INSERT INTO base SELECT (" + ts("2026-01-01T00:00:00.000000Z") + " + "
+                        + (long) commit * DISK_FULL_STRIDE_SECONDS + " * 1_000_000)::timestamp, "
+                        + "concat('s', x), x FROM long_sequence(" + DISK_FULL_KEYS + ")"
+        );
+        drainWalQueue();
+        drainJob(job);
+        drainWalQueue();
+    }
+
+    private long durableGeneration(LiveViewInstance instance) {
+        try (
+                LiveViewCheckpointMetaStore store = openStore(instance);
+                LiveViewCheckpointGenerationPin pin = store.pin()
+        ) {
+            return pin.getGeneration();
+        }
+    }
+
+    /**
+     * Fails the {@code nth} {@code op} one wide seal makes on a file of {@code kind}, then
+     * asserts what a momentarily full disk must leave: the seal failed, the published generation
+     * is still the head, the view is active, the next seal publishes and leaves nothing
+     * uncatalogued behind, and a restart restores from the timeline over rows that match a
+     * recompute. Adds the step to {@code failures}, and to {@code reclaimed} when the failed seal
+     * left files behind. Returns the last commit.
+     */
+    private int failWideSealAndRecover(
+            LiveViewCheckpointDiskFullFault fault,
+            int op,
+            String kind,
+            int nth,
+            int commit,
+            ObjList<String> failures,
+            ObjList<String> reclaimed
+    ) throws Exception {
+        final String opName = LiveViewCheckpointDiskFullFault.opName(op);
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+            Assert.assertNotNull(instance);
+            final long generation = durableGeneration(instance);
+            final long sealFailures = instance.getCheckpointSealFailures();
+            final long headBaseSeqTxn = instance.getHeadCheckpointBaseSeqTxn();
+
+            fault.arm(op, kind, nth);
+            commitWideAndRefresh(job, ++commit);
+            fault.disarm();
+            final String file = fault.getFailedFile();
+            Assert.assertNotNull("the walk must reach " + opName + " #" + nth + " on " + kind, file);
+            final String step = opName + " #" + nth + " on " + file;
+            failures.add(opName + ':' + kind);
+            Assert.assertEquals("the seal must fail at " + step, sealFailures + 1, instance.getCheckpointSealFailures());
+            Assert.assertEquals(
+                    "a failed seal must leave the head where it was at " + step,
+                    headBaseSeqTxn,
+                    instance.getHeadCheckpointBaseSeqTxn()
+            );
+            final boolean isTimelineFile = LiveViewCheckpointLayout.TIMELINE_FILE_NAME.equals(file);
+            if (op == LiveViewCheckpointDiskFullFault.OP_MSYNC && isTimelineFile) {
+                // The superblock syncs the slot it has already written into the mapping, so the
+                // page cache may hold the new generation whatever the sync reports. Either one is
+                // complete: every file the new one names was published ahead of its slot.
+                final long durable = durableGeneration(instance);
+                Assert.assertTrue(
+                        "a failed superblock sync must leave the old or the new generation, found " + durable,
+                        durable == generation || durable == generation + 1
+                );
+            } else {
+                Assert.assertEquals(
+                        "the published generation must stay the head at " + step,
+                        generation,
+                        durableGeneration(instance)
+                );
+            }
+            if (uncataloguedCheckpointFiles(instance).size() > 0) {
+                reclaimed.add(step);
+            }
+            assertViewActive();
+
+            commitWideAndRefresh(job, ++commit);
+            Assert.assertEquals(
+                    "the next seal must publish after " + step,
+                    sealFailures + 1,
+                    instance.getCheckpointSealFailures()
+            );
+            Assert.assertTrue(
+                    "the next seal must publish a newer generation after " + step,
+                    durableGeneration(instance) > generation
+            );
+            Assert.assertEquals(
+                    "the next seal must reclaim what the one at " + step + " staged",
+                    "[]",
+                    uncataloguedCheckpointFiles(instance).toString()
+            );
+            assertNoRefreshFaults("lv");
+        }
+        restartCycle();
+        assertRestoredFromTimeline("lv");
+        assertViewMatchesRecompute();
+        return commit;
+    }
+
+    /**
+     * Seals two wide commits, then records the checkpoint ops the seal of a third makes.
+     * Returns the last commit.
+     */
+    private int recordWideSeal(LiveViewCheckpointDiskFullFault fault) throws Exception {
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            commitWideAndRefresh(job, 1);
+            commitWideAndRefresh(job, 2);
+            fault.record();
+            commitWideAndRefresh(job, 3);
+            fault.stopRecording();
+        }
+        assertNoRefreshFaults("lv");
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        Assert.assertEquals(0, instance.getCheckpointSealFailures());
+        return 3;
+    }
+
+    private void restartCycle() {
+        engine.getLiveViewRegistry().clear();
+        engine.buildViewGraphs();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+        }
+    }
+
+    /**
+     * Names every file under the view's checkpoint directory that its published generation does
+     * not account for: a staged {@code .tmp}, a segment its catalogue does not list, or any file
+     * at the root besides the superblock and the retirement queue.
+     */
+    private ObjList<String> uncataloguedCheckpointFiles(LiveViewInstance instance) {
+        final LongHashSet catalogued = new LongHashSet();
+        final ObjList<String> files = new ObjList<>();
+        try (
+                LiveViewCheckpointMetaStore store = openStore(instance);
+                LiveViewCheckpointGenerationPin pin = store.pin();
+                LiveViewCheckpointSegmentDirectoryReader directory =
+                        new LiveViewCheckpointSegmentDirectoryReader(configuration);
+                Path checkpointsDir = checkpointsDir(instance)
+        ) {
+            directory.of(checkpointsDir, pin.getSegmentDirectoryRootRef());
+            directory.iterateAll(entry -> catalogued.add(entry.segmentId));
+            final long pendingSegmentId = store.getSuperblock().pendingDirectorySegmentId;
+            if (pendingSegmentId != Numbers.LONG_NULL) {
+                catalogued.add(pendingSegmentId);
+            }
+            final File[] entries = new File(checkpointsDir.toString()).listFiles();
+            Assert.assertNotNull(entries);
+            for (File entry : entries) {
+                final String name = entry.getName();
+                if (entry.isDirectory()) {
+                    final File[] children = entry.listFiles();
+                    Assert.assertNotNull(children);
+                    for (File child : children) {
+                        if (!isCataloguedSegment(name, child.getName(), catalogued)) {
+                            files.add(name + Files.SEPARATOR + child.getName());
+                        }
+                    }
+                } else if (!name.equals(LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
+                        && !name.equals(LiveViewCheckpointLayout.RETIREMENT_QUEUE_FILE_NAME)) {
+                    files.add(name);
+                }
+            }
+        }
+        return files;
+    }
+
     private static String denseTimestamp(int second) {
         return String.format(
                 "2026-01-01T%02d:%02d:%02d.000000Z",
@@ -1136,12 +1518,7 @@ public class LiveViewCheckpointTimelineSealTest extends AbstractLiveViewTest {
                             "WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')"
             );
         } else {
-            execute(
-                    "CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
-                            "SELECT ts, sym, sum(x) OVER (" +
-                            "PARTITION BY sym ORDER BY ts RANGE BETWEEN '30' SECOND PRECEDING AND CURRENT ROW" +
-                            ") s FROM base"
-            );
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " + RANGE_VIEW_SQL);
         }
     }
 
