@@ -81,23 +81,18 @@ public class AdaptiveMultiTableLazyGapCrashSweepTest extends AbstractAdaptiveCra
     private static final int ROWS = LAZY_K + LAZY_M; // 9
 
     /**
-     * The full sweep (N=100 crash points) needs more than the 20-minute test timeout, so it runs in three parts of
-     * about 35 points each; see {@link #assertSweepPartRecoversCleanly}. If N grows well past 100, the last part
+     * The full sweep (N=60 crash points) needs more than the 20-minute test timeout, so it runs in two parts of
+     * about 30 points each; see {@link #assertSweepPartRecoversCleanly}. If N grows well past 60, the last part
      * needs a further split.
      */
     @Test
-    public void testMultiTableLazyGapSweepRecoversCleanlyAtCrashPoints1To35() throws Exception {
-        assertSweepPartRecoversCleanly(1, 35);
+    public void testMultiTableLazyGapSweepRecoversCleanlyAtCrashPoints1To30() throws Exception {
+        assertSweepPartRecoversCleanly(1, 30);
     }
 
     @Test
-    public void testMultiTableLazyGapSweepRecoversCleanlyAtCrashPoints36To70() throws Exception {
-        assertSweepPartRecoversCleanly(36, 70);
-    }
-
-    @Test
-    public void testMultiTableLazyGapSweepRecoversCleanlyAtCrashPoints71ToLast() throws Exception {
-        assertSweepPartRecoversCleanly(71, Integer.MAX_VALUE);
+    public void testMultiTableLazyGapSweepRecoversCleanlyAtCrashPoints31ToLast() throws Exception {
+        assertSweepPartRecoversCleanly(31, Integer.MAX_VALUE);
     }
 
     /**

@@ -1,6 +1,7 @@
 package io.questdb.test.cairo.crash;
 
 import io.questdb.cairo.CairoConfiguration;
+import io.questdb.std.Files;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Os;
 import io.questdb.std.Unsafe;
@@ -207,6 +208,36 @@ public class CrashFaultFilesFacadeTest extends AbstractTest {
             ff.powerLoss();
             ff.crash(dir);
             Assert.assertEquals(16, ff.length(path.$()));
+        }
+    }
+
+    @Test
+    public void testTruncateAfterPowerLossDoesNotShortenTheImage() throws Exception {
+        // A failed commit's error path can truncate a file after the power loss (the WAL segment rollback cuts a column
+        // back to its append offset). A real machine runs none of it, so the image keeps the file's synced size,
+        // including a zero value stored through the mapping past the last non-zero byte, which the content model
+        // cannot tell from unwritten space.
+        final CrashFaultFilesFacade ff = new CrashFaultFilesFacade();
+        final String dir = temp.newFolder("crashroot-truncate-after-power-loss").getAbsolutePath();
+        try (Path path = new Path().of(dir).concat("v.d")) {
+            final long fd = ff.openRW(path.$(), CairoConfiguration.O_NONE);
+            Assert.assertTrue(fd > -1);
+            try {
+                Assert.assertTrue(ff.allocate(fd, 16));
+                final long addr = ff.mmap(fd, 16, 0, Files.MAP_RW, MemoryTag.MMAP_DEFAULT);
+                Unsafe.getUnsafe().setMemory(addr, 8, (byte) 1); // the next 8 bytes are a stored zero
+                ff.fdatasync(fd);
+                ff.powerLoss();
+                ff.munmap(addr, 16, MemoryTag.MMAP_DEFAULT);
+                Assert.assertTrue(ff.truncate(fd, 0));
+            } finally {
+                ff.close(fd);
+            }
+            final byte[] expected = new byte[16];
+            java.util.Arrays.fill(expected, 0, 8, (byte) 1);
+            Assert.assertArrayEquals(expected, ff.powerLossImageOf(path.toString()));
+            ff.crash(dir);
+            Assert.assertArrayEquals(expected, java.nio.file.Files.readAllBytes(java.nio.file.Paths.get(path.toString())));
         }
     }
 

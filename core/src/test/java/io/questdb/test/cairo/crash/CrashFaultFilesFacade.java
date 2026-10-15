@@ -212,6 +212,10 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     private final Map<String, byte[]> powerLossNamespaceImages = new HashMap<>();
     private final Map<String, byte[]> powerLossRenameTargetImages = new HashMap<>();
     private final Map<String, Long> powerLossSize = new HashMap<>();
+    // Each file's length at the power-loss instant, for the files with a durable size. The rollback length is capped
+    // by it, not by the live length: a truncate the engine runs after the power loss (a failed commit's segment
+    // rollback, a close) cannot happen on a real machine, so it must not shorten the image.
+    private final Map<String, Long> powerLossLiveSize = new HashMap<>();
     private boolean powerLossMarked;
     private int durabilityOps = 0;
     private int crashAtOp = -1; // -1 = disarmed
@@ -1031,6 +1035,16 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         powerLossMarked = true;
         powerLossContent.putAll(durableContent);
         powerLossSize.putAll(durableSize);
+        for (String key : durableSize.keySet()) {
+            final Path p = Paths.get(key);
+            if (Files.isRegularFile(p)) {
+                try {
+                    powerLossLiveSize.put(key, Files.size(p));
+                } catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+        }
         powerLossDirectories.addAll(durableDirectories);
         powerLossFileEntries.addAll(durableFileEntries);
         powerLossNamespaceImages.putAll(namespaceFileImages);
@@ -1082,6 +1096,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                     + "power loss, before releasing the engine's handles (their close flushes)");
         }
         final Path root = Paths.get(dbRoot.toString()).toAbsolutePath();
+        final Map<String, Long> liveSizeAtPowerLoss = new HashMap<>(powerLossLiveSize);
         restorePowerLossState(root.toString());
         clearPowerLoss();
         restoreNamespace(root);
@@ -1093,9 +1108,14 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
                     // Content rollback: overwrite the prefix with durable bytes, then set the durable length. A
                     // whole-file sync makes the file size durable even where the content model cannot tell written zero
                     // bytes from unwritten space (bytes stored by native code past the last non-zero one): the file
-                    // keeps that size, unless it was truncated below it since, and what lies past the durable bytes
-                    // reads as zero.
-                    final long length = restoredLength(durable.length, durableSize.getOrDefault(key, 0L), ch.size());
+                    // keeps that size, unless it was truncated below it before the power loss, and what lies past the
+                    // durable bytes reads as zero. A file absent at the power loss (its name restored from a namespace
+                    // image) is capped by its restored length.
+                    final long length = restoredLength(
+                            durable.length,
+                            durableSize.getOrDefault(key, 0L),
+                            liveSizeAtPowerLoss.getOrDefault(key, ch.size())
+                    );
                     if (durable.length > 0) {
                         ch.write(ByteBuffer.wrap(durable), 0);
                     }
@@ -1478,7 +1498,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         }
         final long durableLength = (powerLossMarked ? powerLossSize : durableSize).getOrDefault(key, 0L);
         try {
-            return Arrays.copyOf(durable, (int) restoredLength(durable.length, durableLength, Files.size(Paths.get(key))));
+            final Long liveSizeAtPowerLoss = powerLossMarked ? powerLossLiveSize.get(key) : null;
+            final long liveSize = liveSizeAtPowerLoss != null ? liveSizeAtPowerLoss : Files.size(Paths.get(key));
+            return Arrays.copyOf(durable, (int) restoredLength(durable.length, durableLength, liveSize));
         } catch (IOException e) {
             throw new UncheckedIOException(e);
         }
@@ -1618,6 +1640,7 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
         powerLossMarked = false;
         powerLossContent.clear();
         powerLossSize.clear();
+        powerLossLiveSize.clear();
         powerLossDirectories.clear();
         powerLossFileEntries.clear();
         powerLossNamespaceImages.clear();
@@ -1951,9 +1974,9 @@ public class CrashFaultFilesFacade extends TestFilesFacadeImpl {
     }
 
     // The length crash() gives a file: what it holds durably, then zeros up to its durable size, never past its
-    // current size.
-    private static long restoredLength(long durableContentLength, long durableSize, long currentSize) {
-        return Math.max(durableContentLength, Math.min(durableSize, currentSize));
+    // length at the power loss.
+    private static long restoredLength(long durableContentLength, long durableSize, long liveSize) {
+        return Math.max(durableContentLength, Math.min(durableSize, liveSize));
     }
 
     private byte[] durableImage(String path) {
