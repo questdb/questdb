@@ -720,14 +720,14 @@ public class FilesFacadeImpl implements FilesFacade {
         int srcLen = src.size();
         int len = src.size();
         long p = findFirst(src.$());
+        // The listing is open from here on: every exit, a failed mkdir of the destination included, must close it.
+        try {
+            LPSZ lpsz = dst.$();
+            if (!exists(lpsz) && -1 == mkdir(lpsz, dirMode)) {
+                return -1;
+            }
 
-        LPSZ lpsz = dst.$();
-        if (!exists(lpsz) && -1 == mkdir(lpsz, dirMode)) {
-            return -1;
-        }
-
-        if (p > 0) {
-            try {
+            if (p > 0) {
                 int res;
                 do {
                     long name = findName(p);
@@ -754,11 +754,13 @@ public class FilesFacadeImpl implements FilesFacade {
                         dst.trimTo(dstLen);
                     }
                 } while (findNext(p) > 0);
-            } finally {
-                findClose(p);
-                src.trimTo(srcLen);
-                dst.trimTo(dstLen);
             }
+        } finally {
+            if (p > 0) {
+                findClose(p);
+            }
+            src.trimTo(srcLen);
+            dst.trimTo(dstLen);
         }
 
         return 0;

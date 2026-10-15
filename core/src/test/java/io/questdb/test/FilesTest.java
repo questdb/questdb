@@ -65,6 +65,7 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static io.questdb.test.tools.TestUtils.assertContains;
 import static io.questdb.test.tools.TestUtils.assertMemoryLeak;
@@ -341,6 +342,69 @@ public class FilesTest {
                         TestUtils.assertFileContentsEquals(src, dst);
                     } finally {
                         Files.rmdir(p2, true);
+                    }
+                }
+            }
+        });
+    }
+
+    /**
+     * A recursive copy or hard link whose destination directory, or its copy of a subdirectory, cannot be created
+     * must close the source listing it has already opened. It used to return before the block that closes it,
+     * leaving one open directory per failed call, which neither the fd count nor the memory tags show.
+     */
+    @Test
+    public void testCopyRecursiveAndHardLinkRecursiveCloseListingWhenMkdirFails() throws Exception {
+        assertMemoryLeak(() -> {
+            final int mkdirMode = 509;
+            final AtomicInteger openListings = new AtomicInteger();
+            final AtomicReference<String> failingMkdir = new AtomicReference<>();
+            final FilesFacade ff = new TestFilesFacadeImpl() {
+                @Override
+                public long findClose(long findPtr) {
+                    if (findPtr > 0) {
+                        openListings.decrementAndGet();
+                    }
+                    return super.findClose(findPtr);
+                }
+
+                @Override
+                public long findFirst(LPSZ path) {
+                    final long findPtr = super.findFirst(path);
+                    if (findPtr > 0) {
+                        openListings.incrementAndGet();
+                    }
+                    return findPtr;
+                }
+
+                @Override
+                public int mkdir(LPSZ path, int mode) {
+                    return Utf8s.stringFromUtf8Bytes(path).equals(failingMkdir.get()) ? -1 : super.mkdir(path, mode);
+                }
+            };
+            final java.nio.file.Path root = temporaryFolder.newFolder().toPath().toRealPath();
+            final java.nio.file.Path srcDir = root.resolve("src");
+            java.nio.file.Files.createDirectories(srcDir.resolve("subdir"));
+            java.nio.file.Files.writeString(srcDir.resolve("file"), "abcde");
+            java.nio.file.Files.writeString(srcDir.resolve("subdir").resolve("file2"), "efgh");
+            final int attempts = 10;
+            try (Path src = new Path(); Path dst = new Path()) {
+                for (boolean isHardLink : new boolean[]{false, true}) {
+                    for (boolean isNested : new boolean[]{false, true}) {
+                        final int descriptorsBefore = countOpenDescriptorsUnder(srcDir);
+                        for (int i = 0; i < attempts; i++) {
+                            final java.nio.file.Path dstDir = root.resolve("dst-" + isHardLink + "-" + isNested + "-" + i);
+                            failingMkdir.set((isNested ? dstDir.resolve("subdir") : dstDir).toString());
+                            src.of(srcDir.toString());
+                            dst.of(dstDir.toString());
+                            final int rc = isHardLink ? ff.hardLinkDirRecursive(src, dst, mkdirMode) : ff.copyRecursive(src, dst, mkdirMode);
+                            Assert.assertEquals(-1, rc);
+                        }
+                        // /proc/self/fd is the operating system's own count, on Linux; the facade count holds everywhere
+                        Assert.assertEquals("descriptors left open under the source [hardLink=" + isHardLink + ", nested=" + isNested + ']',
+                                descriptorsBefore, countOpenDescriptorsUnder(srcDir));
+                        Assert.assertEquals("source listings left open [hardLink=" + isHardLink + ", nested=" + isNested + ']',
+                                0, openListings.get());
                     }
                 }
             }
@@ -1699,6 +1763,27 @@ public class FilesTest {
         if (Files.getFileSystemStatus(Path.getThreadLocal(path).$()) == Files.TMPFS_MAGIC) {
             throw new AssumptionViolatedException("Path is on tmpfs: " + path);
         }
+    }
+
+    // Open descriptors of this process whose target is dir or lies under it; 0 where /proc/self/fd does not exist.
+    private static int countOpenDescriptorsUnder(java.nio.file.Path dir) throws IOException {
+        final java.nio.file.Path fdDir = java.nio.file.Paths.get("/proc/self/fd");
+        if (!java.nio.file.Files.isDirectory(fdDir)) {
+            return 0;
+        }
+        int count = 0;
+        try (java.nio.file.DirectoryStream<java.nio.file.Path> fds = java.nio.file.Files.newDirectoryStream(fdDir)) {
+            for (java.nio.file.Path fd : fds) {
+                try {
+                    if (java.nio.file.Files.readSymbolicLink(fd).startsWith(dir)) {
+                        count++;
+                    }
+                } catch (IOException ignore) {
+                    // the descriptor closed while it was listed
+                }
+            }
+        }
+        return count;
     }
 
     private static void createSoftLink(Path coldRoot, Path srcFilePath, Path softLinkFilePath) {
