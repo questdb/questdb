@@ -46,6 +46,7 @@ import io.questdb.std.datetime.CommonUtils;
 import io.questdb.std.datetime.DateFormat;
 import io.questdb.std.datetime.DateLocale;
 import io.questdb.std.datetime.TimeZoneRules;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.datetime.nanotime.Nanos;
 import io.questdb.std.datetime.nanotime.NanosFormatFactory;
 import io.questdb.std.datetime.nanotime.NanosFormatUtils;
@@ -91,6 +92,7 @@ public class NanosTimestampDriver implements TimestampDriver {
         }
     };
     private static final long MAX_DESIGNATED_TIMESTAMP_MICROS = CommonUtils.MAX_TIMESTAMP / Nanos.MICRO_NANOS;
+    private static final long MAX_NANOS_DATE = Long.MAX_VALUE / Nanos.MILLI_NANOS;
     private static final String MAX_NANO_TIMESTAMP_STR = "2261-12-31 23:59:59.999999999";
     private static final DateFormat PARTITION_DAY_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorDD, NanosFormatUtils.DAY_FORMAT);
     private static final DateFormat PARTITION_HOUR_FORMAT = new IsoDatePartitionFormat(NanosTimestampDriver::partitionFloorHH, NanosFormatUtils.HOUR_FORMAT);
@@ -336,7 +338,13 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromDate(long date) {
-        return CommonUtils.microsToNanos(MicrosTimestampDriver.INSTANCE.fromDate(date));
+        if (date >= -MAX_NANOS_DATE && date <= MAX_NANOS_DATE) {
+            return date * Nanos.MILLI_NANOS;
+        }
+        if (date == Numbers.LONG_NULL) {
+            return Numbers.LONG_NULL;
+        }
+        throw ImplicitCastException.inconvertibleValue(date * Micros.MILLI_MICROS, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO);
     }
 
     @Override

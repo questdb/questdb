@@ -73,6 +73,32 @@ public class NanoTimestampDriverTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFromDate() {
+        Assert.assertEquals(Numbers.LONG_NULL, driver.fromDate(Numbers.LONG_NULL));
+        Assert.assertEquals(1_000_000L, driver.fromDate(1));
+        Assert.assertEquals(9_223_372_036_854_000_000L, driver.fromDate(9_223_372_036_854L));
+        Assert.assertEquals(-9_223_372_036_854_000_000L, driver.fromDate(-9_223_372_036_854L));
+        try {
+            driver.fromDate(9_223_372_036_855L);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: 9223372036855000 [TIMESTAMP -> TIMESTAMP_NS]", e.getFlyweightMessage());
+        }
+        try {
+            driver.fromDate(-9_223_372_036_855L);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+        }
+        try {
+            driver.fromDate(18_446_744_073_709_552L);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+        }
+    }
+
+    @Test
     public void testFromTimestampUnit() {
         Assert.assertEquals(Numbers.LONG_NULL, driver.from(LineTcpParser.NULL_TIMESTAMP, CommonUtils.TIMESTAMP_UNIT_NANOS));
         Assert.assertEquals(56799L, driver.from(56799, CommonUtils.TIMESTAMP_UNIT_NANOS));
