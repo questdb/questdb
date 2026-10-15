@@ -37,6 +37,7 @@ import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.cutlass.text.CopyImportTask;
 import io.questdb.cutlass.text.ParallelCsvFileImporter;
 import io.questdb.cutlass.text.TextImportException;
 import io.questdb.griffin.SqlCompiler;
@@ -851,6 +852,7 @@ public class AdaptivePartitionDdlCrashTest extends AbstractCairoTest {
             }
             TestUtils.assertContains(ex.getFlyweightMessage(), "save point");
             TestUtils.assertContains(ex.getFlyweightMessage(), "truncated");
+            Assert.assertEquals("the phase of a COPY whose save point fails", CopyImportTask.PHASE_ATTACH_PARTITIONS, ex.getPhase());
             try (TableReader reader = e.getReader(e.verifyTableName("t"))) {
                 Assert.assertEquals("a failed COPY truncates its previously empty target", 0, reader.size());
             }
