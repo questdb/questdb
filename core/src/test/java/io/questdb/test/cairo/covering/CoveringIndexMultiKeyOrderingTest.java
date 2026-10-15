@@ -660,7 +660,10 @@ public class CoveringIndexMultiKeyOrderingTest extends AbstractCairoTest {
         StringBuilder fails = new StringBuilder();
         for (String tail : tails) {
             String suffix = " WHERE " + predicate + (tail.isEmpty() ? "" : " " + tail);
-            String coveringQ = "SELECT " + projection + " FROM " + table + suffix;
+            // a single key's ORDER BY ts DESC reads the posting index backward unless the covering
+            // scan is asked for, and it is the covering scan these shapes test
+            String coveringQ = "SELECT " + (tail.contains("ORDER BY ts DESC") ? "/*+ force_use_covering */ " : "")
+                    + projection + " FROM " + table + suffix;
             String referenceQ = "SELECT /*+ no_covering */ " + projection + " FROM " + table + suffix;
 
             String covPlan = getPlan(coveringQ);

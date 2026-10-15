@@ -139,7 +139,8 @@ public class PostingIndexFrameSeekGenerationsQueryTest extends AbstractCairoTest
             assertQuery("SELECT ts, px, qty, note, s FROM t_idx WHERE sym = 'S' AND ts BETWEEN '2024-01-01T13:07' AND '2024-01-03T07:31'").noLeakCheck()
                     .assertsPlanContaining(covering ? "CoveringIndex on: sym" : "Index forward scan on: sym");
             assertQuery("SELECT ts, px, qty, note, s FROM t_idx WHERE sym = 'S' AND ts BETWEEN '2024-01-01T13:07' AND '2024-01-03T07:31' ORDER BY ts DESC").noLeakCheck()
-                    .assertsPlanContaining(covering ? "CoveringIndex on: sym" : "Index backward scan on: sym");
+                    // one key in ORDER BY ts DESC reads the posting index backward, covering or not
+                    .assertsPlanContaining("Index backward scan on: sym");
             assertQuery("SELECT /*+ asof_index(t q) */ t.ts, t.sym, t.tp, q.px, q.note, q.ts FROM trades t ASOF JOIN t_idx q ON t.sym = q.sym").noLeakCheck()
                     .assertsPlanContaining("Indexed");
             for (String sym : SYMBOLS) {

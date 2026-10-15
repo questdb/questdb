@@ -18089,8 +18089,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             Function symbolFunc = intrinsicModel.keyValueFuncs.get(0);
                             try {
                                 // The covering scan reads forward only: an ORDER BY ts DESC over it would be
-                                // sorted in full, where the index's backward scan reads the tail first.
-                                if (indexDirection == IndexReader.DIR_FORWARD
+                                // sorted in full, where the index's backward scan reads the tail first, unless
+                                // the query asks for the covering scan.
+                                if ((indexDirection == IndexReader.DIR_FORWARD || SqlHints.hasForceUseCoveringHint(model))
                                         && !SqlHints.hasNoCoveringHint(model) && !model.isUpdate() && executionContext.isCoveringIndexEnabled()) {
                                     int keyReaderColIdx = columnIndexes.getQuick(keyColumnIndex);
                                     int[] coveringMapping = buildCoveringIndexMapping(
