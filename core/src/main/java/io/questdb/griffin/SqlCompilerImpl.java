@@ -249,7 +249,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             this.lexer = new GenericLexer(configuration.getSqlLexerPoolCapacity());
             this.functionParser = new FunctionParser(configuration, engine.getFunctionFactoryCache());
             final PostOrderTreeTraversalAlgo postOrderTreeTraversalAlgo = new PostOrderTreeTraversalAlgo();
-            this.codeGenerator = new SqlCodeGenerator(configuration, functionParser, postOrderTreeTraversalAlgo, queryColumnPool, sqlNodePool);
+            this.codeGenerator = new SqlCodeGenerator(configuration, functionParser, postOrderTreeTraversalAlgo, queryColumnPool, sqlNodePool, this, path);
             this.vacuumColumnVersions = new VacuumColumnVersions(engine);
 
             // we have cyclical dependency here
@@ -480,8 +480,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (batchCallback.preCompile(this, sqlText)) {
                     // ok, the callback wants us to compile this query, let's go!
 
-                    // re-position lexer pointer to where sqlText just began
-                    lexer.backTo(position, null);
+                    // Re-position the lexer to where sqlText begins, and make that the point that
+                    // lexer.restart() rewinds to. A retry, in generateSelectWithRetries() or below,
+                    // must re-parse this statement, not the batch's first one.
+                    lexer.of(batchText, position, batchText.length());
                     compileInner(executionContext, sqlText, true);
 
                     // consume residual text, such as semicolon
@@ -571,6 +573,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 }
             }
         }
+    }
+
+    @Override
+    public RecordCursorFactory generateSelectWithoutRetries(
+            @Transient IQueryModel queryModel,
+            @Transient SqlExecutionContext executionContext,
+            boolean generateProgressLogger
+    ) throws SqlException {
+        // Through generateSelectOneShot(), so that a subclass's wrapping of a plan covers this one.
+        return generateSelectOneShot(queryModel, executionContext, generateProgressLogger);
     }
 
     @Override
@@ -2161,7 +2173,17 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
                 // test the cursor, if no exception thrown viewSql is working
-                try (RecordCursor cursor = factory.getCursor(executionContext)) {
+                // Nobody is handed the row this reads, so the open is flagged like the probe in
+                // executeCreateView: an audited view in the new body must not record a read.
+                final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                executionContext.setMetadataProbe(true);
+                final RecordCursor cursor;
+                try {
+                    cursor = factory.getCursor(executionContext);
+                } finally {
+                    executionContext.setMetadataProbe(wasMetadataProbe);
+                }
+                try (cursor) {
                     cursor.hasNext();
                 }
             }
@@ -2183,7 +2205,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private TableToken authorizeCompileView(SqlExecutionContext executionContext, CompileViewModel model) {
         final CharSequence viewName = unquote(model.getTableName());
-        final TableToken tt = engine.getTableTokenIfExists(viewName);
+        // an object the principal may not see fails exactly like a missing one, before the kind check
+        final TableToken tt = executionContext.getVisibleTableTokenIfExists(viewName);
         if (tt == null) {
             throw CairoException.viewDoesNotExist(viewName);
         }
@@ -2210,10 +2233,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final CharSequence tableName = unquote(model.getTableName());
         final TableToken tt = engine.verifyTableName(tableName);
         if (tt != null) {
+            // a table the principal may not see fails exactly like a missing one does in verifyTableName()
+            if (!executionContext.getSecurityContext().isTableVisible(tt)) {
+                throw CairoException.tableDoesNotExist(tableName);
+            }
             executionContext.getSecurityContext().authorizeSelectOnAnyColumn(tt);
         }
     }
 
+    // COPY FROM creates the table when it is missing, so its target collides with any existing object,
+    // visible or not, the way CREATE TABLE does.
     private void checkViewModification(ExecutionModel executionModel) throws SqlException {
         final CharSequence name = executionModel.getTableName();
         final TableToken tableToken = engine.getTableTokenIfExists(name);
@@ -2229,6 +2258,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return;
         }
         throw SqlException.position(position).put("cannot modify ").put(tableToken.getType().keyword()).put(" [view=").put(tableToken.getTableName()).put(']');
+    }
+
+    // For statements that modify an existing table: an object the principal may not see is not disclosed
+    // as a view here, and the statement goes on to fail like it does for a missing table.
+    private void checkVisibleViewModification(ExecutionModel executionModel, SqlExecutionContext executionContext) throws SqlException {
+        final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(executionModel.getTableName());
+        checkViewModification(tableToken, executionModel.getTableNameExpr().position);
     }
 
     private void clearExceptSqlText() {
@@ -2655,7 +2691,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         final CharSequence targetTableName = unquote(tok);
         // Before any resolution, for the same reason as in compileExecutionModel0's UPDATE case.
         executionContext.setStatementTargetTableName(targetTableName);
-        final TableToken tableToken = tableExistsOrFail(tableNamePosition, targetTableName, executionContext);
+        final TableToken tableToken = tableExistsOrFailForWal(tableNamePosition, targetTableName, executionContext);
         checkViewModification(tableToken);
         final SecurityContext securityContext = executionContext.getSecurityContext();
 
@@ -3029,6 +3065,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
         final int viewSqlPosition = lexer.getPosition();
         final String viewSql = parser.parseViewSql(lexer, this);
+        if (isAuditedView(viewToken)) {
+            // The new body keeps the view's audited flag, so its AUDITED declarations are held to
+            // what a read of the view needs, here rather than on every read that follows.
+            validateAuditedViewBody(viewToken, parser.getViewSqlModel(), executionContext);
+        }
 
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
@@ -3245,8 +3286,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence tableName = unquote(tok);
-                // define operation to make sure we generate correct errors in case of syntax check failure
-                final TableToken tt = executionContext.getTableTokenIfExists(tableName);
+                // define operation to make sure we generate correct errors in case of syntax check failure;
+                // an object the principal may not see must not fail the kind check below and disclose itself
+                final TableToken tt = executionContext.getVisibleTableTokenIfExists(tableName);
                 if (tt != null && (tt.isView() || tt.isMatView() || tt.isLiveView())) {
                     // Live views are rejected here as well as at execute time, so DROP TABLE on
                     // one fails the compile-only /validate endpoint too. Keep the message
@@ -3290,8 +3332,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence viewName = GenericLexer.unquote(tok);
-                // define operation to make sure we generate correct errors in case of syntax check failure
-                final TableToken tt = executionContext.getTableTokenIfExists(viewName);
+                // define operation to make sure we generate correct errors in case of syntax check failure;
+                // an object the principal may not see must not fail the kind check below and disclose itself
+                final TableToken tt = executionContext.getVisibleTableTokenIfExists(viewName);
                 if (tt != null && !tt.isView()) {
                     throw SqlException.$(lexer.lastTokenPosition(), "view name expected, got ").put(tt.getType().keyword()).put(" name");
                 }
@@ -3371,8 +3414,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
                 final CharSequence matViewName = unquote(tok);
-                // define operation to make sure we generate correct errors in case of syntax check failure
-                final TableToken tt = executionContext.getTableTokenIfExists(matViewName);
+                // define operation to make sure we generate correct errors in case of syntax check failure;
+                // an object the principal may not see must not fail the kind check below and disclose itself
+                final TableToken tt = executionContext.getVisibleTableTokenIfExists(matViewName);
                 if (tt != null && !tt.isMatView()) {
                     throw SqlException.$(lexer.lastTokenPosition(), "materialized view name expected, got ").put(tt.getType().keyword()).put(" name");
                 }
@@ -3444,7 +3488,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     lightlyValidateInsertModel(insertModel);
                 }
-                final TableToken tableToken = engine.getTableTokenIfExists(insertModel.getTableName());
+                // a table the principal may not see authorizes exactly like a missing one
+                final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(insertModel.getTableName());
                 executionContext.getSecurityContext().authorizeInsert(tableToken);
                 return insertModel;
             }
@@ -3456,6 +3501,11 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 // table while any other table in the statement resolves normally.
                 executionContext.setStatementTargetTableName(queryModel.getTableName());
                 TableToken tableToken = executionContext.getTableToken(queryModel.getTableName());
+                // a table the principal may not see fails exactly like a missing one does in
+                // getTableToken(), before its metadata is read
+                if (!executionContext.getSecurityContext().isTableVisible(tableToken)) {
+                    throw CairoException.tableDoesNotExist(queryModel.getTableName());
+                }
                 try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
                     // Before optimiseUpdate(), which is what fixes the check to this spot rather
                     // than to generateUpdate() where the WAL join rejection lives: optimising an
@@ -3901,17 +3951,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                         throw SqlException.$(startPos, "SELECT query expected");
                     }
                     queryModel = optimiser.optimise((IQueryModel) executionModel, executionContext, this);
-                    final SqlExecutionRequirements executionRequirements = functionParser.getExecutionRequirements();
-                    final int securityContextPosition = executionRequirements.getPosition(
-                            SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
-                    );
-                    if (securityContextPosition > -1) {
-                        throw SqlException.position(securityContextPosition)
-                                .put("administrative function cannot be used in materialized view: ")
-                                .put(executionRequirements.getFunctionName(
-                                        SqlExecutionRequirements.REQUIRES_ENTERPRISE_SECURITY_CONTEXT
-                                ));
-                    }
+                    // The optimiser created the FROM/JOIN cursor functions and the SHOW statements while
+                    // non-deterministic functions were still allowed, so FunctionParser did not check them
+                    // for the materialized view yet.
+                    functionParser.getExecutionRequirements().checkStoredView(executionContext);
                 } catch (SqlException e) {
                     e.setPosition(e.getPosition() + selectTextPosition);
                     throw e;
@@ -3924,7 +3967,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             } catch (Throwable th) {
                 // Rejecting the query after optimise() returned leaves the cursor functions it
                 // instantiated for FROM/JOIN table functions unowned: generation, which takes them over,
-                // has not run yet. Freeing after generateSelectWithRetries below would be a double free.
+                // has not run yet, and this throw skips generateSelectWithRetries below, whose
+                // generateSelectOneShot() would otherwise sweep them.
                 optimiser.freeTableFactoriesInFlight(th);
                 throw th;
             }
@@ -3969,7 +4013,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         assertNameIsQuotedOrNotAKeyword(tok, lexer.lastTokenPosition());
 
         final CharSequence matViewName = unquote(tok);
-        final TableToken matViewToken = executionContext.getTableTokenIfExists(matViewName);
+        // an object the principal may not see fails exactly like a missing one, before the kind check
+        final TableToken matViewToken = executionContext.getVisibleTableTokenIfExists(matViewName);
         if (matViewToken == null) {
             throw SqlException.matViewDoesNotExist(lexer.lastTokenPosition(), matViewName);
         }
@@ -4217,7 +4262,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     tok = unquote(tok);
                 }
 
-                final TableToken tableToken = executionContext.getTableTokenIfExists(tok);
+                // a table the principal may not see truncates exactly like a missing one, IF EXISTS included
+                final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(tok);
                 if (tableToken == null && !hasIfExists) {
                     throw SqlException.$(lexer.lastTokenPosition(), "table does not exist [table=").put(tok).put(']');
                 }
@@ -4399,7 +4445,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     if (!executionContext.isValidationOnly()) {
                         sqlId = queryRegistry.register(sqlText, executionContext);
                         QueryProgress.logStart(sqlId, sqlText, executionContext, false);
-                        checkViewModification(executionModel);
+                        checkVisibleViewModification(executionModel, executionContext);
                         final RenameTableModel rtm = (RenameTableModel) executionModel;
                         engine.rename(
                                 executionContext.getSecurityContext(),
@@ -4415,7 +4461,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     break;
                 case ExecutionModel.UPDATE:
                     QueryProgress.logStart(sqlId, sqlText, executionContext, false);
-                    checkViewModification(executionModel);
+                    checkVisibleViewModification(executionModel, executionContext);
                     final IQueryModel updateQueryModel = (IQueryModel) executionModel;
                     TableToken tableToken = executionContext.getTableToken(updateQueryModel.getTableName());
                     try (TableRecordMetadata metadata = executionContext.getMetadataForWrite(tableToken)) {
@@ -4436,7 +4482,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     QueryProgress.logEnd(sqlId, sqlText, executionContext, beginNanos);
                     break;
                 default:
-                    checkViewModification(executionModel);
+                    checkVisibleViewModification(executionModel, executionContext);
                     final InsertModel insertModel = (InsertModel) executionModel;
                     // we use SQL Compiler state (reusing objects) to generate InsertOperation
                     if (insertModel.getQueryModel() != null) {
@@ -4466,6 +4512,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                     }
                 }
             }
+            // A throw between optimisation and generation leaves open the table functions of the
+            // models the walk above does not reach.
+            optimiser.freeUnclaimedTableFactories(th);
             // unregister query on error
             queryRegistry.unregister(sqlId, executionContext);
 
@@ -4751,7 +4800,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             //   - a same-kind live-view collision without IF NOT EXISTS reports "live view
             //     already exists" (mirroring "materialized view already exists") instead of
             //     the generic "table exists" createLiveView would otherwise surface.
-            // A same-kind IF NOT EXISTS falls through to createLiveView, which no-ops.
+            // A same-kind IF NOT EXISTS is a no-op, as it is for CREATE MATERIALIZED VIEW. It returns
+            // before createLiveView compiles the body: a live view an earlier release created may use
+            // functions that CREATE now rejects, and replaying its DDL must keep working. The no-op in
+            // createLiveView still covers a live view created concurrently after this check.
             final TableToken existingToken = executionContext.getTableTokenIfExists(op.getViewName());
             if (existingToken != null) {
                 if (!existingToken.isLiveView()) {
@@ -4760,9 +4812,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 if (!op.isIgnoreIfExists()) {
                     throw SqlException.$(op.getViewNamePosition(), "live view already exists");
                 }
+                QueryProgress.logEnd(sqlId, op.getSqlText(), executionContext, beginNanos);
+                return false;
             }
-            // validate base table exists and is WAL
-            final TableToken baseTableToken = executionContext.getTableTokenIfExists(op.getBaseTableName());
+            // validate base table exists and is WAL; a base table the principal may not see fails like a
+            // missing one, before the checks below can disclose what kind of object it is
+            final TableToken baseTableToken = executionContext.getVisibleTableTokenIfExists(op.getBaseTableName());
             if (baseTableToken == null) {
                 throw SqlException.$(op.getBaseTableNamePosition(), "base table does not exist [name=").put(op.getBaseTableName()).put(']');
             }
@@ -4840,7 +4895,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             compileMatViewQuery(executionContext, createMatViewOp);
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
-                            newCursor = newFactory.getCursor(executionContext);
+                            // Opened to validate the metadata, and closed with no row read. Flagged
+                            // like the probe in executeCreateView, so that an audited view in the
+                            // SELECT does not record a read that never happened.
+                            final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                            executionContext.setMetadataProbe(true);
+                            try {
+                                newCursor = newFactory.getCursor(executionContext);
+                            } finally {
+                                executionContext.setMetadataProbe(wasMetadataProbe);
+                            }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
@@ -5038,7 +5102,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                 } else {
                     try {
                         if (createTableOp.getLikeTableName() != null) {
-                            TableToken likeTableToken = executionContext.getTableTokenIfExists(createTableOp.getLikeTableName());
+                            // LIKE copies the schema of the table, so a table the principal may not see
+                            // fails exactly like a missing one
+                            final TableToken likeTableToken = executionContext.getVisibleTableTokenIfExists(createTableOp.getLikeTableName());
                             if (likeTableToken == null) {
                                 throw SqlException
                                         .$(createTableOp.getLikeTableNamePosition(), "table does not exist [table=")
@@ -5139,7 +5205,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
                             compileViewQuery(executionContext, createViewOp);
                             Misc.free(newFactory);
                             newFactory = compiledQuery.getRecordCursorFactory();
-                            newCursor = newFactory.getCursor(executionContext);
+                            // This cursor exists to report column types, not to hand anyone rows.
+                            // Flag it so that an audited view in the SELECT does not record a read.
+                            // The flag covers the cursor open only: the compile above runs with it
+                            // clear, so whatever consumes it has to emit at open, not at generate.
+                            // Restored rather than cleared - any execution context may set this, so
+                            // an outer probe has to survive an inner one.
+                            final boolean wasMetadataProbe = executionContext.isMetadataProbe();
+                            executionContext.setMetadataProbe(true);
+                            try {
+                                newCursor = newFactory.getCursor(executionContext);
+                            } finally {
+                                executionContext.setMetadataProbe(wasMetadataProbe);
+                            }
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             if (retryCount == maxRecompileAttempts) {
@@ -5202,17 +5280,27 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         boolean hasDroppedAny = false;
         for (int i = 0, n = tableTokenBucket.size(); i < n; i++) {
             tableToken = tableTokenBucket.get(i);
-            if (!tableToken.isSystem()) {
+            // An object the principal may not see is left alone like one that does not exist: the
+            // failure report below names every object the drop could not remove.
+            if (!tableToken.isSystem() && securityContext.isTableVisible(tableToken)) {
                 final String tableName = tableToken.getTableName();
                 try {
                     if (tableToken.isLiveView()) {
                         securityContext.authorizeLiveViewDrop(tableToken);
                     } else if (tableToken.isView()) {
                         securityContext.authorizeViewDrop(tableToken);
+                        if (isAuditedView(tableToken)) {
+                            securityContext.authorizeAuditView();
+                        }
                     } else if (tableToken.isMatView()) {
                         securityContext.authorizeMatViewDrop(tableToken);
                     } else {
                         securityContext.authorizeTableDrop(tableToken);
+                        // Same veto executeDropTable applies. DROP ALL TABLES skips system tables,
+                        // which an undroppable table need not be, so without this the one route
+                        // that drops every table at once would be the route around the veto. The
+                        // throw lands in dropAllTablesFailures below, so the rest still drop.
+                        engine.checkTableDroppable(tableToken);
                     }
                     if (tableToken.isLiveView()) {
                         // A live view carries state the generic drop does not know about:
@@ -5252,7 +5340,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
 
     private boolean executeDropLiveView(GenericDropOperation op, SqlExecutionContext executionContext) throws SqlException {
         final String name = op.getEntityName();
-        final TableToken tableToken = executionContext.getTableTokenIfExists(name);
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = executionContext.getVisibleTableTokenIfExists(name);
         if (tableToken != null && !tableToken.isLiveView()) {
             throw SqlException.$(op.getEntityNamePosition(), "live view name expected [name=").put(name).put(']');
         }
@@ -5280,7 +5369,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = sqlExecutionContext.getVisibleTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
                 return false;
@@ -5315,7 +5405,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = sqlExecutionContext.getVisibleTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
                 return false;
@@ -5326,6 +5417,7 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(op.getEntityNamePosition(), "table name expected, got ").put(tableToken.getType().keyword()).put(" name: ").put(op.getEntityName());
         }
         sqlExecutionContext.getSecurityContext().authorizeTableDrop(tableToken);
+        engine.checkTableDroppable(tableToken);
 
         final String sqlText = op.getSqlText();
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
@@ -5350,7 +5442,8 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             GenericDropOperation op,
             SqlExecutionContext sqlExecutionContext
     ) throws SqlException {
-        final TableToken tableToken = sqlExecutionContext.getTableTokenIfExists(op.getEntityName());
+        // an object the principal may not see drops exactly like a missing one, IF EXISTS included
+        final TableToken tableToken = sqlExecutionContext.getVisibleTableTokenIfExists(op.getEntityName());
         if (tableToken == null || TableNameRegistry.isLocked(tableToken)) {
             if (op.ifExists()) {
                 return false;
@@ -5364,6 +5457,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             throw SqlException.$(op.getEntityNamePosition(), "cannot drop a system view");
         }
         sqlExecutionContext.getSecurityContext().authorizeViewDrop(tableToken);
+        if (isAuditedView(tableToken)) {
+            // Dropping is the only route by which an audited view loses its marking, so it is gated
+            // like setting it. Redefinition is not such a route: ALTER VIEW and CREATE OR REPLACE
+            // VIEW over an existing view both land in ViewGraph.updateView - compileCreate
+            // intercepts the latter and executes it as an alter - and that carries the current flag
+            // forward rather than taking one from the statement. Only a CREATE over a name that
+            // does not exist yet sets the flag from the statement, and there is nothing to lose
+            // there. Asserted by ViewAuditTest.testRedefiningAnAuditedViewKeepsTheFlag.
+            sqlExecutionContext.getSecurityContext().authorizeAuditView();
+        }
 
         final String sqlText = op.getSqlText();
         final long queryId = queryRegistry.register(sqlText, sqlExecutionContext);
@@ -5436,8 +5539,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     }
 
     private RecordCursorFactory generateExplain(ExplainModel model, SqlExecutionContext executionContext) throws SqlException {
-        if (model.getInnerExecutionModel().getModelType() == ExecutionModel.UPDATE) {
-            IQueryModel updateQueryModel = model.getInnerExecutionModel().getQueryModel();
+        final ExecutionModel innerModel = model.getInnerExecutionModel();
+        if (innerModel.getModelType() == ExecutionModel.UPDATE) {
+            IQueryModel updateQueryModel = innerModel.getQueryModel();
             final IQueryModel selectQueryModel = updateQueryModel.getNestedModel();
             final RecordCursorFactory recordCursorFactory = generateUpdateFactory(
                     updateQueryModel.getUpdateTableToken(),
@@ -5447,7 +5551,16 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             );
             return codeGenerator.generateExplain(updateQueryModel, recordCursorFactory, model.getFormat());
         }
-        if (model.getInnerExecutionModel().getModelType() == ExecutionModel.CREATE_LIVE_VIEW) {
+        final IQueryModel queryModel = innerModel.getQueryModel();
+        if (queryModel == null) {
+            return codeGenerator.generateExplain(model, null);
+        }
+        // ExplainPlanFactory opens the cursor of the plan it prints, which runs the plan's
+        // sub-queries, and the plan can print what they read. So the plan is generated the way the
+        // statement generates it, through generateSelectOneShot(): what a subclass wraps a plan
+        // in there, such as Enterprise's audit of view reads, wraps this one too.
+        final RecordCursorFactory factory;
+        if (innerModel.getModelType() == ExecutionModel.CREATE_LIVE_VIEW) {
             // Arm the live-view compile flag around CODE GENERATION, which is the only thing that
             // reads it: SqlCodeGenerator (the symbol partition-key sink, anchor collection),
             // WhereClauseParser (a SqlCodeGenerator field - it suppresses indexed-symbol filters
@@ -5457,12 +5570,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             // the arm CairoEngine.createLiveView wraps its compile() in.
             executionContext.setLiveViewCompile(true);
             try {
-                return codeGenerator.generateExplain(model, executionContext);
+                factory = generateSelectOneShot(queryModel, executionContext, false);
             } finally {
                 executionContext.setLiveViewCompile(false);
             }
+        } else {
+            factory = generateSelectOneShot(queryModel, executionContext, false);
         }
-        return codeGenerator.generateExplain(model, executionContext);
+        return codeGenerator.generateExplain(model, factory);
     }
 
     private UpdateOperation generateUpdate(IQueryModel updateQueryModel, SqlExecutionContext executionContext, TableRecordMetadata metadata) throws SqlException {
@@ -5664,6 +5779,14 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         );
     }
 
+    private boolean isAuditedView(TableToken tableToken) {
+        if (!tableToken.isView()) {
+            return false;
+        }
+        final ViewDefinition viewDefinition = engine.getViewGraph().getViewDefinition(tableToken);
+        return viewDefinition != null && viewDefinition.isAudited();
+    }
+
     private boolean isCompatibleColumnTypeChange(int from, int to) {
         return columnConversionSupport[ColumnType.tagOf(from)][ColumnType.tagOf(to)];
     }
@@ -5830,6 +5953,10 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         executionContext.getSecurityContext().authorizeResumeWal(tableToken);
+        if (fromTxn > 0) {
+            // Only a positive transaction can skip anything, see TableSequencerAPI.resumeTable().
+            engine.checkTableResumableFromTxn(tableToken, tableNamePosition);
+        }
         alterTableResume(tableNamePosition, tableToken, fromTxn, executionContext);
     }
 
@@ -5875,16 +6002,57 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             }
         }
         executionContext.getSecurityContext().authorizeSuspendWal(tableToken);
+        engine.checkTableSuspendable(tableToken, tableNamePosition);
         alterTableSuspend(tableNamePosition, tableToken, errorTag, errorMessage, executionContext);
     }
 
+    // A table the principal may not see fails exactly like a missing one, before the statement reads
+    // any of its metadata, e.g. validates the column names of an INSERT against it. ALTER TABLE uses
+    // tableExistsOrFailForWal(), which also lets WAL recovery name such a table.
     private TableToken tableExistsOrFail(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
         if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
             throw SqlException.tableDoesNotExist(position, tableName);
         }
-        TableToken token = executionContext.getTableTokenIfExists(tableName);
+        final TableToken token = executionContext.getVisibleTableTokenIfExists(tableName);
         if (token == null) {
             throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        return token;
+    }
+
+    private TableToken tableExistsOrFailForWal(int position, CharSequence tableName, SqlExecutionContext executionContext) throws SqlException {
+        if (executionContext.getTableStatus(path, tableName) != TableUtils.TABLE_EXISTS) {
+            throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        final TableToken token = executionContext.getTableTokenIfExists(tableName);
+        if (token == null) {
+            throw SqlException.tableDoesNotExist(position, tableName);
+        }
+        final SecurityContext securityContext = executionContext.getSecurityContext();
+        if (!securityContext.isTableVisible(token)) {
+            // Only WAL recovery can name an otherwise invisible table. Check permission before
+            // reading its kind or metadata; an unauthorized caller still sees a missing table.
+            final CharSequence action = SqlUtil.fetchNext(lexer);
+            try {
+                if (action != null && isResumeKeyword(action)) {
+                    securityContext.authorizeResumeWal(token);
+                } else if (action != null && isRebaseKeyword(action)) {
+                    securityContext.authorizeRebaseWal(token);
+                } else if (action != null && isSuspendKeyword(action)) {
+                    securityContext.authorizeSuspendWal(token);
+                } else {
+                    throw SqlException.tableDoesNotExist(position, tableName);
+                }
+            } catch (CairoException e) {
+                if (!e.isAuthorizationError()) {
+                    throw e;
+                }
+                throw SqlException.tableDoesNotExist(position, tableName);
+            } finally {
+                if (action != null) {
+                    lexer.unparseLast();
+                }
+            }
         }
         return token;
     }
@@ -5898,11 +6066,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         model.setQueryModel(queryModel);
     }
 
+    // A view the principal may not see fails exactly like a missing one, see tableExistsOrFail().
     private TableToken viewExistsOrFail(CharSequence viewName, SqlExecutionContext executionContext, SqlException notExistException) throws SqlException {
         if (executionContext.getTableStatus(path, viewName) != TableUtils.TABLE_EXISTS) {
             throw notExistException;
         }
-        TableToken viewToken = executionContext.getTableTokenIfExists(viewName);
+        final TableToken viewToken = executionContext.getVisibleTableTokenIfExists(viewName);
         if (viewToken == null) {
             throw notExistException;
         }
@@ -6072,7 +6241,9 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         assertNameIsQuotedOrNotAKeyword(tok, viewNamePosition);
         final CharSequence viewName = unquote(tok);
 
-        final TableToken viewToken = engine.getTableTokenIfExists(viewName);
+        // a view the principal may not see is left to CREATE VIEW like a missing one, where its name
+        // collides the way any taken name does
+        final TableToken viewToken = executionContext.getVisibleTableTokenIfExists(viewName);
         if (viewToken == null) {
             // view does not exist yet
             // just bail out and let CREATE VIEW handle it
@@ -6093,7 +6264,12 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         }
 
         final int viewSqlPosition = lexer.getPosition();
-        final String viewSql = parser.parseViewSql(lexer, this);
+        final String viewSql = parser.parseViewSql(lexer, this, executionContext, viewToken);
+        if (isAuditedView(viewToken)) {
+            // The new body keeps the view's audited flag, so its AUDITED declarations are held to
+            // what a read of the view needs, here rather than on every read that follows.
+            validateAuditedViewBody(viewToken, parser.getViewSqlModel(), executionContext);
+        }
 
         alterViewExecution(executionContext, viewToken, viewSql, viewSqlPosition);
     }
@@ -6114,12 +6290,33 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         return new AlterOperationBuilder();
     }
 
+    /**
+     * Exposed so that a subclass can compile expressions the base compiler captured but does not
+     * itself consume - the audited-view parameters, which Enterprise turns into functions.
+     */
+    protected FunctionParser getFunctionParser() {
+        return functionParser;
+    }
+
     protected RecordCursorFactory generateSelectOneShot(
             IQueryModel selectQueryModel,
             SqlExecutionContext executionContext,
             boolean generateProgressLogger
     ) throws SqlException {
-        RecordCursorFactory factory = codeGenerator.generate(selectQueryModel, executionContext);
+        RecordCursorFactory factory = null;
+        try {
+            factory = codeGenerator.generate(selectQueryModel, executionContext);
+            // Generation has taken over the table functions of the models the plan reads. The
+            // optimiser also opened the table function of every model it optimised and the plan
+            // does not read, and nothing else closes those.
+            CairoException.rethrowCleanupFailure(optimiser.freeUnclaimedTableFactories(null));
+        } catch (Throwable th) {
+            // The generator's cleanup of a failed attempt closes only the table functions it can
+            // walk to from the model it was given.
+            optimiser.freeUnclaimedTableFactories(th);
+            Misc.free(factory, th);
+            throw th;
+        }
         ObjList<ViewDefinition> views = selectQueryModel.getReferencedViews();
         if (views.size() > 0) {
             factory = new StaleViewCheckFactory(factory, views, engine);
@@ -6188,6 +6385,19 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
         keywordBasedExecutors.put("cancel", this::compileCancel);
         keywordBasedExecutors.put("refresh", this::compileRefresh);
         keywordBasedExecutors.put("backup", this::compileBackup);
+    }
+
+    /**
+     * Checks the body {@code ALTER VIEW} or {@code CREATE OR REPLACE VIEW} gives an audited view,
+     * before it replaces the current one. The model is the body as parsed from the statement, so
+     * positions in it are the statement's. A no-op here: Enterprise, which consumes the AUDITED
+     * declarations, overrides it to refuse the ones no read of the view could audit.
+     */
+    protected void validateAuditedViewBody(
+            TableToken viewToken,
+            IQueryModel viewModel,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
     }
 
     @FunctionalInterface

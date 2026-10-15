@@ -60,6 +60,8 @@ SecurityContextTest {
         assertTrue(sc.isSystemAdmin());
         assertTrue(sc.isQueryCancellationAllowed());
         assertFalse(sc.isExternal());
+        assertTrue(sc.isTableVisible(userTableToken));
+        assertNull(sc.getSelectCacheScope());
         for (Method method : SecurityContext.class.getMethods()) {
             String name = method.getName();
             if (name.startsWith("authorize")) {
@@ -77,7 +79,7 @@ SecurityContextTest {
                             method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
                         } else if (name.equals("authorizeSelect") && parameters[0] == ViewDefinition.class) {
                             final ViewDefinition viewDefinition = new ViewDefinition();
-                            viewDefinition.init(userTableToken, tableName, 0L);
+                            viewDefinition.init(userTableToken, tableName, 0L, false);
                             method.invoke(sc, viewDefinition);
                         } else {
                             method.invoke(sc, ONE_PARAM_ARGS);
@@ -102,6 +104,9 @@ SecurityContextTest {
         assertTrue(sc.isSystemAdmin());
         assertFalse(sc.isQueryCancellationAllowed());
         assertFalse(sc.isExternal());
+        // may read no object, so it may see none, and must not share statements with those that do
+        assertFalse(sc.isTableVisible(userTableToken));
+        assertNotNull(sc.getSelectCacheScope());
         for (Method method : SecurityContext.class.getMethods()) {
             String name = method.getName();
             if (name.startsWith("authorize")) {
@@ -119,7 +124,7 @@ SecurityContextTest {
                                 method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
                             } else if (name.equals("authorizeSelect") && parameters[0] == ViewDefinition.class) {
                                 final ViewDefinition viewDefinition = new ViewDefinition();
-                                viewDefinition.init(userTableToken, tableName, 0L);
+                                viewDefinition.init(userTableToken, tableName, 0L, false);
                                 method.invoke(sc, viewDefinition);
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
@@ -151,6 +156,8 @@ SecurityContextTest {
         assertTrue(sc.isSystemAdmin());
         assertFalse(sc.isQueryCancellationAllowed());
         assertFalse(sc.isExternal());
+        assertTrue(sc.isTableVisible(userTableToken));
+        assertNull(sc.getSelectCacheScope());
         for (Method method : SecurityContext.class.getMethods()) {
             String name = method.getName();
             if (name.startsWith("authorize")) {
@@ -174,7 +181,7 @@ SecurityContextTest {
                                 method.invoke(sc, TableUtils.TABLE_KIND_REGULAR_TABLE);
                             } else if (name.equals("authorizeSelect") && parameters[0] == ViewDefinition.class) {
                                 final ViewDefinition viewDefinition = new ViewDefinition();
-                                viewDefinition.init(userTableToken, tableName, 0L);
+                                viewDefinition.init(userTableToken, tableName, 0L, false);
                                 method.invoke(sc, viewDefinition);
                             } else {
                                 method.invoke(sc, ONE_PARAM_ARGS);
