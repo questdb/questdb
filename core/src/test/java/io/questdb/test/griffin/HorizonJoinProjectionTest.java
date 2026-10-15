@@ -2247,7 +2247,7 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                                 """);
                 assertQuery(projection + " WHERE q.bid > 11")
                         .noLeakCheck()
-                        .failsWith("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+                        .fails(115, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
             }
         });
     }

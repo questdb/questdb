@@ -1679,6 +1679,48 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     /**
+     * Finds the position of the leftmost column in a rejected HORIZON JOIN WHERE clause that
+     * does not belong to the left-hand side, so that the error points at the offending token
+     * rather than at the root of the clause.
+     *
+     * @param sqlNodeStack reusable traversal stack
+     * @param model        the parent model containing join models
+     * @param clause       the rejected filter clause
+     * @return the position of the leftmost right-hand or offset column, or the clause position
+     * when no column resolves to the right-hand side
+     */
+    private static int findHorizonFilterColumnPosition(
+            ArrayDeque<ExpressionNode> sqlNodeStack,
+            IQueryModel model,
+            ExpressionNode clause
+    ) {
+        int position = Integer.MAX_VALUE;
+        ExpressionNode node = clause;
+        sqlNodeStack.clear();
+        while (!sqlNodeStack.isEmpty() || node != null) {
+            if (node != null) {
+                if (node.type == LITERAL) {
+                    if (node.position < position && isHorizonRightHandLiteral(model, node.token)) {
+                        position = node.position;
+                    }
+                    node = null;
+                    continue;
+                }
+                for (int i = 0, n = node.args.size(); i < n; i++) {
+                    sqlNodeStack.add(node.args.getQuick(i));
+                }
+                if (node.rhs != null) {
+                    sqlNodeStack.push(node.rhs);
+                }
+                node = node.lhs;
+            } else {
+                node = sqlNodeStack.poll();
+            }
+        }
+        return position != Integer.MAX_VALUE ? position : clause.position;
+    }
+
+    /**
      * Finds the HorizonJoinContext from the synthetic offset model that precedes the HORIZON JOIN model.
      * The synthetic offset model is identified by having no table name and a non-null HorizonJoinContext alias.
      *
@@ -1763,6 +1805,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && model.getHorizonJoinContext().getAlias() != null;
     }
 
+    // The left-hand side of a HORIZON JOIN is always join model 0, since SqlParser rejects
+    // HORIZON JOIN combined with other join types. The optimiser has already rejected
+    // ambiguous unqualified names, so an unqualified name present in any later join model,
+    // the synthetic offset model included, belongs to the right-hand side.
+    private static boolean isHorizonRightHandLiteral(IQueryModel model, CharSequence token) {
+        final int dot = Chars.indexOfLastUnquoted(token, '.');
+        if (dot > -1) {
+            return model.getModelAliasIndex(token, 0, dot) > 0;
+        }
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            if (joinModels.getQuick(i).getAliasToColumnMap().contains(token)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static boolean isSingleColumnFunction(ExpressionNode ast, CharSequence name) {
         return ast.type == FUNCTION && ast.paramCount == 1 && Chars.equalsIgnoreCase(ast.token, name) && ast.rhs.type == LITERAL;
     }
@@ -1838,12 +1898,18 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return slaveTimestampIndex;
     }
 
-    private static void validateHorizonJoinFilter(IQueryModel model, int horizonJoinIndex, IQueryModel slaveModel) throws SqlException {
+    private static void validateHorizonJoinFilter(
+            ArrayDeque<ExpressionNode> sqlNodeStack,
+            IQueryModel model,
+            int horizonJoinIndex,
+            IQueryModel slaveModel
+    ) throws SqlException {
         validateOuterJoinExpressions(slaveModel, "HORIZON");
         // HORIZON JOIN WHERE clause can only reference master table columns.
         // Predicates on slave columns end up as postJoinWhereClause on the slave model.
-        if (slaveModel.getPostJoinWhereClause() != null) {
-            throw SqlException.position(slaveModel.getPostJoinWhereClause().position)
+        final ExpressionNode postJoinWhere = slaveModel.getPostJoinWhereClause();
+        if (postJoinWhere != null) {
+            throw SqlException.position(findHorizonFilterColumnPosition(sqlNodeStack, model, postJoinWhere))
                     .put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         }
 
@@ -1855,7 +1921,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             if (isHorizonOffsetModel(jm)) {
                 final ExpressionNode where = jm.getWhereClause() != null ? jm.getWhereClause() : jm.getPostJoinWhereClause();
                 if (where != null) {
-                    throw SqlException.position(where.position)
+                    throw SqlException.position(findHorizonFilterColumnPosition(sqlNodeStack, model, where))
                             .put("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
                 }
             }
@@ -7353,7 +7419,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                         throw SqlException.position(slaveModel.getJoinKeywordPosition())
                                                 .put("RANGE or LIST must only appear on the last HORIZON JOIN");
                                     }
-                                    validateHorizonJoinFilter(model, index, slaveModel);
+                                    validateHorizonJoinFilter(sqlNodeStack, model, index, slaveModel);
                                     validateBothTimestamps(slaveModel, masterMetadata, slaveMetadata);
                                     validateBothTimestampOrders(master, slaveToFree, slaveModel.getJoinKeywordPosition());
                                     processJoinContext(index == 1, isSameTable(master, slaveToFree), slaveModel.getJoinContext(), masterMetadata, slaveMetadata);
@@ -7375,7 +7441,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
 
                                 // Validate: WHERE clause can only reference master table columns
-                                validateHorizonJoinFilter(model, index, slaveModel);
+                                validateHorizonJoinFilter(sqlNodeStack, model, index, slaveModel);
 
                                 // Get parent model for GROUP BY context (may be null for implicit aggregation)
                                 // If parentModel is null, we'll use the join model itself which contains the SELECT columns

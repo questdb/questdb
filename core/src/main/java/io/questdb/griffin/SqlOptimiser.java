@@ -15797,7 +15797,7 @@ public class SqlOptimiser implements Mutable {
             if (node != null && node.type == LITERAL) {
                 final int dot = Chars.indexOfLastUnquoted(node.token, '.');
                 if (dot != -1) {
-                    return nextLiteral(node.token.subSequence(dot + 1, node.token.length()));
+                    return nextLiteral(node.token.subSequence(dot + 1, node.token.length()), node.position);
                 }
             }
             return node;

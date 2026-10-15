@@ -501,6 +501,62 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHorizonJoinFilterNotAllowedPositionOnOffsetColumn() throws Exception {
+        // The error points at the first offset pseudo-table column of the rejected predicate,
+        // wherever the optimiser routes it: the offset model's own WHERE (a predicate on the
+        // offset alone) or its post-join WHERE (a predicate that also reads another table).
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            final String sql = "SELECT avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE ";
+            final String message = "WHERE clause of HORIZON JOIN can only reference left-hand side columns";
+            assertQuery(sql + "h.offset > 0").noLeakCheck().fails(120, message);
+            assertQuery(sql + "offset > 0").noLeakCheck().fails(120, message);
+            assertQuery(sql + "h.timestamp IS NOT NULL").noLeakCheck().fails(120, message);
+            assertQuery(sql + "abs(h.offset) > 0").noLeakCheck().fails(124, message);
+            assertQuery(sql + "t.qty > 0 AND h.offset > 0").noLeakCheck().fails(134, message);
+            assertQuery(sql + "t.qty + h.offset > 0").noLeakCheck().fails(128, message);
+            assertQuery(sql + "h.offset < p.price").noLeakCheck().fails(120, message);
+            // IN and BETWEEN keep their operands in args rather than in lhs/rhs
+            assertQuery(sql + "h.offset IN (0, 1)").noLeakCheck().fails(120, message);
+            assertQuery(sql + "t.qty BETWEEN 0 AND h.offset").noLeakCheck().fails(140, message);
+        });
+    }
+
+    @Test
+    public void testHorizonJoinFilterNotAllowedPositionOnSlaveColumn() throws Exception {
+        // The error points at the first right-hand column of the rejected predicate, not at its
+        // operator and not at a left-hand column that the same predicate reads.
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
+            executeWithRewriteTimestamp("CREATE TABLE prices (ts #TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts)", rightTableTimestampType.getTypeName());
+
+            final String sql = "SELECT avg(p.price) " +
+                    "FROM trades AS t " +
+                    "HORIZON JOIN prices AS p ON (t.sym = p.sym) " +
+                    "RANGE FROM 0s TO 0s STEP 1s AS h " +
+                    "WHERE ";
+            final String message = "WHERE clause of HORIZON JOIN can only reference left-hand side columns";
+            assertQuery(sql + "price > 10").noLeakCheck().fails(120, message);
+            assertQuery(sql + "t.qty < p.price").noLeakCheck().fails(128, message);
+            assertQuery(sql + "abs(p.price) > 1").noLeakCheck().fails(124, message);
+            assertQuery(sql + "t.qty > 1 AND p.price > 10").noLeakCheck().fails(134, message);
+            assertQuery(sql + "p.price > 10 AND p.price < 20").noLeakCheck().fails(120, message);
+            assertQuery(sql + "t.qty > 1 OR p.price > 10").noLeakCheck().fails(133, message);
+            assertQuery(sql + "p.price > h.offset").noLeakCheck().fails(120, message);
+            // IN, BETWEEN and CASE keep their operands in args rather than in lhs/rhs
+            assertQuery(sql + "p.price IN (1, 2, 3)").noLeakCheck().fails(120, message);
+            assertQuery(sql + "t.qty BETWEEN 1 AND p.price").noLeakCheck().fails(140, message);
+            assertQuery(sql + "CASE WHEN t.qty > 1 THEN p.price ELSE 0 END > 1").noLeakCheck().fails(145, message);
+        });
+    }
+
+    @Test
     public void testHorizonJoinFilterOnOffsetColumnNotAllowed() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp("CREATE TABLE trades (ts #TIMESTAMP, sym SYMBOL, qty DOUBLE) TIMESTAMP(ts)", leftTableTimestampType.getTypeName());
@@ -512,7 +568,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 0s STEP 1s AS h " +
                     "WHERE h.offset > 0")
                     .noLeakCheck()
-                    .fails(129, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+                    .fails(120, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         });
     }
 
@@ -528,7 +584,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 0s STEP 1s AS h " +
                     "WHERE t.qty + p.price > 10")
                     .noLeakCheck()
-                    .fails(136, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+                    .fails(128, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         });
     }
 
@@ -544,7 +600,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "RANGE FROM 0s TO 0s STEP 1s AS h " +
                     "WHERE p.price > 10")
                     .noLeakCheck()
-                    .fails(128, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+                    .fails(120, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         });
     }
 
@@ -8309,7 +8365,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "LIST (0) AS h " +
                     "WHERE a.ask > 0")
                     .noLeakCheck()
-                    .fails(157, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+                    .fails(151, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         });
     }
 
@@ -8328,7 +8384,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "LIST (0) AS h " +
                     "WHERE b.bid > 0")
                     .noLeakCheck()
-                    .fails(157, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+                    .fails(151, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         });
     }
 
@@ -8347,7 +8403,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "LIST (0, 1s) AS h " +
                     "WHERE h.offset > 0")
                     .noLeakCheck()
-                    .fails(164, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
+                    .fails(155, "WHERE clause of HORIZON JOIN can only reference left-hand side columns");
         });
     }
 
