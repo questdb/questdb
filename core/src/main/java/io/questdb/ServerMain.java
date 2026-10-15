@@ -71,6 +71,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjList;
 import io.questdb.std.Uuid;
+import io.questdb.std.Vect;
 import io.questdb.std.datetime.Clock;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -881,6 +882,8 @@ public class ServerMain implements Closeable {
         };
 
         setupDedicatedPools(log, isReadOnly, config);
+        // an encoded sort's native threads count against the query workers it runs beside
+        Vect.setEncodedSortThreads(Math.max(1, workerPoolManager.getSharedQueryWorkerCount()));
 
         if (walApplyEnabled && !isReadOnly && walSupported && config.getWalApplyPoolConfiguration().isEnabled()) {
             WorkerPool walApplyWorkerPool = workerPoolManager.getSharedPoolWrite(

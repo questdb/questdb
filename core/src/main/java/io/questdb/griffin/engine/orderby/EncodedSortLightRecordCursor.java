@@ -42,6 +42,7 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Rows;
@@ -52,6 +53,9 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
     private final IntHashSet buildReadColumns;
     private final SortKeyEncoder encoder;
     private final DirectLongList entryMem;
+    // the LSD sort's scratch, see sortLsd(); null until the first
+    private DirectLongList lsdScratch;
+    private MemoryTracker memoryTracker;
     private final long keyCapBytes;
     private final MemoryCARW keyHeap;
     private final long parallelThreshold;
@@ -189,6 +193,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
         this.baseCursor = baseCursor;
         this.baseRecord = baseCursor.getRecord();
         entryMem.setMemoryTracker(executionContext.getMemoryTracker());
+        memoryTracker = executionContext.getMemoryTracker();
         if (!isOpen) {
             isOpen = true;
             entryMem.reopen();
@@ -308,7 +313,7 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
             if (isVariable) {
                 long heapAddr = keyHeap.getAppendOffset() == 0 ? 0 : keyHeap.addressOf(0);
                 Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold);
-            } else {
+            } else if (keyType.keyLength() != Long.BYTES || count < parallelThreshold || !sortLsd()) {
                 if (keyType.keyLength() == Long.BYTES && count >= parallelThreshold) {
                     if (spreadSample == null) {
                         spreadSample = new long[SortKeyEncoder.SPREAD_SAMPLE_SIZE];
@@ -334,7 +339,25 @@ class EncodedSortLightRecordCursor implements DelegatingRecordCursor, RecordCurs
         Misc.free(encoder);
     }
 
+    // The stable parallel LSD sort of the entries, when the base's row ids ascend in scan order, see
+    // Vect.sortEncodedEntriesLsd(); false leaves them to the MSD sort. Its scratch, as many entries
+    // again, is charged to the query and freed once the entries are sorted.
+    private boolean sortLsd() {
+        if (lsdScratch == null) {
+            lsdScratch = new DirectLongList(count * longsPerEntry, MemoryTag.NATIVE_DEFAULT, true);
+        }
+        lsdScratch.setMemoryTracker(memoryTracker);
+        lsdScratch.reopen();
+        try {
+            lsdScratch.ensureCapacity(count * longsPerEntry);
+            return Vect.sortEncodedEntriesLsd(entryMem.getAddress(), count, lsdScratch.getAddress());
+        } finally {
+            lsdScratch.close();
+        }
+    }
+
     private void forceClose() {
+        lsdScratch = Misc.free(lsdScratch);
         Misc.free(entryMem);
         Misc.free(keyHeap);
         Misc.free(encoder);

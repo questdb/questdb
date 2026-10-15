@@ -404,6 +404,61 @@ public class SortKeyEncoder implements QuietCloseable {
     }
 
     /**
+     * Encodes the keys of {@code n} rows whose key column values lie at {@code colAddr},
+     * {@code colAddr + stride}, ... (a block of a fixed-size record chain), as {@link #encode} would
+     * from their records, the entries' row ids being {@code firstRowId}, {@code firstRowId + stride}, ...
+     * Returns false, writing nothing, for a key {@link #encode} must take record by record: one that
+     * is not a single non-symbol column of one of the types read here.
+     */
+    public boolean encodeFixed8Strided(long colAddr, long stride, int n, long destAddr, long firstRowId) {
+        if (keyShape != KeyShape.FIXED8 || isStaticSymbol[0]) {
+            return false;
+        }
+        final boolean desc = isDesc[0];
+        switch (columnTypes[0]) {
+            case ColumnType.FLOAT:
+                for (int r = 0; r < n; r++) {
+                    putEntry(destAddr, r, floatKey(Unsafe.getFloat(colAddr + r * stride), desc), firstRowId + r * stride);
+                }
+                return true;
+            case ColumnType.DOUBLE:
+                for (int r = 0; r < n; r++) {
+                    putEntry(destAddr, r, doubleKey(Unsafe.getDouble(colAddr + r * stride), desc), firstRowId + r * stride);
+                }
+                return true;
+            case ColumnType.INT:
+            case ColumnType.GEOINT:
+            case ColumnType.DECIMAL32: {
+                final int xor = desc ? 0x7FFFFFFF : 0x80000000;
+                for (int r = 0; r < n; r++) {
+                    putEntry(destAddr, r, Integer.toUnsignedLong(Unsafe.getInt(colAddr + r * stride) ^ xor) << 32, firstRowId + r * stride);
+                }
+                return true;
+            }
+            case ColumnType.LONG:
+            case ColumnType.GEOLONG:
+            case ColumnType.TIMESTAMP:
+            case ColumnType.DATE:
+            case ColumnType.DECIMAL64: {
+                final long xor = desc ? Long.MAX_VALUE : Long.MIN_VALUE;
+                for (int r = 0; r < n; r++) {
+                    putEntry(destAddr, r, Unsafe.getLong(colAddr + r * stride) ^ xor, firstRowId + r * stride);
+                }
+                return true;
+            }
+            default:
+                return false;
+        }
+    }
+
+    /**
+     * The column the key's first part reads.
+     */
+    public int getFirstKeyColumnIndex() {
+        return columnIndices[0];
+    }
+
+    /**
      * Encodes a whole page frame into the top-K buffer in one pass, dispatching once on
      * the key shape to a monomorphic batch loop that hoists the column address, type
      * dispatch and direction transform out of the per-row work. A non-null {@code rows}
@@ -817,6 +872,12 @@ public class SortKeyEncoder implements QuietCloseable {
             case ColumnType.DECIMAL256, ColumnType.LONG256 -> 32;
             default -> -1;
         };
+    }
+
+    private static void putEntry(long destAddr, int r, long key, long rowId) {
+        final long entry = destAddr + ((long) r << 4);
+        Unsafe.putLong(entry, key);
+        Unsafe.putLong(entry + 8, rowId);
     }
 
     private static long floatKey(float value, boolean desc) {

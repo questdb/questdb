@@ -1522,6 +1522,22 @@ void msd_radix_byte(T *arr, int64_t count, int shift, int wordIndex,
 }
 
 // ska_sort_entries: MSD radix sort entry point.
+// The threads an encoded sort may use: the shared query pool's size, which the server sets at
+// startup (Vect.setEncodedSortThreads); 0 until then, meaning the hardware's thread count.
+static std::atomic<int> encoded_sort_threads(0);
+
+static int encoded_sort_thread_budget() {
+    const int t = encoded_sort_threads.load(std::memory_order_relaxed);
+    if (t > 0) {
+        return t;
+    }
+    static const int hw = [] {
+        unsigned n = std::thread::hardware_concurrency();
+        return (n > 2) ? static_cast<int>(n) : 2;
+    }();
+    return hw;
+}
+
 // For large arrays (>= parallelThreshold), performs the first radix pass
 // single-threaded, then sorts each resulting bucket in parallel across
 // all available cores. This is safe because buckets occupy disjoint
@@ -1630,11 +1646,7 @@ void ska_sort_entries(T *arr, int64_t count, int64_t parallelThreshold) {
 
     if (numWork == 0) return;
 
-    static int cachedHw = [] {
-        unsigned hw = std::thread::hardware_concurrency();
-        return (hw > 2) ? static_cast<int>(hw) : 2;
-    }();
-    int numThreads = cachedHw;
+    int numThreads = encoded_sort_thread_budget();
     if (numThreads > numWork) numThreads = numWork;
 
     if (numThreads < 2) {
@@ -1771,6 +1783,114 @@ void vergesort_entries(T *arr, int64_t count, int64_t parallelThreshold) {
     ska_sort_entries<T>(arr, count, parallelThreshold);
 }
 
+// Runs fn(t) for t in [0, n): t = 0 on the calling thread, the others on their own.
+template <typename F>
+static void run_on_threads(int n, F &&fn) {
+    if (n <= 1) {
+        fn(0);
+        return;
+    }
+    std::thread threads[255];
+    for (int t = 1; t < n; t++) {
+        threads[t - 1] = std::thread(fn, t);
+    }
+    fn(0);
+    for (int t = 1; t < n; t++) {
+        threads[t - 1].join();
+    }
+}
+
+// Stable LSD radix sort of encoded_2x entries on their key word, for entries whose row ids
+// strictly ascend in the array's order (entries appended in scan order): equal keys then keep that
+// order, which is the (k1, rowId) order the comparison sorts. Only the key bits that vary are
+// sorted, in up to 3 passes of at most 11 bits each, every pass split over the encoded sort's
+// threads (per-thread histograms of contiguous chunks, scatter in chunk order). scratch holds
+// count entries. Returns false, the entries untouched, when the row ids do not ascend or the keys
+// vary over more than 33 bits: the MSD radix sort then sorts them.
+static bool lsd_sort_encoded_2x(encoded_2x *arr, int64_t count, encoded_2x *scratch) {
+    if (count < 2) {
+        return true;
+    }
+    constexpr int64_t MIN_CHUNK = 64 * 1024;
+    int nThreads = encoded_sort_thread_budget();
+    if (nThreads > 64) nThreads = 64;
+    if (nThreads > count / MIN_CHUNK) nThreads = static_cast<int>(count / MIN_CHUNK);
+    if (nThreads < 1) nThreads = 1;
+    const int threadCount = nThreads;
+    auto chunkLo = [count, threadCount](int t) { return count * t / threadCount; };
+
+    // the bits the keys vary in, and whether the row ids ascend
+    uint64_t varying[64];
+    bool ascending[64];
+    const uint64_t first = arr[0].k1;
+    run_on_threads(threadCount, [&](int t) {
+        const int64_t lo = chunkLo(t), hi = chunkLo(t + 1);
+        uint64_t v = 0;
+        bool asc = true;
+        for (int64_t i = lo; i < hi; i++) {
+            v |= arr[i].k1 ^ first;
+            if (i > 0 && arr[i].rowId <= arr[i - 1].rowId) asc = false;
+        }
+        varying[t] = v;
+        ascending[t] = asc;
+    });
+    uint64_t v = 0;
+    for (int t = 0; t < threadCount; t++) {
+        if (!ascending[t]) return false;
+        v |= varying[t];
+    }
+    if (v == 0) {
+        return true; // one key: the row ids already order the entries
+    }
+    const int lowBit = __builtin_ctzll(v);
+    const int bits = 64 - __builtin_clzll(v) - lowBit;
+    const int passes = (bits + 10) / 11;
+    if (passes > 3) {
+        return false;
+    }
+    const int digitBits = (bits + passes - 1) / passes;
+    const int buckets = 1 << digitBits;
+    const uint64_t mask = static_cast<uint64_t>(buckets - 1);
+    std::vector<int64_t> offsets(static_cast<size_t>(threadCount) * buckets);
+
+    encoded_2x *src = arr;
+    encoded_2x *dst = scratch;
+    for (int p = 0; p < passes; p++) {
+        const int shift = lowBit + p * digitBits;
+        run_on_threads(threadCount, [&](int t) {
+            int64_t *h = offsets.data() + static_cast<size_t>(t) * buckets;
+            std::fill(h, h + buckets, 0);
+            for (int64_t i = chunkLo(t), hi = chunkLo(t + 1); i < hi; i++) {
+                h[(src[i].k1 >> shift) & mask]++;
+            }
+        });
+        // a bucket's entries: thread 0's chunk first, then thread 1's, ...
+        int64_t sum = 0;
+        for (int d = 0; d < buckets; d++) {
+            for (int t = 0; t < threadCount; t++) {
+                int64_t &h = offsets[static_cast<size_t>(t) * buckets + d];
+                const int64_t n = h;
+                h = sum;
+                sum += n;
+            }
+        }
+        run_on_threads(threadCount, [&](int t) {
+            int64_t *h = offsets.data() + static_cast<size_t>(t) * buckets;
+            for (int64_t i = chunkLo(t), hi = chunkLo(t + 1); i < hi; i++) {
+                dst[h[(src[i].k1 >> shift) & mask]++] = src[i];
+            }
+        });
+        std::swap(src, dst);
+    }
+    if (src != arr) {
+        run_on_threads(threadCount, [&](int t) {
+            const int64_t lo = chunkLo(t), hi = chunkLo(t + 1);
+            memcpy(arr + lo, src + lo, static_cast<size_t>(hi - lo) * sizeof(encoded_2x));
+        });
+    }
+    return true;
+}
+
 template <int ENTRY_LONGS>
 void sort_encoded_impl(uint8_t *addr, int64_t count, int64_t parallelThreshold) {
     if (count <= 1) return;
@@ -1803,6 +1923,17 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_sortEncodedEntries(
             assert(false && "unsupported keyLongs");
             break;  // Java side validates keyLongs
     }
+}
+
+JNIEXPORT jboolean JNICALL Java_io_questdb_std_Vect_sortEncodedEntriesLsd(
+    JNIEnv *env, jclass cl, jlong addr, jlong count, jlong scratchAddr) {
+    return lsd_sort_encoded_2x(reinterpret_cast<encoded_2x *>(addr), count,
+                               reinterpret_cast<encoded_2x *>(scratchAddr)) ? JNI_TRUE : JNI_FALSE;
+}
+
+JNIEXPORT void JNICALL Java_io_questdb_std_Vect_setEncodedSortThreads(
+    JNIEnv *env, jclass cl, jint threads) {
+    encoded_sort_threads.store(threads > 0 ? threads : 0, std::memory_order_relaxed);
 }
 
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_sortEncodedVarEntries(

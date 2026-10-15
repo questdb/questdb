@@ -76,6 +76,8 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
     private final int[] blockColumnSizes;
     // the chain ordinals of a sorted block's rows, see peekRecordBlock(); null until the first block
     private DirectLongList sortedBlockRows;
+    // the LSD sort's scratch, see sortLsd(); null until the first
+    private DirectLongList lsdScratch;
     private SortedBlock sortedBlock;
     private MemoryTracker memoryTracker;
     private long currentAddr;
@@ -355,7 +357,7 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             if (isVariable) {
                 long heapAddr = keyHeap.getAppendOffset() == 0 ? 0 : keyHeap.addressOf(0);
                 Vect.sortEncodedVarEntries(entryMem.getAddress(), count, heapAddr, parallelThreshold);
-            } else {
+            } else if (keyType.keyLength() != Long.BYTES || count < parallelThreshold || !sortLsd()) {
                 if (keyType.keyLength() == Long.BYTES && count >= parallelThreshold) {
                     if (spreadSample == null) {
                         spreadSample = new long[SortKeyEncoder.SPREAD_SAMPLE_SIZE];
@@ -468,11 +470,22 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
             }
             baseCursor.skipRecordBlock(n);
             entryMem.ensureCapacity((long) n * longsPerEntry);
-            for (int r = 0; r < n; r++) {
-                final long chainOffset = first + r * stride;
-                recordChain.recordAt(chainRecord, chainOffset);
-                encoder.encode(chainRecord, entryMem.getAppendAddress(), chainOffset);
-                entryMem.skip(longsPerEntry);
+            if (longsPerEntry == 2 && encoder.encodeFixed8Strided(
+                    base + recordChain.getOffsetOfColumn(0, encoder.getFirstKeyColumnIndex()),
+                    stride,
+                    n,
+                    entryMem.getAppendAddress(),
+                    first
+            )) {
+                // the keys straight from the block's chain records, see SortKeyEncoder.encodeFixed8Strided()
+                entryMem.skip((long) n * longsPerEntry);
+            } else {
+                for (int r = 0; r < n; r++) {
+                    final long chainOffset = first + r * stride;
+                    recordChain.recordAt(chainRecord, chainOffset);
+                    encoder.encode(chainRecord, entryMem.getAppendAddress(), chainOffset);
+                    entryMem.skip(longsPerEntry);
+                }
             }
             count += n;
             if (hintAt > 0 && count >= hintAt) {
@@ -501,7 +514,25 @@ class EncodedSortRecordCursor implements DelegatingRecordCursor {
         hintAt = entries < Math.min(lastCount, maxEntries) ? entries : -1;
     }
 
+    // The stable parallel LSD sort of the entries (one key word, chain offsets ascending as appended),
+    // see Vect.sortEncodedEntriesLsd(); false leaves them to the MSD sort. Its scratch, as many entries
+    // again, is charged to the query and freed once the entries are sorted.
+    private boolean sortLsd() {
+        if (lsdScratch == null) {
+            lsdScratch = new DirectLongList(count * longsPerEntry, MemoryTag.NATIVE_DEFAULT, true);
+        }
+        lsdScratch.setMemoryTracker(memoryTracker);
+        lsdScratch.reopen();
+        try {
+            lsdScratch.ensureCapacity(count * longsPerEntry);
+            return Vect.sortEncodedEntriesLsd(entryMem.getAddress(), count, lsdScratch.getAddress());
+        } finally {
+            lsdScratch.close();
+        }
+    }
+
     private void forceClose() {
+        lsdScratch = Misc.free(lsdScratch);
         sortedBlockRows = Misc.free(sortedBlockRows);
         Misc.free(entryMem);
         Misc.free(keyHeap);
