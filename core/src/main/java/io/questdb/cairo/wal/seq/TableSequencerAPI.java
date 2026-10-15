@@ -146,7 +146,7 @@ public class TableSequencerAPI implements QuietCloseable {
                         // metadata and log concurrently as we read the values. It's ok since we iterate
                         // through the WAL tables periodically, so eventually we should see the updates.
                         path.of(root).concat(tableToken.getDirName()).concat(SEQ_DIR);
-                        lastTxn = readCertifiedLastTxn(ff, path, tableToken);
+                        lastTxn = readCertifiedLastTxn(ff, path, tableToken, false);
                     } else {
                         // Slow path.
                         try (TableSequencer tableSequencer = openSequencerLocked(tableToken, SequencerLockType.NONE)) {
@@ -723,10 +723,11 @@ public class TableSequencerAPI implements QuietCloseable {
      * cannot be read. A power loss can leave the header on the disk ahead of its newest records, and the first open
      * in a process cuts them, so the header's max txn is returned only when it is certain: the table's tracker holds
      * as much, and every value the tracker holds was certified, or an open now would cut no record. A log that is not
-     * certain is opened. Its open fails with the same error at the table's first use when it fails here, so the
-     * header's value is returned then, as without the check.
+     * certain is opened. Its open fails with the same error at the table's first use when it fails here. It may have
+     * cut the log before it failed, and a cut header is certain, so the header is read again; one that is still not
+     * certain is returned as read, as without the check.
      */
-    private long readCertifiedLastTxn(FilesFacade ff, Path path, TableToken tableToken) {
+    private long readCertifiedLastTxn(FilesFacade ff, Path path, TableToken tableToken, boolean isAfterFailedOpen) {
         long lastTxn = -1;
         boolean isCertain = true;
         final long header = Unsafe.malloc(SCAN_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
@@ -756,7 +757,7 @@ public class TableSequencerAPI implements QuietCloseable {
             }
             Unsafe.free(header, SCAN_HEADER_SIZE, MemoryTag.NATIVE_DEFAULT);
         }
-        if (!isCertain) {
+        if (!isCertain && !isAfterFailedOpen) {
             try (TableSequencer tableSequencer = openSequencerLocked(tableToken, SequencerLockType.NONE)) {
                 return tableSequencer.lastTxn();
             } catch (CairoException ex) {
@@ -764,6 +765,9 @@ public class TableSequencerAPI implements QuietCloseable {
                     throw ex;
                 }
             }
+            // The open may have used the thread-local path.
+            path.of(configuration.getDbRoot()).concat(tableToken.getDirName()).concat(SEQ_DIR);
+            return readCertifiedLastTxn(ff, path, tableToken, true);
         }
         return lastTxn;
     }

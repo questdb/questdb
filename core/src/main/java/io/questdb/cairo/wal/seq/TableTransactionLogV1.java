@@ -48,6 +48,7 @@ import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.TXNLOG_FILE_NAME;
@@ -67,9 +68,10 @@ import static io.questdb.cairo.wal.WalUtils.WAL_SEQUENCER_FORMAT_VERSION_V1;
  * <p>
  * A power loss can leave the tail of the log torn: the header can reach the disk ahead of the records it
  * publishes, and a record can be split by a sector boundary. Such records were never acknowledged, so
- * {@link #open(Path)} drops them. It relies on two invariants: the bytes past the published tail are zero
- * on disk before a record is written over them, and {@link #UNSYNCED_FROM_TXN_OFFSET_64} names the first
- * record that a completed flush may not have covered.
+ * {@link #open(Path)} drops them, except those the table has already applied: its {@code _txn} can reach the disk
+ * when the log page does not, and a dropped txn would be handed out again. It relies on two invariants: the bytes
+ * past the published tail are zero on disk before a record is written over them, and
+ * {@link #UNSYNCED_FROM_TXN_OFFSET_64} names the first record that a completed flush may not have covered.
  */
 public class TableTransactionLogV1 implements TableTransactionLogFile {
     /**
@@ -90,15 +92,31 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     private final LocalDurabilityPolicy durabilityPolicy;
     private final FilesFacade ff;
     private final AtomicLong maxTxn = new AtomicLong();
+    private final LongSupplier tableStructureVersion;
     private final MemoryCMARW txnMem = Vm.getCMARWInstance();
+    private final LongSupplier usedTxnFloor;
     // Set by open(): the first append checks the bytes past the tail. On a replica they are the downloader's
     // records, written ahead of the tail it publishes, and only a Java append may wipe them.
     private boolean isPastTailUnchecked;
 
-    public TableTransactionLogV1(CairoConfiguration configuration, LocalDurabilityPolicy durabilityPolicy) {
+    /**
+     * @param usedTxnFloor          the highest txn the table has applied, which a torn-tail cut keeps; asked only when
+     *                              an open finds a torn record. {@code Long.MAX_VALUE} when it is not known: nothing is
+     *                              cut then
+     * @param tableStructureVersion the table's structure version, which an open that keeps a torn last record takes
+     *                              when it is above the last whole record's; -1 when it is not known
+     */
+    public TableTransactionLogV1(
+            CairoConfiguration configuration,
+            LocalDurabilityPolicy durabilityPolicy,
+            LongSupplier usedTxnFloor,
+            LongSupplier tableStructureVersion
+    ) {
         this.configuration = configuration;
         this.durabilityPolicy = durabilityPolicy;
         this.ff = configuration.getFilesFacade();
+        this.usedTxnFloor = usedTxnFloor;
+        this.tableStructureVersion = tableStructureVersion;
     }
 
     /**
@@ -291,11 +309,20 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             openSmallFile(ff, path, path.size(), txnMem, TXNLOG_FILE_NAME, MemoryTag.MMAP_TX_LOG);
         }
 
-        final long lastTxn = recoverTail(path, txnMem.getLong(MAX_TXN_OFFSET_64));
+        final long publishedTxn = txnMem.getLong(MAX_TXN_OFFSET_64);
+        final long unsyncedFrom = txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64);
+        final boolean isDurableMode = isDurableMode();
+        final long scanFrom = scanFrom(unsyncedFrom, publishedTxn, isDurableMode);
+        final long wholeTxn = findWholeTail(scanFrom, publishedTxn);
+        final long lastTxn = recoverTail(path, publishedTxn, wholeTxn, unsyncedFrom, scanFrom, isDurableMode);
         isPastTailUnchecked = true;
         maxTxn.set(lastTxn);
         txnMem.jumpTo(HEADER_SIZE);
-        long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (lastTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        long maxStructureVersion = txnMem.getLong(HEADER_SIZE + (wholeTxn - 1) * RECORD_SIZE + TX_LOG_STRUCTURE_VERSION_OFFSET);
+        if (lastTxn > wholeTxn) {
+            // The kept torn records' versions are not on the disk; the table applied them, so it has their schema.
+            maxStructureVersion = Math.max(maxStructureVersion, tableStructureVersion.getAsLong());
+        }
         txnMem.jumpTo(HEADER_SIZE + lastTxn * RECORD_SIZE);
         return maxStructureVersion;
     }
@@ -341,6 +368,16 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             return Math.max(1, Math.min(Math.abs(unsyncedFrom), publishedTxn + 1));
         }
         return unsyncedFrom < 0 ? 1 : publishedTxn + 1;
+    }
+
+    // The last txn before the first torn record from scanFrom on, or publishedTxn when none is torn.
+    private long findWholeTail(long scanFrom, long publishedTxn) {
+        for (long txn = scanFrom; txn <= publishedTxn; txn++) {
+            if (isTornRecord(txn)) {
+                return txn - 1;
+            }
+        }
+        return publishedTxn;
     }
 
     private boolean hasNonZeroBytes(long lo, long hi) {
@@ -398,23 +435,36 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
     }
 
     /**
-     * Drops a torn tail left by a power loss and returns the txn the log ends at. Scans the records from
-     * the first one a flush may not have covered, cuts the log before the first torn one, zeroes everything
-     * past the new tail, and makes that durable before the hint moves past the records it kept. An open
-     * that cuts nothing leaves the bytes past the tail to the first append.
+     * Drops a torn tail left by a power loss and returns the txn the log ends at. The records from the
+     * first one a flush may not have covered were scanned, and {@code wholeTxn} is the last one before the
+     * first torn one. The log is cut there, but never below the txns the table has already applied: those
+     * stay as they are, as the apply never reads them again, and a cut would hand their txns out twice. A
+     * cut zeroes everything past the new tail and makes that durable before the hint moves past the records
+     * it kept. An open that cuts nothing leaves the bytes past the tail to the first append.
      */
-    private long recoverTail(Path path, long publishedTxn) {
-        final long unsyncedFrom = txnMem.getLong(UNSYNCED_FROM_TXN_OFFSET_64);
-        final boolean isDurableMode = isDurableMode();
-        final long scanFrom = scanFrom(unsyncedFrom, publishedTxn, isDurableMode);
+    private long recoverTail(Path path, long publishedTxn, long wholeTxn, long unsyncedFrom, long scanFrom, boolean isDurableMode) {
         long tail = publishedTxn;
-        for (long txn = scanFrom; txn <= publishedTxn; txn++) {
-            if (isTornRecord(txn)) {
-                tail = txn - 1;
-                break;
+        if (wholeTxn < publishedTxn) {
+            final long appliedTxn = usedTxnFloor.getAsLong();
+            tail = Math.max(wholeTxn, Math.min(publishedTxn, appliedTxn));
+            if (tail > wholeTxn) {
+                LOG.error().$("keeping torn sequencer txnlog records the table already used [path=").$(path)
+                        .$(", publishedTxn=").$(publishedTxn)
+                        .$(", firstTornTxn=").$(wholeTxn + 1)
+                        .$(", keptTxn=").$(tail)
+                        .$(", appliedTxn=").$(appliedTxn)
+                        .I$();
+                final long keptEnd = HEADER_SIZE + tail * RECORD_SIZE;
+                if (keptEnd > txnMem.size()) {
+                    // A lost file extension: the kept records read as zeros, as before the cut existed.
+                    txnMem.extend(keptEnd);
+                }
             }
         }
         final boolean isCut = tail != publishedTxn;
+        // A reader that does not open the log trusts a header the predicate certifies. The predicate reads the
+        // scanned records with its own reads, so this checks that the two agree.
+        assert !isCut || !isTailIntact(ff, txnMem.getFd(), publishedTxn, unsyncedFrom, isDurableMode);
         if (isCut) {
             LOG.info().$("dropping torn sequencer txnlog tail [path=").$(path)
                     .$(", publishedTxn=").$(publishedTxn)

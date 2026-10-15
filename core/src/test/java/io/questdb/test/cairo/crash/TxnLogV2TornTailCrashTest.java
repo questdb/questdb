@@ -39,8 +39,11 @@ import io.questdb.cairo.wal.WalUtils;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
 import io.questdb.cairo.wal.seq.TableTransactionLogV2;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import org.junit.Assert;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -112,6 +115,106 @@ public class TxnLogV2TornTailCrashTest extends AbstractAdaptiveCrashTest {
                     appendAtCrashPoint(window, k);
                 }
             }
+        });
+    }
+
+    /**
+     * The startup scan opens a torn log; the open cuts it and then fails, the sequencer's {@code _meta} does not
+     * open. The scan must publish the txn the cut log keeps, not the count the header held before the open, or the
+     * table shows a lag that never closes.
+     */
+    @Test
+    public void testScanOpenFailingAfterTheCut() throws Exception {
+        runWithScanOpenFault("txn_seq" + Files.SEPARATOR + "_meta", token -> {
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            Assert.assertEquals("the scan must publish the txn the cut log keeps", tornTxn - 1, tracker.getSeqTxn());
+            assertApplyGoesIdle(token);
+            Assert.assertEquals(tornTxn - 1, engine.getTableSequencerAPI().lastTxn(token));
+            Assert.assertFalse("must not be suspended: " + tracker.getErrorMessage(), tracker.isSuspended());
+        });
+    }
+
+    /**
+     * A NOSYNC run on a log that ADAPTIVE kept durable applies every commit, and a power loss keeps the table's
+     * {@code _txn} and the header but tears the same records as {@link #testTornTailIsDroppedAtOpen}. The ADAPTIVE
+     * restart scans the records the NOSYNC run wrote. It must keep the ones the table applied, with the table's
+     * schema, so new commits get new txns and every one of them is applied.
+     */
+    @Test
+    public void testTornAppliedTailIsKeptAfterNosyncRun() throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 10_000_000L);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, PART_TXN_COUNT);
+        node1.setProperty(PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, false);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        runWithCrashFacade(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("ALTER TABLE t ADD COLUMN c INT");
+            for (int txn = 2; txn <= appliedTxns; txn++) {
+                execute("INSERT INTO t VALUES (" + txn + ", " + txn + ", " + txn + ")");
+            }
+            drainWalQueue();
+            final TableToken token = engine.verifyTableName("t");
+            markDurableBaseline();
+
+            // A clean restart in NOSYNC: its first open of the log ends the field's promise.
+            node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+            Assert.assertEquals(CommitMode.NOSYNC, engine.getConfiguration().getCommitMode());
+            simulateRestart(new TableToken[]{token});
+            new RecoveryCoordinator(engine).recover();
+            new CheckWalTransactionsJob(engine).run();
+            try (WalWriter writer = getWalWriter("t")) {
+                for (int i = 1; i <= pendingTxns; i++) {
+                    final TableWriter.Row row = writer.newRow(appliedTxns + i);
+                    row.putLong(1, appliedTxns + i);
+                    row.putInt(2, appliedTxns + i);
+                    row.append();
+                    writer.commit();
+                }
+            }
+            drainWalQueue();
+            final long lastTxn = appliedTxns + pendingTxns;
+            Assert.assertEquals(lastTxn, engine.getTableSequencerAPI().getTxnTracker(token).getWriterTxn());
+            // The kernel wrote every page back, the table's _txn and the header included, but the torn bytes.
+            markDurableBaseline();
+            try (Path part = new Path()) {
+                part.of(root).concat(token.getDirName()).concat(WalUtils.SEQ_DIR).concat(WalUtils.TXNLOG_PARTS_DIR)
+                        .slash().put((tornTxn - 1) / PART_TXN_COUNT);
+                crashFf.tornTail(part.$(), (long) ((tornTxn - 1) % PART_TXN_COUNT) * RECORD_SIZE + tornOffsetInRecord, tornBytes);
+            }
+            node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+            Assert.assertEquals(CommitMode.ADAPTIVE, engine.getConfiguration().getCommitMode());
+            simulateRestart(new TableToken[]{token});
+            new RecoveryCoordinator(engine).recover();
+            new CheckWalTransactionsJob(engine).run();
+            final SeqTxnTracker tracker = engine.getTableSequencerAPI().getTxnTracker(token);
+            Assert.assertEquals("the scan must keep the txns the table applied", lastTxn, tracker.getSeqTxn());
+            Assert.assertEquals("the log must keep the txns the table applied", lastTxn, engine.getTableSequencerAPI().lastTxn(token));
+            Assert.assertEquals("version=1 columns=ts,v,c", sequencerSchema(token));
+            Assert.assertFalse("must not be suspended: " + tracker.getErrorMessage(), tracker.isSuspended());
+            engine.notifyWalTxnRepublisher(token);
+            try (ApplyWal2TableJob apply = createWalApplyJob()) {
+                // A bounded count, not a drain: a tracker above the log re-queues the table on every run.
+                int runs = 0;
+                while (apply.run()) {
+                    Assert.assertTrue("the apply job must go idle", ++runs < 10);
+                }
+            }
+
+            execute("INSERT INTO t VALUES (100, 100, 100)");
+            execute("ALTER TABLE t ADD COLUMN d INT");
+            execute("INSERT INTO t VALUES (101, 101, 101, 101)");
+            drainWalQueue();
+            Assert.assertFalse("must not be suspended after new writes: " + tracker.getErrorMessage(), tracker.isSuspended());
+            Assert.assertEquals(lastTxn + 3, tracker.getWriterTxn());
+            Assert.assertEquals("version=2 columns=ts,v,c,d", sequencerSchema(token));
+            final StringBuilder expected = new StringBuilder("v\tc\td\n");
+            for (long txn = 2; txn <= lastTxn; txn++) {
+                expected.append(txn).append('\t').append(txn).append("\tnull\n");
+            }
+            expected.append("100\t100\tnull\n101\t101\t101\n");
+            assertQuery("SELECT v, c, d FROM t ORDER BY v").expectSize().returns(expected.toString());
+            releaseEngineHandles();
         });
     }
 
@@ -295,6 +398,76 @@ public class TxnLogV2TornTailCrashTest extends AbstractAdaptiveCrashTest {
         return count;
     }
 
+    // A bounded count, not a drain: a tracker above the log re-queues the table on every run.
+    private void assertApplyGoesIdle(TableToken token) {
+        engine.notifyWalTxnRepublisher(token);
+        try (ApplyWal2TableJob apply = createWalApplyJob()) {
+            int runs = 0;
+            while (apply.run()) {
+                Assert.assertTrue("the apply job must go idle", ++runs < 10);
+            }
+        }
+    }
+
+    /**
+     * Commits records that are not applied yet, tears them as {@link #testTornTailIsDroppedAtOpen} does, restarts,
+     * and runs the check job's startup scan while every open of a sequencer file whose path ends with
+     * {@code faultSuffix} fails. Then checks the state with the fault gone.
+     */
+    private void runWithScanOpenFault(String faultSuffix, ScanCheck check) throws Exception {
+        node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 10_000_000L);
+        node1.setProperty(PropertyKey.CAIRO_DEFAULT_SEQ_PART_TXN_COUNT, PART_TXN_COUNT);
+        node1.setProperty(PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, false);
+        node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, -1);
+        assumeCrashHarnessSupported();
+        final OpenFaultFacade ff = new OpenFaultFacade(faultSuffix);
+        crashFf = ff;
+        crashFf.setDbRoot(root);
+        try {
+            assertMemoryLeak(crashFf, () -> {
+                execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("ALTER TABLE t ADD COLUMN c INT");
+                for (int txn = 2; txn <= appliedTxns; txn++) {
+                    execute("INSERT INTO t VALUES (" + txn + ", " + txn + ", " + txn + ")");
+                }
+                drainWalQueue();
+                final TableToken token = engine.verifyTableName("t");
+                markDurableBaseline();
+                try (WalWriter writer = getWalWriter("t")) {
+                    for (int i = 1; i <= pendingTxns; i++) {
+                        final TableWriter.Row row = writer.newRow(appliedTxns + i);
+                        row.putLong(1, appliedTxns + i);
+                        row.putInt(2, appliedTxns + i);
+                        row.append();
+                        writer.commit();
+                    }
+                }
+                try (Path part = new Path()) {
+                    part.of(root).concat(token.getDirName()).concat(WalUtils.SEQ_DIR).concat(WalUtils.TXNLOG_PARTS_DIR)
+                            .slash().put((tornTxn - 1) / PART_TXN_COUNT);
+                    crashFf.tornTail(part.$(), (long) ((tornTxn - 1) % PART_TXN_COUNT) * RECORD_SIZE + tornOffsetInRecord, tornBytes);
+                }
+                simulateRestart(new TableToken[]{token});
+                new RecoveryCoordinator(engine).recover();
+
+                ff.armed = true;
+                try {
+                    new CheckWalTransactionsJob(engine).run();
+                } finally {
+                    ff.armed = false;
+                }
+                Assert.assertTrue("the scan's open must fail", ff.fired > 0);
+                check.run(token);
+                releaseEngineHandles();
+            });
+        } finally {
+            crashFf.reset();
+            engine.releaseCrashOrphanedWalWriters();
+            engine.releaseCrashOrphanedWriters();
+        }
+    }
+
     private String sequencerSchema(TableToken token) {
         try (TableRecordMetadata metadata = engine.getSequencerMetadata(token)) {
             final StringBuilder sb = new StringBuilder("version=").append(metadata.getMetadataVersion()).append(" columns=");
@@ -304,6 +477,62 @@ public class TxnLogV2TornTailCrashTest extends AbstractAdaptiveCrashTest {
                 }
             }
             return sb.toString();
+        }
+    }
+
+    @FunctionalInterface
+    private interface ScanCheck {
+        void run(TableToken token) throws Exception;
+    }
+
+    // Fails every open of a file whose path ends with the suffix, with EIO, while armed.
+    private static final class OpenFaultFacade extends CrashFaultFilesFacade {
+        private final String suffix;
+        private boolean armed;
+        private int fired;
+        private int pendingErrno;
+
+        OpenFaultFacade(String suffix) {
+            this.suffix = suffix;
+        }
+
+        @Override
+        public int errno() {
+            final int errno = pendingErrno;
+            if (errno != 0) {
+                pendingErrno = 0;
+                return errno;
+            }
+            return super.errno();
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            return isHit(name) ? -1 : super.openRO(name);
+        }
+
+        @Override
+        public long openRONoCache(LPSZ name) {
+            return isHit(name) ? -1 : super.openRONoCache(name);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            return isHit(name) ? -1 : super.openRW(name, opts);
+        }
+
+        @Override
+        public long openRWNoCache(LPSZ name, int opts) {
+            return isHit(name) ? -1 : super.openRWNoCache(name, opts);
+        }
+
+        private boolean isHit(LPSZ name) {
+            if (armed && Utf8s.endsWithAscii(name, suffix)) {
+                fired++;
+                pendingErrno = 5; // EIO
+                return true;
+            }
+            return false;
         }
     }
 }

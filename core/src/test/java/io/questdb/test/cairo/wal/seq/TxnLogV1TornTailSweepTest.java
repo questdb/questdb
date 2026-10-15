@@ -83,6 +83,8 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
     private static final int SECTOR_SIZE = 512;
     private static final int THROWS = 1;
     private static final int TORN_READ = 2;
+    // The table's structure version a floor check reports, above every version the sweep writes.
+    private static final long TABLE_STRUCTURE_VERSION = 1_000;
     private static final long TS_BASE = 1_759_000_000_000_000L;
 
     @Test
@@ -111,7 +113,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                     try (Path path = new Path().of(seqDir)) {
                         configuration.commitMode = CommitMode.NOSYNC;
                         configuration.groupWindowUs = 0;
-                        try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON)) {
+                        try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON, () -> 0, () -> -1)) {
                             log.create(path, TS_BASE);
                             for (int t = 1; t <= oldTxns; t++) {
                                 log.addEntry(0, 100 + t, 0, t - 1, TS_BASE + t * 1_000L, 0, 0, 0);
@@ -119,7 +121,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                         }
                         configuration.commitMode = (int) mode[0];
                         configuration.groupWindowUs = mode[1];
-                        try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON)) {
+                        try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON, () -> 0, () -> -1)) {
                             log.create(path, TS_BASE);
                             for (int t = 1; t <= newTxns; t++) {
                                 Assert.assertEquals(t, log.addEntry(0, 7, 0, t - 1, TS_BASE + 50_000L + t * 1_000L, 0, 0, 0));
@@ -130,7 +132,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                             ByteBuffer.wrap(image).order(ByteOrder.LITTLE_ENDIAN)
                                     .putLong((int) TableTransactionLogFile.MAX_TXN_OFFSET_64, publishedTxn);
                             writeFile(logPath, image);
-                            try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON)) {
+                            try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON, () -> 0, () -> -1)) {
                                 log.open(path);
                                 Assert.assertEquals(
                                         "records that never reached the disk must be cut, not read from the old lineage [mode="
@@ -168,7 +170,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
             try (Path path = new Path().of(seqDir)) {
                 configuration.commitMode = CommitMode.NOSYNC;
                 int txns = 0;
-                try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON)) {
+                try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON, () -> 0, () -> -1)) {
                     log.create(path, TS_BASE);
                     while (txns < 100) {
                         txns++;
@@ -181,7 +183,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                 for (int i = 0; i < modes.length; i++) {
                     configuration.commitMode = modes[i];
                     flushes[0] = 0;
-                    try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON)) {
+                    try (TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON, () -> 0, () -> -1)) {
                         log.open(path);
                         Assert.assertEquals(txns, log.lastTxn());
                         if (i == 3) {
@@ -229,7 +231,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
             final String seqDir = root + "/replica/" + WalUtils.SEQ_DIR;
             Files.createDirectories(Paths.get(seqDir));
             try (Path path = new Path().of(seqDir);
-                 TableTransactionLogV1 log = new TableTransactionLogV1(configuration, () -> localDurability[0])) {
+                 TableTransactionLogV1 log = new TableTransactionLogV1(configuration, () -> localDurability[0], () -> 0, () -> -1)) {
                 configuration.commitMode = CommitMode.ADAPTIVE;
                 configuration.groupWindowUs = 0;
                 localDurability[0] = false;
@@ -491,7 +493,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                 // window starts, as if the kernel had written it back long ago.
                 configuration.commitMode = CommitMode.NOSYNC;
                 configuration.groupWindowUs = 0;
-                TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON);
+                TableTransactionLogV1 log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON, () -> 0, () -> -1);
                 try {
                     log.create(path, TS_BASE);
                     for (int t = 1; t < first; t++) {
@@ -519,7 +521,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                 logModel = new FileModel(logPath);
                 acked = first - 1;
                 ff.sweep = this;
-                log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON);
+                log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON, () -> 0, () -> -1);
                 try {
                     activity = "open";
                     log.open(path);
@@ -541,7 +543,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                     if (window.reopenAtEnd) {
                         activity = "reopen";
                         log.close();
-                        log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON);
+                        log = new TableTransactionLogV1(configuration, LocalDurabilityPolicy.ALWAYS_ON, () -> 0, () -> -1);
                         log.open(path);
                         crashPoint("after reopen");
                     }
@@ -756,7 +758,7 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
             int readCount = -1;
             verifyConfiguration.commitMode = reopenMode;
             verifyConfiguration.groupWindowUs = window.groupWindowUs;
-            final TableTransactionLogV1 log = new TableTransactionLogV1(verifyConfiguration, LocalDurabilityPolicy.ALWAYS_ON);
+            final TableTransactionLogV1 log = new TableTransactionLogV1(verifyConfiguration, LocalDurabilityPolicy.ALWAYS_ON, () -> 0, () -> -1);
             try (Path path = new Path().of(verifyDir)) {
                 log.open(path);
                 final List<Rec> read = readAll(log, path);
@@ -800,6 +802,71 @@ public class TxnLogV1TornTailSweepTest extends AbstractCairoTest {
                             .append(", intactPrefix=").append(intactPrefix)
                             .append(", acked=").append(acked)
                             .append(", read=").append(readCount)
+                            .append(", detail=").append(detail)
+                            .append("]\n");
+                }
+            } else if (intactPrefix < published) {
+                // The table applied the torn records up to the floor: the first torn one, then all of them.
+                verifyFloor(logImage, key, label, reopenMode, published, intactPrefix, intactPrefix + 1);
+                verifyFloor(logImage, key, label, reopenMode, published, intactPrefix, published);
+            }
+        }
+
+        /**
+         * Opens a torn image with a table that applied the records up to {@code floor}. The log must end at the
+         * larger of the intact prefix and the floor, no higher than the published txn; a cut must leave zeros past
+         * its end; a torn end must take the table's structure version; and the floor must be read once.
+         */
+        private void verifyFloor(byte[] logImage, String key, String label, int reopenMode, long published, int intactPrefix, long floor) {
+            images++;
+            final String logPath = verifyDir + "/" + WalUtils.TXNLOG_FILE_NAME;
+            writeFile(logPath, logImage);
+            final long expectedKept = Math.max(intactPrefix, Math.min(published, floor));
+            final int[] floorReads = {0};
+            String detail = null;
+            verifyConfiguration.commitMode = reopenMode;
+            verifyConfiguration.groupWindowUs = window.groupWindowUs;
+            final TableTransactionLogV1 log = new TableTransactionLogV1(
+                    verifyConfiguration,
+                    LocalDurabilityPolicy.ALWAYS_ON,
+                    () -> {
+                        floorReads[0]++;
+                        return floor;
+                    },
+                    () -> TABLE_STRUCTURE_VERSION
+            );
+            try (Path path = new Path().of(verifyDir)) {
+                final long structureVersion = log.open(path);
+                if (log.lastTxn() != expectedKept) {
+                    detail = "lastTxn=" + log.lastTxn();
+                } else if (floorReads[0] != 1) {
+                    detail = "floorReads=" + floorReads[0];
+                } else if (expectedKept > intactPrefix && structureVersion != TABLE_STRUCTURE_VERSION) {
+                    detail = "structureVersion=" + structureVersion;
+                }
+            } catch (CairoException e) {
+                detail = e.getFlyweightMessage().toString();
+            } finally {
+                log.close();
+            }
+            if (detail == null && expectedKept < published) {
+                final byte[] after = readFile(logPath);
+                for (int i = (int) recordOffset(expectedKept + 1); i < after.length; i++) {
+                    if (after[i] != 0) {
+                        detail = "byte " + i + " past the kept end is not zero";
+                        break;
+                    }
+                }
+            }
+            if (detail != null) {
+                failures++;
+                if (failureSampleCount++ < MAX_FAILURE_SAMPLES) {
+                    failureSamples.append("  FLOOR: ").append(key)
+                            .append(" [txn=").append(txn)
+                            .append(", crash=").append(label)
+                            .append(", published=").append(published)
+                            .append(", intactPrefix=").append(intactPrefix)
+                            .append(", floor=").append(floor)
                             .append(", detail=").append(detail)
                             .append("]\n");
                 }

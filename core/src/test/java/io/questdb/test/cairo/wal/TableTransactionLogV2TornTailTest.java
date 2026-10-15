@@ -770,7 +770,7 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
     private long[] reopen(String dir, CairoConfiguration config, LocalDurabilityPolicy policy) {
         try (Path path = new Path()) {
             path.of(root).concat(dir);
-            final TableTransactionLogV2 v2 = new TableTransactionLogV2(config, PART, DefaultWalDirectoryPolicy.INSTANCE, policy);
+            final TableTransactionLogV2 v2 = new TableTransactionLogV2(config, PART, DefaultWalDirectoryPolicy.INSTANCE, policy, () -> 0, () -> -1);
             try {
                 final long structureVersion = v2.open(path);
                 return new long[]{v2.lastTxn(), structureVersion};
@@ -844,7 +844,7 @@ public class TableTransactionLogV2TornTailTest extends AbstractCairoTest {
         try (Path path = new Path()) {
             path.of(root).concat(dir);
             config.getFilesFacade().mkdir(path.$(), configuration.getMkDirMode());
-            final TableTransactionLogV2 v2 = new TableTransactionLogV2(config, PART, DefaultWalDirectoryPolicy.INSTANCE, policy);
+            final TableTransactionLogV2 v2 = new TableTransactionLogV2(config, PART, DefaultWalDirectoryPolicy.INSTANCE, policy, () -> 0, () -> -1);
             try {
                 v2.create(path, 1L);
                 v2.open(path);

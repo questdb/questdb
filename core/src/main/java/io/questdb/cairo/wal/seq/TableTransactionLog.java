@@ -53,6 +53,7 @@ import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.LongSupplier;
 
 import static io.questdb.cairo.TableUtils.openSmallFile;
 import static io.questdb.cairo.wal.WalUtils.*;
@@ -66,21 +67,33 @@ public class TableTransactionLog implements Closeable {
     private final FilesFacade ff;
     private final AtomicLong maxMetadataVersion = new AtomicLong();
     private final Utf8StringSink rootPath = new Utf8StringSink();
+    private final LongSupplier tableStructureVersion;
     private final MemoryCMARW txnMetaMem = Vm.getCMARWInstance();
     private final MemoryCMARW txnMetaMemIndex = Vm.getCMARWInstance();
+    private final LongSupplier usedTxnFloor;
     private final WalDirectoryPolicy walDirectoryPolicy;
     private volatile long lastTxn = -1;
     private TableTransactionLogFile txnLogFile;
 
+    /**
+     * @param usedTxnFloor          the highest txn the table has applied, read only when an open finds a torn record:
+     *                              the open never cuts the log below it. {@code Long.MAX_VALUE} when it is not known
+     * @param tableStructureVersion the table's structure version, read only when an open keeps a torn last record;
+     *                              -1 when it is not known
+     */
     TableTransactionLog(
             CairoConfiguration configuration,
             @NotNull WalDirectoryPolicy walDirectoryPolicy,
-            @NotNull LocalDurabilityPolicy durabilityPolicy
+            @NotNull LocalDurabilityPolicy durabilityPolicy,
+            @NotNull LongSupplier usedTxnFloor,
+            @NotNull LongSupplier tableStructureVersion
     ) {
         this.configuration = configuration;
         this.durabilityPolicy = durabilityPolicy;
         this.ff = configuration.getFilesFacade();
         this.walDirectoryPolicy = walDirectoryPolicy;
+        this.usedTxnFloor = usedTxnFloor;
+        this.tableStructureVersion = tableStructureVersion;
     }
 
     /**
@@ -177,7 +190,7 @@ public class TableTransactionLog implements Closeable {
             assert txnLogFile == null;
             rootPath.put(path);
 
-            txnLogFile = openTxnFile(path, configuration, walDirectoryPolicy, durabilityPolicy);
+            txnLogFile = openTxnFile(path, configuration, walDirectoryPolicy, durabilityPolicy, usedTxnFloor, tableStructureVersion);
             long maxStructureVersion = txnLogFile.open(path);
 
             openFiles(path);
@@ -238,13 +251,16 @@ public class TableTransactionLog implements Closeable {
             Path path,
             CairoConfiguration configuration,
             WalDirectoryPolicy walDirectoryPolicy,
-            LocalDurabilityPolicy durabilityPolicy
+            LocalDurabilityPolicy durabilityPolicy,
+            LongSupplier usedTxnFloor,
+            LongSupplier tableStructureVersion
     ) {
         int formatVersion = getFormatVersion(path, configuration.getFilesFacade());
         return switch (formatVersion) {
-            case WAL_SEQUENCER_FORMAT_VERSION_V1 -> new TableTransactionLogV1(configuration, durabilityPolicy);
+            case WAL_SEQUENCER_FORMAT_VERSION_V1 ->
+                    new TableTransactionLogV1(configuration, durabilityPolicy, usedTxnFloor, tableStructureVersion);
             case WAL_SEQUENCER_FORMAT_VERSION_V2 ->
-                    new TableTransactionLogV2(configuration, -1, walDirectoryPolicy, durabilityPolicy);
+                    new TableTransactionLogV2(configuration, -1, walDirectoryPolicy, durabilityPolicy, usedTxnFloor, tableStructureVersion);
             default -> throw new UnsupportedOperationException("Unsupported transaction log version: " + formatVersion);
         };
     }
@@ -252,9 +268,9 @@ public class TableTransactionLog implements Closeable {
     private void createTxnLogFileInstance() {
         if (txnLogFile == null) {
             if (configuration.getDefaultSeqPartTxnCount() > 0) {
-                txnLogFile = new TableTransactionLogV2(configuration, configuration.getDefaultSeqPartTxnCount(), walDirectoryPolicy, durabilityPolicy);
+                txnLogFile = new TableTransactionLogV2(configuration, configuration.getDefaultSeqPartTxnCount(), walDirectoryPolicy, durabilityPolicy, usedTxnFloor, tableStructureVersion);
             } else {
-                txnLogFile = new TableTransactionLogV1(configuration, durabilityPolicy);
+                txnLogFile = new TableTransactionLogV1(configuration, durabilityPolicy, usedTxnFloor, tableStructureVersion);
             }
         } else {
             throw new IllegalStateException("transaction log file already opened");
