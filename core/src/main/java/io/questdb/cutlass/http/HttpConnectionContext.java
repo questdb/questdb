@@ -1479,12 +1479,14 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
         // for clients which do not support/care about cookies, such as apps using the REST API
         final DirectUtf8Sequence sessionParam = getRequestHeader().getUrlParam(URL_PARAM_SESSION);
 
-        // create session if
-        // - we do not have one yet and the client requested one with 'session=true' or
-        // - the client sent an expired/evicted/revoked session id or
-        // - changed credentials without sending logout
-        // in all these cases the authenticator has authenticated the request
-        if (
+        // Logout must not create a replacement for a revoked, expired or evicted session, or for a
+        // session whose principal differs from the authenticated principal. The request is still processed.
+        if (isSessionCloseRequested()) {
+            if (sessionInfo != null) {
+                sessionStore.destroySession(sessionInfo.getSessionId(), this);
+            }
+        } else if (
+                // create a session only when requested, replacing a stale cookie, or changing principals
                 (Utf8s.equalsNcAscii(TRUE, sessionParam) && sessionId == null)
                         || (sessionId != null && sessionInfo == null)
                         || (sessionInfo != null && !Chars.equals(sessionInfo.getPrincipal(), securityContext.getSessionPrincipal()))
@@ -1495,10 +1497,6 @@ public class HttpConnectionContext extends IOContext<HttpConnectionContext> impl
                     getCredentialFingerprint(headerParser.getHeader(HEADER_AUTHORIZATION)),
                     this
             );
-        } else if (sessionInfo != null && isSessionCloseRequested()) {
-            // close session if client requested it
-            // note that this request is still going to be processed
-            sessionStore.destroySession(sessionInfo.getSessionId(), this);
         } else if (sessionInfo != null) {
             if (isRequestCredentialVerified) {
                 // The credential has just authenticated the principal of the session (again), and the session ends
