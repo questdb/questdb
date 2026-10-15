@@ -6297,6 +6297,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // their bytes for the whole call.
                 final long keyHandle = transplantKeys.getQuick(i);
                 final long payloadHandle = transplantPayloads.getQuick(i);
+                hooks.beforeKeyedTransplantEntry(i);
                 primaryWindow.transplantCheckpointWindowEntry(
                         transplantKeyPage.of(
                                 transplantKeyArena.memory(),

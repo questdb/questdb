@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewRefreshHooks;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.QuietCloseable;
 import org.jetbrains.annotations.Nullable;
@@ -52,6 +53,10 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
     private boolean isStoredSuffixCountFaultArmed;
     private boolean isStrandedIdLeadPublished;
     private Runnable keyedTransplantEndObserver;
+    // The view tracker the armed hand-back entry breaches; null throws a critical error instead.
+    private MemoryTracker keyedTransplantEntryBreachTracker;
+    // The hand-back position whose restore throws; -1 is disarmed.
+    private int keyedTransplantEntryFaultIndex = -1;
     private Runnable keyedTransplantStartObserver;
     private Runnable peerTurnBeforeRefreshLatch;
     private Consumer<Throwable> refreshFaultObserver;
@@ -94,10 +99,30 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
     }
 
     @Override
+    public void beforeKeyedTransplantEntry(int entryIndex) {
+        if (keyedTransplantEntryFaultIndex >= 0 && entryIndex == keyedTransplantEntryFaultIndex) {
+            keyedTransplantEntryFaultIndex = -1;
+            final MemoryTracker tracker = keyedTransplantEntryBreachTracker;
+            keyedTransplantEntryBreachTracker = null;
+            if (tracker != null) {
+                // What the view's own tracker raises for a restore that grows the primary's
+                // map past the view's refresh memory limit.
+                LiveViewMidDrainFault.breach(tracker);
+            }
+            // Stands in for any other failure of one key's restore, which the refresh
+            // failure handler retries.
+            throw CairoException.critical(0).put("simulated live view keyed repair transplant entry fault");
+        }
+    }
+
+    @Override
     public void beforeKeyedTransplantRestore() {
         if (isKeyedTransplantFaultArmed) {
             isKeyedTransplantFaultArmed = false;
-            // Stands in for the allocation failure a refresh memory limit raises there.
+            // Stands in for a critical failure after the freeze and before any key moves,
+            // which the refresh failure handler retries. It is not a breach of the view's
+            // refresh memory limit: a breach invalidates the view, and
+            // setSimulateKeyedTransplantEntryFault arms that one.
             throw CairoException.critical(0).put("simulated live view keyed repair transplant fault");
         }
     }
@@ -157,6 +182,8 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
     public void clearFaults() {
         isColdKeyedTimelineFaultArmed = false;
         isKeyedTransplantFaultArmed = false;
+        keyedTransplantEntryBreachTracker = null;
+        keyedTransplantEntryFaultIndex = -1;
         isRepairApplySkipped = false;
         isRepairUnwindCleanupFaultArmed = false;
         isStagingBufferCloseFaultArmed = false;
@@ -171,6 +198,10 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
     @Override
     public boolean isForwardCommitDedupCollapsed() {
         return isForwardCommitDedupCollapsed;
+    }
+
+    public boolean isKeyedTransplantEntryFaultArmed() {
+        return keyedTransplantEntryFaultIndex >= 0;
     }
 
     public boolean isKeyedTransplantFaultArmed() {
@@ -309,6 +340,17 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
 
     public void setSimulateForwardCommitDedupCollapse(boolean simulate) {
         isForwardCommitDedupCollapsed = simulate;
+    }
+
+    /**
+     * One-shot: the next hand-back fails restoring the key at {@code entryIndex}, with every
+     * key below it already restored into the primary runtime. With {@code breachTracker} - the
+     * view's own refresh memory tracker - the restore breaches it; without one it throws a
+     * critical error.
+     */
+    public void setSimulateKeyedTransplantEntryFault(int entryIndex, @Nullable MemoryTracker breachTracker) {
+        keyedTransplantEntryBreachTracker = breachTracker;
+        keyedTransplantEntryFaultIndex = entryIndex;
     }
 
     public void setSimulateKeyedTransplantFault(boolean simulate) {

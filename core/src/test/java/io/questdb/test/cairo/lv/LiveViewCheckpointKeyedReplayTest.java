@@ -1148,6 +1148,9 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                             engine.getBusyReaderCount()
                     );
                     assertLadderCountsRowsAtOrBelowEachBoundary("after the retry");
+                    // The faulted turn committed its replacement and consumed nothing, so the
+                    // retry repairs the same correction over it.
+                    assertViewMatchesRecomputeIgnoringFaults();
                 }
             });
             // Checked once assertMemoryLeak has passed, so a run that drops the close failure
@@ -1163,6 +1166,195 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
         } finally {
             capture.stop();
         }
+    }
+
+    @Test
+    public void testAKeyedSegmentReplayThatFaultsLeavesTheNextViewOnItsWorkerReadingWhole() throws Exception {
+        // The keyed replay is worker state: repairOneSegment arms it with one view's key
+        // domain, and its finally clears it on every exit. A replay that faults part way
+        // unwinds through that finally like any other exit, and the view the worker turns to
+        // next in the same pass - lv2, over the same base and the same correction - must find
+        // nothing armed. lv2 leaves the account out of its projection, which denies it the
+        // keyed route, so it reads its segment whole; a replay still armed with lv's domain
+        // is the one thing that would read it by key.
+        //
+        // The fault fails a read of the view's own table: the merge's first read of the stored
+        // rows of the repaired day, which the replay makes once it has replayed the correction.
+        // A read of the base cannot stand in, because the pricing ahead of the replay opens
+        // every base partition the replay reads.
+        armKeyedReplay();
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("created_at", "cumulative_sum", "account_id");
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(fault.facade(), () -> {
+                createView(seedEightAccountsOverThreeDays());
+                execute("""
+                        CREATE LIVE VIEW lv2 FLUSH EVERY 100ms START FROM BEGINNING AS
+                        SELECT created_at, sum(amount) OVER w AS cumulative_sum FROM tx
+                        WINDOW w AS (PARTITION BY account_id ORDER BY created_at ANCHOR DAILY '00:00')
+                        """);
+                fault.of(viewInstance().getLiveViewToken().getDirName());
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    commit(row(5, 1, "acct-1"), job);
+                    final LiveViewInstance instance = viewInstance();
+                    final long keyedRepairsBefore = job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT);
+
+                    // The executor's prologue counts the view's rows below the floor through a
+                    // reader of its own first, and the fault lets that open through.
+                    fault.armAppliedScan("2026-01-02T01", 1);
+                    commit(correction("acct-1"), job);
+
+                    Assert.assertTrue("the keyed replay's merge must have met the fault", fault.hasAppliedScanFired());
+                    Assert.assertFalse(
+                            "a keyed replay that faulted must leave its worker's replay disarmed",
+                            job.isKeyedReplayArmedForTest()
+                    );
+                    Assert.assertTrue(
+                            "the correction must have been replayed by key",
+                            job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT) > keyedRepairsBefore
+                    );
+                    Assert.assertEquals("the fault must cost lv exactly one refresh fault", 1, instance.getRefreshFaultCount());
+                    capture.drain();
+                    capture.assertLogged("live view repair replayed by key [view=lv,");
+                    capture.assertLogged("live view segment repair [view=lv2,");
+                    capture.assertNotLogged("live view repair replayed by key [view=lv2,");
+                    assertViewMatchesRecomputeIgnoringFaults();
+                    assertKeylessViewMatchesRecompute();
+
+                    commitForwardRows(10, job);
+                    assertViewMatchesRecomputeIgnoringFaults();
+                    assertKeylessViewMatchesRecompute();
+                }
+
+                restartAndCommitForwardRows(12);
+                assertRestoredFromTimeline("lv");
+                assertRestoredFromTimeline("lv2");
+                assertViewMatchesRecompute();
+                assertKeylessViewMatchesRecompute();
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testAParkedKeyedRepairFinishesAfterTheBaseIndexIsDropped() throws Exception {
+        // The parked replay follows its keys through the posting index of the base reader it
+        // pinned, and DROP INDEX moves the base past that reader between two of its turns. The
+        // turn that resumes it still reads the pinned snapshot, and the repair it finishes is
+        // the one it started.
+        armKeyedReplay();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedEightAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = parkTheKeyedSegmentRepair(job);
+                final long resumesBefore = instance.getCheckpointRepairResumes();
+
+                execute("ALTER TABLE tx ALTER COLUMN account_id DROP INDEX");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                Assert.assertTrue(
+                        "the parked repair must have resumed rather than started over",
+                        instance.getCheckpointRepairResumes() > resumesBefore
+                );
+                Assert.assertNull("the resumed repair must have finished", instance.getSuspendedRepair());
+                Assert.assertEquals(
+                        "the finished repair must copy every untouched account's row forward",
+                        (ACCOUNTS - 1) * ROWS_PER_ACCOUNT_PER_DAY,
+                        job.getStatsForTest().get(KEYED_REPLAY_MERGED_ROWS)
+                );
+                Assert.assertEquals("the finished repair must return every reader", 0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                assertViewMatchesRecompute();
+
+                commitForwardRows(10, job);
+                assertViewMatchesRecompute();
+            }
+
+            restartAndCommitForwardRows(12);
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testAParkedKeyedRepairIsReleasedByDropLiveView() throws Exception {
+        // A parked keyed repair holds the pinned base reader, the view's WAL writer with the
+        // uncommitted replacement, the staged capture, and in its keyed replay the merge's
+        // cursor over the view's own table. Once DROP LIVE VIEW has the view, nothing will
+        // resume the repair, so the drop must discard all of it. A view created again under
+        // the same name starts from the base, not from anything the parked repair staged.
+        armKeyedReplay();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedEightAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance parked = parkTheKeyedSegmentRepair(job);
+
+                execute("DROP LIVE VIEW lv");
+
+                Assert.assertTrue(parked.isDropped());
+                Assert.assertNull("the drop must discard the parked repair", parked.getSuspendedRepair());
+                Assert.assertEquals("the drop must return the parked repair's readers", 0, engine.getBusyReaderCount());
+                Assert.assertEquals("the drop must roll the parked repair's writer back", 0, engine.getBusyWriterCount());
+                // The worker still lists the dropped view among the repairs it parked.
+                driveRefreshToQuiescence(job);
+
+                createLiveView("lv", "");
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+                commitForwardRows(10, job);
+                assertViewMatchesRecompute();
+            }
+
+            restartAndCommitForwardRows(12);
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testAParkedKeyedRepairIsReplannedAfterARestart() throws Exception {
+        // A restart tears the registry down under a parked keyed repair, with the worker that
+        // parked it still holding the view on its list. The parked repair moved nothing
+        // durable - the replacement is uncommitted and no repair marker is down - so the
+        // restarted view restores from the timeline and repairs the same correction again,
+        // by key.
+        armKeyedReplay();
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+        assertMemoryLeak(() -> {
+            createView(seedEightAccountsOverThreeDays());
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance parked = parkTheKeyedSegmentRepair(job);
+
+                restartCycle();
+
+                Assert.assertNull("the teardown must discard the parked repair", parked.getSuspendedRepair());
+                Assert.assertEquals("the teardown must return the parked repair's readers", 0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            }
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertRestoredFromTimeline("lv");
+                Assert.assertEquals(
+                        "the restarted view must repair the correction by key again",
+                        1,
+                        job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
+                );
+                assertViewMatchesRecompute();
+                commitForwardRows(10, job);
+                assertViewMatchesRecompute();
+            }
+
+            restartAndCommitForwardRows(12);
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
     }
 
     @Test
@@ -2034,26 +2226,56 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
     }
 
     private void assertViewMatchesRecompute(String viewName, String whereClause) throws Exception {
-        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
-        final String recompute = "select created_at, account_id, "
-                + "sum(amount) over (partition by account_id, bucket order by created_at "
-                + "rows between unbounded preceding and current row) as cumulative_sum "
-                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx" + whereClause + ")";
+        assertViewMatchesRecomputeIgnoringFaults(viewName, whereClause);
+        assertNoRefreshFaults(viewName);
+    }
+
+    private void assertViewMatchesRecomputeIgnoringFaults() throws Exception {
+        assertViewMatchesRecomputeIgnoringFaults("lv", "");
+    }
+
+    private void assertViewMatchesRecomputeIgnoringFaults(String viewName, String whereClause) throws Exception {
         TestUtils.assertSqlCursors(
                 engine,
                 sqlExecutionContext,
-                "(" + recompute + ") order by 2, 1",
+                "(" + recomputeSql("account_id, ", whereClause) + ") order by 2, 1",
                 "(" + viewName + ") order by 2, 1",
                 LOG,
                 true
         );
-        assertNoRefreshFaults(viewName);
+    }
+
+    /**
+     * lv2 of {@link #testAKeyedSegmentReplayThatFaultsLeavesTheNextViewOnItsWorkerReadingWhole}
+     * against a recompute: the same running sum per account and day, without the account
+     * column the view leaves out. Every row it holds has a timestamp of its own.
+     */
+    private void assertKeylessViewMatchesRecompute() throws Exception {
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                "(" + recomputeSql("", "") + ") order by 1",
+                "(lv2) order by 1",
+                LOG,
+                true
+        );
+        assertNoRefreshFaults("lv2");
     }
 
     private void commit(String values, LiveViewRefreshJob job) throws Exception {
         execute("insert into tx values " + values);
         drainWalQueue();
         driveRefreshToQuiescence(job);
+    }
+
+    /**
+     * In-order rows on 2026-01-05, above everything the view holds: acct-1, which the
+     * corrections here touch, at {@code hour}, and acct-3, which none of them touches, an hour
+     * later. Each folds onto the accumulator the runtime holds for its account, so a stale one
+     * shows on the account's next row and in no row before it.
+     */
+    private void commitForwardRows(int hour, LiveViewRefreshJob job) throws Exception {
+        commit(row(5, hour, "acct-1") + ", " + row(5, hour + 1, "acct-3"), job);
     }
 
     /**
@@ -2119,7 +2341,11 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 + "amount double) timestamp(created_at) partition by hour wal" + dedupClause);
         execute("insert into tx values " + seedRows);
         drainWalQueue();
-        execute("create live view lv flush every 100ms start from beginning as "
+        createLiveView("lv", whereClause);
+    }
+
+    private void createLiveView(String viewName, String whereClause) throws Exception {
+        execute("create live view " + viewName + " flush every 100ms start from beginning as "
                 + "select created_at, account_id, sum(amount) over w as cumulative_sum "
                 + "from tx" + whereClause + " window w as (partition by account_id order by created_at anchor daily '00:00')");
     }
@@ -2157,9 +2383,46 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
         }
     }
 
+    /**
+     * Parks the keyed repair of {@link #correction} on acct-1, a closed day's, on the
+     * one-row replay budget the caller sets, and returns the view holding it.
+     */
+    private LiveViewInstance parkTheKeyedSegmentRepair(LiveViewRefreshJob job) throws Exception {
+        driveRefreshToQuiescence(job);
+        commit(row(5, 1, "acct-1"), job);
+        execute("insert into tx values " + correction("acct-1"));
+        drainWalQueue();
+        driveUntilParked(job, "lv");
+        final LiveViewInstance instance = viewInstance();
+        Assert.assertEquals(
+                "the parked repair must be the keyed one",
+                1,
+                job.getStatsForTest().get(KEYED_REPLAY_SEGMENT_COUNT)
+        );
+        Assert.assertNotNull(
+                "the parked repair must carry its keyed replay",
+                instance.getSuspendedRepair().getKeyedReplay()
+        );
+        return instance;
+    }
+
     private void restartCycle() {
         engine.getLiveViewRegistry().clear();
         engine.buildViewGraphs();
+    }
+
+    /**
+     * The follow-up a keyed case ends on: a restart, then {@link #commitForwardRows} at
+     * {@code hour} on a worker of its own. The restore comes back on whatever the repair and
+     * the seals behind it left on disk, and the forward rows are what read it. The caller
+     * asserts the route and the rows.
+     */
+    private void restartAndCommitForwardRows(int hour) throws Exception {
+        restartCycle();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+            commitForwardRows(hour, job);
+        }
     }
 
     /**
@@ -2387,6 +2650,19 @@ public class LiveViewCheckpointKeyedReplayTest extends AbstractLiveViewTest {
                 );
             }
         }
+    }
+
+    /**
+     * The view's running sum per account and day, recomputed from the base, projecting
+     * {@code keyProjection} - the account column and a comma, or nothing - between the
+     * timestamp and the sum.
+     */
+    private static String recomputeSql(String keyProjection, String whereClause) {
+        final String bucket = "timestamp_floor('1d', created_at, '1970-01-01T00:00:00.000000Z'::timestamp)";
+        return "select created_at, " + keyProjection
+                + "sum(amount) over (partition by account_id, bucket order by created_at "
+                + "rows between unbounded preceding and current row) as cumulative_sum "
+                + "from (select created_at, account_id, amount, " + bucket + " as bucket from tx" + whereClause + ")";
     }
 
     private static Path checkpointsDir(LiveViewInstance instance) {

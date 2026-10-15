@@ -56,6 +56,7 @@ import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.LogCapture;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -156,7 +157,17 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 Assert.assertEquals(0, job.getStatsForTest().get(SPARSE_PUBLICATION_FALLBACK_COUNT));
                 Assert.assertTrue(job.getStatsForTest().get(SPARSE_PUBLICATION_ROWS_KEPT) > 0);
                 assertViewMatchesRecompute();
+
+                // The publication alone decides the rows above. In order on the corrected
+                // account and an untouched one, these fold onto the accumulators the hand-back
+                // left the primary runtime holding, which nothing above reads.
+                commitForwardRows(3, 12, job);
+                assertViewMatchesRecompute();
             }
+
+            restartAndCommitForwardRows(3, 13);
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
         });
     }
 
@@ -327,11 +338,14 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
     public void testAColdKeyedHeadMissWhoseTransplantFaultsRebuildsBeforeSealingAndSurvivesARestart() throws Exception {
         // The cold keyed route replays the corrected keys in an isolated runtime and hands
         // their accumulators back to the primary just before the head seal images it. A
-        // hand-back that throws - a refresh memory limit reached over the primary's map -
-        // leaves the durable output correct and the primary holding stale accumulators for
-        // exactly the corrected keys. Marking the runtime dirty and carrying on used to seal
-        // the head over that runtime: a restart then restored it as clean, the dirty mark
-        // gone with the process, and every later row on those keys extended the stale total.
+        // hand-back that throws a critical error before any key moves leaves the durable
+        // output correct and the primary holding stale accumulators for exactly the
+        // corrected keys, and the refresh failure handler retries it. A breach of the view's
+        // refresh memory limit takes the other path, invalidation, which
+        // testAColdKeyedHeadMissWhoseTransplantBreachesPartWayInvalidatesTheView covers.
+        // Marking the runtime dirty and carrying on used to seal the head over that
+        // runtime: a restart then restored it as clean, the dirty mark gone with the
+        // process, and every later row on those keys extended the stale total.
         //
         // The failure now unwinds the turn before the seal, and the refresh's own failure
         // path rebuilds the window state from the applied base. What the case pins is the
@@ -355,10 +369,7 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                     // a worker would run it: driving to quiescence would let a later tick read
                     // the dirty mark and rebuild, which is the recovery a restart never sees.
                     hooks(job).setSimulateKeyedTransplantFault(true);
-                    execute("insert into tx values " + row(3, 2, 35, "acct-1"));
-                    drainWalQueue();
-                    setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
-                    Assert.assertTrue("the turn must find the correction", job.run());
+                    commitAndRunOneTurn(row(3, 2, 35, "acct-1"), job);
                     Assert.assertFalse(
                             "the injected transplant fault never fired, so the case pinned nothing",
                             hooks(job).isKeyedTransplantFaultArmed()
@@ -393,10 +404,295 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                     commit(row(3, 12, 31, "acct-2"), job);
                     assertViewMatchesRecomputeIgnoringFaults();
                 }
+                // The rebuild the fault forced sealed what it rebuilt, and the restart restores
+                // that seal. A turn that unwound without the rebuild leaves nothing sealed over
+                // the truncated timeline, so the restart rebuilds from the base instead, which
+                // hides any stale state here and is refused over a base that lost rows.
+                assertRestoredFromTimeline("lv");
             });
         } finally {
             setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, (String) null);
         }
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissWhoseTransplantFaultsPartWayRebuildsBeforeSealingAndSurvivesARestart() throws Exception {
+        // The case above with the fault one key further in. The hand-back has restored the
+        // first corrected key into the primary and fails on the second, so the primary holds
+        // one corrected accumulator and one stale one, and nothing in the runtime tells them
+        // apart. The unwind must not seal that runtime either, and the rebuild behind the
+        // fault is what puts both keys right.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        // As above: the restart must come back on the head seal, not on re-versioned roots.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+
+                // Two accounts of four, so the hand-back has a second key to fail on. The
+                // pricing need not prefer the keyed read for half the accounts; the switch
+                // takes it anyway.
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
+                hooks(job).setSimulateKeyedTransplantEntryFault(1, null);
+                commitAndRunOneTurn(row(3, 2, 35, "acct-1") + ", " + row(3, 2, 36, "acct-2"), job);
+                Assert.assertFalse(
+                        "the injected fault never reached the second key, so the case pinned nothing",
+                        hooks(job).isKeyedTransplantEntryFaultArmed()
+                );
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(
+                        "the failed hand-back must cost exactly one refresh fault",
+                        1,
+                        instance.getRefreshFaultCount()
+                );
+                Assert.assertFalse(
+                        "the rebuild the fault forces must have paid the debt within the turn",
+                        instance.isWindowStateDirty()
+                );
+            }
+
+            // Nothing committed between the fault and the restart, as above, and the restart
+            // comes back on the rebuild's seal.
+            restartAndCommitForwardRows(3, 12);
+            Assert.assertFalse("the restored view must not come back dirty", viewInstance().isWindowStateDirty());
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissWhoseTransplantBreachesPartWayInvalidatesTheView() throws Exception {
+        // The same part-way hand-back, failing on what a restore that grows the primary's map
+        // past the view's own refresh memory limit raises. The refresh failure handler retries
+        // other faults, but a breach means the view's working set does not fit the limit its
+        // operator set, so it invalidates the view on the first one with the tracker's own
+        // message. The hand-back rethrows what it caught rather than a failure of its own, and
+        // that is what keeps the breach a breach on its way there.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        // Fits everything the view does here; the fault supplies the breach.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_REFRESH_MEMORY_LIMIT_BYTES, 67_108_864);
+        final LogCapture capture = new LogCapture();
+        capture.start();
+        try {
+            assertMemoryLeak(() -> {
+                createView(seedFourAccountsOverTwoDays(), true);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    driveRefreshToQuiescence(job);
+                    final LiveViewInstance instance = viewInstance();
+
+                    hooks(job).setForceOpenSegmentKeyedReplay(true);
+                    hooks(job).setSimulateKeyedTransplantEntryFault(1, instance.getMemoryTracker());
+                    commitAndRunOneTurn(row(3, 2, 35, "acct-1") + ", " + row(3, 2, 36, "acct-2"), job);
+                    Assert.assertFalse(
+                            "the injected breach never reached the second key, so the case pinned nothing",
+                            hooks(job).isKeyedTransplantEntryFaultArmed()
+                    );
+                    Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                    Assert.assertEquals("the breach is the one fault", 1, instance.getRefreshFaultCount());
+                    Assert.assertTrue("a breach of the view's own limit must invalidate it", instance.isInvalid());
+                    TestUtils.assertContains(
+                            instance.getInvalidationReason(),
+                            "query memory limit exceeded [workload=LIVE_VIEW_REFRESH"
+                    );
+                    capture.drain();
+                    capture.assertLogged("live view cold keyed repair could not hand its keys back [view=lv");
+                    capture.assertLogged("live view exceeded its refresh memory limit, invalidating [view=lv");
+                    // The publication ahead of the hand-back committed the corrected rows, so
+                    // the view keeps serving them.
+                    assertViewMatchesRecomputeIgnoringFaults();
+                }
+
+                // The invalidation is durable: a restart does not bring the view back.
+                restartCycle();
+                final LiveViewInstance restarted = viewInstance();
+                Assert.assertTrue(restarted.isInvalid());
+                TestUtils.assertContains(
+                        restarted.getInvalidationReason(),
+                        "query memory limit exceeded [workload=LIVE_VIEW_REFRESH"
+                );
+                assertViewMatchesRecomputeIgnoringFaults();
+            });
+        } finally {
+            capture.stop();
+        }
+    }
+
+    @Test
+    public void testAColdKeyedHeadMissWhoseReplacementStallsRepeatsTheRepairOnceItApplies() throws Exception {
+        // The cold keyed route's publication goes through the same reconciliation as every
+        // head-miss: a replacement the view's inline apply leaves in its WAL but not in its
+        // table defers the repair, which runs again once the block lands. On this route the
+        // deferred turn also owes the primary a hand-back, and it must not pay it: no
+        // generation describes the state the hand-back would leave, and the table does not
+        // hold the output that state belongs to yet.
+        //
+        // The repeated repair finds the stored rows above its floor already corrected by the
+        // block that landed, so the cold route declines it, and the localized rebuild replays
+        // the whole range through the primary instead. That replaces the primary's state for
+        // every key, which is what the forward rows and the restart below read back.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                final LiveViewInstance instance = viewInstance();
+                final long processedBefore = instance.getLastProcessedSeqTxn();
+
+                hooks(job).setForceOpenSegmentKeyedReplay(true);
+                hooks(job).setSimulateRepairApplyFailure(true);
+                // One turn, so the fallback scan, which re-drives a view's outstanding apply,
+                // does not run and the stall is observable.
+                commitAndRunOneTurn(row(3, 2, 35, "acct-1"), job);
+                drainWalQueue();
+                Assert.assertEquals(1, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertNotEquals(
+                        "an unapplied replacement must be left for reconciliation",
+                        Numbers.LONG_NULL,
+                        instance.getPendingReplacementLvSeqTxn()
+                );
+                Assert.assertEquals(
+                        "no watermark may walk past output the live view table does not hold",
+                        processedBefore,
+                        instance.getLastProcessedSeqTxn()
+                );
+                Assert.assertEquals(
+                        "the deferred turn must not hand its keys back",
+                        0,
+                        job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT)
+                );
+
+                hooks(job).setSimulateRepairApplyFailure(false);
+                driveRefreshToQuiescence(job);
+                Assert.assertEquals(Numbers.LONG_NULL, instance.getPendingReplacementLvSeqTxn());
+                Assert.assertTrue(instance.getLastProcessedSeqTxn() > processedBefore);
+                Assert.assertEquals(
+                        "the repeated repair must read the whole range, not the corrected key",
+                        1,
+                        job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT)
+                );
+                Assert.assertEquals(0, job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT));
+                assertViewMatchesRecompute();
+
+                commitForwardRows(3, 12, job);
+                assertViewMatchesRecompute();
+            }
+
+            restartAndCommitForwardRows(3, 13);
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testAParkedColdKeyedRepairFinishesAfterTheBaseIndexIsDropped() throws Exception {
+        // The parked replay follows its keys through the posting index of the base reader it
+        // pinned, and DROP INDEX moves the base past that reader between two of its turns. The
+        // turn that resumes it still reads the pinned snapshot, and the repair it finishes is
+        // the one it started.
+        armTheColdKeyedPark();
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance instance = parkTheColdKeyedRepair(job);
+                final long resumesBefore = instance.getCheckpointRepairResumes();
+
+                execute("ALTER TABLE tx ALTER COLUMN account_id DROP INDEX");
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+
+                Assert.assertTrue(
+                        "the parked repair must have resumed rather than started over",
+                        instance.getCheckpointRepairResumes() > resumesBefore
+                );
+                Assert.assertNull("the resumed repair must have finished", instance.getSuspendedRepair());
+                Assert.assertEquals("the finished repair must return every reader", 0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+                assertViewMatchesRecompute();
+
+                commitForwardRows(3, 12, job);
+                assertViewMatchesRecompute();
+            }
+
+            restartAndCommitForwardRows(3, 13);
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testAParkedColdKeyedRepairIsReleasedByDropLiveView() throws Exception {
+        // A parked cold keyed repair holds the pinned base reader, the view's WAL writer with
+        // the uncommitted replacement, the staged capture, and in its keyed replay a cursor
+        // over the view's own table. Once DROP LIVE VIEW has the view, nothing will resume
+        // the repair, so the drop must discard all of it. A view created again under the
+        // same name starts from the base, not from anything the parked repair staged.
+        armTheColdKeyedPark();
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance parked = parkTheColdKeyedRepair(job);
+
+                execute("DROP LIVE VIEW lv");
+
+                Assert.assertTrue(parked.isDropped());
+                Assert.assertNull("the drop must discard the parked repair", parked.getSuspendedRepair());
+                Assert.assertEquals("the drop must return the parked repair's readers", 0, engine.getBusyReaderCount());
+                Assert.assertEquals("the drop must roll the parked repair's writer back", 0, engine.getBusyWriterCount());
+                // The worker still lists the dropped view among the repairs it parked.
+                driveRefreshToQuiescence(job);
+
+                createLiveView();
+                driveRefreshToQuiescence(job);
+                assertViewMatchesRecompute();
+                commitForwardRows(3, 12, job);
+                assertViewMatchesRecompute();
+            }
+
+            restartAndCommitForwardRows(3, 13);
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
+    }
+
+    @Test
+    public void testAParkedColdKeyedRepairIsReplannedAfterARestart() throws Exception {
+        // A restart tears the registry down under a parked cold keyed repair, with the worker
+        // that parked it still holding the view on its list. The parked repair moved nothing
+        // durable - the replacement is uncommitted and no repair marker is down - so the
+        // restarted view restores from the timeline and repairs the same correction again.
+        armTheColdKeyedPark();
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                final LiveViewInstance parked = parkTheColdKeyedRepair(job);
+
+                restartCycle();
+
+                Assert.assertNull("the teardown must discard the parked repair", parked.getSuspendedRepair());
+                Assert.assertEquals("the teardown must return the parked repair's readers", 0, engine.getBusyReaderCount());
+                Assert.assertEquals(0, engine.getBusyWriterCount());
+            }
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                assertRestoredFromTimeline("lv");
+                assertViewMatchesRecompute();
+                commitForwardRows(3, 12, job);
+                assertViewMatchesRecompute();
+            }
+
+            restartAndCommitForwardRows(3, 13);
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
     }
 
     @Test
@@ -952,8 +1248,33 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                         job.getStatsForTest().get(TRANSPLANTED_KEY_COUNT) > 0
                 );
                 assertViewMatchesRecompute();
+
+                // The publication alone decides the rows above. In order on the corrected
+                // account and an untouched one, these fold onto the accumulators the hand-back
+                // left the primary runtime holding, which nothing above reads.
+                commitForwardRows(4, 12, job);
+                assertViewMatchesRecompute();
             }
+
+            restartAndCommitForwardRows(4, 13);
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
         });
+    }
+
+    @Test
+    public void testAKeyedResumeWhoseTransplantFaultsRebuildsBeforeSealingAndSurvivesARestart() throws Exception {
+        // The anchor resume's hand-back fails the way the cold route's does in
+        // testAColdKeyedHeadMissWhoseTransplantFaultsRebuildsBeforeSealingAndSurvivesARestart,
+        // after its splice has published the re-versioned roots.
+        assertKeyedResumeTransplantFaultSurvivesARestart(true);
+    }
+
+    @Test
+    public void testAKeyedResumeWhoseTransplantFaultsWithoutASpliceRebuildsBeforeSealingAndSurvivesARestart() throws Exception {
+        // The same fault with the chain declined, so the resume truncates the timeline at its
+        // anchor, and only what the recovery behind the fault seals stands above it.
+        assertKeyedResumeTransplantFaultSurvivesARestart(false);
     }
 
     @Test
@@ -1519,10 +1840,85 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         });
     }
 
+    /**
+     * The settings {@link #parkTheColdKeyedRepair} parks under: the cold keyed route priced
+     * at this fixture's scale, and a replay budget of one row.
+     */
+    private static void armTheColdKeyedPark() {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
+    }
+
     private static LongList transplantHandles(LiveViewRefreshJob job, String name) throws Exception {
         final Field field = LiveViewRefreshJob.class.getDeclaredField(name);
         field.setAccessible(true);
         return (LongList) field.get(job);
+    }
+
+    /**
+     * Drives an anchor resume of a late acct-1 row in the open day, by key, whose hand-back
+     * fails before it restores any key, in one refresh turn, then restarts with nothing
+     * committed in between and commits forward rows on the corrected account and an untouched
+     * one. The turn must unwind before its head seal, and its failure path must rebuild the
+     * runtime, so the restart comes back on what the turn sealed and nothing stale.
+     *
+     * @param isSpliced whether the resume re-versions the roots above its anchor, or declines
+     *                  the chain and truncates the timeline there
+     */
+    private void assertKeyedResumeTransplantFaultSurvivesARestart(boolean isSpliced) throws Exception {
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_KEYED_SCAN_INDEX_OPEN_ROWS, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_SPARSE_PUBLICATION_ENABLED, "true");
+        if (!isSpliced) {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_MAX_CHAINED_BOUNDARIES, 0);
+        }
+        assertMemoryLeak(() -> {
+            createView(seedFourAccountsOverTwoDays(), true);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                openTheDayAboveARoot(job);
+                final LiveViewInstance instance = viewInstance();
+                final long rootsVersionedBefore = instance.getCheckpointRepairRootsVersioned();
+
+                hooks(job).setSimulateKeyedTransplantFault(true);
+                commitAndRunOneTurn(row(4, 2, 35, "acct-1"), job);
+                Assert.assertFalse(
+                        "the injected transplant fault never fired, so the case pinned nothing",
+                        hooks(job).isKeyedTransplantFaultArmed()
+                );
+                Assert.assertEquals(
+                        "the correction must have been resumed by key",
+                        1,
+                        job.getStatsForTest().get(OPEN_SEGMENT_KEYED_RESUME_COUNT)
+                );
+                Assert.assertEquals(0, job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT));
+                Assert.assertEquals(
+                        isSpliced
+                                ? "the splice must have published ahead of the hand-back"
+                                : "a declined chain must re-version no root",
+                        isSpliced,
+                        instance.getCheckpointRepairRootsVersioned() > rootsVersionedBefore
+                );
+                Assert.assertEquals(
+                        "the failed hand-back must cost exactly one refresh fault",
+                        1,
+                        instance.getRefreshFaultCount()
+                );
+                Assert.assertFalse(
+                        "the rebuild the fault forces must have paid the debt within the turn",
+                        instance.isWindowStateDirty()
+                );
+            }
+
+            // The rebuild the fault forced sealed what it rebuilt, and the restart restores that
+            // seal rather than rebuilding from the base.
+            restartAndCommitForwardRows(4, 12);
+            Assert.assertFalse("the restored view must not come back dirty", viewInstance().isWindowStateDirty());
+            assertRestoredFromTimeline("lv");
+            assertViewMatchesRecompute();
+        });
     }
 
     /**
@@ -1711,6 +2107,42 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         engine.buildViewGraphs();
     }
 
+    /**
+     * The follow-up a keyed case ends on: a restart, then {@link #commitForwardRows} at
+     * {@code hour} of 2026-01-{@code day} on a worker of its own. The restore comes back on
+     * whatever the repair and the seals behind it left on disk, and the forward rows are what
+     * read it. The caller asserts the route and the rows.
+     */
+    private void restartAndCommitForwardRows(int day, int hour) throws Exception {
+        restartCycle();
+        try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+            driveRefreshToQuiescence(job);
+            commitForwardRows(day, hour, job);
+        }
+    }
+
+    /**
+     * Parks the cold keyed repair of a late acct-1 row in the seed's open day on the replay
+     * budget {@link #armTheColdKeyedPark} sets, and returns the view holding it.
+     */
+    private LiveViewInstance parkTheColdKeyedRepair(LiveViewRefreshJob job) throws Exception {
+        driveRefreshToQuiescence(job);
+        execute("insert into tx values " + row(3, 2, 35, "acct-1"));
+        drainWalQueue();
+        driveUntilParked(job, "lv");
+        final LiveViewInstance instance = viewInstance();
+        Assert.assertEquals(
+                "the parked repair must be the cold keyed one",
+                1,
+                job.getStatsForTest().get(OPEN_SEGMENT_COLD_KEYED_REPLAY_COUNT)
+        );
+        Assert.assertNotNull(
+                "the parked repair must carry its keyed replay",
+                instance.getSuspendedRepair().getKeyedReplay()
+        );
+        return instance;
+    }
+
     private long count(String sql) throws Exception {
         try (
                 RecordCursorFactory factory = select(sql);
@@ -1828,6 +2260,27 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
         driveRefreshToQuiescence(job);
     }
 
+    /**
+     * Commits {@code values} and runs exactly one refresh turn over it, the way a worker would:
+     * driving to quiescence would let a later turn repair whatever this one left behind, which
+     * a restart straight after it never sees.
+     */
+    private void commitAndRunOneTurn(String values, LiveViewRefreshJob job) throws Exception {
+        execute("insert into tx values " + values);
+        drainWalQueue();
+        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS);
+        Assert.assertTrue("the turn must find the correction", job.run());
+    }
+
+    /**
+     * In-order rows at {@code hour} of 2026-01-{@code day} on acct-1, which every correction
+     * here touches, and on acct-2. Each folds onto the accumulator the runtime holds for its
+     * account, so a stale one shows on the account's next row and in no row before it.
+     */
+    private void commitForwardRows(int day, int hour, LiveViewRefreshJob job) throws Exception {
+        commit(row(day, hour, 30, "acct-1") + ", " + row(day, hour, 31, "acct-2"), job);
+    }
+
     private void createView(String seedRows, boolean isKeyIndexed) throws Exception {
         createView(seedRows, isKeyIndexed, 0);
     }
@@ -1845,6 +2298,10 @@ public class LiveViewOpenSegmentKeyedReplayTest extends AbstractLiveViewTest {
                 + "amount double) timestamp(created_at) partition by hour wal");
         execute("insert into tx values " + seedRows);
         drainWalQueue();
+        createLiveView();
+    }
+
+    private void createLiveView() throws Exception {
         execute("create live view lv flush every 100ms start from beginning as "
                 + "select created_at, account_id, sum(amount) over w as cumulative_sum "
                 + "from tx window w as (partition by account_id order by created_at anchor daily '00:00')");

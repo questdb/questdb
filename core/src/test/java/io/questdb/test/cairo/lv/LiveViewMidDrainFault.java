@@ -79,6 +79,8 @@ final class LiveViewMidDrainFault {
     // The file name, with its leading separator, of the base column armAppliedScan fails.
     private final String appliedScanFileName;
     private final AtomicBoolean appliedScanFired = new AtomicBoolean();
+    // The opens armAppliedScan still lets through before the one it fails.
+    private final AtomicInteger appliedScanSkip = new AtomicInteger();
     // -1 disarmed; otherwise the number of reads still to skip before the one to fail.
     private final AtomicInteger countdown = new AtomicInteger(-1);
     private final AtomicBoolean fired = new AtomicBoolean();
@@ -136,7 +138,17 @@ final class LiveViewMidDrainFault {
      * after it appended every row of the one before, and the raw-WAL drain never opens it.
      */
     void armAppliedScan(String partition) {
+        armAppliedScan(partition, 0);
+    }
+
+    /**
+     * Arms the open {@link #armAppliedScan(String)} fails, letting the first {@code skip} of
+     * those opens through. A reader opens a partition's files once and keeps them, so each
+     * open the fault skips is another reader's first look at the partition.
+     */
+    void armAppliedScan(String partition, int skip) {
         appliedScanPartition = partition;
+        appliedScanSkip.set(skip);
         appliedScanFired.set(false);
         appliedScanArmed.set(true);
     }
@@ -210,6 +222,7 @@ final class LiveViewMidDrainFault {
                         && !Utf8s.containsAscii(name, "wal")
                         && isInAppliedScanPartition(name)
                         && Utf8s.endsWithAscii(name, appliedScanFileName)
+                        && appliedScanSkip.getAndDecrement() <= 0
                         && appliedScanArmed.compareAndSet(true, false)) {
                     appliedScanFired.set(true);
                     return -1;
@@ -293,7 +306,11 @@ final class LiveViewMidDrainFault {
         readErrno = errno;
     }
 
-    private static void breach(MemoryTracker tracker) {
+    /**
+     * Charges {@code tracker} one byte past what it has left, which it refuses with its
+     * "query memory limit exceeded" error.
+     */
+    static void breach(MemoryTracker tracker) {
         try (MemoryCARW overflow = Vm.getCARWInstance(4096, Integer.MAX_VALUE, MemoryTag.NATIVE_DEFAULT)) {
             overflow.setMemoryTracker(tracker);
             overflow.extend(tracker.getLimit() - tracker.getUsed() + 1);

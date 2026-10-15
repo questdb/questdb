@@ -51,6 +51,15 @@ public interface LiveViewRefreshHooks {
     }
 
     /**
+     * Called by a keyed repair's hand-back right before it restores each frozen key into the
+     * primary runtime, with that key's position in the hand-back. Position 0 follows
+     * {@link #beforeKeyedTransplantRestore()}; at a higher position every key below it is
+     * already restored.
+     */
+    default void beforeKeyedTransplantEntry(int entryIndex) {
+    }
+
+    /**
      * Called by a keyed repair's hand-back after it froze the isolated runtime's keys and
      * before it restores the first of them into the primary runtime.
      */
