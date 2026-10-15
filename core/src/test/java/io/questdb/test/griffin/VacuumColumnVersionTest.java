@@ -459,6 +459,81 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVacuumParquetIndexVersionDroppedByFullPurgeQueue() throws Exception {
+        // In-place O3 merges into a parquet partition move the index to a new version each time. With a
+        // reader pinned, each commit queues the purge of the version it replaced; the purge queue holds
+        // two tasks, so the third one is dropped. The next commit does not retry it, and VACUUM TABLE
+        // removes it.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_RATIO, "1.0");
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (s SYMBOL INDEX, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("""
+                    INSERT INTO pt VALUES
+                    ('a', 1, '2024-01-01T00:00:00.000000Z'), ('b', 2, '2024-01-01T01:00:00.000000Z'),
+                    ('c', 3, '2024-01-01T02:00:00.000000Z'), ('a', 4, '2024-01-01T03:00:00.000000Z'),
+                    ('b', 5, '2024-01-01T04:00:00.000000Z'), ('c', 6, '2024-01-01T05:00:00.000000Z'),
+                    ('a', 7, '2024-01-01T06:00:00.000000Z'), ('b', 8, '2024-01-01T07:00:00.000000Z'),
+                    ('c', 9, '2024-01-01T08:00:00.000000Z'), ('a', 10, '2024-01-01T09:00:00.000000Z'),
+                    ('b', 11, '2024-01-01T10:00:00.000000Z'), ('c', 12, '2024-01-01T11:00:00.000000Z'),
+                    ('a', 99, '2024-01-02T00:00:00.000000Z')""");
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+
+            final long[] versions = new long[5];
+            final String partitionDir;
+            try (TableReader pinned = getReader("pt")) {
+                versions[0] = pinned.getColumnVersionReader().getColumnNameTxn(pinned.getPartitionTimestampByIndex(0), 0);
+                partitionDir = "2024-01-01." + pinned.getTxFile().getPartitionNameTxn(0);
+                for (int i = 1; i <= 3; i++) {
+                    // a merge names the new version after the txn the commit starts from
+                    versions[i] = getTableTxn();
+                    execute("INSERT INTO pt VALUES ('a', " + (100 + i) + ", '2024-01-01T0" + i + ":30:00.000000Z')");
+                }
+            }
+            for (int i = 0; i <= 3; i++) {
+                assertFilesExist("pt", partitionDir, new String[]{"s.k", "s.v"}, versionSuffix(versions[i]), true);
+            }
+
+            // no reader: the next merge removes the version it replaces, and leaves the dropped one
+            engine.releaseInactive();
+            versions[4] = getTableTxn();
+            engine.releaseInactive();
+            execute("INSERT INTO pt VALUES ('a', 104, '2024-01-01T04:30:00.000000Z')");
+            assertFilesExist("pt", partitionDir, new String[]{"s.k", "s.v"}, versionSuffix(versions[3]), false);
+            assertFilesExist("pt", partitionDir, new String[]{"s.k", "s.v"}, versionSuffix(versions[2]), true);
+
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                // the two queued tasks
+                runPurgeJob(purgeJob);
+                assertFilesExist("pt", partitionDir, new String[]{"s.k", "s.v"}, versionSuffix(versions[0]), false);
+                assertFilesExist("pt", partitionDir, new String[]{"s.k", "s.v"}, versionSuffix(versions[1]), false);
+                assertFilesExist("pt", partitionDir, new String[]{"s.k", "s.v"}, versionSuffix(versions[2]), true);
+
+                runTableVacuum("pt");
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+            assertFilesExist("pt", partitionDir, new String[]{"s.k", "s.v"}, versionSuffix(versions[2]), false);
+            assertFilesExist("pt", partitionDir, new String[]{"s.k", "s.v"}, versionSuffix(versions[4]), true);
+            assertQuery("SELECT s, v, ts FROM pt WHERE s = 'a' AND ts IN '2024-01-01'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            s\tv\tts
+                            a\t1\t2024-01-01T00:00:00.000000Z
+                            a\t101\t2024-01-01T01:30:00.000000Z
+                            a\t102\t2024-01-01T02:30:00.000000Z
+                            a\t4\t2024-01-01T03:00:00.000000Z
+                            a\t103\t2024-01-01T03:30:00.000000Z
+                            a\t104\t2024-01-01T04:30:00.000000Z
+                            a\t7\t2024-01-01T06:00:00.000000Z
+                            a\t10\t2024-01-01T09:00:00.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testVacuumSyncFailsQueueSize() throws Exception {
         assertMemoryLeak(() -> {
             execute(
@@ -609,6 +684,16 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
             path.of(configuration.getDbRoot()).concat(tableToken).concat(partition).concat(file).put(colSuffix).$();
             Assert.assertEquals(Utf8s.toString(path), exist, TestFilesFacadeImpl.INSTANCE.exists(path.$()));
         }
+    }
+
+    private static long getTableTxn() {
+        try (TableReader reader = getReader("pt")) {
+            return reader.getTxn();
+        }
+    }
+
+    private static String versionSuffix(long columnNameTxn) {
+        return columnNameTxn > -1 ? "." + columnNameTxn : "";
     }
 
     @NotNull
