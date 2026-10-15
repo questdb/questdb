@@ -1429,6 +1429,26 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
     }
 
     /**
+     * Whether the folder was attached from a soft link. ATTACH marks such a folder READ ONLY and leaves its data on
+     * the volume the link points at; the sweep's rebuild would land a regular copy under the db root and undo that
+     * placement, so the sweep leaves it alone. Only a READ ONLY folder pays the {@code lstat}.
+     */
+    private boolean isPartitionSoftLinked(TableToken tableToken, int timestampType, int partitionBy, int partitionIndex) {
+        if (!txReader.isPartitionReadOnly(partitionIndex)) {
+            return false;
+        }
+        path.of(configuration.getDbRoot()).concat(tableToken.getDirName());
+        TableUtils.setPathForNativePartition(
+                path,
+                timestampType,
+                partitionBy,
+                txReader.getPartitionTimestampByIndex(partitionIndex),
+                txReader.getPartitionNameTxn(partitionIndex)
+        );
+        return ff.isSoftLink(path.$());
+    }
+
+    /**
      * Whether a swap for this LOGICAL partition is still in flight, which stands the sweep down on every one of its
      * folders - the main directory and all its splits - not just the one the swap was built from. At most one swap
      * per logical partition is ever outstanding, so folders that each deserve their own compaction take their turns
@@ -1673,6 +1693,7 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
             isMergeable = !txReader.isPartitionRemote(partitionIndex)
                     // A parquet folder is not rows this native copy can read; it is compacted on its own.
                     && !txReader.isPartitionParquet(partitionIndex)
+                    && !isPartitionSoftLinked(tableToken, timestampType, partitionBy, partitionIndex)
                     && folderLastWriteMicros(tableToken, metadata, timestampType, partitionBy, partitionIndex)
                     <= nowMicros - squashIdleTimeoutMicros;
         }
@@ -1703,6 +1724,11 @@ public class PartitionCompactionScanJob extends SynchronizedJob implements Close
                 // served partition has no local data.parquet left to map at all. READ ONLY - an operator
                 // ATTACH or an Enterprise freeze ahead of the cold switch - keeps writes out, not compaction:
                 // every swap carries the flag over to the partition it swaps in.
+                continue;
+            }
+            if (isPartitionSoftLinked(tableToken, timestampType, partitionBy, partitionIndex)) {
+                // Attached from a soft link: a rebuild would move its data onto the db root volume. A
+                // compaction request still serves it - the requester asked for that copy explicitly.
                 continue;
             }
             final boolean isComposite = txReader.isPartitionComposite(partitionIndex);

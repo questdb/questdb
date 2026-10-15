@@ -1340,6 +1340,55 @@ public class PartitionCompactionScanJobTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testScanLeavesASoftLinkedParquetPartitionAlone() throws Exception {
+        assertMemoryLeak(() -> {
+            final TableToken token = createIdleDirtyParquetTable("sl_px");
+            execute("ALTER TABLE sl_px DETACH PARTITION LIST '2020-01-01'");
+            drainWalQueue();
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+
+            final FilesFacade ff = configuration.getFilesFacade();
+            final String otherVolume = temp.newFolder("sl_px_other_volume").getAbsolutePath();
+            try (Path src = new Path(); Path dst = new Path()) {
+                src.of(configuration.getDbRoot()).concat(token).concat("2020-01-01").put(TableUtils.DETACHED_DIR_MARKER);
+                dst.of(otherVolume).concat("2020-01-01").put(TableUtils.DETACHED_DIR_MARKER);
+                Assert.assertEquals(0, ff.rename(src.$(), dst.$()));
+                src.of(configuration.getDbRoot()).concat(token).concat("2020-01-01").put(configuration.getAttachPartitionSuffix());
+                Assert.assertEquals(0, ff.softLink(dst.$(), src.$()));
+            }
+            execute("ALTER TABLE sl_px ATTACH PARTITION LIST '2020-01-01'");
+            drainWalQueue();
+            engine.releaseAllReaders();
+
+            final long nameTxnBefore;
+            try (TableReader reader = engine.getReader(token)) {
+                final TxReader tx = reader.getTxFile();
+                Assert.assertTrue(tx.isPartitionReadOnly(0));
+                Assert.assertTrue(tx.isPartitionParquet(0));
+                nameTxnBefore = tx.getPartitionNameTxn(0);
+            }
+            assertUnusedBytes(token, 0, true);
+
+            sweepPastTheIdleTimeout();
+
+            assertPartitionUntouched(token, nameTxnBefore, "a soft-linked");
+            try (TableReader reader = engine.getReader(token); Path dir = new Path()) {
+                dir.of(configuration.getDbRoot()).concat(token);
+                TableUtils.setPathForNativePartition(
+                        dir,
+                        reader.getMetadata().getTimestampType(),
+                        reader.getPartitionedBy(),
+                        reader.getTxFile().getPartitionTimestampByIndex(0),
+                        nameTxnBefore
+                );
+                Assert.assertTrue("the partition must stay a soft link", ff.isSoftLink(dir.$()));
+            }
+            assertQuery("SELECT count() c FROM sl_px").noRandomAccess().expectSize().returns("c\n16\n");
+        });
+    }
+
     /**
      * A partition whose bytes already live in a remote object store. It keeps reading UPLOADED after a rewrite,
      * so nothing downstream notices the manifest row now describes content that moved.
