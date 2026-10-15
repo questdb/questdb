@@ -1095,6 +1095,50 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testParquetRewriteKeepsCoveredValuesOfNameTxnZero() throws Exception {
+        // In the ZERO shape s is the first column added to the empty table: its column name txn is 0.
+        // With 1 row, partition 2024-01-01 is a single row group, so the O3 commit rewrites it into a
+        // new directory and links the covering index of s there. The covered columns then read what
+        // the native twin reads, before and after CONVERT TO NATIVE.
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                final String p1Row = "(1, '2024-01-01T01:00:00.000000Z')";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("DROP TABLE IF EXISTS tw");
+                createColumnTopShapeTable("pt", ColumnTopShape.ZERO, "TYPE POSTING INCLUDE (d, vc)", walMode, p1Row, true);
+                createColumnTopShapeTable("tw", ColumnTopShape.ZERO, "TYPE POSTING INCLUDE (d, vc)", walMode, p1Row, false);
+                Assert.assertEquals(walMode, 0, getColumnNameTxn("pt", 0, "s"));
+                final long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
+                final String o3Rows = columnTopShapeInsert("{t}",
+                        columnTopShapeRow(101, "2024-01-01T00:30:00.000000Z", "x"),
+                        columnTopShapeRow(102, "2024-01-01T02:00:00.000000Z", "x")
+                );
+                execute(o3Rows.replace("{t}", "pt"));
+                execute(o3Rows.replace("{t}", "tw"));
+                drainWalQueue();
+                Assert.assertNotEquals(walMode, partitionNameTxn, getParquetPartitionNameTxn("pt", 0));
+                assertQuery("SELECT ts, s, d, vc FROM pt WHERE s = 'x'")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .timestamp("ts")
+                        .withPlanContaining("CoveringIndex on: s with: ts, d, vc")
+                        .returns("""
+                                ts\ts\td\tvc
+                                2024-01-01T00:30:00.000000Z\tx\t101.5\tvc101
+                                2024-01-01T02:00:00.000000Z\tx\t102.5\tvc102
+                                """);
+                assertQueriesMatchTwin("pt", walMode + ", rewritten", COLUMN_TOP_SHAPE_COVERED_QUERIES);
+                execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                drainWalQueue();
+                assertColumnTopShapeQueriesMatchTwin(walMode + ", native");
+                assertQueriesMatchTwin("pt", walMode + ", native", COLUMN_TOP_SHAPE_COVERED_QUERIES);
+            }
+        });
+    }
+
+    @Test
     public void testInPlaceColumnTopTwoPartitionsOneCommitWorkerPool() throws Exception {
         // s and the other columns are added while 2024-01-02 is the last partition: their top is -1 on
         // 2024-01-01 and the row count on 2024-01-02. One non-WAL commit, run by a worker pool, merges
@@ -3273,11 +3317,9 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                         execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
                         drainWalQueue();
                         assertColumnTopShapeQueriesMatchTwin(context + ", native");
-                        if (!indexSuffix.contains("INCLUDE")) {
-                            // CONVERT TO NATIVE loses the covered values of the rows an in-place
-                            // update added, whatever the column tops: a separate bug
-                            assertQueriesMatchTwin("pt", context + ", native", COLUMN_TOP_SHAPE_COVERED_QUERIES);
-                        }
+                        // in the ZERO shape s is the first column added to the empty table, so its column
+                        // name txn is 0, which its covering .pc file names share with txn NONE
+                        assertQueriesMatchTwin("pt", context + ", native", COLUMN_TOP_SHAPE_COVERED_QUERIES);
                     }
                 }
             }

@@ -31,9 +31,11 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TimestampDriver;
 import io.questdb.griffin.SqlException;
 import io.questdb.mp.Sequence;
+import io.questdb.std.Files;
 import io.questdb.std.LongList;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.Micros;
@@ -51,8 +53,11 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.File;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.TreeSet;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 @RunWith(Parameterized.class)
 public class ColumnPurgeJobTest extends AbstractCairoTest {
@@ -1343,6 +1348,212 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    @Test
+    public void testPurgeRemovesPostingCoverFilesOfNameTxnZero() throws Exception {
+        // s is the first column added to the empty table t_z, so its column name txn is 0, and its .pc
+        // files carry the token 0 that txn NONE also writes: s.pc<N>.0[.<covered txn>].<seal>. An
+        // earlier version left a superseded seal of s on disk, planted here by name. Each change moves
+        // s, or its index, away from column version 0, and the removal of that version takes every
+        // .pc file of it, with an open reader through the purge job and without one in the writer.
+        // The covered values read what the twin, with s in CREATE TABLE, reads.
+        assertMemoryLeak(() -> {
+            for (String change : new String[]{"DROP INDEX", "DROP COLUMN", "RENAME COLUMN", "UPDATE"}) {
+                for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                    for (boolean isReaderOpen : new boolean[]{true, false}) {
+                        final String context = change + ", " + walMode + (isReaderOpen ? ", reader open" : "");
+                        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                            createTxnZeroCoveringTables(walMode);
+                            final String dir = partitionDir("t_z", 0);
+                            for (String name : new String[]{"s.pc0.0.1.77", "s.pc2.0.77", "s.pv.0.77"}) {
+                                Assert.assertTrue(context + ", " + name, new File(dir, name).createNewFile());
+                            }
+                            final String sql = switch (change) {
+                                case "DROP INDEX" -> "ALTER TABLE {t} ALTER COLUMN s DROP INDEX";
+                                case "DROP COLUMN" -> "ALTER TABLE {t} DROP COLUMN s";
+                                case "RENAME COLUMN" -> "ALTER TABLE {t} RENAME COLUMN s TO s2";
+                                default -> "UPDATE {t} SET s = 'z' WHERE s = 'y' AND ts IN '2024-01-01'";
+                            };
+                            if (isReaderOpen) {
+                                try (TableReader ignored = getReader("t_z")) {
+                                    execute(sql.replace("{t}", "t_z"));
+                                    execute(sql.replace("{t}", "t_twin"));
+                                    drainWalQueue();
+                                    runPurgeJob(purgeJob);
+                                }
+                            } else {
+                                execute(sql.replace("{t}", "t_z"));
+                                execute(sql.replace("{t}", "t_twin"));
+                                drainWalQueue();
+                            }
+                            runPurgeJob(purgeJob);
+                            Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                            Assert.assertEquals(context, "[]", txnZeroIndexFilesOfS(partitionDir("t_z", 0)).toString());
+                            final String sName = change.equals("RENAME COLUMN") ? "s2" : "s";
+                            if (!change.startsWith("DROP")) {
+                                assertCoverFilesPerSeal(context, partitionDir("t_z", 0), sName);
+                                assertCoverFilesPerSeal(context, partitionDir("t_z", 1), sName);
+                            }
+                            final String projection = change.equals("DROP COLUMN") ? "ts, d, vc" : "ts, " + sName + ", d, vc";
+                            for (String query : change.startsWith("DROP")
+                                    ? new String[]{"SELECT " + projection + " FROM {t}"}
+                                    : new String[]{
+                                    "SELECT " + projection + " FROM {t} WHERE " + sName + " = 'x'",
+                                    "SELECT " + projection + " FROM {t} WHERE " + sName + " IN ('y', 'z')",
+                                    "SELECT " + projection + " FROM {t}"
+                            }) {
+                                assertSqlCursors(query.replace("{t}", "t_twin"), query.replace("{t}", "t_z"));
+                            }
+                            if (!change.startsWith("DROP")) {
+                                assertQuery("SELECT count() c, sum(d) sd FROM t_z WHERE " + sName + " = 'x'")
+                                        .noLeakCheck()
+                                        .noRandomAccess()
+                                        .expectSize()
+                                        .withPlanContaining("CoveringIndex on: " + sName)
+                                        .returns("c\tsd\n3\t14.5\n");
+                            }
+                            execute("DROP TABLE t_z");
+                            execute("DROP TABLE t_twin");
+                            drainWalQueue();
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesPostingCoverFilesOfNameTxnZero() throws Exception {
+        // The purge of the index of s, column name txn 0, cannot remove one of its .pc files the first
+        // time. It reports the task incomplete and removes the file on the retry.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicBoolean hasFailed = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isArmed.get() && Utf8s.containsAscii(name, Files.SEPARATOR + "s.pc0.0.") && hasFailed.compareAndSet(false, true)) {
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                createTxnZeroCoveringTables("BYPASS WAL");
+                try (TableReader ignored = getReader("t_z")) {
+                    execute("ALTER TABLE t_z ALTER COLUMN s DROP INDEX");
+                    execute("ALTER TABLE t_twin ALTER COLUMN s DROP INDEX");
+                    runPurgeJob(purgeJob);
+                }
+                isArmed.set(true);
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 10L * iteration++);
+                purgeJob.run();
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertTrue(hasFailed.get());
+                Assert.assertEquals(1, coverDataFileCount(partitionDir("t_z", 0), "s") + coverDataFileCount(partitionDir("t_z", 1), "s"));
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals("[]", txnZeroIndexFilesOfS(partitionDir("t_z", 0)).toString());
+                Assert.assertEquals("[]", txnZeroIndexFilesOfS(partitionDir("t_z", 1)).toString());
+                assertSqlCursors("SELECT ts, s, d, vc FROM t_twin WHERE s = 'x'", "SELECT ts, s, d, vc FROM t_z WHERE s = 'x'");
+            }
+        });
+    }
+
+    /**
+     * The live seal of the covering index of {@code columnName} in {@code dir}, the newest
+     * {@code <col>.pv.<txn>.<seal>}, has a .pc file for each covered column d, vc and ts:
+     * {@code <col>.pc<N>.<txn>[.<covered txn>].<seal>}, N in 0..2. Every .pc file belongs to a seal
+     * that has its .pv file.
+     */
+    private static void assertCoverFilesPerSeal(String context, String dir, String columnName) {
+        final String[] names = new File(dir).list();
+        Assert.assertNotNull(names);
+        final String failureContext = context + ", " + Arrays.toString(names);
+        final TreeSet<Long> valueFileSeals = new TreeSet<>();
+        for (String name : names) {
+            if (name.startsWith(columnName + ".pv.")) {
+                valueFileSeals.add(Long.parseLong(name.substring(name.lastIndexOf('.') + 1)));
+            }
+        }
+        Assert.assertFalse(failureContext, valueFileSeals.isEmpty());
+        final long liveSeal = valueFileSeals.last();
+        final TreeSet<String> liveCoverFiles = new TreeSet<>();
+        for (String name : names) {
+            if (name.startsWith(columnName + ".pc") && !name.startsWith(columnName + ".pci")) {
+                final long seal = Long.parseLong(name.substring(name.lastIndexOf('.') + 1));
+                Assert.assertTrue(failureContext, valueFileSeals.contains(seal));
+                if (seal == liveSeal) {
+                    liveCoverFiles.add(name.substring(columnName.length() + 1, columnName.length() + 4));
+                }
+            }
+        }
+        Assert.assertEquals(failureContext, "[pc0, pc1, pc2]", liveCoverFiles.toString());
+    }
+
+    private static int coverDataFileCount(String dir, String columnName) {
+        final String[] names = new File(dir).list((_, name) -> name.startsWith(columnName + ".pc") && !name.startsWith(columnName + ".pci"));
+        Assert.assertNotNull(names);
+        return names.length;
+    }
+
+    /**
+     * Creates t_z, where s is the first column added to the empty table (column name txn 0), with a
+     * covering index on s, and t_twin, which declares s in CREATE TABLE, with the same index and rows
+     * in partitions 2024-01-01 and 2024-01-02.
+     */
+    private void createTxnZeroCoveringTables(String walMode) throws SqlException {
+        final String ts = timestampType.getTypeName();
+        execute("CREATE TABLE t_z (v INT, ts " + ts + ") TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("ALTER TABLE t_z ADD COLUMN s SYMBOL");
+        execute("ALTER TABLE t_z ADD COLUMN d DOUBLE");
+        execute("ALTER TABLE t_z ADD COLUMN vc VARCHAR");
+        execute("CREATE TABLE t_twin (v INT, ts " + ts + ", s SYMBOL, d DOUBLE, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        for (String table : new String[]{"t_z", "t_twin"}) {
+            execute("ALTER TABLE " + table + " ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (d, vc)");
+            execute("INSERT INTO " + table + """
+                     VALUES (1, '2024-01-01T01:00:00.000000Z', 'x', 1.5, 'vc1'), (2, '2024-01-01T02:00:00.000000Z', 'y', 2.5, 'vc2'),
+                    (3, '2024-01-01T03:00:00.000000Z', NULL, NULL, NULL), (4, '2024-01-01T04:00:00.000000Z', 'x', 4.5, 'vc4'),
+                    (5, '2024-01-02T01:00:00.000000Z', 'y', 5.5, 'vc5'), (6, '2024-01-02T02:00:00.000000Z', 'x', 8.5, 'vc6')
+                    """);
+        }
+        drainWalQueue();
+        try (TableReader reader = getReader("t_z")) {
+            final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex("s"));
+            Assert.assertEquals(0, reader.getColumnVersionReader().getColumnNameTxn(reader.getPartitionTimestampByIndex(0), writerIndex));
+        }
+    }
+
+    private String partitionDir(String tableName, int partitionIndex) {
+        try (TableReader reader = getReader(tableName); Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+            TableUtils.setPathForNativePartition(
+                    path,
+                    reader.getMetadata().getTimestampType(),
+                    PartitionBy.DAY,
+                    reader.getTxFile().getPartitionTimestampByIndex(partitionIndex),
+                    reader.getTxFile().getPartitionNameTxn(partitionIndex)
+            );
+            return path.toString();
+        }
+    }
+
+    /**
+     * The index files of column version 0 of s in {@code dir}: s.pk.0, s.pci.0, s.pv.0.<seal> and
+     * s.pc<N>.0[.<covered txn>].<seal>.
+     */
+    private static TreeSet<String> txnZeroIndexFilesOfS(String dir) {
+        final String[] names = new File(dir).list();
+        Assert.assertNotNull(names);
+        final TreeSet<String> files = new TreeSet<>();
+        for (String name : names) {
+            if (name.equals("s.pk.0") || name.equals("s.pci.0") || name.startsWith("s.pv.0.") || name.matches("s\\.pc[0-9]+\\.0\\..*")) {
+                files.add(name);
+            }
+        }
+        return files;
     }
 
     private void assertPartitionFileExists(Path path, String partition, String fileName, boolean exist) {

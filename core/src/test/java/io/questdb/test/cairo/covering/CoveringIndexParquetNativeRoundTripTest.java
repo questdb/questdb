@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.covering;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
@@ -37,10 +38,12 @@ import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.Arrays;
 import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
@@ -53,6 +56,11 @@ import java.util.concurrent.ConcurrentLinkedQueue;
  * covering sidecars) across, mirroring the native->parquet direction.
  */
 public class CoveringIndexParquetNativeRoundTripTest extends AbstractCairoTest {
+    // one column of each type a covering index stores, added to t_cov after s
+    private static final String[] TXN_ZERO_INCLUDE_COLUMNS = {
+            "d DOUBLE", "i INT", "l LONG", "vc VARCHAR", "st STRING", "ch CHAR", "bo BOOLEAN", "bt BYTE", "sh SHORT", "u UUID", "ip IPv4",
+            "l256 LONG256", "g GEOHASH(4c)", "d18 DECIMAL(18, 2)", "d38 DECIMAL(38, 4)", "sy SYMBOL", "tn TIMESTAMP_NS"
+    };
 
     @Test
     public void testBitmapIndexSurvivesRoundTrip() throws Exception {
@@ -212,6 +220,78 @@ public class CoveringIndexParquetNativeRoundTripTest extends AbstractCairoTest {
                             2024-01-01T07:00:00.000000Z\t7.5
                             2024-01-01T08:00:00.000000Z\t8.5
                             """);
+        });
+    }
+
+    @Test
+    public void testConvertToParquetLinkFailureTxnZero() throws Exception {
+        // The hard link of a .pc file of s, whose column name txn is 0, fails: CONVERT TO PARQUET
+        // fails with it and leaves the partition native, with its covering index intact.
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                final String path = Utf8s.stringFromUtf8Bytes(src);
+                if (path.contains(Files.SEPARATOR + "s.pc") && !path.contains(".pci")) {
+                    return -1;
+                }
+                return super.hardLink(src, hardLink);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createTxnZeroTables("BYPASS WAL");
+            final String[] partitionDirsBefore = listPartitionDirs("t_cov");
+            try {
+                execute("ALTER TABLE t_cov CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                Assert.fail("CONVERT TO PARQUET must fail when it cannot link a covering sidecar of s");
+            } catch (CairoException e) {
+                TestUtils.assertContains(e.getFlyweightMessage(), "could not create hard link");
+                TestUtils.assertContains(e.getFlyweightMessage(), "s.pc");
+            }
+            assertPartitionFormat("t_cov", false);
+            Assert.assertArrayEquals(partitionDirsBefore, listPartitionDirs("t_cov"));
+            assertTxnZeroCoveredMatchesTwin("after the failed convert");
+        });
+    }
+
+    @Test
+    public void testCoveredValuesSurviveConvertWhenSymbolNameTxnIsZero() throws Exception {
+        // s is the first column added to the empty table t_cov, so its column name txn is 0 and its
+        // .pc files are named s.pc<N>.0.<C>.<S>, the token that column name txn NONE also writes. The
+        // twin declares s in CREATE TABLE (txn NONE) and is never converted. CONVERT PARTITION in
+        // both directions links the .pc files of s along with the rest of its index.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+                final String context = walMode;
+                execute("DROP TABLE IF EXISTS t_cov");
+                execute("DROP TABLE IF EXISTS t_twin");
+                createTxnZeroTables(walMode);
+                Assert.assertEquals(context, 0, getColumnNameTxn("t_cov", "s"));
+                Assert.assertEquals(context, TableUtils.COLUMN_NAME_TXN_NONE, getColumnNameTxn("t_twin", "s"));
+                assertTxnZeroCoveredMatchesTwin(context + ", native");
+
+                execute("ALTER TABLE t_cov CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+                drainWalQueue();
+                assertPartitionFormat("t_cov", true);
+                // one .pc file per INCLUDE column and the designated timestamp, linked into the parquet partition
+                Assert.assertEquals(context, TXN_ZERO_INCLUDE_COLUMNS.length + 1, countCoverDataFiles("t_cov", 0));
+                assertTxnZeroCoveredMatchesTwin(context + ", parquet");
+
+                execute("ALTER TABLE t_cov CONVERT PARTITION TO NATIVE LIST '2024-01-01', '2024-01-02'");
+                drainWalQueue();
+                assertPartitionFormat("t_cov", false);
+                Assert.assertEquals(context, TXN_ZERO_INCLUDE_COLUMNS.length + 1, countCoverDataFiles("t_cov", 0));
+                assertTxnZeroCoveredMatchesTwin(context + ", native again");
+
+                // readers reopen every file from disk
+                engine.releaseAllWriters();
+                engine.releaseAllReaders();
+                assertTxnZeroCoveredMatchesTwin(context + ", reopened");
+                assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't_cov'")
+                        .noRandomAccess()
+                        .noLeakCheck()
+                        .returns(walMode.equals("WAL") ? "suspended\nfalse\n" : "suspended\n");
+            }
         });
     }
 
@@ -657,6 +737,139 @@ public class CoveringIndexParquetNativeRoundTripTest extends AbstractCairoTest {
                     "SELECT sym, price FROM t_rowless WHERE sym = 'A1'"
             );
         });
+    }
+
+    private static int countCoverDataFiles(String tableName, int partitionIndex) {
+        final TableToken token = engine.verifyTableName(tableName);
+        final long partitionTs;
+        final long nameTxn;
+        try (TableReader reader = engine.getReader(token)) {
+            partitionTs = reader.getTxFile().getPartitionTimestampByIndex(partitionIndex);
+            nameTxn = reader.getTxFile().getPartitionNameTxn(partitionIndex);
+        }
+        try (Path path = new Path()) {
+            path.of(configuration.getDbRoot()).concat(token);
+            TableUtils.setPathForNativePartition(path, ColumnType.TIMESTAMP, PartitionBy.DAY, partitionTs, nameTxn);
+            final String[] names = new File(path.toString()).list((_, name) -> name.startsWith("s.pc") && !name.startsWith("s.pci"));
+            Assert.assertNotNull(names);
+            return names.length;
+        }
+    }
+
+    /**
+     * Creates t_cov, where s is the first column added to the empty table (column name txn 0), and
+     * t_twin, which declares every column in CREATE TABLE. Both get the same covering index and rows:
+     * partition 2024-01-01 has more rows than one parquet row group, NULL, empty and repeated keys;
+     * in 2024-01-02 s is NULL in every row; 2024-01-03 is the last partition.
+     */
+    private static void createTxnZeroTables(String walMode) throws Exception {
+        execute("CREATE TABLE t_cov (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("ALTER TABLE t_cov ADD COLUMN s SYMBOL");
+        for (String column : TXN_ZERO_INCLUDE_COLUMNS) {
+            execute("ALTER TABLE t_cov ADD COLUMN " + column);
+        }
+        execute("CREATE TABLE t_twin (v INT, ts TIMESTAMP, s SYMBOL, " + String.join(", ", TXN_ZERO_INCLUDE_COLUMNS)
+                + ") TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        final StringBuilder include = new StringBuilder();
+        for (String column : TXN_ZERO_INCLUDE_COLUMNS) {
+            include.append(include.isEmpty() ? "" : ", ").append(column, 0, column.indexOf(' '));
+        }
+        for (String table : new String[]{"t_cov", "t_twin"}) {
+            execute("ALTER TABLE " + table + " ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (" + include + ")");
+            final StringBuilder rows = new StringBuilder();
+            final String[] keys = {"x", "y", null, "", "x", "y", "x", null, "x"};
+            for (int v = 1; v <= keys.length; v++) {
+                rows.append(v > 1 ? ", " : "").append(txnZeroRow(v, "2024-01-01T0" + v + ":00:00.000000Z", keys[v - 1]));
+            }
+            for (int v = 11; v <= 13; v++) {
+                rows.append(", ").append(txnZeroRow(v, "2024-01-02T0" + (v - 10) + ":00:00.000000Z", null));
+            }
+            rows.append(", ").append(txnZeroRow(21, "2024-01-03T01:00:00.000000Z", "x"));
+            execute("INSERT INTO " + table + " VALUES " + rows);
+        }
+        drainWalQueue();
+    }
+
+    private static long getColumnNameTxn(String tableName, String columnName) {
+        try (TableReader reader = engine.getReader(tableName)) {
+            final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(columnName));
+            return reader.getColumnVersionReader().getColumnNameTxn(reader.getPartitionTimestampByIndex(0), writerIndex);
+        }
+    }
+
+    private static String[] listPartitionDirs(String tableName) {
+        final String[] names = new File(configuration.getDbRoot().toString(), engine.verifyTableName(tableName).getDirName())
+                .list((_, name) -> name.startsWith("2024-"));
+        Assert.assertNotNull(names);
+        Arrays.sort(names);
+        return names;
+    }
+
+    /**
+     * A row of t_cov and t_twin with a value derived from {@code v} in every INCLUDE column, or NULL in
+     * all of them when {@code s} is null.
+     */
+    private static String txnZeroRow(int v, String timestamp, String s) {
+        if (s == null) {
+            return "(" + v + ", '" + timestamp + "', NULL" + ", NULL".repeat(TXN_ZERO_INCLUDE_COLUMNS.length) + ")";
+        }
+        return "(" + v + ", '" + timestamp + "', '" + s + "', " + v + ".5, " + v + ", " + v + "000000000, 'vc" + v + "', 'st\u00e9" + v + "', 'q', true, "
+                + v + "::BYTE, " + v + "::SHORT, '00000000-0000-0000-0000-" + String.format("%012d", v) + "', '10.0.0." + v + "', '0x"
+                + String.format("%02x", v) + "'::LONG256, #9v1s, '" + v + ".25'::DECIMAL(18, 2), '" + v + ".1234'::DECIMAL(38, 4), 'k"
+                + (v % 3) + "', '2024-01-01T00:00:00." + String.format("%09d", v) + "Z'::TIMESTAMP_NS)";
+    }
+
+    /**
+     * The covering scans of t_cov return what the never-converted twin returns, and what a scan of t_cov
+     * that bypasses the index returns.
+     */
+    private void assertTxnZeroCoveredMatchesTwin(String context) throws Exception {
+        final StringBuilder projection = new StringBuilder("ts, s");
+        for (String column : TXN_ZERO_INCLUDE_COLUMNS) {
+            projection.append(", ").append(column, 0, column.indexOf(' '));
+        }
+        assertQuery("SELECT " + projection + " FROM t_cov WHERE s = 'x'")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .timestamp("ts")
+                .withPlanContaining("CoveringIndex on: s with: ts, d, i, l, vc, st, ch, bo, bt, sh, u, ip, l256, g, d18, d38, sy, tn")
+                .returns(txnZeroExpectedRowsOfX());
+        for (String where : new String[]{
+                "s = 'x'",
+                "s = 'y'",
+                "s = ''",
+                "s IS NULL",
+                "s IN ('x', 'y')",
+                "s = 'x' ORDER BY ts DESC",
+                "s = 'x' LATEST ON ts PARTITION BY s",
+                "s = 'x' AND ts IN '2024-01-01'"
+        }) {
+            final String sql = "SELECT " + projection + " FROM {t} WHERE " + where;
+            try {
+                assertSqlCursors(sql.replace("{t}", "t_twin"), sql.replace("{t}", "t_cov"));
+                assertSqlCursors(sql.replace("{t}", "t_cov").replace("WHERE s ", "WHERE s::VARCHAR "), sql.replace("{t}", "t_cov"));
+            } catch (AssertionError e) {
+                throw new AssertionError(context + ": " + sql, e);
+            }
+        }
+    }
+
+    private static String txnZeroExpectedRowsOfX() {
+        return """
+                ts\ts\td\ti\tl\tvc\tst\tch\tbo\tbt\tsh\tu\tip\tl256\tg\td18\td38\tsy\ttn
+                """
+                + txnZeroExpectedRow(1, "2024-01-01T01:00:00.000000Z")
+                + txnZeroExpectedRow(5, "2024-01-01T05:00:00.000000Z")
+                + txnZeroExpectedRow(7, "2024-01-01T07:00:00.000000Z")
+                + txnZeroExpectedRow(9, "2024-01-01T09:00:00.000000Z")
+                + txnZeroExpectedRow(21, "2024-01-03T01:00:00.000000Z");
+    }
+
+    private static String txnZeroExpectedRow(int v, String timestamp) {
+        return timestamp + "\tx\t" + v + ".5\t" + v + "\t" + v + "000000000\tvc" + v + "\tst\u00e9" + v + "\tq\ttrue\t" + v + "\t" + v
+                + "\t00000000-0000-0000-0000-" + String.format("%012d", v) + "\t10.0.0." + v + "\t0x" + String.format("%02x", v)
+                + "\t9v1s\t" + v + ".25\t" + v + ".1234\tk" + (v % 3) + "\t2024-01-01T00:00:00." + String.format("%09d", v) + "Z\n";
     }
 
     private void assertCovered(String stage) throws Exception {
