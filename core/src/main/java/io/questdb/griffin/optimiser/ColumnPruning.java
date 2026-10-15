@@ -409,10 +409,10 @@ final class ColumnPruning implements OptimiserPass {
                 final int inputTimestampId = project.getChild().getOutput().getTimestampColumnId();
                 columnReads.retainOutputs(project);
                 retainGroupingKeys(project);
+                columnReads.collectInputReads(project);
                 final boolean isComputed = !LogicalPlans.isColumnProjection(project);
                 pruneOutput(project);
                 project.setPrunedComputedColumns(isComputed && LogicalPlans.isColumnProjection(project));
-                columnReads.collectInputReads(project);
                 final LogicalPlan projectInput = project.getChild();
                 // A computing projection reads a table function in place; narrowing
                 // a source that produces every column anyway only adds a mapping.

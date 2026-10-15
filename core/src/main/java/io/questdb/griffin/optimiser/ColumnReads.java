@@ -146,7 +146,8 @@ final class ColumnReads implements Mutable {
     }
 
     /**
-     * Adds the input columns the plan reads to compute the output columns the read set holds.
+     * Adds the input columns the plan reads to compute the output columns the read set holds. A projection column that
+     * reads an earlier column of the projection by alias reads that column too.
      */
     void collectInputReads(LogicalPlan plan) {
         switch (plan) {
@@ -228,9 +229,13 @@ final class ColumnReads implements Mutable {
                 }
             }
             case ProjectPlan project -> {
-                for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-                    if (readColumnIds.contains(project.getOutput().getColumnId(i))) {
-                        project.getExpressions().getQuick(i).walk(expressionReads);
+                final OutputSchema output = project.getOutput();
+                for (int readCount = -1, count = readOutputCount(output); count != readCount; count = readOutputCount(output)) {
+                    readCount = count;
+                    for (int i = output.getColumnCount() - 1; i >= 0; i--) {
+                        if (readColumnIds.contains(output.getColumnId(i))) {
+                            project.getExpressions().getQuick(i).walk(expressionReads);
+                        }
                     }
                 }
             }
@@ -322,8 +327,7 @@ final class ColumnReads implements Mutable {
 
     /**
      * Adds the output columns the plan keeps whether or not a consumer reads them: an aggregate keeps its grouping
-     * keys, which define its groups, and a projection keeps its declared designated timestamp and every column a
-     * kept column reads by alias.
+     * keys, which define its groups, and a projection keeps its declared designated timestamp.
      */
     void retainOutputs(LogicalPlan plan) {
         if (plan instanceof AggregatePlan aggregate) {
@@ -340,39 +344,24 @@ final class ColumnReads implements Mutable {
             for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
                 readColumnIds.add(output.getColumnId(i));
             }
-        } else if (plan instanceof ProjectPlan project) {
-            final OutputSchema output = project.getOutput();
-            if (project.hasTimestampDeclaration()) {
-                readColumnIds.add(output.getTimestampColumnId());
-            }
-            boolean isChanged = true;
-            while (isChanged) {
-                isChanged = false;
-                for (int i = output.getColumnCount() - 1; i >= 0; i--) {
-                    if (readColumnIds.contains(output.getColumnId(i))) {
-                        isChanged |= retainReferences(project.getExpressions().getQuick(i), output);
-                    }
-                }
+        } else if (plan instanceof ProjectPlan project && project.hasTimestampDeclaration()) {
+            readColumnIds.add(project.getOutput().getTimestampColumnId());
+        }
+    }
+
+    private int readOutputCount(OutputSchema output) {
+        int count = 0;
+        for (int i = 0, n = output.getColumnCount(); i < n; i++) {
+            if (readColumnIds.contains(output.getColumnId(i))) {
+                count++;
             }
         }
+        return count;
     }
 
     private void readAllColumns(OutputSchema output) {
         for (int i = 0, n = output.getColumnCount(); i < n; i++) {
             readColumnIds.add(output.getColumnId(i));
         }
-    }
-
-    private boolean retainReferences(BoundExpression expression, OutputSchema output) {
-        if (expression instanceof ColumnExpression column) {
-            return output.getColumnIndexById(column.getColumnId()) >= 0 && readColumnIds.add(column.getColumnId());
-        }
-        boolean isChanged = false;
-        if (expression instanceof FunctionExpression call) {
-            for (int i = 0, n = call.getArgumentCount(); i < n; i++) {
-                isChanged |= retainReferences(call.argumentAt(i), output);
-            }
-        }
-        return isChanged;
     }
 }
