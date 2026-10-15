@@ -6242,7 +6242,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean symbolNullFlag,
             int columnIndex
     ) {
-        MapWriter.createSymbolMapFiles(ff, ddlMem, path.trimTo(pathSize), name, columnNameTxn, symbolCapacity, symbolCacheFlag);
+        MapWriter.createSymbolMapFiles(ff, ddlMem, path.trimTo(pathSize), name, columnNameTxn, symbolCapacity, symbolCacheFlag, configuration.getCommitMode());
         SymbolMapWriter w = new SymbolMapWriter(
                 configuration,
                 path.trimTo(pathSize),
