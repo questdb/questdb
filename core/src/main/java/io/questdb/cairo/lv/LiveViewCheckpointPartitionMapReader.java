@@ -29,7 +29,6 @@ import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
-import io.questdb.std.ObjectPool;
 import io.questdb.std.Transient;
 import io.questdb.std.str.Path;
 import org.jetbrains.annotations.NotNull;
@@ -344,7 +343,7 @@ public class LiveViewCheckpointPartitionMapReader implements Closeable {
             int length,
             LiveViewCheckpointPartitionMapNode node,
             LiveViewCheckpointMutationArena arena,
-            ObjectPool<LiveViewCheckpointPageRef> pageRefPool
+            LiveViewCheckpointPageRefPool pageRefPool
     ) {
         final LiveViewCheckpointMetaSegmentReader reader = readerFor(segmentId);
         reader.openPageAt(offset, length);

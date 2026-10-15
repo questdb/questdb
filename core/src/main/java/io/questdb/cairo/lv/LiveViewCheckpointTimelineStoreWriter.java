@@ -151,9 +151,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
      * Partition-map nodes and page references the writer keeps pooled once a
      * publication ends. A complete build over 32,768 ascending keys - the largest inline
      * or fused seal {@link #MAX_RETAINED_FROZEN_ENTRIES} keeps warm - pools about 2,100 of
-     * them, so a build with sparser leaves still stays inside this limit. Pooled objects
-     * cost about 1.3 KB each on average, node arrays included, which caps the pool at
-     * roughly 5.3 MiB.
+     * them. A later seal that moves every one of those keys decodes and path-copies every
+     * node, which adds one decoded child reference per node below the root: it pools 3,163
+     * objects and leaves under 1,000 of headroom. Pooled objects cost about 1.3 KB each on
+     * average, node arrays included, which caps the pool at roughly 5.3 MiB.
      */
     public static final int MAX_RETAINED_PARTITION_MAP_OBJECTS = 4_096;
     /**

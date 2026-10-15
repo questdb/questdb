@@ -584,6 +584,56 @@ public class LiveViewCheckpointSealScratchMemoryTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAppendKeepsPartitionMapPoolWarmAcrossSteadySealsOfTheWidestWarmKeySet() throws Exception {
+        // One frozen key and one inline state array per key, so this is the widest key set
+        // whose frozen graph MAX_RETAINED_FROZEN_ENTRIES keeps warm. Each seal moves every
+        // state, so each steady seal decodes and path-copies every node of the partition map.
+        // What that build pools must stay under MAX_RETAINED_PARTITION_MAP_OBJECTS, or every
+        // seal of this view hands its partition-map nodes back and allocates them afresh.
+        assertMemoryLeak(() -> {
+            try (
+                    PartitionedStateStub stub = new PartitionedStateStub();
+                    LiveViewCheckpointTimelineStoreWriter writer =
+                            new LiveViewCheckpointTimelineStoreWriter(configuration)
+            ) {
+                final int keyCount = LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_FROZEN_ENTRIES / 2;
+                // Seal 1 builds the map from empty; seals 2 and 3 are the steady state.
+                for (int seq = 1; seq <= 3; seq++) {
+                    putStates(stub, keyCount, seq);
+                    seal(writer, stub, seq);
+                }
+                Assert.assertTrue(
+                        "this key set must keep its frozen graph pooled",
+                        writer.getRetainedFrozenObjectCountForTest() > 0
+                );
+                final int warmedNodeIdentity = writer.getFirstRetainedPartitionMapNodeIdentityForTest();
+                final int warmedObjectCount = writer.getRetainedPartitionMapObjectCountForTest();
+                Assert.assertNotEquals(
+                        "a steady seal of this key set must keep its partition-map nodes pooled, retained="
+                                + warmedObjectCount,
+                        0,
+                        warmedNodeIdentity
+                );
+                Assert.assertTrue(
+                        "retained=" + warmedObjectCount,
+                        warmedObjectCount <= LiveViewCheckpointTimelineStoreWriter.MAX_RETAINED_PARTITION_MAP_OBJECTS
+                );
+
+                for (int seq = 4; seq <= 5; seq++) {
+                    putStates(stub, keyCount, seq);
+                    seal(writer, stub, seq);
+                    Assert.assertEquals(
+                            "seal " + seq + " must reuse the pooled partition-map nodes",
+                            warmedNodeIdentity,
+                            writer.getFirstRetainedPartitionMapNodeIdentityForTest()
+                    );
+                    Assert.assertEquals(warmedObjectCount, writer.getRetainedPartitionMapObjectCountForTest());
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAppendParksNoWideKeyOnTheWriter() throws Exception {
         // Wide keys used to be heap images a few thousand of which pinned megabytes on the
         // writer between seals. A frozen key now lives in the freeze scratch's native arena,
