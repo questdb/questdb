@@ -25,10 +25,17 @@
 package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.ColumnPurgeJob;
+import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableReaderMetadata;
+import io.questdb.cairo.TableUtils;
+import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
@@ -38,6 +45,11 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.BeforeClass;
 import org.junit.Test;
+
+import java.io.File;
+import java.util.Arrays;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import static io.questdb.ParanoiaState.FD_PARANOIA_MODE;
 import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE_CEIL;
@@ -318,6 +330,81 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
         runFuzz(rnd);
+    }
+
+    @Test
+    public void testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbol() throws Exception {
+        // Pins the shape that hid the txn 0 sidecar bug, see FuzzRunner.setTxnZeroCoveredSymbol(): sym0
+        // is added to the still-empty table (column name txn 0) and covered before the first row. These
+        // seeds convert partitions to parquet and back, rename sym0 twice, drop other columns and change
+        // their types, all on that covering index.
+        Rnd rnd = generateRandom(LOG, 11L, 80L);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.1,
+                0.1,
+                0.1,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0,
+                0.01,
+                0.1,
+                0.0, // addCoveringIndexProb
+                0.0
+        );
+        setFuzzCounts(true, 2_000, 60, 20, 10, 100, 100, 3);
+        runTxnZeroCoveredSymbolFuzz(rnd);
+    }
+
+    @Test
+    public void testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbolFuzz() throws Exception {
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                // Two separate bugs keep renames and type changes out of the random runs: RENAME COLUMN
+                // of a covered column makes covering queries read NULL for it, and ALTER COLUMN TYPE of
+                // an indexed symbol leaves its index files in parquet partitions. A type or symbol
+                // capacity change also moves sym0 off column name txn 0. The pinned seed above renames
+                // sym0 itself and changes the type of a column that is neither indexed nor covered.
+                0.0,
+                0.0,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.0,
+                0.0,
+                0.8,
+                0.00,
+                0,
+                0.01,
+                0.1,
+                0.1, // addCoveringIndexProb
+                0.0
+        );
+        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        runTxnZeroCoveredSymbolFuzz(rnd);
     }
 
     @Test
@@ -831,6 +918,92 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         setFuzzCounts(true, 1_000_000, 500, 20, 1000, 1000, 100, 20);
         setFuzzProperties(rnd);
         runFuzz(rnd);
+    }
+
+    /**
+     * Checks that each .pc sidecar in a live partition of tableName belongs to a live column instance: a
+     * POSTING indexed column of that name whose column name txn in the partition gives the txn token of
+     * the file name, 0 for txn NONE and for txn 0, the txn otherwise. A sidecar of a dropped, renamed or
+     * retyped column version fails the check.
+     */
+    private void assertNoCoverFilesOfDroppedColumnVersions(String tableName) {
+        final Pattern coverFileName = Pattern.compile("^(.+)\\.pc[0-9]+\\.([0-9]+)(\\.[0-9]+)?\\.[0-9]+$");
+        try (TableReader reader = getReader(tableName); Path path = new Path()) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            for (int p = 0, n = reader.getTxFile().getPartitionCount(); p < n; p++) {
+                final long partitionTimestamp = reader.getTxFile().getPartitionTimestampByIndex(p);
+                path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+                TableUtils.setPathForNativePartition(
+                        path,
+                        metadata.getTimestampType(),
+                        reader.getPartitionedBy(),
+                        partitionTimestamp,
+                        reader.getTxFile().getPartitionNameTxn(p)
+                );
+                final String dir = path.toString();
+                final String[] names = new File(dir).list();
+                Assert.assertNotNull(dir, names);
+                for (String name : names) {
+                    final Matcher matcher = coverFileName.matcher(name);
+                    if (!matcher.matches()) {
+                        continue;
+                    }
+                    final String context = dir + ", " + name + " in " + Arrays.toString(names);
+                    final int columnIndex = metadata.getColumnIndexQuiet(matcher.group(1));
+                    Assert.assertTrue("sidecar of a dropped column: " + context, columnIndex > -1);
+                    Assert.assertTrue(
+                            "sidecar of a dropped index: " + context,
+                            IndexType.isPosting(metadata.getColumnIndexType(columnIndex))
+                    );
+                    final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(
+                            partitionTimestamp,
+                            metadata.getWriterIndex(columnIndex)
+                    );
+                    Assert.assertEquals(
+                            "sidecar of a dropped column version: " + context,
+                            Math.max(0, columnNameTxn),
+                            Long.parseLong(matcher.group(2))
+                    );
+                }
+            }
+        }
+    }
+
+    /**
+     * Runs a column purge job until it purged every column version that the fuzz run queued, moving
+     * the clock past the retry delay before each run.
+     */
+    private void purgeColumnVersions() throws SqlException {
+        engine.releaseInactive();
+        try (ColumnPurgeJob purgeJob = new ColumnPurgeJob(engine)) {
+            long now = configuration.getMicrosecondClock().getTicks();
+            for (int i = 0; i < 20 && (i == 0 || purgeJob.getOutstandingPurgeTasks() > 0); i++) {
+                now += configuration.getColumnPurgeRetryDelayLimit() + 1;
+                setCurrentMicros(now);
+                purgeJob.run();
+            }
+            Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+        } finally {
+            setCurrentMicros(-1);
+        }
+    }
+
+    /**
+     * Runs the fuzz on tables that start with a covering index on a column of column name txn 0, see
+     * FuzzRunner.setTxnZeroCoveredSymbol(). runFuzz() checks that the covered queries read what the
+     * uncovered ones read and that the WAL tables equal the non-WAL twin. After the column purge, no .pc
+     * sidecar of a dropped column version stays in a live partition of any of the three tables.
+     */
+    private void runTxnZeroCoveredSymbolFuzz(Rnd rnd) throws Exception {
+        fuzzer.setTxnZeroCoveredSymbol(rnd);
+        runFuzz(rnd);
+        assertMemoryLeak(() -> {
+            purgeColumnVersions();
+            final String tableName = getTestName();
+            for (String table : new String[]{tableName + "_wal", tableName + "_wal_parallel", tableName + "_nonwal"}) {
+                assertNoCoverFilesOfDroppedColumnVersions(table);
+            }
+        });
     }
 
     private void setTestParams(Rnd rnd) throws Exception {
