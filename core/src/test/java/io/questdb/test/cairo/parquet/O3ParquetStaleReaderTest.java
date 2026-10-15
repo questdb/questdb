@@ -33,11 +33,17 @@ import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.idx.IndexFactory;
+import io.questdb.cairo.sql.OperationFuture;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.CompiledQuery;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.mp.SCSequence;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.DirectLongList;
@@ -47,6 +53,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -68,6 +75,7 @@ import java.util.Arrays;
 import java.util.Comparator;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.CyclicBarrier;
 import java.util.concurrent.TimeUnit;
@@ -203,6 +211,30 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             new SymRow("d", 103, "2024-01-01", "06:30"),
             new SymRow("", 104, "2024-01-01", "09:30")
     };
+    // the columns of the failure tests added after 5 of 8 rows of partition 2024-01-01
+    private static final String[] CONVERT_FAILURE_COLUMNS = {"s", "bt", "st"};
+    // one row in each of 300 new partitions: the next _txn record outgrows the _txn file
+    private static final String CONVERT_FAILURE_PARTITIONS_INSERT = "INSERT INTO {t} (v, ts) SELECT (1_000 + x)::INT, dateadd('d', x::INT, '2024-01-02T12:00:00.000000Z'::TIMESTAMP) FROM long_sequence(300)";
+    // the queries over partition 2024-01-01 that a failed CONVERT TO NATIVE must leave as they were
+    private static final String[] CONVERT_FAILURE_QUERIES = {
+            "SELECT * FROM {t} WHERE ts IN '2024-01-01'",
+            "SELECT v, ts, s FROM {t} WHERE s = 'x' AND ts IN '2024-01-01'",
+            "SELECT v, ts, s FROM {t} WHERE s IS NULL AND ts IN '2024-01-01'",
+            "SELECT v, ts, s FROM {t} WHERE s IN ('x', 'a') AND ts IN '2024-01-01'",
+            "SELECT v, ts, s FROM {t} WHERE ts IN '2024-01-01' LATEST ON ts PARTITION BY s"
+    };
+    private static final String[] LEGACY_ABSENT_NATIVE_QUERIES = {
+            "SELECT * FROM {t}",
+            "SELECT v, ts, s, d FROM {t} WHERE s = 'x'",
+            "SELECT v, ts, s FROM {t} WHERE s = 'z'",
+            "SELECT v, ts, s FROM {t} WHERE s IS NULL",
+            "SELECT v, ts, s FROM {t} WHERE s IN ('x', 'a')",
+            "SELECT v, ts, s FROM {t} WHERE s != 'x'",
+            "SELECT v, ts, s FROM {t} WHERE s = 'x' ORDER BY ts DESC",
+            "SELECT v, ts, s FROM {t} LATEST ON ts PARTITION BY s",
+            "SELECT v, ts, s FROM {t} WHERE s = 'x' LATEST ON ts PARTITION BY s",
+            "SELECT count() FROM {t} WHERE s = 'x'"
+    };
     private static final String[] STALE_INDEX_QUERIES = {
             "SELECT s, v, ts FROM pt WHERE s = 'a' AND ts IN '2024-01-01'",
             "SELECT s, v, ts FROM pt WHERE s IS NULL AND ts IN '2024-01-01'",
@@ -213,6 +245,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             "SELECT s, v, ts FROM pt LATEST ON ts PARTITION BY s",
             "SELECT s, v, ts FROM pt WHERE s = 'b' AND ts IN '2024-01-01' LATEST ON ts PARTITION BY s"
     };
+    private final SCSequence eventSubSequence = new SCSequence();
 
     @Test
     public void testCanSkipRowGroupSurvivesConcurrentO3Merge() throws Exception {
@@ -1364,12 +1397,7 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         setInPlaceParquetO3Properties();
         assertMemoryLeak(() -> {
             loadStaleColumnTopFixture("legacy_absent_merged");
-            execute("CREATE TABLE tw (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
-            execute("INSERT INTO tw VALUES " + COLUMN_TOP_SHAPE_P1_ROWS + ", (99, '2024-01-02T00:00:00.000000Z')");
-            execute("ALTER TABLE tw ADD COLUMN s SYMBOL INDEX");
-            execute("ALTER TABLE tw ADD COLUMN d DOUBLE");
-            execute("INSERT INTO tw VALUES (100, '2024-01-02T01:00:00.000000Z', 'a', 0.5)");
-            execute("INSERT INTO tw VALUES (101, '2024-01-01T04:30:00.000000Z', 'x', 1.5)");
+            createLegacyAbsentMergedTwin();
             final String table = "legacy_absent_merged";
             Assert.assertEquals(-1, getColumnTop(table, 0, "s"));
             Assert.assertEquals(-1, getColumnTop(table, 0, "d"));
@@ -1390,6 +1418,178 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             assertLegacyQueriesMatchTwin(table, "repaired");
             execute("ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
             assertLegacyQueriesMatchTwin(table, "repaired, native");
+        });
+    }
+
+    @Test
+    public void testLegacyAbsentMergedConvertToNative() throws Exception {
+        // Fixture legacy_absent_merged: s and d keep top -1 in parquet partition 2024-01-01, while the
+        // file holds them from row 0, with row 101 = ('x', 1.5). CONVERT TO NATIVE takes the top from the
+        // decoded rows, 0, and builds the index of s from them.
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            final String table = "legacy_absent_merged";
+            loadStaleColumnTopFixture(table);
+            createLegacyAbsentMergedTwin();
+            Assert.assertEquals(-1, getColumnTop(table, 0, "s"));
+            execute("ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            assertLegacyAbsentMergedNative(table, "native");
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            assertLegacyAbsentMergedNative(table, "native, reopen");
+        });
+    }
+
+    @Test
+    public void testLegacyAbsentMergedAlterColumnType() throws Exception {
+        // ALTER COLUMN TYPE SYMBOL converts the legacy parquet partition to native in its pre-pass
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            final String table = "legacy_absent_merged";
+            loadStaleColumnTopFixture(table);
+            createLegacyAbsentMergedTwin();
+            for (String t : new String[]{table, "tw"}) {
+                execute("ALTER TABLE " + t + " ALTER COLUMN v TYPE SYMBOL");
+            }
+            Assert.assertEquals(0, getColumnTop(table, 0, "s"));
+            Assert.assertEquals(0, getColumnTop(table, 0, "d"));
+            assertQuery("SELECT v, ts, s, d FROM " + table + " WHERE s = 'x'")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            v\tts\ts\td
+                            101\t2024-01-01T04:30:00.000000Z\tx\t1.5
+                            """);
+            assertQueriesMatchTwin(table, "altered", LEGACY_ABSENT_NATIVE_QUERIES);
+        });
+    }
+
+    @Test
+    public void testLegacyLiveTopConvertToNative() throws Exception {
+        // Fixtures legacy_live_top and legacy_live_top_posting: s, d and vc keep top 8 of 9 rows in parquet
+        // partition 2024-01-01, while the file holds them from row 0. CONVERT TO NATIVE gives them top 0
+        // and builds the index of s from the decoded rows. k keeps top 0, so CONVERT links its index.
+        setInPlaceParquetO3Properties();
+        final HardLinkRecordingFacade ff = new HardLinkRecordingFacade();
+        assertMemoryLeak(ff, () -> {
+            for (String table : new String[]{"legacy_live_top", "legacy_live_top_posting"}) {
+                final boolean isPosting = table.endsWith("_posting");
+                execute("DROP TABLE IF EXISTS tw");
+                loadStaleColumnTopFixture(table);
+                createLegacyLiveTopTwin(isPosting);
+                Assert.assertEquals(table, 8, getColumnTop(table, 0, "s"));
+                ff.linkedFileNames.clear();
+                execute("ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                Assert.assertTrue(table + " " + ff.linkedFileNames, ff.hasLinked("k."));
+                Assert.assertFalse(table + " " + ff.linkedFileNames, ff.hasLinked("s."));
+                assertLegacyLiveTopNative(table, table + ", native");
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                assertLegacyLiveTopNative(table, table + ", native, reopen");
+            }
+        });
+    }
+
+    @Test
+    public void testLegacyRoundTripRepairsIndex() throws Exception {
+        // CONVERT TO NATIVE and back to PARQUET repairs the index of a legacy partition: the parquet
+        // index then agrees with the file, and a second CONVERT TO NATIVE reads the same rows
+        setInPlaceParquetO3Properties();
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"legacy_absent_merged", "legacy_live_top", "legacy_live_top_posting"}) {
+                execute("DROP TABLE IF EXISTS tw");
+                loadStaleColumnTopFixture(table);
+                final String[] queries;
+                final String[] columns;
+                if (table.equals("legacy_absent_merged")) {
+                    createLegacyAbsentMergedTwin();
+                    queries = LEGACY_ABSENT_NATIVE_QUERIES;
+                    columns = new String[]{"s", "d"};
+                } else {
+                    createLegacyLiveTopTwin(table.endsWith("_posting"));
+                    queries = LEGACY_LIVE_TOP_QUERIES;
+                    columns = new String[]{"s", "d", "vc", "k"};
+                }
+                execute("ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                // asserts the partition is parquet
+                getParquetPartitionNameTxn(table, 0);
+                for (String column : columns) {
+                    Assert.assertEquals(table + ", column " + column, 0, getColumnTop(table, 0, column));
+                }
+                assertQueriesMatchTwin(table, table + ", parquet", queries);
+                engine.releaseAllReaders();
+                engine.releaseAllWriters();
+                assertQueriesMatchTwin(table, table + ", parquet, reopen", queries);
+                execute("ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                for (String column : columns) {
+                    Assert.assertEquals(table + ", column " + column, 0, getColumnTop(table, 0, column));
+                }
+                assertQueriesMatchTwin(table, table + ", native again", queries);
+            }
+        });
+    }
+
+    @Test
+    public void testConvertToNativeFailureKeepsColumnTopsLegacy() throws Exception {
+        assertConvertToNativeFailureKeepsColumnTops(true, false);
+    }
+
+    @Test
+    public void testConvertToNativeFailureKeepsColumnTopsLegacyAsyncWriter() throws Exception {
+        assertConvertToNativeFailureKeepsColumnTops(true, true);
+    }
+
+    @Test
+    public void testConvertToNativeFailureKeepsColumnTopsRowGroups() throws Exception {
+        assertConvertToNativeFailureKeepsColumnTops(false, false);
+    }
+
+    @Test
+    public void testConvertToNativeFailureKeepsColumnTopsRowGroupsAsyncWriter() throws Exception {
+        assertConvertToNativeFailureKeepsColumnTops(false, true);
+    }
+
+    @Test
+    public void testConvertToNativeTxnFailureWalApply() throws Exception {
+        // WAL table, s, bt and st added after 5 of 8 rows of parquet partition 2024-01-01. The _cv commit
+        // of CONVERT TO NATIVE lands, the _txn commit fails: the table suspends with the committed state
+        // of before the CONVERT, and RESUME WAL applies it.
+        setInPlaceParquetO3Properties();
+        final ConvertToNativeFailingFacade ff = new ConvertToNativeFailingFacade("pt");
+        assertMemoryLeak(ff, () -> {
+            createConvertFailureTable("pt", "WAL", true);
+            createConvertFailureTable("tw", "BYPASS WAL", false);
+            for (String table : new String[]{"pt", "tw"}) {
+                execute(CONVERT_FAILURE_PARTITIONS_INSERT.replace("{t}", table));
+            }
+            drainWalQueue();
+            final long columnVersionBefore = readColumnVersionFileVersion("pt");
+            final long seqTxnBefore;
+            try (TableReader reader = getReader("pt")) {
+                seqTxnBefore = reader.getSeqTxn();
+            }
+            final String[] snapshot = snapshotQueries("pt", CONVERT_FAILURE_QUERIES);
+            ff.isArmed.set(true);
+            execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            Assert.assertFalse(ff.isArmed.get());
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 'pt'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("suspended\ntrue\n");
+            try (TableReader reader = getReader("pt")) {
+                Assert.assertEquals(seqTxnBefore, reader.getSeqTxn());
+            }
+            assertConvertFailureKeptState("pt", "failed WAL apply", columnVersionBefore, CONVERT_FAILURE_COLUMNS, new long[]{0, 0, 0}, snapshot);
+
+            execute("ALTER TABLE pt RESUME WAL");
+            drainWalQueue();
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 'pt'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("suspended\nfalse\n");
+            assertConvertFailureTableConverted("pt", "resumed");
         });
     }
 
@@ -1971,8 +2171,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         // it. The held cursor must return the full-scan rows captured before the commit, and a fresh
         // index query the full-scan rows after it. s starts in each column top shape: created with the
         // table, added after the partition exists (top -1), added while it is the last one (top at the
-        // row count). At the end CONVERT TO NATIVE must give the rows of a native twin table that got
-        // the same rows. The number of batches is a budget property.
+        // row count). Partition 2024-01-02, which no batch touches, is parquet too, with column late
+        // added after 7 of its 10 rows: a top that spans a row group. At the end CONVERT TO NATIVE must
+        // give the rows of a native twin table that got the same rows. The number of batches is a
+        // budget property.
         setInPlaceParquetO3Properties();
         final int batchCount = Integer.getInteger("questdb.fuzz.parquet.index.batches", 20);
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -2002,9 +2204,12 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                         execute("ALTER TABLE pt ADD COLUMN s SYMBOL " + indexDefinition);
                     }
                     execute("INSERT INTO pt (s, v, ts) VALUES ('a', 0, '2024-01-02T01:00:00.000000Z')");
+                    execute("INSERT INTO pt (v, ts) SELECT x, '2024-01-02T02:00:00.000000Z'::TIMESTAMP + x * 60_000_000L FROM long_sequence(5)");
+                    execute("ALTER TABLE pt ADD COLUMN late DOUBLE");
+                    execute("INSERT INTO pt (s, v, ts, late) SELECT 'b', x, '2024-01-02T03:00:00.000000Z'::TIMESTAMP + x * 60_000_000L, x * 1.5 FROM long_sequence(3)");
                     drainWalQueue();
                     execute("CREATE TABLE tw AS (SELECT * FROM pt) TIMESTAMP(ts) PARTITION BY DAY WAL");
-                    execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                    execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
                     drainWalQueue();
                     final long partitionNameTxn = getParquetPartitionNameTxn("pt", 0);
                     long nextV = 1_000;
@@ -2055,8 +2260,10 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                             }
                         }
                     }
-                    execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+                    execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '2024-01-01', '2024-01-02'");
                     drainWalQueue();
+                    // the first row group of 2024-01-02 holds no row of late
+                    Assert.assertEquals(4, getColumnTop("pt", 1, "late"));
                     assertSqlCursors("SELECT * FROM tw", "SELECT * FROM pt");
                 }
             }
@@ -2655,6 +2862,12 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         }
     }
 
+    private static byte getPartitionFormat(String tableName) {
+        try (TableReader reader = getReader(tableName)) {
+            return reader.getPartitionFormat(0);
+        }
+    }
+
     private static long getParquetPartitionNameTxn(String tableName, int partitionIndex) {
         try (TableReader reader = getReader(tableName)) {
             Assert.assertTrue("partition " + partitionIndex + " must be parquet", reader.getTxFile().isPartitionParquet(partitionIndex));
@@ -2723,6 +2936,18 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
                     reader.getTxFile().getPartitionNameTxn(partitionIndex)
             );
         }
+    }
+
+    /**
+     * The text each query, run on {@code table}, returns. The queries name the table {t}.
+     */
+    private static String[] snapshotQueries(String table, String[] queries) throws SqlException {
+        final String[] results = new String[queries.length];
+        for (int i = 0; i < queries.length; i++) {
+            printSql(queries[i].replace("{t}", table));
+            results[i] = queries[i] + '\n' + sink;
+        }
+        return results;
     }
 
     private static String symRowsText(boolean isNanos, Predicate<SymRow> filter, Comparator<SymRow> order, SymRow[]... rowSets) {
@@ -3146,6 +3371,212 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
         });
     }
 
+    /**
+     * After a failed CONVERT TO NATIVE, the _cv file, the column tops and the partition are those of
+     * before, the new partition directory is gone, and the queries return what they did before.
+     */
+    private static void assertConvertFailureKeptState(
+            String table,
+            String context,
+            long columnVersion,
+            String[] columns,
+            long[] tops,
+            String[] querySnapshot
+    ) throws Exception {
+        Assert.assertEquals(context, columnVersion, readColumnVersionFileVersion(table));
+        // asserts the partition is parquet
+        getParquetPartitionNameTxn(table, 0);
+        for (int i = 0; i < columns.length; i++) {
+            Assert.assertEquals(context + ", column " + columns[i], tops[i], getColumnTop(table, 0, columns[i]));
+        }
+        final File tableDir = new File(configuration.getDbRoot().toString(), engine.verifyTableName(table).getDirName());
+        final String[] partitionDirs = tableDir.list((_, name) -> name.startsWith("2024-01-01"));
+        Assert.assertNotNull(partitionDirs);
+        Assert.assertEquals(context + ": " + Arrays.toString(partitionDirs), 1, partitionDirs.length);
+        Assert.assertArrayEquals(context, querySnapshot, snapshotQueries(table, CONVERT_FAILURE_QUERIES));
+    }
+
+    /**
+     * Table pt of the failure tests, converted: s and st start at row group 1, bt keeps its top of 5.
+     */
+    private void assertConvertFailureTableConverted(String table, String context) throws Exception {
+        Assert.assertEquals(context, PartitionFormat.NATIVE, getPartitionFormat(table));
+        Assert.assertEquals(context, 4, getColumnTop(table, 0, "s"));
+        Assert.assertEquals(context, 5, getColumnTop(table, 0, "bt"));
+        Assert.assertEquals(context, 4, getColumnTop(table, 0, "st"));
+        assertQuery("SELECT v, ts, s, bt, st FROM " + table + " WHERE ts IN '2024-01-01'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns("""
+                        v\tts\ts\tbt\tst
+                        1\t2024-01-01T00:00:00.000000Z\t\t0\t
+                        2\t2024-01-01T01:00:00.000000Z\t\t0\t
+                        3\t2024-01-01T02:00:00.000000Z\t\t0\t
+                        4\t2024-01-01T03:00:00.000000Z\t\t0\t
+                        5\t2024-01-01T04:00:00.000000Z\t\t0\t
+                        6\t2024-01-01T05:00:00.000000Z\tx\t6\t\u00e9\ud834\udd1e6
+                        7\t2024-01-01T06:00:00.000000Z\t\t-7\t
+                        8\t2024-01-01T07:00:00.000000Z\ta\t0\t
+                        """);
+        assertQueriesMatchTwin(table, context, CONVERT_FAILURE_QUERIES);
+        assertQueriesMatchTwin(table, context, new String[]{"SELECT * FROM {t}", "SELECT v, ts, s FROM {t} WHERE s IS NULL", "SELECT v, ts, s FROM {t} WHERE s = 'a'"});
+    }
+
+    private void assertConvertToNativeFailureKeepsColumnTops(boolean isLegacy, boolean isAsync) throws Exception {
+        // Three failures of CONVERT TO NATIVE in a row on one table, each through the writer pool or the
+        // command queue of a writer the test holds: the _txn commit after the _cv commit, the index
+        // rebuild of s, and the open of the last column file. Each one leaves the committed state of
+        // before the CONVERT, in the files and in the writer, which then commits a row of another
+        // partition. A last CONVERT succeeds.
+        setInPlaceParquetO3Properties();
+        final String table = isLegacy ? "legacy_absent_merged" : "pt";
+        final ConvertToNativeFailingFacade ff = new ConvertToNativeFailingFacade(table);
+        assertMemoryLeak(ff, () -> {
+            final String[] columns;
+            final long[] tops;
+            if (isLegacy) {
+                loadStaleColumnTopFixture(table);
+                createLegacyAbsentMergedTwin();
+                columns = new String[]{"s", "d"};
+                tops = new long[]{-1, -1};
+            } else {
+                createConvertFailureTable(table, "BYPASS WAL", true);
+                createConvertFailureTable("tw", "BYPASS WAL", false);
+                columns = CONVERT_FAILURE_COLUMNS;
+                tops = new long[]{0, 0, 0};
+            }
+            for (String t : new String[]{table, "tw"}) {
+                execute(CONVERT_FAILURE_PARTITIONS_INSERT.replace("{t}", t));
+            }
+            final long columnVersion = readColumnVersionFileVersion(table);
+            final String[] querySnapshot = snapshotQueries(table, CONVERT_FAILURE_QUERIES);
+            final String convertSql = "ALTER TABLE " + table + " CONVERT PARTITION TO NATIVE LIST '2024-01-01'";
+            final String[] failures = {"_txn commit", "index rebuild", "column file open"};
+            final String[] failingFileNames = {null, "s.k", isLegacy ? "d.d" : "st.d"};
+            final String[] errors = {"No space left", "could not open read-write", "could not open"};
+            if (isAsync) {
+                try (TableWriter writer = getWriter(table)) {
+                    final int partitionColumnIndex = writer.getMetadata().getColumnIndex("s");
+                    for (int i = 0; i < failures.length; i++) {
+                        final String context = "async writer, failed " + failures[i];
+                        ff.arm(i == 0, failingFileNames[i]);
+                        try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                            final CompiledQuery cq = compiler.compile(convertSql, sqlExecutionContext);
+                            try (OperationFuture fut = cq.execute(eventSubSequence)) {
+                                writer.tick();
+                                fut.await();
+                            }
+                            Assert.fail(context + ": the CONVERT must fail");
+                        } catch (SqlException | CairoException e) {
+                            TestUtils.assertContains(context, e.getMessage(), errors[i]);
+                        }
+                        Assert.assertTrue(context, ff.hasFired());
+                        Assert.assertEquals(context, PartitionFormat.PARQUET, writer.getPartitionFormat(0));
+                        Assert.assertEquals(context, tops[0], writer.columnVersionReader().getColumnTop(writer.getPartitionTimestamp(0), partitionColumnIndex));
+                        assertConvertFailureKeptState(table, context, columnVersion, columns, tops, querySnapshot);
+                        // the writer commits a row of partition 2024-01-02 on the committed state of before the CONVERT
+                        final TableWriter.Row row = writer.newRow(1_704_153_600_000_000L + 5 * Micros.HOUR_MICROS + i * Micros.MINUTE_MICROS);
+                        row.putInt(0, 500 + i);
+                        row.append();
+                        writer.commit();
+                        execute("INSERT INTO tw (v, ts) VALUES (" + (500 + i) + ", '2024-01-02T05:0" + i + ":00.000000Z')");
+                        assertConvertFailureKeptState(table, context + ", after commit", columnVersion, columns, tops, querySnapshot);
+                    }
+                    try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                        final CompiledQuery cq = compiler.compile(convertSql, sqlExecutionContext);
+                        try (OperationFuture fut = cq.execute(eventSubSequence)) {
+                            writer.tick();
+                            fut.await();
+                        }
+                    }
+                }
+            } else {
+                for (int i = 0; i < failures.length; i++) {
+                    final String context = "pooled writer, failed " + failures[i];
+                    ff.arm(i == 0, failingFileNames[i]);
+                    try {
+                        execute(convertSql);
+                        Assert.fail(context + ": the CONVERT must fail");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(context, e.getFlyweightMessage(), errors[i]);
+                    }
+                    Assert.assertTrue(context, ff.hasFired());
+                    assertConvertFailureKeptState(table, context, columnVersion, columns, tops, querySnapshot);
+                    for (String t : new String[]{table, "tw"}) {
+                        execute("INSERT INTO " + t + " (v, ts) VALUES (" + (500 + i) + ", '2024-01-02T05:0" + i + ":00.000000Z')");
+                    }
+                    assertConvertFailureKeptState(table, context + ", after commit", columnVersion, columns, tops, querySnapshot);
+                }
+                if (!isLegacy) {
+                    // the parquet -> native pre-pass of ALTER COLUMN TYPE fails the same way
+                    ff.arm(false, "st.d");
+                    try {
+                        execute("ALTER TABLE pt ALTER COLUMN v TYPE SYMBOL");
+                        Assert.fail("ALTER COLUMN TYPE must fail");
+                    } catch (CairoException e) {
+                        TestUtils.assertContains(e.getFlyweightMessage(), "could not open");
+                    }
+                    Assert.assertTrue(ff.hasFired());
+                    engine.releaseAllWriters();
+                    assertConvertFailureKeptState(table, "failed pre-pass", columnVersion, columns, tops, querySnapshot);
+                }
+                execute(convertSql);
+            }
+            if (isLegacy) {
+                assertLegacyAbsentMergedNative(table, "converted");
+            } else {
+                assertConvertFailureTableConverted(table, "converted");
+            }
+            engine.releaseAllReaders();
+            engine.releaseAllWriters();
+            if (isLegacy) {
+                assertLegacyAbsentMergedNative(table, "converted, reopen");
+            } else {
+                assertConvertFailureTableConverted(table, "converted, reopen");
+            }
+        });
+    }
+
+    private void assertLegacyAbsentMergedNative(String table, String context) throws Exception {
+        Assert.assertEquals(context, PartitionFormat.NATIVE, getPartitionFormat(table));
+        Assert.assertEquals(context, 0, getColumnTop(table, 0, "s"));
+        Assert.assertEquals(context, 0, getColumnTop(table, 0, "d"));
+        assertQuery("SELECT v, ts, s, d FROM " + table + " WHERE s = 'x'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns("""
+                        v\tts\ts\td
+                        101\t2024-01-01T04:30:00.000000Z\tx\t1.5
+                        """);
+        assertQuery("SELECT v, ts, s FROM " + table + " WHERE s IS NULL AND ts IN '2024-01-01'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns(COLUMN_TOP_SHAPE_P1_NULL_ROWS);
+        assertQuery("SELECT v, ts, s FROM " + table + " WHERE s = 'x'")
+                .noLeakCheck()
+                .assertsPlanContaining("Index forward scan on: s");
+        assertQueriesMatchTwin(table, context, LEGACY_ABSENT_NATIVE_QUERIES);
+    }
+
+    private void assertLegacyLiveTopNative(String table, String context) throws Exception {
+        Assert.assertEquals(context, PartitionFormat.NATIVE, getPartitionFormat(table));
+        for (String column : new String[]{"s", "d", "vc", "k"}) {
+            Assert.assertEquals(context + ", column " + column, 0, getColumnTop(table, 0, column));
+        }
+        assertQuery("SELECT v, ts, s, d, vc FROM " + table + " WHERE s = 'y'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns("""
+                        v\tts\ts\td\tvc
+                        9\t2024-01-01T08:00:00.000000Z\ty\t2.5\ty9
+                        """);
+        assertQuery("SELECT v, ts, s FROM " + table + " WHERE s IS NULL AND ts IN '2024-01-01'")
+                .noLeakCheck()
+                .timestamp("ts")
+                .returns(COLUMN_TOP_SHAPE_P1_NULL_ROWS);
+        assertQueriesMatchTwin(table, context, LEGACY_LIVE_TOP_QUERIES);
+    }
+
     private static void assertLegacyQueriesMatchTwin(String table, String context) throws Exception {
         assertQueriesMatchTwin(table, context, LEGACY_ABSENT_QUERIES);
     }
@@ -3207,6 +3638,44 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
             execute("ALTER TABLE " + table + " ADD COLUMN " + column);
         }
         execute("ALTER TABLE " + table + " ALTER COLUMN s ADD INDEX " + indexSuffix);
+    }
+
+    /**
+     * Table {@code table} of the failure tests: s SYMBOL INDEX, bt BYTE and st STRING added after 5 of
+     * the 8 rows of partition 2024-01-01, with a row group size of 4, and one row on 2024-01-02.
+     */
+    private static void createConvertFailureTable(String table, String walMode, boolean isParquet) throws Exception {
+        execute("CREATE TABLE " + table + " (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("""
+                INSERT INTO {t} (v, ts) VALUES (1, '2024-01-01T00:00:00.000000Z'), (2, '2024-01-01T01:00:00.000000Z'),
+                (3, '2024-01-01T02:00:00.000000Z'), (4, '2024-01-01T03:00:00.000000Z'), (5, '2024-01-01T04:00:00.000000Z')
+                """.replace("{t}", table));
+        execute("ALTER TABLE " + table + " ADD COLUMN s SYMBOL INDEX");
+        execute("ALTER TABLE " + table + " ADD COLUMN bt BYTE");
+        execute("ALTER TABLE " + table + " ADD COLUMN st STRING");
+        execute("""
+                INSERT INTO {t} VALUES (6, '2024-01-01T05:00:00.000000Z', 'x', 6, '\u00e9\ud834\udd1e6'),
+                (7, '2024-01-01T06:00:00.000000Z', NULL, -7, ''), (8, '2024-01-01T07:00:00.000000Z', 'a', 0, NULL),
+                (99, '2024-01-02T00:00:00.000000Z', 'a', 9, 'p2')
+                """.replace("{t}", table));
+        drainWalQueue();
+        if (isParquet) {
+            execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+        }
+    }
+
+    /**
+     * The native twin of the legacy_absent_merged fixture: the statements that wrote it, without the
+     * CONVERT.
+     */
+    private static void createLegacyAbsentMergedTwin() throws Exception {
+        execute("CREATE TABLE tw (v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO tw VALUES " + COLUMN_TOP_SHAPE_P1_ROWS + ", (99, '2024-01-02T00:00:00.000000Z')");
+        execute("ALTER TABLE tw ADD COLUMN s SYMBOL INDEX");
+        execute("ALTER TABLE tw ADD COLUMN d DOUBLE");
+        execute("INSERT INTO tw VALUES (100, '2024-01-02T01:00:00.000000Z', 'a', 0.5)");
+        execute("INSERT INTO tw VALUES (101, '2024-01-01T04:30:00.000000Z', 'x', 1.5)");
     }
 
     /**
@@ -3431,10 +3900,82 @@ public class O3ParquetStaleReaderTest extends AbstractCairoTest {
     }
 
     /**
+     * Fails, once when armed, the extension of the _txn file of one table by its writer, or the open of a
+     * file for append or read-write by its name, with or without the column name txn suffix.
+     */
+    private static class ConvertToNativeFailingFacade extends TxnExtendFailingFacade {
+        private final AtomicInteger fileFailures = new AtomicInteger();
+        private final AtomicReference<String> failingFileNameRef = new AtomicReference<>();
+        private volatile boolean isTxnExtendFailing;
+
+        ConvertToNativeFailingFacade(String tableName) {
+            super(tableName);
+        }
+
+        @Override
+        public long openAppend(LPSZ name) {
+            return isFailingFile(name) ? -1 : super.openAppend(name);
+        }
+
+        @Override
+        public long openRW(LPSZ name, int opts) {
+            return isFailingFile(name) ? -1 : super.openRW(name, opts);
+        }
+
+        void arm(boolean isTxnExtendFailing, String failingFileName) {
+            this.isTxnExtendFailing = isTxnExtendFailing;
+            isArmed.set(isTxnExtendFailing);
+            failingFileNameRef.set(failingFileName);
+            fileFailures.set(0);
+        }
+
+        boolean hasFired() {
+            return isTxnExtendFailing ? !isArmed.get() : fileFailures.get() == 1;
+        }
+
+        private boolean isFailingFile(LPSZ name) {
+            final String fileName = failingFileNameRef.get();
+            if (fileName == null) {
+                return false;
+            }
+            final String path = Utf8s.stringFromUtf8Bytes(name);
+            final String lastSegment = path.substring(path.lastIndexOf(Files.SEPARATOR) + 1);
+            if ((lastSegment.equals(fileName) || lastSegment.startsWith(fileName + '.')) && failingFileNameRef.compareAndSet(fileName, null)) {
+                fileFailures.incrementAndGet();
+                return true;
+            }
+            return false;
+        }
+    }
+
+    /**
+     * Records the names of the files the writer links.
+     */
+    private static class HardLinkRecordingFacade extends TestFilesFacadeImpl {
+        private final ConcurrentLinkedQueue<String> linkedFileNames = new ConcurrentLinkedQueue<>();
+
+        @Override
+        public int hardLink(LPSZ src, LPSZ hardLink) {
+            final String path = Utf8s.stringFromUtf8Bytes(src);
+            linkedFileNames.add(path.substring(path.lastIndexOf(Files.SEPARATOR) + 1));
+            return super.hardLink(src, hardLink);
+        }
+
+        boolean hasLinked(String fileNamePrefix) {
+            for (String fileName : linkedFileNames) {
+                if (fileName.startsWith(fileNamePrefix)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+    }
+
+    /**
      * Fails, once when armed, the extension of the _txn file of one table by its writer.
      */
     private static class TxnExtendFailingFacade extends TestFilesFacadeImpl {
-        private final AtomicBoolean isArmed = new AtomicBoolean();
+        final AtomicBoolean isArmed = new AtomicBoolean();
         private final String tableDirPrefix;
         private volatile long txnFd = -1;
 

@@ -24,17 +24,24 @@
 
 package io.questdb.test.cairo.covering;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import org.junit.Assert;
 import org.junit.Test;
 
 import java.io.File;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * A COVERING posting index converted to Parquet and then back to native must
@@ -128,6 +135,83 @@ public class CoveringIndexParquetNativeRoundTripTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .withPlanContaining("CoveringIndex on: sym")
                     .returns("sum_price\tc\tfirst_tag\n316.0\t13\tV0\n");
+        });
+    }
+
+    @Test
+    public void testConvertToNativeCoveredTopChangesLinkedIndex() throws Exception {
+        // s exists from the start (top 0), d is added after 5 of 8 rows. With row groups of 4 rows, CONVERT
+        // TO NATIVE gives d top 4 and links the covering index of s, whose top does not change. The covered
+        // values of d then read through the native column with its new top, also after an insert into
+        // the partition, the last one, whose seal reads the covered tops from _cv.
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        final ConcurrentLinkedQueue<String> linkedFileNames = new ConcurrentLinkedQueue<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int hardLink(LPSZ src, LPSZ hardLink) {
+                final String path = Utf8s.stringFromUtf8Bytes(src);
+                linkedFileNames.add(path.substring(path.lastIndexOf(Files.SEPARATOR) + 1));
+                return super.hardLink(src, hardLink);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            // t_twin gets the same statements without the CONVERT
+            for (String table : new String[]{"t_cov", "t_twin"}) {
+                execute("CREATE TABLE " + table + " (ts TIMESTAMP, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO " + table + " SELECT dateadd('h', (x - 1)::INT, '2024-01-01T00:00:00.000000Z'::TIMESTAMP), CASE WHEN x % 2 = 1 THEN 'x' ELSE 'y' END FROM long_sequence(5)");
+                execute("ALTER TABLE " + table + " ADD COLUMN d DOUBLE");
+                execute("""
+                        INSERT INTO {t} VALUES ('2024-01-01T05:00:00.000000Z', 'x', 5.5), ('2024-01-01T06:00:00.000000Z', 'y', 6.5),
+                        ('2024-01-01T07:00:00.000000Z', 'x', 7.5)""".replace("{t}", table));
+                execute("ALTER TABLE " + table + " ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (d)");
+            }
+            drainWalQueue();
+            execute("ALTER TABLE t_cov CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            assertPartitionFormat("t_cov", true);
+            linkedFileNames.clear();
+            execute("ALTER TABLE t_cov CONVERT PARTITION TO NATIVE LIST '2024-01-01'");
+            drainWalQueue();
+            assertPartitionFormat("t_cov", false);
+            Assert.assertTrue(linkedFileNames.toString(), linkedFileNames.contains("s.pk") || linkedFileNames.stream().anyMatch(name -> name.startsWith("s.pk.")));
+            Assert.assertEquals(0, getColumnTop("t_cov", "s"));
+            Assert.assertEquals(4, getColumnTop("t_cov", "d"));
+            assertQuery("SELECT ts, d FROM t_cov WHERE s = 'x'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .withPlanContaining("CoveringIndex on: s")
+                    .returns("""
+                            ts\td
+                            2024-01-01T00:00:00.000000Z\tnull
+                            2024-01-01T02:00:00.000000Z\tnull
+                            2024-01-01T04:00:00.000000Z\tnull
+                            2024-01-01T05:00:00.000000Z\t5.5
+                            2024-01-01T07:00:00.000000Z\t7.5
+                            """);
+            assertCoveredMatchesTwin("converted");
+
+            for (String table : new String[]{"t_cov", "t_twin"}) {
+                execute("INSERT INTO " + table + " VALUES ('2024-01-01T08:00:00.000000Z', 'x', 8.5), ('2024-01-01T09:00:00.000000Z', 'y', NULL)");
+            }
+            drainWalQueue();
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't_cov'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("suspended\nfalse\n");
+            assertCoveredMatchesTwin("after insert");
+            assertQuery("SELECT ts, d FROM t_cov WHERE s = 'x' AND ts > '2024-01-01T04:00:00.000000Z'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\td
+                            2024-01-01T05:00:00.000000Z\t5.5
+                            2024-01-01T07:00:00.000000Z\t7.5
+                            2024-01-01T08:00:00.000000Z\t8.5
+                            """);
         });
     }
 
@@ -582,6 +666,33 @@ public class CoveringIndexParquetNativeRoundTripTest extends AbstractCairoTest {
                 .noLeakCheck()
                 .withPlanContaining("CoveringIndex on: sym with: price, tag")
                 .returns("sum_price\tfirst_tag\n1300.0\tV0\n");
+    }
+
+    private static long getColumnTop(String tableName, String columnName) {
+        try (TableReader reader = engine.getReader(tableName)) {
+            final int columnIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(columnName));
+            return reader.getColumnVersionReader().getColumnTop(reader.getPartitionTimestampByIndex(0), columnIndex);
+        }
+    }
+
+    /**
+     * The covering scans of t_cov return what the twin returns, and what a scan that reads d from the
+     * column returns.
+     */
+    private void assertCoveredMatchesTwin(String context) throws Exception {
+        for (String sql : new String[]{
+                "SELECT ts, d FROM {t} WHERE s = 'x'",
+                "SELECT ts, d FROM {t} WHERE s = 'y'",
+                "SELECT ts, s, d FROM {t} WHERE s IN ('x', 'y')",
+                "SELECT count() c, sum(d) sd FROM {t} WHERE s = 'x'"
+        }) {
+            try {
+                assertSqlCursors(sql.replace("{t}", "t_twin"), sql.replace("{t}", "t_cov"));
+                assertSqlCursors(sql.replace("SELECT ", "SELECT /*+ no_covering */ ").replace("{t}", "t_cov"), sql.replace("{t}", "t_cov"));
+            } catch (AssertionError e) {
+                throw new AssertionError(context + ": " + sql, e);
+            }
+        }
     }
 
     private void assertPartitionFormat(String tableName, boolean parquet) throws Exception {
