@@ -235,7 +235,16 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             // FROM-TO may apply to align to calendar queries, fixing the lower bound.
             if (sampleFromFunc != timestampDriver.getTimestampConstantNull()) {
                 from = sampleFromFunc.getTimestamp(null);
-                timestampSampler.setStart(from != Long.MIN_VALUE ? timestampDriver.from(from, sampleFromFuncType) : 0);
+                if (from != Long.MIN_VALUE) {
+                    final long fromTimestamp = timestampDriver.from(from, sampleFromFuncType);
+                    if (fixedOffset != Long.MIN_VALUE) {
+                        timestampSampler.setLocalAnchor(fromTimestamp + fixedOffset);
+                    } else {
+                        timestampSampler.setStart(fromTimestamp);
+                    }
+                } else {
+                    timestampSampler.setStart(0);
+                }
             } else {
                 timestampSampler.setOffset(fixedOffset != Long.MIN_VALUE ? fixedOffset : 0);
             }
