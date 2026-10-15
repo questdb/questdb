@@ -114,11 +114,11 @@ final class JoinOrderSolver implements Mutable {
     /**
      * Selects the order of a join binding left a graph for and publishes the keys, join types and ordered inputs; the
      * caller places the graph's filter conjuncts. An input binding added after the graph joins as an unkeyed CROSS
-     * step. The first input stays first when the join designates its timestamp and a part of the query sees the join's
-     * order, {@code isOrderVisible}; when the order leads with another input, the join designates no timestamp.
+     * step. The first input stays first when the join designates its timestamp and a part of the query requires it,
+     * {@code isTimestampRequired}; when the order leads with another input, the join designates no timestamp.
      */
-    void order(JoinPlan join, boolean isOrderVisible) {
-        of(join, join.getGraph(), isOrderVisible);
+    void order(JoinPlan join, boolean isTimestampRequired) {
+        of(join, join.getGraph(), isTimestampRequired);
         try {
             for (int i = dependencies.size(), n = join.getInputs().size(); i < n; i++) {
                 dependencies.add(null);
@@ -284,14 +284,14 @@ final class JoinOrderSolver implements Mutable {
         return retained;
     }
 
-    private void of(JoinPlan join, JoinGraph graph, boolean isOrderVisible) {
+    private void of(JoinPlan join, JoinGraph graph, boolean isTimestampRequired) {
         clear();
         children.clear();
         childrenPool.clear();
         joinTypes.clear();
         this.graph = graph;
         this.dependencies = graph.getDependencies();
-        isFirstInputFixed = isOrderVisible && join.getOutput().getTimestampIndex() >= 0 || join.hasExplicitTimestamp()
+        isFirstInputFixed = isTimestampRequired && join.getOutput().getTimestampIndex() >= 0 || join.hasExplicitTimestamp()
                 || graph.getLateralDependencies().size() > 0 || graph.getOrderingConstraints().size() > 0;
         final ObjList<JoinInput> inputs = join.getInputs();
         for (int i = 0, n = inputs.size(); i < n; i++) {

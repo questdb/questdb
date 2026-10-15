@@ -42,6 +42,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
     private int exclusionKindPos;
     private int framingMode;
     private boolean ignoreNulls;
+    private boolean isDesignatedTimestampRead;
     private boolean liveView;
     private int nullsDescPos;
     private int orderByDirection;
@@ -131,6 +132,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.timestampIndex = -1;
         this.timestampType = ColumnType.UNDEFINED;
         this.ignoreNulls = false;
+        this.isDesignatedTimestampRead = false;
         this.liveView = false;
         this.nullsDescPos = 0;
     }
@@ -212,6 +214,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
 
     @Override
     public int getTimestampIndex() {
+        isDesignatedTimestampRead = true;
         return timestampIndex;
     }
 
@@ -227,6 +230,11 @@ public class WindowContextImpl implements WindowContext, Mutable {
         return framingMode == WindowExpression.FRAMING_RANGE
                 && rowsLo == Long.MIN_VALUE
                 && (rowsHi == 0 || rowsHi == Long.MAX_VALUE);
+    }
+
+    @Override
+    public boolean isDesignatedTimestampRead() {
+        return isDesignatedTimestampRead;
     }
 
     @Override
@@ -250,6 +258,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
     }
 
     public boolean isOrderedByDesignatedTimestamp() {
+        isDesignatedTimestampRead = true;
         return orderByDirection == RecordCursorFactory.SCAN_DIRECTION_FORWARD || orderByDirection == RecordCursorFactory.SCAN_DIRECTION_BACKWARD;
     }
 
@@ -307,6 +316,7 @@ public class WindowContextImpl implements WindowContext, Mutable {
         this.timestampIndex = timestampIndex;
         this.timestampType = timestampType;
         this.ignoreNulls = ignoreNulls;
+        this.isDesignatedTimestampRead = false;
         this.nullsDescPos = nullsDescPos;
         this.timestampType = timestampType;
     }

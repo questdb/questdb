@@ -769,6 +769,118 @@ public class LimitTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegativeLimitBindVariableMultipleOrderTerms() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, v LONG) TIMESTAMP(ts)");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('2024-01-01T00:00:00.000000Z', 5),
+                        ('2024-01-01T00:00:00.000000Z', NULL),
+                        ('2024-01-01T00:00:01.000000Z', 3),
+                        ('2024-01-01T00:00:02.000000Z', 7),
+                        ('2024-01-01T00:00:02.000000Z', NULL),
+                        ('2024-01-01T00:00:02.000000Z', 1),
+                        ('2024-01-01T00:00:03.000000Z', 4),
+                        ('2024-01-01T00:00:03.000000Z', NULL)
+                    """);
+            final String query = "SELECT ts, v FROM t ORDER BY ts, v LIMIT -$1";
+            final String lastThree = """
+                    ts\tv
+                    2024-01-01T00:00:02.000000Z\t7
+                    2024-01-01T00:00:03.000000Z\tnull
+                    2024-01-01T00:00:03.000000Z\t4
+                    """;
+            final String firstThree = """
+                    ts\tv
+                    2024-01-01T00:00:00.000000Z\tnull
+                    2024-01-01T00:00:00.000000Z\t5
+                    2024-01-01T00:00:01.000000Z\t3
+                    """;
+            final String none = "ts\tv\n";
+            final String all = """
+                    ts\tv
+                    2024-01-01T00:00:00.000000Z\tnull
+                    2024-01-01T00:00:00.000000Z\t5
+                    2024-01-01T00:00:01.000000Z\t3
+                    2024-01-01T00:00:02.000000Z\tnull
+                    2024-01-01T00:00:02.000000Z\t1
+                    2024-01-01T00:00:02.000000Z\t7
+                    2024-01-01T00:00:03.000000Z\tnull
+                    2024-01-01T00:00:03.000000Z\t4
+                    """;
+
+            assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT -3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [ts, v]
+                                Encode sort light lo: 3 partiallySorted: true
+                                  keys: [ts desc, v desc]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: t
+                            """)
+                    .returns(lastThree);
+            assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT 3").noLeakCheck().timestamp("ts").expectSize().returns(firstThree);
+            assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT 0").noLeakCheck().timestamp("ts").expectSize().returns(none);
+            assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT NULL::LONG").noLeakCheck().timestamp("ts").expectSize().returns(all);
+
+            bindVariableService.setLong(0, 3);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [ts, v]
+                                Encode sort light lo: $0::long partiallySorted: true
+                                  keys: [ts desc, v desc]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: t
+                            """)
+                    .returns(lastThree);
+            try (RecordCursorFactory factory = select(query)) {
+                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(lastThree);
+                bindVariableService.setLong(0, -3);
+                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(firstThree);
+                bindVariableService.setLong(0, 0);
+                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(none);
+                bindVariableService.setLong(0, Numbers.LONG_NULL);
+                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(all);
+            }
+
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 3);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [ts, v]
+                                Encode sort light lo: $0::int partiallySorted: true
+                                  keys: [ts desc, v desc]
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: t
+                            """)
+                    .returns(lastThree);
+            try (RecordCursorFactory factory = select(query)) {
+                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(lastThree);
+                bindVariableService.setInt(0, -3);
+                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(firstThree);
+                bindVariableService.setInt(0, 0);
+                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(none);
+                bindVariableService.setInt(0, Numbers.INT_NULL);
+                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(all);
+            }
+        });
+    }
+
+    @Test
     public void testNegativeLimitEmptyTable() throws Exception {
         assertMemoryLeak(() -> {
             execute("create table y (sym symbol, ts timestamp) timestamp(ts) partition by day");

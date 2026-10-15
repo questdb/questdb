@@ -42,6 +42,12 @@ public abstract sealed class BoundExpression implements Mutable
     public static final int ASCENDING_TIMESTAMP = 512;
     public static final int CONSTANT = 1;
     /**
+     * The window function of the call relies on the designated timestamp of its input: its factory read the timestamp
+     * or whether the window orders by it. The binder records it from the window context, the function does not report
+     * it.
+     */
+    public static final int DESIGNATED_TIMESTAMP = 4096;
+    /**
      * The aggregate function of the call can stop reading its input early.
      */
     public static final int EARLY_EXIT = 256;

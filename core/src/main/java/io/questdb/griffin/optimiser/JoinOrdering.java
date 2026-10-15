@@ -32,7 +32,6 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.FilterPlan;
-import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.JoinGraph;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -51,10 +50,11 @@ import io.questdb.std.ObjectPool;
 /**
  * Orders every join binding left a {@link JoinGraph} for and places the graph's filter conjuncts on the ordered steps.
  * Inner and cross joins commute, but a join that designates its first input's timestamp keeps that input first while
- * any part of the query can see the join's rows in their order. The order stays invisible only along a path of nodes
- * that provably ignore it, see {@link #isInputOrderVisible}, up to the query result of a statement that stores no
- * designated timestamp; every other node, including any that a later change adds, sees it. A join that leads with
- * another input designates no timestamp, and neither does a node on that path that forwarded the join's.
+ * any part of the query requires the designated timestamp of the join's rows, and so their order: a statement that
+ * stores the designated timestamp, or a node that reads it or depends on its order along a path of nodes that pass the
+ * requirement on, see {@link #isInputTimestampRequired}. A node the rule does not name, including any that a later
+ * change adds, requires it. A join that leads with another input designates no timestamp, and neither does a node on
+ * the path that forwarded the join's.
  * A conjunct filters the step that joins the last input it reads, a conjunct that reads no input the last step. When
  * the join has an outer or temporal step, an ON conjunct filters no earlier than its own step unless it reads one input
  * and an ASOF, LT or SPLICE step anchors it, and a WHERE conjunct filters no earlier than the last RIGHT or FULL step
@@ -174,30 +174,22 @@ final class JoinOrdering implements OptimiserPass {
         return position;
     }
 
-    private boolean hasOrderedReadAggregate(AggregatePlan aggregate) {
+    private boolean hasReadTimestampAggregate(AggregatePlan aggregate) {
         final int keyCount = aggregate.getGroupingExpressions().size();
         for (int i = 0, n = aggregate.getAggregates().size(); i < n; i++) {
-            final FunctionExpression function = aggregate.getAggregates().getQuick(i);
             if (columnReads.isRead(aggregate.getOutput().getColumnId(keyCount + i))
-                    && (LogicalPlans.isTimestampAggregate(function) || !LogicalPlans.isOrderIndependentAggregate(function))) {
+                    && LogicalPlans.isTimestampAggregate(aggregate.getAggregates().getQuick(i))) {
                 return true;
             }
         }
         return false;
     }
 
-    private boolean hasOrderedReadExpression(ProjectPlan project) {
-        for (int i = 0, n = project.getExpressions().size(); i < n; i++) {
-            if (columnReads.isRead(project.getOutput().getColumnId(i)) && !LogicalPlans.isOrderIndependent(project.getExpressions().getQuick(i))) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean hasReadFunction(WindowPlan window) {
+    private boolean hasReadTimestampWindow(WindowPlan window) {
         for (int i = 0, n = window.getFunctionColumnIds().size(); i < n; i++) {
-            if (columnReads.isRead(window.getFunctionColumnIds().getQuick(i))) {
+            if (columnReads.isRead(window.getFunctionColumnIds().getQuick(i))
+                    && ((window.getFunctions().getQuick(i).getFunctionFlags() & BoundExpression.DESIGNATED_TIMESTAMP) != 0
+                    || window.getSpecs().getQuick(i).isSubsampleKeepFlag())) {
                 return true;
             }
         }
@@ -205,33 +197,30 @@ final class JoinOrdering implements OptimiserPass {
     }
 
     /**
-     * True when the plan sees the order of its input at {@code inputIndex}, an index of a join's
-     * {@link LogicalPlans#orderedSteps}, given whether its own consumer sees the plan's order: {@code isOrderVisible}.
-     * A node sees the order only through the columns the query reads from it, see {@link ColumnReads}: column pruning
-     * removes the computations of every other column. A sort orders the rows itself, and an aggregate groups them, so
-     * neither sees it unless its grouping keys or a read aggregate value depend on the order or a read aggregate
-     * function reads the designated timestamp. A filter, a projection, a window, a LIMIT and a DISTINCT pass the order
-     * on, unless the filter or a read column of the projection depends on row order, the projection declares a
-     * designated timestamp, or the window computes a read column. A set operation passes it on from its left input and
-     * from each branch of a
-     * UNION, while EXCEPT and INTERSECT read their right input as a set. A join passes it on to its first input,
-     * shows it to the inputs whose timestamp a temporal step reads, and reads its other inputs as the rows it matches.
-     * Any other node sees it.
+     * True when the plan requires the designated timestamp of its input at {@code inputIndex}, an index of a join's
+     * {@link LogicalPlans#orderedSteps}, given whether its own consumer requires the plan's: {@code isTimestampRequired}.
+     * A node requires it only through the columns the query reads from it, see {@link ColumnReads}: column pruning
+     * removes the computations of every other column. A sort orders the rows itself, so it requires nothing of its
+     * input, and an aggregate requires it only for a read aggregate function that reads the designated timestamp or
+     * requires its ascending order. A filter, a LIMIT, a DISTINCT, a projection and a window pass the requirement on;
+     * a projection that declares a designated timestamp requires it, and so does a window with a read function whose
+     * factory relies on the designated timestamp or that keeps SUBSAMPLE rows. A set operation passes it on to its left
+     * input and to each branch of a UNION, while EXCEPT and INTERSECT read their right input as a set. A join passes it
+     * on to its first input and requires it of the inputs whose timestamp a temporal step reads. Any other node requires
+     * it. Every other dependence on row order, such as an order-sensitive aggregate or a window over its input order,
+     * reads the rows in the order the join chooses.
      */
-    private boolean isInputOrderVisible(LogicalPlan plan, int inputIndex, boolean isOrderVisible) {
+    private boolean isInputTimestampRequired(LogicalPlan plan, int inputIndex, boolean isTimestampRequired) {
         return switch (plan) {
             case SortPlan _ -> false;
-            case AggregatePlan aggregate ->
-                    !LogicalPlans.areOrderIndependent(aggregate.getGroupingExpressions()) || hasOrderedReadAggregate(aggregate);
-            case FilterPlan filter -> isOrderVisible || !LogicalPlans.isOrderIndependent(filter.getPredicate());
-            case ProjectPlan project ->
-                    isOrderVisible || project.hasTimestampDeclaration() || hasOrderedReadExpression(project);
-            case WindowPlan window -> isOrderVisible || hasReadFunction(window);
-            case LimitPlan _, DistinctPlan _ -> isOrderVisible;
+            case AggregatePlan aggregate -> hasReadTimestampAggregate(aggregate);
+            case FilterPlan _, LimitPlan _, DistinctPlan _ -> isTimestampRequired;
+            case ProjectPlan project -> isTimestampRequired || project.hasTimestampDeclaration();
+            case WindowPlan window -> isTimestampRequired || hasReadTimestampWindow(window);
             case SetOperationPlan operation ->
-                    isOrderVisible && (inputIndex == 0 || operation.getOperation().isUnion());
+                    isTimestampRequired && (inputIndex == 0 || operation.getOperation().isUnion());
             case JoinPlan join ->
-                    inputIndex == 0 && isOrderVisible || LogicalPlans.consumesInputTimestamp(join, inputIndex);
+                    inputIndex == 0 && isTimestampRequired || LogicalPlans.consumesInputTimestamp(join, inputIndex);
             default -> true;
         };
     }
@@ -245,21 +234,23 @@ final class JoinOrdering implements OptimiserPass {
     }
 
     /**
-     * Orders the joins under the input at {@code inputIndex} of the plan, whose consumer sees the plan's order when
-     * {@code isOrderVisible}. Once the input designates no timestamp, the plan stops designating the one it forwarded.
+     * Orders the joins under the input at {@code inputIndex} of the plan, whose consumer requires the plan's designated
+     * timestamp when {@code isTimestampRequired}. Once the input designates no timestamp, the plan stops designating the
+     * one it forwarded.
      */
-    private void orderInputJoins(LogicalPlan plan, int inputIndex, LogicalPlan input, boolean isOrderVisible) throws SqlException {
+    private void orderInputJoins(LogicalPlan plan, int inputIndex, LogicalPlan input, boolean isTimestampRequired) throws SqlException {
         final boolean isForwarded = isTimestampForwarded(plan, inputIndex, input);
-        orderJoins(input, isInputOrderVisible(plan, inputIndex, isOrderVisible));
+        orderJoins(input, isInputTimestampRequired(plan, inputIndex, isTimestampRequired));
         if (isForwarded && input.getOutput().getTimestampIndex() < 0) {
             plan.getOutput().setTimestampIndex(-1);
         }
     }
 
     /**
-     * Orders every join under and at the plan, whose consumer sees its order when {@code isOrderVisible}.
+     * Orders every join under and at the plan, whose consumer requires its designated timestamp when
+     * {@code isTimestampRequired}.
      */
-    private void orderJoins(LogicalPlan plan, boolean isOrderVisible) throws SqlException {
+    private void orderJoins(LogicalPlan plan, boolean isTimestampRequired) throws SqlException {
         columnReads.retainOutputs(plan);
         columnReads.collectInputReads(plan);
         if (plan instanceof JoinPlan join) {
@@ -267,18 +258,18 @@ final class JoinOrdering implements OptimiserPass {
             for (int i = 0, n = steps.size(); i < n; i++) {
                 final LogicalPlan input = steps.getQuick(i).getInput();
                 if (input != null) {
-                    orderInputJoins(join, i, input, isOrderVisible);
+                    orderInputJoins(join, i, input, isTimestampRequired);
                 }
             }
             if (join.getGraph() != null) {
-                solver.order(join, isOrderVisible);
+                solver.order(join, isTimestampRequired);
                 place(join, join.getGraph());
                 join.setGraph(null);
             }
             return;
         }
         for (int i = 0, n = plan.inputCount(); i < n; i++) {
-            orderInputJoins(plan, i, plan.inputAt(i), isOrderVisible);
+            orderInputJoins(plan, i, plan.inputAt(i), isTimestampRequired);
         }
     }
 

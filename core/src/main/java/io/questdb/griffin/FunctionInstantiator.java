@@ -729,8 +729,9 @@ public final class FunctionInstantiator implements Mutable {
                     function.assignType(call.getDataType(), executionContext.getBindVariableService());
                 }
                 // Optimiser-built calls may record a weaker stability than the built function proves; the bound
-                // flags stay the conservative ones optimisations relied on.
-                final int flags = call.getFunctionFlags();
+                // flags stay the conservative ones optimisations relied on. The function does not report the binding's
+                // designated timestamp flag.
+                final int flags = call.getFunctionFlags() & ~BoundExpression.DESIGNATED_TIMESTAMP;
                 if (function.getType() != call.getDataType() || ParanoiaState.PLAN_PARANOIA_MODE
                         && (BoundExpression.functionFlags(function) & (flags | ~BoundExpression.STABLE_WITHIN_EXECUTION)) != flags) {
                     throw new IllegalStateException("bound function semantics have changed");

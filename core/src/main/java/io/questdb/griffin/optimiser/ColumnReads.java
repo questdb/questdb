@@ -63,8 +63,8 @@ import io.questdb.std.ObjList;
  * consumers read and those it computes for itself, see {@link #retainOutputs}, and reads the input columns that compute
  * them, see {@link #collectInputReads}. A walk collects a node once it has collected every consumer of the node, so the
  * read set then holds each output column of the node that the query reads. Column pruning removes the columns outside
- * the set, and join ordering lets a node see the order of its input only through the columns in it, so a computation
- * that join ordering finds unread is one that pruning removes.
+ * the set, and join ordering lets a node require the designated timestamp of its input only through the columns in
+ * it, so a computation that join ordering finds unread is one that pruning removes.
  */
 final class ColumnReads implements Mutable {
     private final ObjList<LogicalPlan> sharedSetOperations = new ObjList<>();

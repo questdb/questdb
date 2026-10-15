@@ -422,7 +422,7 @@ public class JoinPlanningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDisconnectedTimestampedLeadingCrossLeadsUnderLateralRead() throws Exception {
+    public void testDisconnectedTimestampedLeadingCrossTrailsUnderOrderDependentReads() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_cross_a (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("CREATE TABLE lp_cross_b (k INT)");
@@ -430,19 +430,91 @@ public class JoinPlanningTest extends AbstractCairoTest {
             execute("INSERT INTO lp_cross_a VALUES (1, '2020-01-01T00:00:00Z'), (2, '2020-01-01T00:00:01Z'), (3, '2020-01-01T00:00:02Z')");
             execute("INSERT INTO lp_cross_b VALUES (1), (2), (3)");
             execute("INSERT INTO lp_cross_c VALUES (2), (3)");
-            assertQuery("""
-                    SELECT x.id, l.v
-                    FROM (SELECT a.id, row_number() OVER () rn FROM lp_cross_a a CROSS JOIN lp_cross_b b JOIN lp_cross_c c ON b.k=c.k) x
-                    JOIN LATERAL (SELECT x.rn v FROM long_sequence(1)) l ON true
-                    """)
-                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlanContaining(LEADING_CROSS_PLAN.indent(16)).returns("""
-                            id\tv
-                            1\t1
-                            1\t2
-                            2\t3
-                            2\t4
-                            3\t5
-                            3\t6
+            final String join = "lp_cross_a a CROSS JOIN lp_cross_b b JOIN lp_cross_c c ON b.k=c.k";
+            assertQuery("SELECT first(a.id), last(a.id), count() FROM " + join).noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                    GroupBy vectorized: false
+                      values: [first(a.id),last(a.id),count(*)]
+                    """ + TRAILING_CROSS_PLAN.indent(4)).returns("first\tlast\tcount\n1\t3\t6\n");
+            assertQuery("SELECT string_agg(a.id::VARCHAR, ',') s FROM " + join).noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                    GroupBy vectorized: false
+                      values: [string_agg(a.id::varchar,,)]
+                    """ + TRAILING_CROSS_PLAN.indent(4)).returns("s\n1,2,3,1,2,3\n");
+            assertQuery("SELECT a.id, row_number() OVER () rn FROM " + join).noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                    Window
+                      functions: [row_number()]
+                        SelectedRecord
+                    """ + TRAILING_CROSS_PLAN.indent(8)).returns("""
+                    id\trn
+                    1\t1
+                    2\t2
+                    3\t3
+                    1\t4
+                    2\t5
+                    3\t6
+                    """);
+            assertQuery("SELECT sum(rn) FROM (SELECT a.id, row_number() OVER (ORDER BY a.id) rn FROM " + join + ")")
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                            GroupBy vectorized: false
+                              values: [sum(rn)]
+                                CachedWindow
+                                  orderedFunctions: [[id] => [row_number()]]
+                                    SelectedRecord
+                            """ + TRAILING_CROSS_PLAN.indent(12)).returns("sum\n21\n");
+            assertQuery("SELECT a.id, b.k, avg(a.id, 'alpha', 0.5) OVER (ORDER BY a.ts, b.k) e FROM " + join)
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                            CachedWindow
+                              orderedFunctions: [[ts, k] => [avg(id, 'alpha', 0.5) over (rows between unbounded preceding and current row)]]
+                                SelectedRecord
+                            """ + TRAILING_CROSS_PLAN.indent(8)).returns("""
+                            id\tk\te
+                            1\t2\t1.0
+                            2\t2\t1.5
+                            3\t2\t2.375
+                            1\t3\t1.0
+                            2\t3\t1.75
+                            3\t3\t2.6875
+                            """);
+            assertQuery("SELECT a.id, b.k, avg(a.id, 'alpha', 0.5, a.id) OVER (ORDER BY a.ts, b.k) e FROM " + join)
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                            CachedWindow
+                              orderedFunctions: [[ts, k] => [avg(id, 'alpha', 0.5, id) over (rows between unbounded preceding and current row)]]
+                                SelectedRecord
+                            """ + TRAILING_CROSS_PLAN.indent(8)).returns("""
+                            id\tk\te
+                            1\t2\t1.0
+                            2\t2\t1.6666666666666667
+                            3\t2\t2.5789473684210527
+                            1\t3\t1.0
+                            2\t3\t1.8571428571428572
+                            3\t3\t2.813953488372093
+                            """);
+            assertQuery("SELECT a.id, b.k, sum(a.id) OVER (ORDER BY a.ts, b.k ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) s FROM " + join)
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                            CachedWindow
+                              orderedFunctions: [[ts, k] => [sum(id) over ( rows between 1 preceding and current row)]]
+                                SelectedRecord
+                            """ + TRAILING_CROSS_PLAN.indent(8)).returns("""
+                            id\tk\ts
+                            1\t2\t1.0
+                            2\t2\t3.0
+                            3\t2\t5.0
+                            1\t3\t2.0
+                            2\t3\t4.0
+                            3\t3\t6.0
+                            """);
+            assertQuery("SELECT a.id, b.k, lag(a.id) OVER (ORDER BY a.ts, b.k) p FROM " + join)
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                            CachedWindow
+                              orderedFunctions: [[ts, k] => [lag(id, 1, NULL) over ()]]
+                                SelectedRecord
+                            """ + TRAILING_CROSS_PLAN.indent(8)).returns("""
+                            id\tk\tp
+                            1\t2\tnull
+                            2\t2\t1
+                            3\t2\t2
+                            1\t3\t1
+                            2\t3\t2
+                            3\t3\t3
                             """);
         });
     }
@@ -478,19 +550,19 @@ public class JoinPlanningTest extends AbstractCairoTest {
                               values: [sum(id)]
                                 SelectedRecord
                             """ + TRAILING_CROSS_PLAN.indent(8)).returns("sum\n6\n");
-            assertQuery("SELECT sum(rn) FROM (SELECT a.id, row_number() OVER (ORDER BY a.id) rn FROM " + join + ")")
+            assertQuery("SELECT sum(s) FROM (SELECT a.id, sum(a.id) OVER (ORDER BY a.ts RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW) s FROM " + join + ")")
                     .noLeakCheck().noRandomAccess().expectSize().withPlan("""
                             GroupBy vectorized: false
-                              values: [sum(rn)]
-                                CachedWindow
-                                  orderedFunctions: [[id] => [row_number()]]
+                              values: [sum(s)]
+                                Window
+                                  functions: [sum(id) over (range between 1000000 preceding and current row)]
                                     SelectedRecord
-                            """ + LEADING_CROSS_PLAN.indent(12)).returns("sum\n6\n");
+                            """ + LEADING_CROSS_PLAN.indent(12)).returns("sum\n9.0\n");
         });
     }
 
     @Test
-    public void testDisconnectedTimestampedLeadingCrossTrailsUnlessOrderIsVisible() throws Exception {
+    public void testDisconnectedTimestampedLeadingCrossTrailsUnlessTimestampIsRequired() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE lp_cross_a (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
             execute("CREATE TABLE lp_cross_b (k INT)");
@@ -570,22 +642,76 @@ public class JoinPlanningTest extends AbstractCairoTest {
                               functions: [avg(id, 'second', 1.0) over (rows between unbounded preceding and current row)]
                                 SelectedRecord
                             """ + LEADING_CROSS_PLAN.indent(8)).returns("e\n1.0\n1.6321205588285577\n2.496785275591945\n");
+            assertQuery("SELECT avg(a.id, 'second', 1, a.id) OVER (ORDER BY a.ts) e FROM " + join)
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
+                            Window
+                              functions: [avg(id, 'second', 1.0, id) over (rows between unbounded preceding and current row)]
+                                SelectedRecord
+                            """ + LEADING_CROSS_PLAN.indent(8)).returns("e\n1.0\n1.7746003264394359\n2.7053175178756814\n");
             assertQuery("SELECT sum(a.id) OVER (ORDER BY a.ts RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW EXCLUDE CURRENT ROW) s FROM " + join)
                     .noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
                             Window
                               functions: [sum(id) over (range between unbounded preceding and 1 preceding)]
                                 SelectedRecord
                             """ + LEADING_CROSS_PLAN.indent(8)).returns("s\nnull\n1.0\n3.0\n");
-            assertQuery("SELECT first(a.id), last(a.id) FROM " + join).noLeakCheck().inferRandomAccess().sizeMayVary().withPlan("""
-                    GroupBy vectorized: false
-                      values: [first(a.id),last(a.id)]
-                    """ + LEADING_CROSS_PLAN.indent(4)).returns("first\tlast\n1\t3\n");
+            assertQuery("SELECT a.id, a.ts FROM " + join + " SUBSAMPLE uniform(2)").noLeakCheck().inferRandomAccess().sizeMayVary().timestamp("ts").withPlan("""
+                    SelectedRecord
+                        Filter filter: __keep_subsample
+                            CachedWindow
+                              unorderedFunctions: [uniform(2) over (order by [ts])]
+                                SelectedRecord
+                    """ + LEADING_CROSS_PLAN.indent(16)).returns("""
+                    id\tts
+                    1\t2020-01-01T00:00:00.000000Z
+                    3\t2020-01-01T00:00:02.000000Z
+                    """);
             assertQuery("SELECT * FROM (SELECT a.id, a.ts FROM " + join + ") TIMESTAMP(ts)")
                     .noLeakCheck().inferRandomAccess().sizeMayVary().timestamp("ts").withPlan("""
                             SelectedRecord
                             """ + LEADING_CROSS_PLAN.indent(4)).returns(rows);
             execute("CREATE TABLE lp_cross_copy AS (SELECT a.id, a.ts FROM " + join + ")");
             assertQuery("SELECT * FROM lp_cross_copy").noLeakCheck().timestamp("ts").expectSize().returns(rows);
+        });
+    }
+
+    @Test
+    public void testDisconnectedTimestampedLeadingCrossUnderLateralRead() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_cross_a (id INT, ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("CREATE TABLE lp_cross_b (k INT)");
+            execute("CREATE TABLE lp_cross_c (k INT)");
+            execute("INSERT INTO lp_cross_a VALUES (1, '2020-01-01T00:00:00Z'), (2, '2020-01-01T00:00:01Z'), (3, '2020-01-01T00:00:02Z')");
+            execute("INSERT INTO lp_cross_b VALUES (1), (2), (3)");
+            execute("INSERT INTO lp_cross_c VALUES (2), (3)");
+            assertQuery("""
+                    SELECT x.id, l.v
+                    FROM (SELECT a.id, sum(a.id) OVER (ORDER BY a.ts RANGE BETWEEN 1 SECOND PRECEDING AND CURRENT ROW) s
+                          FROM lp_cross_a a CROSS JOIN lp_cross_b b JOIN lp_cross_c c ON b.k=c.k) x
+                    JOIN LATERAL (SELECT x.s v FROM long_sequence(1)) l ON true
+                    """)
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlanContaining(LEADING_CROSS_PLAN.indent(16)).returns("""
+                            id\tv
+                            1\t1.0
+                            1\t2.0
+                            2\t4.0
+                            2\t6.0
+                            3\t7.0
+                            3\t10.0
+                            """);
+            assertQuery("""
+                    SELECT x.id, l.v
+                    FROM (SELECT a.id, row_number() OVER () rn FROM lp_cross_a a CROSS JOIN lp_cross_b b JOIN lp_cross_c c ON b.k=c.k) x
+                    JOIN LATERAL (SELECT x.rn v FROM long_sequence(1)) l ON true
+                    """)
+                    .noLeakCheck().inferRandomAccess().sizeMayVary().withPlanContaining(TRAILING_CROSS_PLAN.indent(16)).returns("""
+                            id\tv
+                            1\t1
+                            2\t2
+                            3\t3
+                            1\t4
+                            2\t5
+                            3\t6
+                            """);
         });
     }
 

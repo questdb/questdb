@@ -30,6 +30,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.PlanRewriter;
@@ -37,6 +38,7 @@ import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.std.Chars;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -69,6 +71,20 @@ final class NegativeLimitReversal implements OptimiserPass {
         return "negative limit reversal";
     }
 
+    /**
+     * A negative constant, or the negation of an INT or LONG value, which negates back exactly.
+     */
+    private static boolean isNegatedCount(BoundExpression lo) {
+        if (lo instanceof ConstantExpression constant) {
+            return constant.getLongValue() < 0 && constant.getLongValue() != Numbers.LONG_NULL;
+        }
+        if (!(lo instanceof FunctionExpression call) || call.getArgumentCount() != 1 || !Chars.equals(call.getName(), '-')) {
+            return false;
+        }
+        final int type = call.argumentAt(0).getDataType();
+        return type == ColumnType.INT || type == ColumnType.LONG;
+    }
+
     private static boolean isTableSource(LogicalPlan plan) {
         plan = LogicalPlans.skipProjectsAndFilters(plan);
         return plan instanceof ScanPlan;
@@ -81,6 +97,15 @@ final class NegativeLimitReversal implements OptimiserPass {
         final int id = liftColumnId(plan.inputAt(0), target, columnId);
         final int index = id < 0 ? -1 : LogicalPlans.projectedUncastColumnIndex((ProjectPlan) plan, id);
         return index < 0 ? -1 : plan.getOutput().getColumnId(index);
+    }
+
+    private BoundExpression reversedCount(BoundExpression lo) {
+        if (lo instanceof FunctionExpression negation) {
+            return negation.argumentAt(0);
+        }
+        return lo.getDataType() == ColumnType.INT
+                ? constants.next().ofInt((int) -((ConstantExpression) lo).getLongValue(), lo.getPosition())
+                : constants.next().ofLong(-((ConstantExpression) lo).getLongValue(), lo.getPosition());
     }
 
     private LogicalPlan reverseNegativeLimit(LogicalPlan plan) {
@@ -107,9 +132,8 @@ final class NegativeLimitReversal implements OptimiserPass {
         }
         final IntList ids = sort.getColumnIds();
         final ObjList<SortDirection> directions = sort.getDirections();
-        if (limit.getHi() != null || !(limit.getLo() instanceof ConstantExpression lo)
-                || lo.getLongValue() >= 0 || lo.getLongValue() == Numbers.LONG_NULL
-                || directions.size() < 2 || directions.getQuick(0) != SortDirection.ASCENDING
+        final BoundExpression lo = limit.getLo();
+        if (limit.getHi() != null || !isNegatedCount(lo) || directions.size() < 2 || directions.getQuick(0) != SortDirection.ASCENDING
                 || sort.isMarkoutHorizon() || ids.getQuick(0) != sort.getChild().getOutput().getTimestampColumnId()) {
             return plan;
         }
@@ -147,10 +171,7 @@ final class NegativeLimitReversal implements OptimiserPass {
         }
         sort.markReversal();
         sort.replaceInput(0, source);
-        final BoundExpression count = lo.getDataType() == ColumnType.INT
-                ? constants.next().ofInt((int) -lo.getLongValue(), lo.getPosition())
-                : constants.next().ofLong(-lo.getLongValue(), lo.getPosition());
-        limit.of(sort, count, null, limit.getPosition());
+        limit.of(sort, reversedCount(lo), null, limit.getPosition());
         limit.deriveOutput();
         final LogicalPlan lower = lowerBottom == null ? limit : lowerTop;
         if (lowerBottom != null) {

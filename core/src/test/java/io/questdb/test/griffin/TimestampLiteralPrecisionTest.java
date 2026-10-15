@@ -431,6 +431,83 @@ public class TimestampLiteralPrecisionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNanoComparisonRejectsDateBeyondNanosecondRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE events (event_time TIMESTAMP_NS, id INT)");
+            execute("INSERT INTO events VALUES ('2024-01-01T00:00:00.000000001Z', 1), ('2024-02-01', 2)");
+            for (String sql : new String[]{
+                    "SELECT id FROM events WHERE event_time < '9999-12-31'::DATE",
+                    "SELECT id FROM events WHERE '9999-12-31'::DATE > event_time",
+                    "SELECT id FROM events WHERE event_time BETWEEN '2024-01-01'::DATE AND '9999-12-31'::DATE",
+                    "SELECT id, event_time < '9999-12-31'::DATE FROM events"
+            }) {
+                assertQuery(sql).noLeakCheck().failsWith("inconvertible value: 253402214400000000 [TIMESTAMP -> TIMESTAMP_NS]");
+            }
+            assertQuery("SELECT id FROM events WHERE event_time < '2300-01-01'::DATE")
+                    .noLeakCheck()
+                    .failsWith("inconvertible value: 10413792000000000 [TIMESTAMP -> TIMESTAMP_NS]");
+            assertQuery("SELECT id FROM events WHERE event_time < '2200-12-31'::DATE")
+                    .noLeakCheck()
+                    .returns("""
+                            id
+                            1
+                            2
+                            """);
+        });
+    }
+
+    @Test
+    public void testNanoConversionRejectsDateBeyondNanosecondRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE events (event_time TIMESTAMP_NS, id INT)");
+            execute("INSERT INTO events VALUES ('2024-01-01T00:00:00.000000001Z', 1), ('2024-02-01', 2)");
+            execute("CREATE TABLE dates (d DATE)");
+            execute("INSERT INTO dates VALUES ('9999-12-31')");
+            for (String sql : new String[]{
+                    "SELECT '9999-12-31'::DATE::TIMESTAMP_NS",
+                    "SELECT d::TIMESTAMP_NS FROM dates",
+                    "SELECT id FROM events WHERE event_time IN ('2024-01-01'::DATE, '9999-12-31'::DATE)",
+                    "SELECT id FROM events WHERE event_time NOT IN ('9999-12-31'::DATE)"
+            }) {
+                assertQuery(sql).noLeakCheck().failsWith("inconvertible value: 253402214400000000 [TIMESTAMP -> TIMESTAMP_NS]");
+            }
+            assertExceptionNoLeakCheck("INSERT INTO events SELECT d, 3 FROM dates", -1, "inconvertible value: 253402214400000000 [TIMESTAMP -> TIMESTAMP_NS]");
+            assertExceptionNoLeakCheck("INSERT INTO events VALUES ('9999-12-31'::DATE, 3)", -1, "inconvertible value: 253402214400000000 [TIMESTAMP -> TIMESTAMP_NS]");
+            assertQuery("SELECT id FROM events WHERE event_time IN ('2024-02-01'::DATE)").noLeakCheck().returns("""
+                    id
+                    2
+                    """);
+            assertQuery("SELECT id FROM events").noLeakCheck().expectSize().returns("""
+                    id
+                    1
+                    2
+                    """);
+        });
+    }
+
+    @Test
+    public void testNanoIntervalRejectsDateBeyondNanosecondRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE events (event_time TIMESTAMP_NS, id INT) TIMESTAMP(event_time) PARTITION BY DAY");
+            execute("INSERT INTO events VALUES ('2024-01-01T00:00:00.000000001Z', 1), ('2024-02-01', 2)");
+            for (String sql : new String[]{
+                    "SELECT id FROM events WHERE event_time < '9999-12-31'::DATE",
+                    "SELECT id FROM events WHERE event_time BETWEEN '2024-01-01'::DATE AND '9999-12-31'::DATE",
+                    "SELECT id FROM events WHERE event_time IN ('2024-01-01'::DATE, '9999-12-31'::DATE)"
+            }) {
+                assertQuery(sql).noLeakCheck().failsWith("inconvertible value: 253402214400000000 [TIMESTAMP -> TIMESTAMP_NS]");
+            }
+            assertQuery("SELECT id FROM events WHERE event_time < '2200-12-31'::DATE")
+                    .noLeakCheck()
+                    .returns("""
+                            id
+                            1
+                            2
+                            """);
+        });
+    }
+
+    @Test
     public void testNanoProjectionKeepsMicrosecondsBeyondNanosecondRange() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE n (ts TIMESTAMP_NS)");

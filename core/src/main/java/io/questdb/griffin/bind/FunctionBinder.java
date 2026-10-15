@@ -1217,8 +1217,9 @@ public final class FunctionBinder implements CallBinder, FunctionResolver.Timest
                 // A connective with a constant operand returns its other operand.
                 expression = arguments.getQuick(function == first ? 0 : 1);
             } else {
-                expression = ctx.planNodes.functions.next().of(overload, arguments, argumentPositions,
-                        function.getType(), callFlags(function, arguments), position);
+                final int flags = role == CALL_WINDOW_ROOT && sqlExecutionContext.getWindowContext().isDesignatedTimestampRead()
+                        ? callFlags(function, arguments) | BoundExpression.DESIGNATED_TIMESTAMP : callFlags(function, arguments);
+                expression = ctx.planNodes.functions.next().of(overload, arguments, argumentPositions, function.getType(), flags, position);
             }
             pushCall(name, role, isSetOperation, expression);
             return function;

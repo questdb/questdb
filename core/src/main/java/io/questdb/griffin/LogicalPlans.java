@@ -489,8 +489,8 @@ public final class LogicalPlans {
 
     /**
      * True when the join runs its first input first. Join ordering leads with another input only when the join
-     * designates no timestamp or no part of the query sees the join's order, and a join that leads with another input
-     * designates no timestamp.
+     * designates no timestamp or no part of the query requires it, and a join that leads with another input designates
+     * no timestamp.
      */
     public static boolean isFirstInputLeading(JoinPlan join) {
         return orderedSteps(join).getQuick(0) == join.getInputs().getQuick(0);

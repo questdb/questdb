@@ -118,7 +118,6 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
         RecordSink partitionBySink = windowContext.getPartitionBySink();
         ColumnTypes partitionByKeyTypes = windowContext.getPartitionByKeyTypes();
         VirtualRecord partitionByRecord = windowContext.getPartitionByRecord();
-        int timestampIndex = windowContext.getTimestampIndex();
         int timestampType = windowContext.getTimestampType();
         TimestampDriver timestampDriver = ColumnType.getTimestampDriver(timestampType);
 
@@ -182,7 +181,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
                         partitionByRecord,
                         partitionBySink,
                         valueArg,
-                        timestampIndex,
+                        windowContext.getTimestampIndex(),
                         tau,
                         kind.toString(),
                         paramValue,
@@ -209,7 +208,7 @@ public class EmaDoubleWindowFunctionFactory extends AbstractWindowFunctionFactor
             if (mode == MODE_TIME_WEIGHTED) {
                 return new EmaTimeWeightedOverUnboundedRowsFrameFunction(
                         valueArg,
-                        timestampIndex,
+                        windowContext.getTimestampIndex(),
                         tau,
                         kind.toString(),
                         paramValue

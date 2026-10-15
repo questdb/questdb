@@ -336,7 +336,7 @@ public class NanosTimestampDriver implements TimestampDriver {
 
     @Override
     public long fromDate(long date) {
-        return date == Numbers.LONG_NULL ? Numbers.LONG_NULL : date * Nanos.MILLI_NANOS;
+        return CommonUtils.microsToNanos(MicrosTimestampDriver.INSTANCE.fromDate(date));
     }
 
     @Override
