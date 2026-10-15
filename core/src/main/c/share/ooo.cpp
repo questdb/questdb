@@ -1803,11 +1803,11 @@ static void run_on_threads(int n, F &&fn) {
 // Stable LSD radix sort of encoded_2x entries on their key word, for entries whose row ids
 // strictly ascend in the array's order (entries appended in scan order): equal keys then keep that
 // order, which is the (k1, rowId) order the comparison sorts. Only the key bits that vary are
-// sorted, in up to 3 passes of at most 11 bits each, every pass split over the encoded sort's
+// sorted, in up to 3 passes of at most 12 bits each, every pass split over the encoded sort's
 // threads (per-thread histograms of contiguous chunks, scatter in chunk order). scratch holds
-// count entries. Returns false, the entries untouched, when the row ids do not ascend or the keys
-// vary over more than 33 bits: the MSD radix sort then sorts them.
-static bool lsd_sort_encoded_2x(encoded_2x *arr, int64_t count, encoded_2x *scratch) {
+// count entries. Returns false, the entries untouched, when checkRowIds and the row ids do not ascend,
+// or the keys need more than maxPasses passes: the MSD radix sort then sorts them.
+static bool lsd_sort_encoded_2x(encoded_2x *arr, int64_t count, encoded_2x *scratch, bool checkRowIds, int maxPasses) {
     if (count < 2) {
         return true;
     }
@@ -1829,7 +1829,7 @@ static bool lsd_sort_encoded_2x(encoded_2x *arr, int64_t count, encoded_2x *scra
         bool asc = true;
         for (int64_t i = lo; i < hi; i++) {
             v |= arr[i].k1 ^ first;
-            if (i > 0 && arr[i].rowId <= arr[i - 1].rowId) asc = false;
+            if (checkRowIds && i > 0 && arr[i].rowId <= arr[i - 1].rowId) asc = false;
         }
         varying[t] = v;
         ascending[t] = asc;
@@ -1844,8 +1844,10 @@ static bool lsd_sort_encoded_2x(encoded_2x *arr, int64_t count, encoded_2x *scra
     }
     const int lowBit = __builtin_ctzll(v);
     const int bits = 64 - __builtin_clzll(v) - lowBit;
-    const int passes = (bits + 10) / 11;
-    if (passes > 3) {
+    // digits of at most 12 bits: 4096 buckets per thread keep the histograms and the scatter's write
+    // streams cache-resident, and a key that varies over 24 bits (a narrow price range) takes 2 passes
+    const int passes = (bits + 11) / 12;
+    if (passes > maxPasses) {
         return false;
     }
     const int digitBits = (bits + passes - 1) / passes;
@@ -1928,7 +1930,15 @@ JNIEXPORT void JNICALL Java_io_questdb_std_Vect_sortEncodedEntries(
 JNIEXPORT jboolean JNICALL Java_io_questdb_std_Vect_sortEncodedEntriesLsd(
     JNIEnv *env, jclass cl, jlong addr, jlong count, jlong scratchAddr) {
     return lsd_sort_encoded_2x(reinterpret_cast<encoded_2x *>(addr), count,
-                               reinterpret_cast<encoded_2x *>(scratchAddr)) ? JNI_TRUE : JNI_FALSE;
+                               reinterpret_cast<encoded_2x *>(scratchAddr), true, 3) ? JNI_TRUE : JNI_FALSE;
+}
+
+// A stable sort of encoded_2x entries on their key word alone, whatever their second words hold: the LSD
+// radix sort without the row id check, in as many passes as the key's varying bits take (at most 6).
+JNIEXPORT void JNICALL Java_io_questdb_std_Vect_sortEncodedEntriesStable(
+    JNIEnv *env, jclass cl, jlong addr, jlong count, jlong scratchAddr) {
+    lsd_sort_encoded_2x(reinterpret_cast<encoded_2x *>(addr), count,
+                        reinterpret_cast<encoded_2x *>(scratchAddr), false, 6);
 }
 
 JNIEXPORT void JNICALL Java_io_questdb_std_Vect_setEncodedSortThreads(

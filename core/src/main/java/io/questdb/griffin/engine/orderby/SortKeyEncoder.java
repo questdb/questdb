@@ -763,7 +763,7 @@ public class SortKeyEncoder implements QuietCloseable {
         }
     }
 
-    private static long doubleKey(double value, boolean desc) {
+    static long doubleKey(double value, boolean desc) {
         final long bits = Double.doubleToLongBits(value);
         if (desc) {
             return bits >= 0 ? bits ^ Long.MAX_VALUE : bits;
@@ -880,7 +880,37 @@ public class SortKeyEncoder implements QuietCloseable {
         Unsafe.putLong(entry + 8, rowId);
     }
 
-    private static long floatKey(float value, boolean desc) {
+    // the value whose doubleKey() the key is
+    static double decodeDoubleKey(long key, boolean desc) {
+        final long bits = desc ? (key >= 0 ? key ^ Long.MAX_VALUE : key) : (key < 0 ? key ^ Long.MIN_VALUE : ~key);
+        return Double.longBitsToDouble(bits);
+    }
+
+    // the value whose floatKey() the key is
+    static float decodeFloatKey(long key, boolean desc) {
+        final int e = (int) (key >>> 32);
+        final int bits = desc ? (e >= 0 ? e ^ Integer.MAX_VALUE : e) : (e < 0 ? e ^ Integer.MIN_VALUE : ~e);
+        return Float.intBitsToFloat(bits);
+    }
+
+    // The column of a single fixed-size key whose value its encoded key word gives back (see the decode*
+    // functions): FLOAT, DOUBLE, INT, LONG, DATE or TIMESTAMP, not a SYMBOL; -1 for any other key.
+    int getDecodableKeyColumn() {
+        if (keyShape != KeyShape.FIXED8 || isStaticSymbol[0] || columnIndices.length != 1) {
+            return -1;
+        }
+        return switch (ColumnType.tagOf(columnTypes[0])) {
+            case ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.INT, ColumnType.LONG, ColumnType.DATE,
+                 ColumnType.TIMESTAMP -> columnIndices[0];
+            default -> -1;
+        };
+    }
+
+    boolean isFirstKeyDescending() {
+        return isDesc[0];
+    }
+
+    static long floatKey(float value, boolean desc) {
         int bits = Float.floatToIntBits(value);
         if (desc) {
             bits = bits >= 0 ? bits ^ Integer.MAX_VALUE : bits;
