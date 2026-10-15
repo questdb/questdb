@@ -36,6 +36,8 @@ import org.jetbrains.annotations.NotNull;
 
 public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGroupByFunction implements UnaryFunction, GroupByFunction {
     private final int[] indices = new int[2];
+    // the radix selection's (k+1)-th value
+    private final double[] next = new double[1];
 
     public PercentileContDoubleGroupByFunction(@NotNull CairoConfiguration configuration, @NotNull Function arg, @NotNull Function percentileFunc, int percentilePos) {
         super(configuration, arg, percentileFunc, percentilePos);
@@ -58,6 +60,14 @@ public class PercentileContDoubleGroupByFunction extends PercentileDiscDoubleGro
         double position = percentile * (size - 1);
         int lowerIndex = (int) Math.floor(position);
         int upperIndex = (int) Math.ceil(position);
+
+        if (size > RADIX_SELECT_MIN_SIZE) {
+            if (lowerIndex == upperIndex) {
+                return listA.radixSelect(0, size - 1, lowerIndex);
+            }
+            final double lower = listA.radixSelect(0, size - 1, lowerIndex, next);
+            return SqlUtil.interpolatePercentile(lower, next[0], position - lowerIndex);
+        }
 
         // If the position is exactly at an index, return that value
         if (lowerIndex == upperIndex) {

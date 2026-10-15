@@ -47,6 +47,8 @@ import org.jetbrains.annotations.NotNull;
 import static io.questdb.std.Numbers.LONG_NULL;
 
 public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implements UnaryFunction, GroupByFunction {
+    // groups above this size select by radix, linear whatever their values' distribution
+    protected static final int RADIX_SELECT_MIN_SIZE = 64 * 1024;
     protected final Function arg;
     protected final GroupByDoubleList listA;
     protected final GroupByDoubleList listB;
@@ -114,6 +116,9 @@ public class PercentileDiscDoubleGroupByFunction extends DoubleFunction implemen
         }
         double percentile = SqlUtil.validatePercentile(percentileFunc.getDouble(record), percentilePos);
         int N = (int) SqlUtil.getPercentileDiscIndex(percentile, size);
+        if (size > RADIX_SELECT_MIN_SIZE) {
+            return listA.radixSelect(0, size - 1, N);
+        }
         // Use QuickSelect instead of full sorting - O(n) vs O(n log n)
         listA.quickSelect(0, size - 1, N);
         return listA.getQuick(N);

@@ -107,7 +107,7 @@ public class GroupByDoubleList {
 
             long oldPtr = ptr;
             ptr = allocator.malloc(8L * newCapacity + HEADER_SIZE);
-            zero(ptr, newCapacity);
+            // only the values below the size are ever read: the old ones are copied, the rest written first
             Unsafe.getUnsafe().putInt(ptr, newCapacity);
             Unsafe.getUnsafe().putInt(ptr + SIZE_OFFSET, oldSize);
 
@@ -219,6 +219,27 @@ public class GroupByDoubleList {
         if (lo < hi) {
             DoubleSort.quickSelect(addressOf(0), lo, hi, k);
         }
+    }
+
+    /**
+     * The k-th smallest of the list's values at [lo, hi] (inclusive), by radix selection
+     * ({@link DoubleSort#radixSelect}); reorders them, without leaving the k-th at index k.
+     */
+    public double radixSelect(int lo, int hi, int k) {
+        if (lo < 0 || hi >= size() || k < lo || k > hi) {
+            throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", k=" + k + ", size=" + size());
+        }
+        return DoubleSort.radixSelect(addressOf(0), lo, hi, k);
+    }
+
+    /**
+     * {@link #radixSelect}, and into {@code next[0]} the (k+1)-th smallest, see {@link DoubleSort#radixSelect(long, long, long, long, double[])}.
+     */
+    public double radixSelect(int lo, int hi, int k, double[] next) {
+        if (lo < 0 || hi >= size() || k < lo || k >= hi) {
+            throw new ArrayIndexOutOfBoundsException("lo=" + lo + ", hi=" + hi + ", k=" + k + ", size=" + size());
+        }
+        return DoubleSort.radixSelect(addressOf(0), lo, hi, k, next);
     }
 
     /**
