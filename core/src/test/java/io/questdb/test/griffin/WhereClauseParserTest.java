@@ -307,6 +307,43 @@ public class WhereClauseParserTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testEscapedKeyConstants() throws Exception {
+        assertMemoryLeak(() -> {
+            ObjList<String> literals = new ObjList<>("'O''Brien'", "'O''''Brien'", "'''start'", "'end'''", "''''", "''''''", "''", "NULL", "'a\"\"b``c'", "'$1'", "':key'");
+            ObjList<String> values = new ObjList<>("O'Brien", "O''Brien", "'start", "end'", "'", "''", "", "null", "a\"\"b``c", "$1", ":key");
+            ObjList<String> predicates = new ObjList<>("sym = %s", "sym != %s", "sym IN (%s)", "sym NOT IN (%s)", "sym IN (%s, 'other')", "sym NOT IN (%s, 'other')");
+            try {
+                for (int i = 0; i < literals.size(); i++) {
+                    for (int form = 0; form < predicates.size(); form++) {
+                        String predicate = String.format(predicates.getQuick(form), literals.getQuick(i));
+                        IntrinsicModel model = modelOf(predicate);
+                        assertFilter(model, null);
+                        String expected = "[" + values.getQuick(i) + (form > 3 ? ",other]" : "]");
+                        Assert.assertEquals(predicate, expected, keyValueFuncsToString(
+                                form % 2 == 0 ? model.keyValueFuncs : model.keyExcludedValueFuncs
+                        ));
+                    }
+                }
+                ObjList<String> exclusions = new ObjList<>("sym != 'O''Brien'", "sym NOT IN ('O''Brien')", "sym NOT IN ('O''Brien', 'other')");
+                for (int i = 0; i < exclusions.size(); i++) {
+                    IntrinsicModel model = modelOf("sym IN ('O''Brien', 'O''''Brien') AND " + exclusions.getQuick(i));
+                    assertFilter(model, null);
+                    Assert.assertEquals("[O''Brien]", keyValueFuncsToString(model.keyValueFuncs));
+                }
+                IntrinsicModel model = modelOf("sym = 'O''Brien' AND sym = concat('O', '''Brien')");
+                assertFilter(model, null);
+                Assert.assertEquals(IntrinsicModel.UNDEFINED, model.intrinsicValue);
+                Assert.assertEquals("[O'Brien]", keyValueFuncsToString(model.keyValueFuncs));
+                model = modelOf("sym = '''start'::SYMBOL");
+                assertFilter(model, null);
+                Assert.assertEquals("['start]", keyValueFuncsToString(model.keyValueFuncs));
+            } finally {
+                e.clear();
+            }
+        });
+    }
+
+    @Test
     public void testAndBranchWithNonIndexedField() throws Exception {
         IntrinsicModel m = modelOf("timestamp between '2014-01-01T12:30:00.000Z' and '2014-01-02T12:30:00.000Z' and bid > 100");
         TestUtils.assertEquals(replaceTimestampSuffix("[{lo=2014-01-01T12:30:00.000000Z, hi=2014-01-02T12:30:00.000000Z}]"), intervalToString(m));

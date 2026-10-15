@@ -121,6 +121,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
+    private TableFunctionView tableFunctionView;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
     private SecurityContext validationSecurityContext;
@@ -417,6 +418,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public @NotNull SqlExecutionCircuitBreaker getSimpleCircuitBreaker() {
         return simpleCircuitBreaker;
+    }
+
+    @Override
+    public TableFunctionView getTableFunctionView() {
+        return tableFunctionView;
     }
 
     @Override
@@ -731,6 +737,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setTableFunctionView(TableFunctionView view) {
+        this.tableFunctionView = view;
+    }
+
+    @Override
     public void setUseSimpleCircuitBreaker(boolean value) {
         this.useSimpleCircuitBreaker = value;
     }
@@ -855,6 +866,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         // but a reused per-connection context must never inherit a stale live-view flag.
         // setLiveViewCompile also clears the mirrored windowContext flag.
         setLiveViewCompile(false);
+        this.tableFunctionView = null;
         isMetadataProbe = false;
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.

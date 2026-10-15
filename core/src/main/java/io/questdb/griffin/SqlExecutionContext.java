@@ -36,7 +36,9 @@ import io.questdb.cairo.pool.ResourcePoolSupervisor;
 import io.questdb.cairo.sql.BindVariableService;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.cairo.sql.TableReferenceOutOfDateException;
 import io.questdb.cairo.sql.VirtualRecord;
+import io.questdb.cairo.view.ViewDefinition;
 import io.questdb.griffin.engine.functions.rnd.SharedRandom;
 import io.questdb.griffin.engine.window.WindowContext;
 import io.questdb.griffin.model.IntrinsicModel;
@@ -234,6 +236,15 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     @NotNull
     SqlExecutionCircuitBreaker getSimpleCircuitBreaker();
 
+    /**
+     * The view whose definition is currently being compiled, which the table-name functions and SHOW
+     * statements written in it read the objects they name through, see
+     * {@link #isTableFunctionVisible(TableToken, TableFunctionView)}.
+     */
+    default TableFunctionView getTableFunctionView() {
+        return null;
+    }
+
     default int getTableStatus(Path path, CharSequence tableName) {
         return getCairoEngine().getTableStatus(path, tableName);
     }
@@ -256,6 +267,19 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
 
     default TableToken getTableTokenIfExists(CharSequence tableName, int lo, int hi) {
         return getCairoEngine().getTableTokenIfExists(tableName, lo, hi);
+    }
+
+    /**
+     * Returns the token of the table, view, materialized view or live view of the given name, or null
+     * when there is no such object or the principal may not see it, see
+     * {@link SecurityContext#isTableVisible(TableToken)}. Statements that act on an existing object
+     * resolve its name through this method, so that an object the principal may not see behaves
+     * exactly like a missing one, IF EXISTS included. Statements that create an object must not:
+     * the namespace is shared, so a name taken by an invisible object is still taken.
+     */
+    default TableToken getVisibleTableTokenIfExists(CharSequence tableName) {
+        final TableToken tableToken = getTableTokenIfExists(tableName);
+        return tableToken != null && getSecurityContext().isTableVisible(tableToken) ? tableToken : null;
     }
 
     WindowContext getWindowContext();
@@ -297,6 +321,20 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     // extraction so the planner falls back to a plain FilteredRecordCursorFactory
     // shape that the incremental refresh path can handle.
     default boolean isLiveViewCompile() {
+        return false;
+    }
+
+    // The refresh of a live view compiles the SQL that CREATE accepted, with no caller to authorize:
+    // a catalogue function written in that SQL needs no SYSTEM ADMIN here, see
+    // SqlExecutionRequirements.DISCLOSES_OBJECTS.
+    default boolean isLiveViewRefresh() {
+        return false;
+    }
+
+    // The refresh of a materialized view compiles the SQL that CREATE accepted, with no caller to
+    // authorize: a catalogue function written in that SQL needs no SYSTEM ADMIN here, see
+    // SqlExecutionRequirements.DISCLOSES_OBJECTS. Readers with SELECT on the view read what it lists.
+    default boolean isMatViewRefresh() {
         return false;
     }
 
@@ -342,12 +380,61 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     /**
+     * A table-name function or a SHOW statement in a view reads the object it names through that
+     * view, not as the caller, when the view's definition names the object, see
+     * {@link TableFunctionView#isDependency(TableToken)}. Any other object, such as one a caller
+     * substitutes through an OVERRIDABLE variable of the view, is read as the caller. Recheck the
+     * view's identity, definition and SELECT grant when the cursor opens: a cached cursor may outlive
+     * a revoke, a replacement or a drop and recreation under the same name. A view that changed since
+     * the compile makes the plan stale, so it throws {@link TableReferenceOutOfDateException} for the
+     * caller to recompile, rather than run a function the current definition may not name or report a
+     * visible object as missing.
+     */
+    default boolean isTableFunctionVisible(TableToken tableToken, TableFunctionView view) {
+        if (view != null) {
+            final ViewDefinition viewDefinition = view.definition();
+            final TableToken viewToken = viewDefinition.getViewToken();
+            final ViewDefinition currentDefinition = viewToken.equals(getTableTokenIfExists(viewToken.getTableName()))
+                    ? getCairoEngine().getViewGraph().getViewDefinition(viewToken)
+                    : null;
+            if (currentDefinition == null || currentDefinition.getSeqTxn() != viewDefinition.getSeqTxn()) {
+                throw TableReferenceOutOfDateException.ofOutdatedView(
+                        viewToken,
+                        viewDefinition.getSeqTxn(),
+                        currentDefinition != null ? currentDefinition.getSeqTxn() : -1
+                );
+            }
+        }
+        return isTableFunctionVisibleAtCompile(tableToken, view);
+    }
+
+    /**
+     * Like {@link #isTableFunctionVisible(TableToken, TableFunctionView)}, for the compile that
+     * captured the view: it checks the view's visibility and SELECT grant against the definition the
+     * compile captured, without rereading it. A view change that another session commits during the
+     * compile makes the plan stale, which StaleViewCheckFactory and the recheck at cursor open report
+     * as {@link TableReferenceOutOfDateException}; failing the compile instead would report the object
+     * missing, or fail a PostgreSQL Parse, which does not recompile.
+     */
+    default boolean isTableFunctionVisibleAtCompile(TableToken tableToken, TableFunctionView view) {
+        if (view == null || !view.isDependency(tableToken)) {
+            return getSecurityContext().isTableVisible(tableToken);
+        }
+        final ViewDefinition viewDefinition = view.definition();
+        if (!getSecurityContext().isTableVisible(viewDefinition.getViewToken())) {
+            return false;
+        }
+        getSecurityContext().authorizeSelect(viewDefinition);
+        return true;
+    }
+
+    /**
      * Returns whether a factory may keep the plan choices that its compile took from the tables'
      * row counts after the tables change size. A context that runs a factory which no holder
      * compiles again, such as a queued export, tolerates the change: a fused GROUP BY over a hash
      * join then keeps its compile-time build side, RIGHT join bound and key table presizing, which
      * cost memory and never change the rows, instead of throwing
-     * {@link io.questdb.cairo.sql.TableReferenceOutOfDateException} to ask for a recompile.
+     * {@link TableReferenceOutOfDateException} to ask for a recompile.
      */
     default boolean isTableRowCountChangeTolerated() {
         return false;
@@ -507,6 +594,12 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     default void setStatementTargetTableName(CharSequence tableName) {
     }
 
+    default void setTableFunctionView(TableFunctionView view) {
+        if (view != null) {
+            throw new UnsupportedOperationException("table-valued functions in views require a view-aware execution context");
+        }
+    }
+
     void setUseSimpleCircuitBreaker(boolean value);
 
     default boolean shouldLogSql() {
@@ -517,5 +610,19 @@ public interface SqlExecutionContext extends Sinkable, Closeable {
     }
 
     default void toSink(@NotNull CharSink<?> sink) {
+    }
+
+    // the view definition, as of the compile, that a table-name function or SHOW statement reads through
+    record TableFunctionView(ViewDefinition definition) {
+
+        /**
+         * Returns whether the view's definition names the object, i.e. whether CREATE VIEW or ALTER
+         * VIEW recorded it among the dependencies of the view, the tables it reads and the arguments of
+         * its table-name functions. The view lends its authority to those objects only: an object a
+         * caller substitutes into the view, e.g. through an OVERRIDABLE variable, is read as the caller.
+         */
+        public boolean isDependency(TableToken tableToken) {
+            return definition.getDependencies().contains(tableToken.getTableName());
+        }
     }
 }
