@@ -256,7 +256,7 @@ class EncodedSortPayloadRecordCursor implements DelegatingRecordCursor {
 
     @Override
     public long size() {
-        return isSorted ? count : baseCursor.size();
+        return baseCursor.size();
     }
 
     @Override
