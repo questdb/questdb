@@ -6303,7 +6303,7 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             boolean symbolNullFlag,
             int columnIndex
     ) {
-        MapWriter.createSymbolMapFiles(ff, ddlMem, path.trimTo(pathSize), name, columnNameTxn, symbolCapacity, symbolCacheFlag);
+        MapWriter.createSymbolMapFiles(ff, ddlMem, path.trimTo(pathSize), name, columnNameTxn, symbolCapacity, symbolCacheFlag, configuration.getCommitMode());
         SymbolMapWriter w = new SymbolMapWriter(
                 configuration,
                 path.trimTo(pathSize),
@@ -9274,8 +9274,12 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                 upsertParquetIndexVersions(partitionTimestamp);
                             }
                             // The Rust updater zeroes column_top of every column in the
-                            // file (update.rs), and updateParquetIndexes() indexed every
-                            // column from row 0, so _cv must not keep a top either.
+                            // file (update.rs end()), merged row groups carry real data
+                            // below the old top, and updateParquetIndexes() indexed every
+                            // column from row 0. Zero ALL column tops, like the rewrite
+                            // branch does, so a stale top (e.g. a column added after the
+                            // partition was written) does not hide the merged values from
+                            // index scans, CONVERT TO NATIVE or the dedup merge.
                             zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);

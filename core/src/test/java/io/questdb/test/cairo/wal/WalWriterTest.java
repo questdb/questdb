@@ -6868,7 +6868,8 @@ public class WalWriterTest extends AbstractCairoTest {
                     replicaDirName,
                     initialMetadata,
                     ColumnType.VERSION,
-                    tableToken.getTableId()
+                    tableToken.getTableId(),
+                    configuration.getCommitMode()
             );
         }
         final TableReaderMetadata metadata = new TableReaderMetadata(configuration);
