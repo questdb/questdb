@@ -72,7 +72,7 @@ final class NegativeLimitReversal implements OptimiserPass {
     }
 
     /**
-     * A negative constant, or the negation of an INT or LONG value, which negates back exactly.
+     * A negative constant, or the negation of an integer value.
      */
     private static boolean isNegatedCount(BoundExpression lo) {
         if (lo instanceof ConstantExpression constant) {
@@ -81,8 +81,10 @@ final class NegativeLimitReversal implements OptimiserPass {
         if (!(lo instanceof FunctionExpression call) || call.getArgumentCount() != 1 || !Chars.equals(call.getName(), '-')) {
             return false;
         }
-        final int type = call.argumentAt(0).getDataType();
-        return type == ColumnType.INT || type == ColumnType.LONG;
+        return switch (call.argumentAt(0).getDataType()) {
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> true;
+            default -> false;
+        };
     }
 
     private static boolean isTableSource(LogicalPlan plan) {

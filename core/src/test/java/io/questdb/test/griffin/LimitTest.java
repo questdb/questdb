@@ -827,55 +827,34 @@ public class LimitTest extends AbstractCairoTest {
             assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT 0").noLeakCheck().timestamp("ts").expectSize().returns(none);
             assertQuery("SELECT ts, v FROM t ORDER BY ts, v LIMIT NULL::LONG").noLeakCheck().timestamp("ts").expectSize().returns(all);
 
-            bindVariableService.setLong(0, 3);
-            assertQuery(query)
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .expectSize()
-                    .withPlan("""
-                            Encode sort light
-                              keys: [ts, v]
-                                Encode sort light lo: $0::long partiallySorted: true
-                                  keys: [ts desc, v desc]
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: t
-                            """)
-                    .returns(lastThree);
-            try (RecordCursorFactory factory = select(query)) {
-                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(lastThree);
-                bindVariableService.setLong(0, -3);
-                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(firstThree);
-                bindVariableService.setLong(0, 0);
-                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(none);
-                bindVariableService.setLong(0, Numbers.LONG_NULL);
-                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(all);
-            }
-
-            bindVariableService.clear();
-            bindVariableService.setInt(0, 3);
-            assertQuery(query)
-                    .noLeakCheck()
-                    .timestamp("ts")
-                    .expectSize()
-                    .withPlan("""
-                            Encode sort light
-                              keys: [ts, v]
-                                Encode sort light lo: $0::int partiallySorted: true
-                                  keys: [ts desc, v desc]
-                                    PageFrame
-                                        Row backward scan
-                                        Frame backward scan on: t
-                            """)
-                    .returns(lastThree);
-            try (RecordCursorFactory factory = select(query)) {
-                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(lastThree);
-                bindVariableService.setInt(0, -3);
-                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(firstThree);
-                bindVariableService.setInt(0, 0);
-                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(none);
-                bindVariableService.setInt(0, Numbers.INT_NULL);
-                assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(all);
+            final int[] types = {ColumnType.LONG, ColumnType.INT, ColumnType.SHORT, ColumnType.BYTE};
+            final long[] minValues = {Numbers.LONG_NULL, Numbers.INT_NULL, Short.MIN_VALUE, Byte.MIN_VALUE};
+            for (int i = 0; i < types.length; i++) {
+                bindVariableService.clear();
+                setLimitBindVariable(types[i], 3);
+                assertQuery(query)
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .expectSize()
+                        .withPlan("""
+                                Encode sort light
+                                  keys: [ts, v]
+                                    Encode sort light lo: $0::%s partiallySorted: true
+                                      keys: [ts desc, v desc]
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: t
+                                """.formatted(ColumnType.nameOf(types[i]).toLowerCase()))
+                        .returns(lastThree);
+                try (RecordCursorFactory factory = select(query)) {
+                    assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(lastThree);
+                    setLimitBindVariable(types[i], -3);
+                    assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(firstThree);
+                    setLimitBindVariable(types[i], 0);
+                    assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(none);
+                    setLimitBindVariable(types[i], minValues[i]);
+                    assertFactory(factory).withContext(sqlExecutionContext).timestamp("ts").expectSize().returns(all);
+                }
             }
         });
     }
@@ -2014,6 +1993,15 @@ public class LimitTest extends AbstractCairoTest {
 
         String query = "select * from y limit 4,6";
         testLimit(expected, expected, query);
+    }
+
+    private static void setLimitBindVariable(int type, long value) throws SqlException {
+        switch (type) {
+            case ColumnType.LONG -> bindVariableService.setLong(0, value);
+            case ColumnType.INT -> bindVariableService.setInt(0, (int) value);
+            case ColumnType.SHORT -> bindVariableService.setShort(0, (short) value);
+            default -> bindVariableService.setByte(0, (byte) value);
+        }
     }
 
     private static void testLimitDefinesBindVariables0(String sqlText, int bindVarCount) throws SqlException {
