@@ -97,13 +97,9 @@ public class SqlUtil {
     private static final FiberLocal<StringSink> IMPLICIT_CAST_VARCHAR_SINK = new FiberLocal<>(StringSink::new);
     private static final FiberLocal<Long256ConstantFactory> LONG256_FACTORY = new FiberLocal<>(Long256ConstantFactory::new);
     private static final int NOT_OP_AND = 2;
-    private static final int NOT_OP_EQUAL = 8;
-    private static final int NOT_OP_GREATER = 4;
-    private static final int NOT_OP_GREATER_EQ = 5;
-    private static final int NOT_OP_LESS = 6;
-    private static final int NOT_OP_LESS_EQ = 7;
+    private static final int NOT_OP_EQUAL = 4;
     private static final int NOT_OP_NOT = 1;
-    private static final int NOT_OP_NOT_EQ = 9;
+    private static final int NOT_OP_NOT_EQ = 5;
     private static final int NOT_OP_OR = 3;
     private static final CharSequenceIntHashMap notOps = new CharSequenceIntHashMap();
 
@@ -1743,7 +1739,8 @@ public class SqlUtil {
     }
 
     /**
-     * Normalizes an owned predicate before overload resolution and join/interval analysis.
+     * Normalizes an owned predicate before overload resolution and join/interval analysis. NOT stays above an
+     * ordering comparison: a NULL operand makes both the comparison and its complement false.
      */
     public static ExpressionNode optimiseBooleanNot(ExpressionNode node, ObjectPool<ExpressionNode> pool) {
         return optimiseBooleanNot(node, false, pool);
@@ -2492,26 +2489,6 @@ public class SqlUtil {
                     node.lhs = optimiseBooleanNot(node.lhs, reverse, pool);
                     node.rhs = optimiseBooleanNot(node.rhs, reverse, pool);
                     break;
-                case NOT_OP_GREATER:
-                    if (reverse) {
-                        node.token = "<=";
-                    }
-                    break;
-                case NOT_OP_GREATER_EQ:
-                    if (reverse) {
-                        node.token = "<";
-                    }
-                    break;
-                case NOT_OP_LESS:
-                    if (reverse) {
-                        node.token = ">=";
-                    }
-                    break;
-                case NOT_OP_LESS_EQ:
-                    if (reverse) {
-                        node.token = ">";
-                    }
-                    break;
                 case NOT_OP_EQUAL:
                     if (reverse) {
                         node.token = "!=";
@@ -2695,10 +2672,6 @@ public class SqlUtil {
         notOps.put("not", NOT_OP_NOT);
         notOps.put("and", NOT_OP_AND);
         notOps.put("or", NOT_OP_OR);
-        notOps.put(">", NOT_OP_GREATER);
-        notOps.put(">=", NOT_OP_GREATER_EQ);
-        notOps.put("<", NOT_OP_LESS);
-        notOps.put("<=", NOT_OP_LESS_EQ);
         notOps.put("=", NOT_OP_EQUAL);
         notOps.put("!=", NOT_OP_NOT_EQ);
         notOps.put("<>", NOT_OP_NOT_EQ);

@@ -5087,6 +5087,18 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinFailsWhenSlaveRedesignatesTimestamp() throws Exception {
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s AS (SELECT x v, (x * 43_200_000_000)::TIMESTAMP ts, (x * 43_200_000_000 + 172_800_000_000)::TIMESTAMP ts2 FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x l, (x * 43_200_000_000 + 100_000_000_000)::TIMESTAMP ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            final String sql = "SELECT m.l, count(x.v) c FROM m WINDOW JOIN (s TIMESTAMP(ts2)) x RANGE BETWEEN 12 HOUR PRECEDING AND CURRENT ROW";
+            assertQuery(sql).noLeakCheck().fails(sql.indexOf("WINDOW"), "right side of window join must be a table, not sub-query");
+        });
+    }
+
+    @Test
     public void testWindowJoinFailsWhenUnboundedIsUsed() throws Exception {
         // timestamp types don't matter for this test
         Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);

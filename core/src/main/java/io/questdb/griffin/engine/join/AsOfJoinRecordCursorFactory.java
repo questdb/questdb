@@ -50,6 +50,7 @@ import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.Transient;
 
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.nullSlaveTimestamp;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
 public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory {
@@ -254,6 +255,12 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
                             valueSink.copy(slaveRecord, value);
                         }
                         danglingSlaveRecord = false;
+                    } else if (slaveTimestamp == Long.MIN_VALUE) {
+                        if (!hasFirstSlaveRow(masterTimestamp, minSlaveTimestamp)) {
+                            record.hasSlave(false);
+                            return true;
+                        }
+                        slaveTimestamp = this.slaveTimestamp;
                     }
 
                     evacuateJoinKeyMap(masterTimestamp);
@@ -355,6 +362,30 @@ public class AsOfJoinRecordCursorFactory extends AbstractJoinRecordCursorFactory
             boolean hasSlave = record.hasSlave();
             record.of(masterRecord, currentJoinKeyMap.getRecord());
             record.hasSlave(hasSlave);
+        }
+
+        /**
+         * Reads the first slave row into the join key map, false when there is none, or it follows the master row and
+         * stays dangling.
+         */
+        private boolean hasFirstSlaveRow(long masterTimestamp, long minSlaveTimestamp) {
+            if (!slaveCursor.hasNext()) {
+                return false;
+            }
+            slaveTimestamp = scaleTimestamp(slaveRecord.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+            if (slaveTimestamp == Numbers.LONG_NULL) {
+                throw nullSlaveTimestamp();
+            }
+            if (slaveTimestamp > masterTimestamp) {
+                danglingSlaveRecord = true;
+                return false;
+            }
+            if (slaveTimestamp >= minSlaveTimestamp) {
+                final MapKey key = currentJoinKeyMap.withKey();
+                key.put(slaveRecord, slaveKeySink);
+                valueSink.copy(slaveRecord, key.createValue());
+            }
+            return true;
         }
 
         private void of(RecordCursor masterCursor, RecordCursor slaveCursor, SqlExecutionContext executionContext) {

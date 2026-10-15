@@ -189,6 +189,9 @@ public class AsyncJitFilteredRecordCursorFactory extends AbstractRecordCursorFac
         this.limitLoPos = limitLoPos;
         this.maxNegativeLimit = maxNegativeLimit;
         this.sharedQueryWorkerCount = workerCount;
+        if (limitLoFunction instanceof MasterSuffixLimitFunction masterSuffixLimit) {
+            masterSuffixLimit.of(negativeLimitCursor);
+        }
     }
 
     @Override

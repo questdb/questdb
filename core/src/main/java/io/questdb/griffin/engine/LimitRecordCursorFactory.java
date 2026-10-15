@@ -36,24 +36,38 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import org.jetbrains.annotations.Nullable;
 
 public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
+    // Each run of the join sets its slave up again, so few large steps bound that cost when the join emits no rows.
+    private static final long MASTER_ROW_COUNT_GROWTH = 64;
     private final RecordCursorFactory base;
     private final LimitRecordCursor cursor;
+    private final MasterSuffixLimitFunction masterSuffixLimit;
 
+    /**
+     * {@code masterSuffixLimit}: the LIMIT count of the master filter of the join the base runs, which the base factory
+     * owns. When the join emits fewer rows than a negative LIMIT selects and the filter returned all the rows it was
+     * asked for, the factory runs the join again over {@link #MASTER_ROW_COUNT_GROWTH} times as many master rows, or
+     * over all of them past the negative LIMIT a filter accepts. The rows of each master row come out together and in
+     * master order, so the last rows of the join over a suffix of the master rows are its last rows over all of them
+     * once there are as many as the LIMIT selects.
+     */
     public LimitRecordCursorFactory(
             RecordCursorFactory base,
             Function loFunction,
             @Nullable Function hiFunction,
-            int argPos
+            int argPos,
+            @Nullable MasterSuffixLimitFunction masterSuffixLimit
     ) {
         super(base.getMetadata());
         this.base = base;
         this.cursor = new LimitRecordCursor(loFunction, hiFunction, argPos);
+        this.masterSuffixLimit = masterSuffixLimit;
     }
 
     @Override
@@ -66,10 +80,24 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
         final RecordCursor baseCursor = base.getCursor(executionContext);
         try {
             cursor.of(baseCursor, executionContext);
+            if (masterSuffixLimit != null) {
+                final long maxRowCount = executionContext.getCairoEngine().getConfiguration().getSqlMaxNegativeLimit();
+                long rowCount = cursor.lo;
+                while (cursor.isTailShort() && masterSuffixLimit.hasMoreRows(rowCount)) {
+                    rowCount = -rowCount > maxRowCount / MASTER_ROW_COUNT_GROWTH ? Numbers.LONG_NULL : rowCount * MASTER_ROW_COUNT_GROWTH;
+                    masterSuffixLimit.setRowCount(rowCount);
+                    cursor.close();
+                    cursor.of(base.getCursor(executionContext), executionContext);
+                }
+            }
             return cursor;
         } catch (Throwable th) {
             cursor.close();
             throw th;
+        } finally {
+            if (masterSuffixLimit != null) {
+                masterSuffixLimit.clearRowCount();
+            }
         }
     }
 
@@ -342,6 +370,17 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             return baseSize >= 0;
         }
 
+        /**
+         * True when a negative LIMIT selects more rows than the base has.
+         */
+        private boolean isTailShort() {
+            if (lo >= 0 || lo == Numbers.LONG_NULL) {
+                return false;
+            }
+            ensureBoundsResolved();
+            return baseSize < -lo;
+        }
+
         private void resolveBoundsCheap() {
             if (lo == hi) {
                 // There's either a single zero argument (LIMIT 0) or two equal arguments (LIMIT n, n).
@@ -431,6 +470,9 @@ public class LimitRecordCursorFactory extends AbstractRecordCursorFactory {
             remaining = -1;
             counter.clear();
             resolveBoundsCheap();
+            if (lo >= 0 && hi > lo) {
+                base.expectLimitedIteration();
+            }
         }
     }
 }

@@ -39,8 +39,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredLightRecordCursorFactory;
 import io.questdb.griffin.engine.join.HashOuterJoinFilteredRecordCursorFactory;
-import io.questdb.griffin.engine.join.NestedLoopFullJoinRecordCursorFactory;
-import io.questdb.griffin.engine.join.NullRecordFactory;
 import io.questdb.griffin.model.QueryModel;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -62,14 +60,6 @@ public class JoinOwnershipTest {
         TestUtils.assertMemoryLeak(() -> {
             assertConstructorFailure(1, false);
             assertConstructorFailure(1, true);
-        });
-    }
-
-    @Test
-    public void testNestedFullJoinPreparationFailureClosesEveryOwnerOnce() throws Exception {
-        TestUtils.assertMemoryLeak(() -> {
-            assertConstructorFailure(2, false);
-            assertConstructorFailure(2, true);
         });
     }
 
@@ -96,10 +86,7 @@ public class JoinOwnershipTest {
         valueTypes.add(factoryKind == 1 ? ColumnType.INT : ColumnType.LONG);
         final RuntimeException actual = Assert.assertThrows(RuntimeException.class, () -> {
             // The configuration throws before either constructor uses its record sinks.
-            if (factoryKind == 2) {
-                new NestedLoopFullJoinRecordCursorFactory(configuration, metadata, master, slave, 1, filter,
-                        NullRecordFactory.getInstance(childMetadata), NullRecordFactory.getInstance(childMetadata));
-            } else if (factoryKind == 1) {
+            if (factoryKind == 1) {
                 new HashOuterJoinFilteredLightRecordCursorFactory(configuration, metadata, master, slave,
                         keyTypes, valueTypes, null, null, 1, filter, null, QueryModel.JOIN_LEFT_OUTER, null, null);
             } else {

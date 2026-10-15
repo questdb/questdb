@@ -161,7 +161,7 @@ final class SortFactoryGenerator {
             base = null;
             lo = null;
             hi = null;
-            return new LimitRecordCursorFactory(limited, ownedLo, ownedHi, limit.getPosition());
+            return new LimitRecordCursorFactory(limited, ownedLo, ownedHi, limit.getPosition(), null);
         } catch (Throwable th) {
             Misc.free(base, th);
             Misc.free(lo, th);

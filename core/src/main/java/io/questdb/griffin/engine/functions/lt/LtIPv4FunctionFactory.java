@@ -32,7 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -64,7 +64,7 @@ public class LtIPv4FunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
+    private static class Func extends ComparisonFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -75,7 +75,7 @@ public class LtIPv4FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
-            return Numbers.lessThanIPv4(left.getIPv4(rec), right.getIPv4(rec), negated);
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -89,7 +89,7 @@ public class LtIPv4FunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
                 sink.val(">=");
@@ -97,6 +97,10 @@ public class LtIPv4FunctionFactory implements FunctionFactory {
                 sink.val('<');
             }
             sink.val(right);
+        }
+
+        private boolean isMatch(Record rec) {
+            return Numbers.lessThanIPv4(left.getIPv4(rec), right.getIPv4(rec), negated);
         }
     }
 }

@@ -363,6 +363,11 @@ public final class Misc {
         }
     }
 
+    public static String getMessageOrClassName(Throwable th) {
+        final String message = th.getMessage();
+        return message != null && !message.isEmpty() ? message : th.getClass().getName();
+    }
+
     public static Decimal128 getThreadLocalDecimal128() {
         return tlDecimal128.get();
     }

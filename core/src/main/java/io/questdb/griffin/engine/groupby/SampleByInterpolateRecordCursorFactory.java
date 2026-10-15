@@ -53,6 +53,7 @@ import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.IntList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 import io.questdb.std.Transient;
 import io.questdb.std.Unsafe;
@@ -854,6 +855,9 @@ public class SampleByInterpolateRecordCursorFactory extends AbstractRecordCursor
             assert good;
 
             final long timestamp = managedRecord.getTimestamp(timestampIndex);
+            if (timestamp == Numbers.LONG_NULL) {
+                throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+            }
             final TimeZoneRules rules = timezone.getRules();
             final long tzOffset = timezone.getTzOffset();
             final long fixedOffset = timezone.getFixedOffset();

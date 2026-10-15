@@ -43,6 +43,7 @@ import io.questdb.network.PeerDisconnectedException;
 import io.questdb.network.PeerIsSlowToReadException;
 import io.questdb.network.ServerDisconnectException;
 import io.questdb.preferences.SettingsStore;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
 import io.questdb.std.str.DirectUtf8Sink;
@@ -192,7 +193,7 @@ public class SettingsProcessor implements HttpRequestHandler {
             transientState.clear();
             transientState.setStatusCode(HTTP_BAD_REQUEST);
             final DirectUtf8Sink utf8Sink = transientState.getUtf8Sink();
-            utf8Sink.put("{\"error\":\"").escapeJsonStr(e.getMessage()).put("\"}");
+            utf8Sink.put("{\"error\":\"").escapeJsonStr(Misc.getMessageOrClassName(e)).put("\"}");
             transientState.send(context);
         }
 

@@ -67,6 +67,7 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
 
     @Override
     public void close() {
+        UnaryFunction.super.close();
         Misc.freeObjListAndClear(sinks);
     }
 

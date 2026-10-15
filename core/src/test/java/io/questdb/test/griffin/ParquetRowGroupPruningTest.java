@@ -41,6 +41,7 @@ import io.questdb.griffin.engine.QueryProgress;
 import io.questdb.griffin.engine.table.PageFrameRecordCursorFactory;
 
 import io.questdb.griffin.engine.table.ParquetRowGroupFilter;
+import io.questdb.std.Numbers;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -3692,6 +3693,42 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegatedRangeComparisonPrunesOnlyNullFreeRowGroups() throws Exception {
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE x (val INT, d DOUBLE, s VARCHAR, c CHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // Rows 101-150 hold NULLs, so the second row group has them and the other 49 do not.
+            execute("""
+                    INSERT INTO x
+                    SELECT
+                        CASE WHEN x BETWEEN 101 AND 150 THEN NULL ELSE x::INT END,
+                        CASE WHEN x BETWEEN 101 AND 150 THEN NULL ELSE x::DOUBLE END,
+                        CASE WHEN x BETWEEN 101 AND 150 THEN NULL ELSE lpad(x::VARCHAR, 4, '0') END,
+                        CASE WHEN x BETWEEN 101 AND 150 THEN NULL ELSE 'a' END,
+                        timestamp_sequence('2024-01-01', 10_000)
+                    FROM long_sequence(5_000)
+                    """);
+            execute("INSERT INTO x VALUES (1, 1.0, '0001', 'a', '2024-01-02')");
+            execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+            // The negation keeps the 100 rows from 4901 up and the 50 NULL rows. Every row group below 4901
+            // fails it, except the one holding NULLs.
+            for (String predicate : new String[]{"NOT (val < 4901)", "NOT (4901 > val)", "NOT (val <= 4900)", "NOT (d < 4901.0)",
+                    "NOT (s < '4901')"}) {
+                assertPrunedCount(predicate, "count\n150\n", 48);
+            }
+            assertPrunedCount("val >= 4901", "count\n100\n", 49);
+            // CHAR stores its NULL as a value the null count misses, so the 50 NULL rows must not be pruned.
+            assertPrunedCount("NOT (c < 'b')", "count\n50\n", 0);
+            assertPrunedCount("NOT (val < NULL)", "count\n5001\n", 0);
+            bindVariableService.clear();
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            assertPrunedCount("NOT (val < $1)", "count\n5001\n", 0);
+            bindVariableService.setInt(0, 4901);
+            assertPrunedCount("NOT (val < $1)", "count\n150\n", 48);
+        });
+    }
+
+    @Test
     public void testNativePlanInvalidatedAfterParquetConversion() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 100);
         assertMemoryLeak(() -> {
@@ -6824,6 +6861,18 @@ public class ParquetRowGroupPruningTest extends AbstractCairoTest {
         execute("INSERT INTO tn VALUES (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
         execute("INSERT INTO tp VALUES (" + nativeValue + ", '2024-01-02T00:00:00.000000Z')");
         execute("ALTER TABLE tp CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
+    }
+
+    private void assertPrunedCount(String predicate, String expected, int expectedSkipped) throws Exception {
+        try (RecordCursorFactory factory = select("SELECT count() FROM x WHERE " + predicate)) {
+            ParquetRowGroupFilter.resetRowGroupsSkipped();
+            final StringSink sink = new StringSink();
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                CursorPrinter.println(cursor, factory.getMetadata(), sink);
+            }
+            TestUtils.assertEquals(expected, sink);
+            Assert.assertEquals(predicate, expectedSkipped, ParquetRowGroupFilter.getRowGroupsSkipped());
+        }
     }
 
     private void assertHasParquetPartitions(String tableName, boolean expected) {

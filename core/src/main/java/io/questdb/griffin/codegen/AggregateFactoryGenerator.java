@@ -40,6 +40,7 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.griffin.FunctionInstantiator;
+import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
@@ -53,6 +54,7 @@ import io.questdb.griffin.engine.groupby.DistinctRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.DistinctTimeSeriesRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByNotKeyedRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.GroupByUtils;
+import io.questdb.griffin.engine.groupby.TimestampEndpointRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.CountVectorAggregateFunction;
 import io.questdb.griffin.engine.groupby.vect.GroupByRecordCursorFactory;
 import io.questdb.griffin.engine.groupby.vect.VectorAggregateFunction;
@@ -430,6 +432,17 @@ final class AggregateFactoryGenerator {
         return factory;
     }
 
+    private RecordCursorFactory generateTimestampEndpoint(GenerationFrame frame, AggregatePlan aggregate, SqlExecutionContext executionContext)
+            throws SqlException {
+        final LogicalPlan input = aggregate.getChild();
+        final OutputSchema output = aggregate.getOutput();
+        final GenericRecordMetadata metadata = new GenericRecordMetadata()
+                .add(new TableColumnMetadata(Chars.toString(output.getColumnName(0)), output.getColumnType(0)));
+        final int columnIndex = input.getOutput().getColumnIndexById(LogicalPlans.endpointColumn(aggregate).getColumnId());
+        return new TimestampEndpointRecordCursorFactory(metadata, codeGenerator.generate(frame, input, executionContext),
+                aggregate.getAggregates().getQuick(0).getName(), columnIndex);
+    }
+
     private RecordCursorFactory generateVector(GenerationFrame frame, AggregatePlan plan, RecordCursorFactory base, SqlExecutionContext executionContext) {
         ObjList<VectorAggregateFunction> functions = null;
         boolean isAdopted = false;
@@ -686,8 +699,12 @@ final class AggregateFactoryGenerator {
     }
 
     RecordCursorFactory generateAggregate(GenerationFrame frame, AggregatePlan aggregate, SqlExecutionContext executionContext) throws SqlException {
-        if (PlanToFactoryRules.aggregateFactory(aggregate) == PlanToFactoryRules.AggregateFactory.HORIZON) {
+        final PlanToFactoryRules.AggregateFactory factory = PlanToFactoryRules.aggregateFactory(aggregate);
+        if (factory == PlanToFactoryRules.AggregateFactory.HORIZON) {
             return generateHorizonJoin(frame, aggregate, (HorizonJoinPlan) aggregate.getChild(), executionContext);
+        }
+        if (factory == PlanToFactoryRules.AggregateFactory.TIMESTAMP_ENDPOINT) {
+            return generateTimestampEndpoint(frame, aggregate, executionContext);
         }
         if (aggregate.getAlgorithm() == AggregatePlan.Algorithm.PARALLEL_STOLEN_FILTER) {
             return generateStolenFilterGroupBy(frame, aggregate, executionContext);

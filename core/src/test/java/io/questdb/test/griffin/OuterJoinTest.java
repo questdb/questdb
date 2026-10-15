@@ -24,6 +24,7 @@
 
 package io.questdb.test.griffin;
 
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.test.AbstractCairoTest;
@@ -246,6 +247,226 @@ public class OuterJoinTest extends AbstractCairoTest {
                                     """);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testNestedLoopFullJoinOverSlaveWithoutUniqueRowIds() throws Exception {
+        assertMemoryLeak(() -> {
+            createRows();
+            execute("CREATE TABLE lp_outer_u(id INT,v INT,s SYMBOL,ts TIMESTAMP) TIMESTAMP(ts)");
+            execute("INSERT INTO lp_outer_u VALUES (20,12,'a','2020-01-01'),(21,25,'g','2020-01-02'),(22,5,'h','2020-01-03')");
+            final String plan = "Nested Loop Full Join";
+            final String unionAll = "SELECT v,s FROM lp_outer_r UNION ALL SELECT v,s FROM lp_outer_u";
+            final String unionAllExpected = """
+                    lid	rv
+                    null	null
+                    null	5
+                    1	11
+                    1	12
+                    1	12
+                    1	25
+                    1	31
+                    1	60
+                    2	25
+                    2	31
+                    2	60
+                    3	31
+                    3	60
+                    4	null
+                    5	60
+                    """;
+            assertRows("SELECT count() FROM lp_outer_l l FULL JOIN (" + unionAll + ") r ON true", false, plan, "count\n40\n");
+            assertRows("SELECT count() FROM lp_outer_l l FULL JOIN (SELECT s FROM lp_outer_r UNION ALL SELECT s FROM lp_outer_u) r ON true",
+                    false, plan, "count\n40\n");
+            assertRows("SELECT l.id lid,r.v rv FROM lp_outer_l l FULL JOIN (" + unionAll + ") r ON l.v<r.v ORDER BY lid,rv",
+                    false, plan, unionAllExpected);
+            assertRows("SELECT l.id lid,r.v rv FROM lp_outer_l l FULL JOIN (SELECT v FROM lp_outer_r UNION ALL SELECT v::LONG v FROM lp_outer_u) r "
+                    + "ON l.v<r.v ORDER BY lid,rv", false, plan, unionAllExpected);
+            assertRows("SELECT l.id lid,r.s rs FROM lp_outer_l l FULL JOIN (" + unionAll + ") r ON l.s=r.s OR r.s='g' ORDER BY lid,rs",
+                    false, plan,
+                    """
+                            lid	rs
+                            null	f
+                            null	h
+                            1	a
+                            1	a
+                            1	a
+                            1	g
+                            2	g
+                            3	c
+                            3	g
+                            4\t
+                            4	g
+                            5	g
+                            """);
+            assertRows("SELECT l.id lid,r.v rv FROM (SELECT * FROM lp_outer_l WHERE id>100) l FULL JOIN (" + unionAll + ") r "
+                            + "ON l.v<r.v ORDER BY lid,rv", false, plan,
+                    """
+                            lid	rv
+                            null	null
+                            null	5
+                            null	11
+                            null	12
+                            null	12
+                            null	25
+                            null	31
+                            null	60
+                            """);
+            assertRows("SELECT l.id lid,r.v rv FROM lp_outer_l l FULL JOIN "
+                            + "(SELECT v FROM lp_outer_r WHERE id>100 UNION ALL SELECT v FROM lp_outer_u WHERE id>100) r ON l.v<r.v ORDER BY lid,rv",
+                    false, plan,
+                    """
+                            lid	rv
+                            1	null
+                            2	null
+                            3	null
+                            4	null
+                            5	null
+                            """);
+            assertRows("SELECT l.id lid,r.v rv FROM lp_outer_l l FULL JOIN (SELECT v FROM lp_outer_r UNION SELECT v FROM lp_outer_u) r "
+                            + "ON l.v<r.v ORDER BY lid,rv", false, plan,
+                    """
+                            lid	rv
+                            null	null
+                            null	5
+                            1	11
+                            1	12
+                            1	25
+                            1	31
+                            1	60
+                            2	25
+                            2	31
+                            2	60
+                            3	31
+                            3	60
+                            4	null
+                            5	60
+                            """);
+            assertRows("SELECT l.id lid,r.s rs FROM lp_outer_l l FULL JOIN (SELECT s FROM lp_outer_r UNION SELECT s FROM lp_outer_u) r "
+                            + "ON l.s=r.s OR r.s='g' ORDER BY lid,rs", false, plan,
+                    """
+                            lid	rs
+                            null	f
+                            null	h
+                            1	a
+                            1	g
+                            2	g
+                            3	c
+                            3	g
+                            4\t
+                            4	g
+                            5	g
+                            """);
+            assertRows("SELECT l.id lid,r.v rv FROM lp_outer_l l FULL JOIN "
+                            + "(SELECT v FROM (" + unionAll + ") EXCEPT SELECT v FROM lp_outer_r WHERE id=11) r ON l.v<r.v ORDER BY lid,rv",
+                    false, plan,
+                    """
+                            lid	rv
+                            null	null
+                            null	5
+                            1	11
+                            1	25
+                            1	31
+                            1	60
+                            2	25
+                            2	31
+                            2	60
+                            3	31
+                            3	60
+                            4	null
+                            5	60
+                            """);
+            assertRows("SELECT l.id lid,r.v rv FROM lp_outer_l l FULL JOIN "
+                            + "(SELECT v FROM (" + unionAll + ") INTERSECT SELECT v FROM lp_outer_r) r ON l.v<r.v ORDER BY lid,rv",
+                    false, plan,
+                    """
+                            lid	rv
+                            null	null
+                            1	11
+                            1	12
+                            1	31
+                            1	60
+                            2	31
+                            2	60
+                            3	31
+                            3	60
+                            4	null
+                            5	60
+                            """);
+            assertRows("SELECT count() FROM lp_outer_l l FULL JOIN "
+                    + "(SELECT s FROM (" + unionAll + ") EXCEPT SELECT s FROM lp_outer_r WHERE id=14) r ON true", false, plan, "count\n25\n");
+            assertRows("SELECT count() FROM lp_outer_l l FULL JOIN "
+                    + "(SELECT s FROM (" + unionAll + ") INTERSECT SELECT s FROM lp_outer_u) r ON true", false, plan, "count\n15\n");
+            assertRows("SELECT l.id lid,r.k rk FROM (SELECT * FROM lp_outer_l WHERE id=1) l FULL JOIN "
+                            + "(SELECT a.v+b.v k FROM lp_outer_u a CROSS JOIN lp_outer_u b) r ON l.v+10<r.k ORDER BY lid,rk", false, plan,
+                    """
+                            lid	rk
+                            null	10
+                            null	17
+                            null	17
+                            1	24
+                            1	30
+                            1	30
+                            1	37
+                            1	37
+                            1	50
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLoopFullJoinRewindsAfterUnmatchedMasterRow() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_nl_m(k LONG)");
+            execute("INSERT INTO lp_nl_m VALUES (1),(7),(5),(2)");
+            execute("CREATE TABLE lp_nl_s(k LONG)");
+            execute("INSERT INTO lp_nl_s VALUES (2),(3)");
+            assertQuery("SELECT x,mk,sk FROM long_sequence(2) CROSS JOIN "
+                    + "(SELECT m.k mk,s.k sk FROM lp_nl_m m FULL JOIN lp_nl_s s ON m.k<s.k LIMIT 3)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x	mk	sk
+                            1	1	2
+                            1	1	3
+                            1	7	null
+                            2	1	2
+                            2	1	3
+                            2	7	null
+                            """);
+        });
+    }
+
+    @Test
+    public void testNestedLoopOuterJoinReopensAfterEarlyClose() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE lp_nl_m(k LONG)");
+            execute("INSERT INTO lp_nl_m VALUES (7),(5),(2)");
+            execute("CREATE TABLE lp_nl_s(k LONG)");
+            execute("INSERT INTO lp_nl_s VALUES (2),(3)");
+            assertRowsAfterEarlyClose("SELECT m.k mk,s.k sk FROM lp_nl_m m LEFT JOIN lp_nl_s s ON m.k<s.k", "Nested Loop Left Join",
+                    """
+                            mk	sk
+                            7	null
+                            5	null
+                            2	3
+                            """);
+            assertRowsAfterEarlyClose("SELECT s.k sk,m.k mk FROM lp_nl_s s RIGHT JOIN lp_nl_m m ON s.k>m.k", "Nested Loop Right Join",
+                    """
+                            sk	mk
+                            null	7
+                            null	5
+                            3	2
+                            """);
+            assertRowsAfterEarlyClose("SELECT m.k mk,s.k sk FROM lp_nl_m m FULL JOIN lp_nl_s s ON m.k<s.k", "Nested Loop Full Join",
+                    """
+                            mk	sk
+                            7	null
+                            5	null
+                            2	3
+                            null	2
+                            """);
         });
     }
 
@@ -532,6 +753,16 @@ public class OuterJoinTest extends AbstractCairoTest {
                     TestUtils.assertContains(planText(factory), expectedPlan);
                 }
             }
+        }
+    }
+
+    private void assertRowsAfterEarlyClose(String sql, String expectedPlan, String expected) throws Exception {
+        try (RecordCursorFactory factory = select(sql)) {
+            TestUtils.assertContains(planText(factory), expectedPlan);
+            try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                Assert.assertTrue(cursor.hasNext());
+            }
+            assertFactory(factory).withContext(sqlExecutionContext).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
         }
     }
 

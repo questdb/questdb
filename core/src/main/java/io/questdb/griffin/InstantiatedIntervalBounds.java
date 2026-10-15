@@ -103,8 +103,9 @@ public final class InstantiatedIntervalBounds implements IntervalBoundSource {
 
     @Override
     public Function newMonotonicInverter(Function head, Function lo, short loAdjustment, long loValue, Function hi, short hiAdjustment,
-                                         long hiValue, boolean isBetween, TimestampDriver timestampDriver) {
-        return new TimestampMonotonicInverter(head, lo, loAdjustment, loValue, hi, hiAdjustment, hiValue, isBetween, timestampDriver);
+                                         long hiValue, boolean isBetween, boolean isNullBoundMatching, TimestampDriver timestampDriver) {
+        return new TimestampMonotonicInverter(head, lo, loAdjustment, loValue, hi, hiAdjustment, hiValue, isBetween, isNullBoundMatching,
+                timestampDriver);
     }
 
     @Override

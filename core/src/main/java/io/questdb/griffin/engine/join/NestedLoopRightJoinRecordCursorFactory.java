@@ -202,6 +202,7 @@ public class NestedLoopRightJoinRecordCursorFactory extends AbstractJoinRecordCu
             filter.init(this, executionContext);
             record.of(masterCursor.getRecord(), slaveCursor.getRecord());
             isSlaveHasNextPending = true;
+            isMatch = false;
             circuitBreaker = executionContext.getCircuitBreaker();
         }
     }

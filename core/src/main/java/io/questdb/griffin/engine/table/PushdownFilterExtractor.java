@@ -121,6 +121,16 @@ public final class PushdownFilterExtractor {
     }
 
     /**
+     * Reports whether a negated range comparison over this column type may drive row group pruning. Its condition
+     * prunes only a row group whose null count is zero, which has to prove that no row compares as NULL. CHAR fails
+     * that: the writer stores {@code Numbers.CHAR_NULL} as an ordinary value. FLOAT and DOUBLE pass, because the
+     * infinities their null count misses compare as values in a range comparison, and NaN is counted.
+     */
+    public static boolean isNullMatchingPushable(int columnType) {
+        return ColumnType.tagOf(columnType) != ColumnType.CHAR;
+    }
+
+    /**
      * Rebuilds a constant DECIMAL function so its storage tag and scale match the
      * column's, which is what {@link ParquetRowGroupFilter#prepareFilterList} relies
      * on when it dispatches {@code getDecimal<N>} based on the column tag and pushes
@@ -181,6 +191,9 @@ public final class PushdownFilterExtractor {
         private final int operationType;
         private final ObjList<Function> valueFunctions = new ObjList<>();
         private final ObjList<ExpressionNode> values = new ObjList<>();
+        // Set when the condition stands for a negated range comparison: NULL rows satisfy it as well, so it prunes
+        // only row groups without NULLs.
+        private boolean isNullMatching;
         // Set when value serialization declined this condition AND every one of its values is a
         // compile-time constant, so re-running it cannot reach a different answer.
         // ParquetRowGroupFilter.prepareFilterList runs once per parquet partition and re-raised the
@@ -262,8 +275,16 @@ public final class PushdownFilterExtractor {
             }
         }
 
+        public boolean isNullMatching() {
+            return isNullMatching;
+        }
+
         public boolean isSerializationDeclined() {
             return isSerializationDeclined;
+        }
+
+        public void setNullMatching() {
+            isNullMatching = true;
         }
 
         public void setSerializationDeclined() {

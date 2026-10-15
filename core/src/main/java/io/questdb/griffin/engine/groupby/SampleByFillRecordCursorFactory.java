@@ -1130,6 +1130,9 @@ public class SampleByFillRecordCursorFactory extends AbstractRecordCursorFactory
             // getRecordB and the slot-cache covers all reads anyway. A SAMPLE BY
             // source bound prevRecord above.
             if (peekNextRow()) {
+                if (pendingTs == Numbers.LONG_NULL) {
+                    throw CairoException.nonCritical().put("designated timestamp column cannot be NULL");
+                }
                 if (isPrevPositioningNeeded && sampleBySource == null) {
                     prevRecord = baseCursor.getRecordB();
                 }

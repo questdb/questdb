@@ -295,6 +295,20 @@ public final class LogicalPlans {
     }
 
     /**
+     * The column whose value in one row of its input the keyless aggregate returns: the argument of its only call when
+     * that is a {@code min}, {@code max}, {@code first} or {@code last} of a direct column reference; null otherwise.
+     */
+    public static ColumnExpression endpointColumn(AggregatePlan aggregate) {
+        if (aggregate.getGroupingExpressions().size() != 0 || aggregate.getAggregates().size() != 1) {
+            return null;
+        }
+        final FunctionExpression call = aggregate.getAggregates().getQuick(0);
+        return call.getArgumentCount() == 1 && call.argumentAt(0) instanceof ColumnExpression column && column.isDirectReference()
+                && (isTimestampEndpointBackward(call) || Chars.equalsIgnoreCase(call.getName(), "min") || Chars.equalsIgnoreCase(call.getName(), "first"))
+                ? column : null;
+    }
+
+    /**
      * The index of the join input whose output holds the column, or -1 when no input holds it.
      */
     public static int findJoinColumnSource(JoinPlan join, int columnId) {
@@ -573,6 +587,22 @@ public final class LogicalPlans {
     }
 
     /**
+     * True when every step of the join emits the rows each row of its master joins next to each other, in its master's
+     * order, and they depend on that row alone: inner, cross, left outer, ASOF and LT joins.
+     */
+    public static boolean isMasterRowGrouped(JoinPlan join) {
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        for (int i = 1, n = ordered.size(); i < n; i++) {
+            final JoinKind joinType = ordered.getQuick(i).getJoinType();
+            if (joinType != JoinKind.INNER && joinType != JoinKind.CROSS && joinType != JoinKind.LEFT_OUTER
+                    && joinType != JoinKind.ASOF && joinType != JoinKind.LT) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * True when every step of the join emits at least one row for each row of its master, in its master's order: left
      * outer, ASOF and LT joins without a post-join filter.
      */
@@ -670,12 +700,8 @@ public final class LogicalPlans {
      * ascending ({@code min}, {@code first}) or descending ({@code max}, {@code last}) timestamp order.
      */
     public static boolean isTimestampEndpoint(AggregatePlan aggregate) {
-        if (aggregate.getGroupingExpressions().size() != 0 || aggregate.getAggregates().size() != 1) {
-            return false;
-        }
-        final FunctionExpression call = aggregate.getAggregates().getQuick(0);
-        if (call.getArgumentCount() != 1 || !(call.argumentAt(0) instanceof ColumnExpression column) || !column.isDirectReference()
-                || !isTimestampEndpointBackward(call) && !Chars.equalsIgnoreCase(call.getName(), "min") && !Chars.equalsIgnoreCase(call.getName(), "first")) {
+        final ColumnExpression column = endpointColumn(aggregate);
+        if (column == null) {
             return false;
         }
         final LogicalPlan input = aggregate.getChild();

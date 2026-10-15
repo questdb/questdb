@@ -54,6 +54,7 @@ import io.questdb.griffin.engine.ExplainPlanFactory;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.join.SharedRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.RecordComparatorCompiler;
+import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
 import io.questdb.griffin.engine.table.SelectedRecordCursorFactory;
 import io.questdb.griffin.model.ExecutionModel;
 import io.questdb.griffin.model.QueryModel;
@@ -362,12 +363,37 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         return factory;
     }
 
+    /**
+     * Builds a MASTER_SUFFIX LIMIT over the join, whose master scan's parallel filter wraps its LIMIT count in the count
+     * the LIMIT sets. A master scan without a parallel filter reads all master rows, and the LIMIT runs the join once.
+     */
+    private RecordCursorFactory generateMasterSuffixLimit(GenerationFrame frame, LimitPlan limit, SqlExecutionContext executionContext)
+            throws SqlException {
+        final ScanPlan outerScan = frame.masterSuffixScan;
+        final MasterSuffixLimitFunction outerSuffixLimit = frame.masterSuffixLimit;
+        frame.masterSuffixScan = PlanToFactoryRules.masterSuffixScan(limit);
+        frame.masterSuffixLimit = null;
+        final RecordCursorFactory base;
+        final MasterSuffixLimitFunction masterSuffixLimit;
+        try {
+            base = generate(frame, limit.getChild(), executionContext);
+            masterSuffixLimit = frame.masterSuffixLimit;
+        } finally {
+            frame.masterSuffixScan = outerScan;
+            frame.masterSuffixLimit = outerSuffixLimit;
+        }
+        instantiateLimit(frame, limit, base, executionContext);
+        return new LimitRecordCursorFactory(base, frame.limitLo, frame.limitHi, limit.getPosition(), masterSuffixLimit);
+    }
+
     private RecordCursorFactory generateUnary(GenerationFrame frame, LogicalPlan plan, SqlExecutionContext executionContext) throws SqlException {
         final LogicalPlan input = plan.inputAt(0);
         final BoundExpression residual = plan instanceof FilterPlan filter ? filter.getPredicate() : null;
         final RecordCursorFactory base;
         if (plan instanceof FilterPlan filter && residual != null && PlanToFactoryRules.fusedScan(filter) instanceof ScanPlan scan) {
             return scanGenerator.generateFiltered(frame, scan, residual, executionContext);
+        } else if (plan instanceof LimitPlan limit && limit.getApplication() == LimitPlan.Application.MASTER_SUFFIX) {
+            return generateMasterSuffixLimit(frame, limit, executionContext);
         } else if (plan instanceof LimitPlan limit && input instanceof DistinctPlan distinct) {
             base = aggregateGenerator.generateDistinct(frame, distinct, limit, executionContext);
         } else {
@@ -420,7 +446,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     return base;
                 }
                 instantiateLimit(frame, limit, base, executionContext);
-                return new LimitRecordCursorFactory(base, frame.limitLo, frame.limitHi, limit.getPosition());
+                return new LimitRecordCursorFactory(base, frame.limitLo, frame.limitHi, limit.getPosition(), null);
             }
             default -> {
                 final IllegalStateException failure = new IllegalStateException("unknown logical operation");

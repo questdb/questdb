@@ -2906,9 +2906,9 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertA4fRows("5_000_000_001 <= f + 1.0", 0, 1, 2);
             assertA4fRows("5_000_000_001 > f + 1.0", 3, 4, 5, 6, 7, 8, 9, 10, 12);
             assertA4fRows("5_000_000_001 >= f + 1.0", 2, 3, 4, 5, 6, 7, 8, 9, 10, 12);
-            // NOT over the whole comparison keeps the mode, and drops the NaN row - which fails
-            // the predicate and its negation alike.
-            assertA4fRows("not (f + 1.0 > 5_000_000_001)", 2, 3, 4, 5, 6, 7, 8, 9, 10, 12);
+            // NOT over the whole comparison keeps the mode, and keeps the NaN row - the comparison
+            // is false for it, so its negation is true.
+            assertA4fRows("not (f + 1.0 > 5_000_000_001)", 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12);
         });
     }
 
@@ -2971,7 +2971,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // NOT, and both conjunct orders beside a second predicate: the execution mode a
             // widened constant forces is filter-wide, so the answer must not depend on which
             // conjunct the traversal reaches first.
-            assertA2fRows("not (f + 1.0 > 16777216.5)", 2, 5, 6, 7);
+            assertA2fRows("not (f + 1.0 > 16777216.5)", 2, 3, 5, 6, 7, 8);
             assertA2fRows("f + 1.0 > 16777216.5 and i > 0", 0, 1, 4);
             assertA2fRows("i > 0 and f + 1.0 > 16777216.5", 0, 1, 4);
             assertA2fRows("f + 1.0 > 16777216.5 or i > 16_777_216", 0, 1, 4);
@@ -5643,15 +5643,11 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // Operand order is symmetric: the reversed spelling selects the same rows.
             assertJitScalarAndVectorMatchJava("select rn from icfw where f32 < i32",
                     "rn\n4\n7\n10\n13\n14\n15\n17\n");
-            // NOT keeps the pairing inside one predicate. Its answer is the NEGATED comparison
-            // rather than the boolean complement of ">": the factory reads the negation flag and
-            // evaluates "eq || l > r" (LtDoubleVVFunctionFactory:69), where l and r are the
-            // factory's own operands - QuestDB registers no (DOUBLE, DOUBLE) ">" factory, so ">"
-            // arrives here as a swapped "<". The one-sided NULL rows - rn 1, 2 and 16 - are
-            // therefore outside both ">" and "not (>)". This is the Java filter's own answer, and
-            // the widened pairing has to reproduce it.
+            // NOT keeps the pairing inside one predicate. Its answer is the boolean complement of
+            // ">": the one-sided NULL rows - rn 1, 2 and 16 - fail ">" and so pass "not (>)", and
+            // the widened pairing has to reproduce that.
             assertJitScalarAndVectorMatchJava("select rn from icfw where not (i32 > f32)",
-                    "rn\n3\n5\n6\n8\n9\n11\n12\n");
+                    "rn\n1\n2\n3\n5\n6\n8\n9\n11\n12\n16\n");
             // An F4 arithmetic peer computes at f32 in the Java filter too - "*(FF)" exists - so
             // only the INT side widens, and the comparison still runs at f64.
             assertJitScalarAndVectorMatchJava("select rn from icfw where i32 > f32 * 2",
@@ -6708,7 +6704,7 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             // Correct answer is NO rows - -0.0 is never 500 - and the defect ADDED rows here, so
             // the empty result is the oracle rather than an absence of coverage.
             assertA3wNoRows("(-(0.0 * l64)) = (1000 / 2)");
-            assertA3wRows("not (0 > ((-3 * 0) / (0.5 * l64)))", 0, 1, 2, 3, 4, 5, 7, 8, 9);
+            assertA3wRows("not (0 > ((-3 * 0) / (0.5 * l64)))", 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10);
             assertA3wRows("l64 * 0.5 > (0 - 1000)", 5, 6, 7, 8, 9);
             assertA3wRows("(0 - 1000) > (0.5 * l64)", 0, 1, 2, 3);
         });
@@ -7506,6 +7502,42 @@ public class CompiledFilterRegressionTest extends AbstractCairoTest {
             assertJitScalarAndVectorMatchJava("select rn from zm where i + 0 > 16777216.0 and l = 5 and rn <= 3", "rn\n2\n");
             // Control: a bound whose rounding cannot reach any INT row is not a source either.
             assertJitScalarAndVectorMatchJava("select rn from zm where i > 1.1 and l = 5 and rn <= 3", "rn\n2\n3\n");
+        });
+    }
+
+    @Test
+    public void testNegatedOrderingComparisonKeepsNullRows() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE neg_null AS (
+                        SELECT
+                            x rn,
+                            CASE WHEN x % 100 = 0 THEN NULL ELSE x::INT END i,
+                            CASE WHEN x % 100 = 0 THEN NULL ELSE x END l,
+                            CASE WHEN x % 100 = 0 THEN NULL ELSE x::FLOAT END f,
+                            CASE WHEN x % 100 = 0 THEN NULL ELSE x::DOUBLE END d,
+                            CASE WHEN x % 100 = 0 THEN NULL ELSE x::TIMESTAMP END t
+                        FROM long_sequence(1_000)
+                    )""");
+            final StringSink high = new StringSink();
+            final StringSink low = new StringSink();
+            high.put("rn\n");
+            low.put("rn\n");
+            for (int rn = 1; rn <= 1_000; rn++) {
+                final boolean isNull = rn % 100 == 0;
+                if (isNull || rn >= 995) {
+                    high.put(rn).put('\n');
+                }
+                if (isNull || rn <= 5) {
+                    low.put(rn).put('\n');
+                }
+            }
+            for (String column : new String[]{"i", "l", "f", "d"}) {
+                assertJitScalarAndVectorMatchJava("SELECT rn FROM neg_null WHERE NOT (" + column + " < 995)", high);
+                assertJitScalarAndVectorMatchJava("SELECT rn FROM neg_null WHERE NOT (5 < " + column + ")", low);
+            }
+            assertJitScalarAndVectorMatchJava("SELECT rn FROM neg_null WHERE NOT (t < '1970-01-01T00:00:00.000995Z')", high);
+            assertJitScalarAndVectorMatchJava("SELECT rn FROM neg_null WHERE NOT (t > '1970-01-01T00:00:00.000005Z')", low);
         });
     }
 

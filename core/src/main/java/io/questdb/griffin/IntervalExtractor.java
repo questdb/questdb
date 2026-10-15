@@ -234,6 +234,13 @@ public final class IntervalExtractor implements Mutable {
         return constant.isLiteral() && constant.getSource() == null;
     }
 
+    private static boolean isRangeOperator(String operator) {
+        return switch (operator) {
+            case "<", "<=", ">", ">=" -> true;
+            default -> false;
+        };
+    }
+
     private static boolean isRuntimePoint(BoundExpression bound) {
         final int type = bound.getDataType();
         return (ColumnType.isTimestamp(type) || isIntegralType(type)) && (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0;
@@ -328,6 +335,8 @@ public final class IntervalExtractor implements Mutable {
                 remaining = intersectBetween(negated, true, timestampColumnId, input, executionContext);
             } else if ("in".equals(negated.getName()) && negated.getArgumentCount() >= 2) {
                 remaining = intersectIn(negated, true, timestampColumnId, input, executionContext);
+            } else if (negated.getArgumentCount() == 2 && isRangeOperator(negated.getName())) {
+                remaining = intersectComparison(negated, true, timestampColumnId, input, executionContext);
             } else {
                 return predicate;
             }
@@ -360,113 +369,7 @@ public final class IntervalExtractor implements Mutable {
             }
             return predicate;
         }
-        final BoundExpression left = call.argumentAt(0);
-        final BoundExpression right = call.argumentAt(1);
-        final BoundExpression bound;
-        final boolean isReversed;
-        if (left instanceof ColumnExpression column && column.getColumnId() == timestampColumnId) {
-            bound = right;
-            isReversed = false;
-        } else if (right instanceof ColumnExpression column && column.getColumnId() == timestampColumnId) {
-            bound = left;
-            isReversed = true;
-        } else {
-            return intersectMonotonic(call, timestampColumnId, input, executionContext);
-        }
-        if (left instanceof ColumnExpression l && right instanceof ColumnExpression r
-                && l.getColumnId() == r.getColumnId() && l.isDirectReference() && r.isDirectReference()) {
-            switch (operator) {
-                case "=" -> {
-                    return null;
-                }
-                case "!=", "<>" -> {
-                    intersectEmpty();
-                    return null;
-                }
-                default -> {
-                    return predicate;
-                }
-            }
-        }
-        final ColumnExpression column = (ColumnExpression) (isReversed ? right : left);
-        if (column.isDirectReference() && column.getDataType() == timestampType
-                && (operator.startsWith("<") || operator.startsWith(">")) && !"<>".equals(operator)) {
-            validateRangeBound(bound);
-        }
-        final boolean isIntegralBound = bound instanceof ConstantExpression && column.isDirectReference()
-                && column.getDataType() == timestampType && isIntegralType(bound.getDataType());
-        final boolean isCursorBound = bound instanceof CursorExpression cursor && isTimestampCursor(cursor)
-                && column.isDirectReference() && column.getDataType() == timestampType;
-        final boolean isRuntimeTimestampBound = isCursorBound || !(bound instanceof ConstantExpression) && column.isDirectReference()
-                && column.getDataType() == timestampType && isRuntimePoint(bound);
-        final long convertedBound = bound instanceof ConstantExpression constantBound && isLosslessPrecisionBound(column, constantBound, timestampType)
-                ? ColumnType.getTimestampDriver(timestampType).from(constantBound.getLongValue(), ColumnType.getTimestampType(bound.getDataType()))
-                : Numbers.LONG_NULL;
-        // Precision conversion can round or overflow; retain those constant bounds in the filter.
-        if (!isIntegralBound && !isRuntimeTimestampBound && convertedBound == Numbers.LONG_NULL
-                && (left.getDataType() != timestampType || right.getDataType() != timestampType)) {
-            if (!column.isDirectReference() && bound instanceof ConstantExpression) {
-                return intersectMonotonic(call, timestampColumnId, input, executionContext);
-            }
-            return predicate;
-        }
-        final boolean isEquality = "=".equals(operator);
-        final boolean isExclusion = "!=".equals(operator) || "<>".equals(operator);
-        final boolean isLower;
-        final boolean isStrict;
-        switch (operator) {
-            case "=", "<", "<=" -> {
-                isLower = isReversed;
-                isStrict = "<".equals(operator);
-            }
-            case ">", ">=" -> {
-                isLower = !isReversed;
-                isStrict = ">".equals(operator);
-            }
-            case "!=", "<>" -> {
-                isLower = false;
-                isStrict = false;
-            }
-            default -> {
-                return predicate;
-            }
-        }
-        if (bound instanceof ConstantExpression constant) {
-            final long value = convertedBound != Numbers.LONG_NULL ? convertedBound : pointValue(constant);
-            if (value == Numbers.LONG_NULL && !isExclusion) {
-                if (isNestedOffset) {
-                    intersectEmpty();
-                    return null;
-                }
-                return predicate;
-            }
-            if (isExclusion) {
-                intervals.subtractInterval(value, value);
-                isIntrinsicFalse |= intervals.isEmptySet();
-            } else if (isEquality) {
-                intervals.intersect(value, value);
-                if (!isIntegralBound && constant.getTimestampText() != null) {
-                    isIntrinsicFalse |= intervals.isEmptySet();
-                }
-            } else {
-                intersectBound(value, isLower, isStrict);
-            }
-        } else if (isCursorBound || (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0) {
-            final Function function = isCursorBound ? bounds.instantiateTimestampCursor((CursorExpression) bound, executionContext)
-                    : bounds.instantiate(bound, input, executionContext);
-            if (isExclusion) {
-                intervals.subtractEquals(function, bound.getPosition());
-            } else if (isEquality) {
-                intervals.intersectRuntimeTimestamp(function, bound.getPosition());
-            } else if (isLower) {
-                intervals.intersect(function, Long.MAX_VALUE, (short) (isStrict ? 1 : 0), bound.getPosition());
-            } else {
-                intervals.intersect(Long.MIN_VALUE, function, (short) (isStrict ? -1 : 0), bound.getPosition());
-            }
-        } else {
-            return predicate;
-        }
-        return null;
+        return intersectComparison(call, false, timestampColumnId, input, executionContext);
     }
 
     private BoundExpression intersectBetween(
@@ -491,7 +394,7 @@ public final class IntervalExtractor implements Mutable {
                 return predicate;
             }
             return intersectMonotonicRange(predicate, operand, lo, hi, (short) 0, (short) 0,
-                    true, timestampColumnId, input, executionContext);
+                    true, false, timestampColumnId, input, executionContext);
         }
         Throwable failure = null;
         try {
@@ -526,6 +429,136 @@ public final class IntervalExtractor implements Mutable {
             // LONG_NULL was excluded before arithmetic; subtracting one cannot wrap.
             intervals.intersect(Long.MIN_VALUE, isStrict ? value - 1 : value);
         }
+    }
+
+    /**
+     * A negated range comparison implements its complement: the designated timestamp is never NULL, so only a
+     * NULL bound, which makes the comparison false and its negation true, separates the two.
+     */
+    private BoundExpression intersectComparison(
+            FunctionExpression predicate,
+            boolean negated,
+            int timestampColumnId,
+            OutputSchema input,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        final String operator = predicate.getName();
+        final BoundExpression left = predicate.argumentAt(0);
+        final BoundExpression right = predicate.argumentAt(1);
+        final BoundExpression bound;
+        final boolean isReversed;
+        if (left instanceof ColumnExpression column && column.getColumnId() == timestampColumnId) {
+            bound = right;
+            isReversed = false;
+        } else if (right instanceof ColumnExpression column && column.getColumnId() == timestampColumnId) {
+            bound = left;
+            isReversed = true;
+        } else {
+            return intersectMonotonic(predicate, negated, timestampColumnId, input, executionContext);
+        }
+        if (left instanceof ColumnExpression l && right instanceof ColumnExpression r
+                && l.getColumnId() == r.getColumnId() && l.isDirectReference() && r.isDirectReference()) {
+            switch (operator) {
+                case "=" -> {
+                    return null;
+                }
+                case "!=", "<>" -> {
+                    intersectEmpty();
+                    return null;
+                }
+                default -> {
+                    return predicate;
+                }
+            }
+        }
+        final ColumnExpression column = (ColumnExpression) (isReversed ? right : left);
+        if (column.isDirectReference() && column.getDataType() == timestampType && isRangeOperator(operator)) {
+            validateRangeBound(bound);
+        }
+        final boolean isIntegralBound = bound instanceof ConstantExpression && column.isDirectReference()
+                && column.getDataType() == timestampType && isIntegralType(bound.getDataType());
+        final boolean isCursorBound = bound instanceof CursorExpression cursor && isTimestampCursor(cursor)
+                && column.isDirectReference() && column.getDataType() == timestampType;
+        final boolean isRuntimeTimestampBound = isCursorBound || !(bound instanceof ConstantExpression) && column.isDirectReference()
+                && column.getDataType() == timestampType && isRuntimePoint(bound);
+        final long convertedBound = bound instanceof ConstantExpression constantBound && isLosslessPrecisionBound(column, constantBound, timestampType)
+                ? ColumnType.getTimestampDriver(timestampType).from(constantBound.getLongValue(), ColumnType.getTimestampType(bound.getDataType()))
+                : Numbers.LONG_NULL;
+        // Precision conversion can round or overflow; retain those constant bounds in the filter.
+        if (!isIntegralBound && !isRuntimeTimestampBound && convertedBound == Numbers.LONG_NULL
+                && (left.getDataType() != timestampType || right.getDataType() != timestampType)) {
+            if (!column.isDirectReference() && bound instanceof ConstantExpression) {
+                return intersectMonotonic(predicate, negated, timestampColumnId, input, executionContext);
+            }
+            return predicate;
+        }
+        final boolean isEquality = "=".equals(operator);
+        final boolean isExclusion = "!=".equals(operator) || "<>".equals(operator);
+        final boolean isLower;
+        final boolean isStrict;
+        switch (operator) {
+            case "=", "<", "<=" -> {
+                isLower = isReversed;
+                isStrict = "<".equals(operator);
+            }
+            case ">", ">=" -> {
+                isLower = !isReversed;
+                isStrict = ">".equals(operator);
+            }
+            case "!=", "<>" -> {
+                isLower = false;
+                isStrict = false;
+            }
+            default -> {
+                return predicate;
+            }
+        }
+        if (bound instanceof ConstantExpression constant) {
+            final long value = convertedBound != Numbers.LONG_NULL ? convertedBound : pointValue(constant);
+            if (value == Numbers.LONG_NULL && !isExclusion) {
+                if (isNestedOffset && !negated) {
+                    intersectEmpty();
+                    return null;
+                }
+                return predicate;
+            }
+            if (isExclusion) {
+                intervals.subtractInterval(value, value);
+                isIntrinsicFalse |= intervals.isEmptySet();
+            } else if (isEquality) {
+                intervals.intersect(value, value);
+                if (!isIntegralBound && constant.getTimestampText() != null) {
+                    isIntrinsicFalse |= intervals.isEmptySet();
+                }
+            } else {
+                intersectBound(value, isLower != negated, isStrict != negated);
+            }
+        } else if (isCursorBound || (bound.getFunctionFlags() & BoundExpression.RUNTIME_CONSTANT) != 0) {
+            final Function function = isCursorBound ? bounds.instantiateTimestampCursor((CursorExpression) bound, executionContext)
+                    : bounds.instantiate(bound, input, executionContext);
+            if (isExclusion) {
+                intervals.subtractEquals(function, bound.getPosition());
+            } else if (isEquality) {
+                intervals.intersectRuntimeTimestamp(function, bound.getPosition());
+            } else if (isLower) {
+                final short adjustment = (short) (isStrict ? 1 : 0);
+                if (negated) {
+                    intervals.subtract(function, Long.MAX_VALUE, adjustment, bound.getPosition());
+                } else {
+                    intervals.intersect(function, Long.MAX_VALUE, adjustment, bound.getPosition());
+                }
+            } else {
+                final short adjustment = (short) (isStrict ? -1 : 0);
+                if (negated) {
+                    intervals.subtract(Long.MIN_VALUE, function, adjustment, bound.getPosition());
+                } else {
+                    intervals.intersect(Long.MIN_VALUE, function, adjustment, bound.getPosition());
+                }
+            }
+        } else {
+            return predicate;
+        }
+        return null;
     }
 
     private void intersectEmpty() {
@@ -662,6 +695,7 @@ public final class IntervalExtractor implements Mutable {
 
     private BoundExpression intersectMonotonic(
             FunctionExpression predicate,
+            boolean negated,
             int timestampColumnId,
             OutputSchema input,
             SqlExecutionContext executionContext
@@ -690,11 +724,14 @@ public final class IntervalExtractor implements Mutable {
         if (isEquality && bound instanceof CursorExpression) {
             return predicate;
         }
-        final boolean isLower = isGreater != isReversed;
-        final short adjustment = "<".equals(operator) || ">".equals(operator) ? (short) (isLower ? 1 : -1) : 0;
+        // A monotonic function of the designated timestamp is never NULL, so a negated comparison keeps the
+        // complementary range of its bound, and every row for a NULL one.
+        final boolean isLower = isGreater != isReversed != negated;
+        final boolean isStrict = "<".equals(operator) || ">".equals(operator);
+        final short adjustment = isStrict != negated ? (short) (isLower ? 1 : -1) : 0;
         return intersectMonotonicRange(predicate, operand, isEquality || isLower ? bound : null,
                 isEquality || !isLower ? bound : null, isLower ? adjustment : 0, !isLower ? adjustment : 0,
-                false, timestampColumnId, input, executionContext);
+                false, negated, timestampColumnId, input, executionContext);
     }
 
     private BoundExpression intersectMonotonicIn(
@@ -768,6 +805,7 @@ public final class IntervalExtractor implements Mutable {
             short loAdjustment,
             short hiAdjustment,
             boolean isBetween,
+            boolean negated,
             int timestampColumnId,
             OutputSchema input,
             SqlExecutionContext executionContext
@@ -792,6 +830,9 @@ public final class IntervalExtractor implements Mutable {
             long hiValue = Long.MAX_VALUE;
             if (lo instanceof ConstantExpression constant) {
                 loValue = constantBoundValue(constant, driver);
+                if (loValue == Numbers.LONG_NULL && negated) {
+                    return predicate;
+                }
                 if (loValue == Numbers.LONG_NULL || loAdjustment > 0 && loValue == Long.MAX_VALUE) {
                     intersectEmpty();
                     return null;
@@ -802,6 +843,9 @@ public final class IntervalExtractor implements Mutable {
             }
             if (hi instanceof ConstantExpression constant) {
                 hiValue = constantBoundValue(constant, driver);
+                if (hiValue == Numbers.LONG_NULL && negated) {
+                    return predicate;
+                }
                 if (hiValue == Numbers.LONG_NULL) {
                     intersectEmpty();
                     return null;
@@ -830,7 +874,7 @@ public final class IntervalExtractor implements Mutable {
             }
             final Function inverter = bounds.newMonotonicInverter(
                     head, loFunction, loFunction != null ? loAdjustment : 0, loValue,
-                    hiFunction, hiFunction != null ? hiAdjustment : 0, hiValue, isBetween, driver
+                    hiFunction, hiFunction != null ? hiAdjustment : 0, hiValue, isBetween, negated, driver
             );
             bounds.publishScalarBound(lo, loFunction);
             if (hi != lo) {

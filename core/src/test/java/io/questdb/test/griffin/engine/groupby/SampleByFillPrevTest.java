@@ -11,7 +11,10 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.std.BinarySequence;
 import io.questdb.std.Chars;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -1478,6 +1481,40 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevKeyedPooledStringAggregatesReuseKeyState() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, s STRING, vc VARCHAR, sy SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            // 20 keys, each with a row in every one of 1_000 hourly buckets
+            execute("INSERT INTO t SELECT 'k' || (x % 20), NULL, NULL, NULL, (x * 180_000_000)::TIMESTAMP FROM long_sequence(20_000)");
+            final String sql = """
+                    SELECT ts, k, string_agg(s, ',') sa, string_agg(vc, ',') va, string_distinct_agg(s, ',') sd,
+                    string_distinct_agg(vc, ',') vd, string_distinct_agg(sy, ',') yd, count_distinct(s) cs, count_distinct(vc) cv
+                    FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION""";
+            try (TestUtils.ThreadMetricsScope<com.sun.management.ThreadMXBean> scope = TestUtils.threadAllocationScope()) {
+                long minSinkMemGrowth = Long.MAX_VALUE;
+                long minAllocatedBytes = Long.MAX_VALUE;
+                for (int round = 0; round < 2; round++) {
+                    try (RecordCursorFactory factory = select(sql)) {
+                        final long sinkMemBefore = sinkMemUsed();
+                        final long allocatedBefore = scope.getBean().getCurrentThreadAllocatedBytes();
+                        long rowCount = 0;
+                        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+                            while (cursor.hasNext()) {
+                                rowCount++;
+                            }
+                            minSinkMemGrowth = Math.min(minSinkMemGrowth, sinkMemUsed() - sinkMemBefore);
+                        }
+                        minAllocatedBytes = Math.min(minAllocatedBytes, scope.getBean().getCurrentThreadAllocatedBytes() - allocatedBefore);
+                        Assert.assertEquals(20_000, rowCount);
+                    }
+                }
+                Assert.assertTrue("native sink memory grew by " + minSinkMemGrowth + " bytes", minSinkMemGrowth < 1_048_576);
+                Assert.assertTrue("Java heap allocations: " + minAllocatedBytes + " bytes", minAllocatedBytes < 1_048_576);
+            }
+        });
+    }
+
+    @Test
     public void testFillPrevLong() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -2517,5 +2554,9 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
                             2024-01-03T10:00:00.000000Z\t3.0
                             """);
         });
+    }
+
+    private static long sinkMemUsed() {
+        return Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_CHAR_SINK) + Unsafe.getMemUsedByTag(MemoryTag.NATIVE_DIRECT_UTF8_SINK);
     }
 }

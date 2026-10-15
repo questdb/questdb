@@ -2827,14 +2827,14 @@ public class UnionTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             Union All
-                                GroupBy vectorized: false
-                                  values: [min(timestamp)]
+                                Timestamp Endpoint
+                                  value: min(timestamp)
                                     Limit value: 1 skip-rows: 0 take-rows: 1
                                         PageFrame
                                             Row forward scan
                                             Frame forward scan on: trades
-                                GroupBy vectorized: false
-                                  values: [max(timestamp)]
+                                Timestamp Endpoint
+                                  value: max(timestamp)
                                     Limit value: 1 skip-rows: 0 take-rows: 1
                                         PageFrame
                                             Row backward scan

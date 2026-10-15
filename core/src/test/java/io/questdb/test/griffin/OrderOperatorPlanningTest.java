@@ -471,6 +471,44 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMarkoutJoinDeclinesDescendingMaster() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP) TIMESTAMP(order_ts)");
+            execute("INSERT INTO orders VALUES (1, 0::TIMESTAMP), (2, 1::TIMESTAMP), (3, 2::TIMESTAMP)");
+            final String sql = """
+                    SELECT /*+ markout_horizon(o offsets) */ id, order_ts + usec_offs AS ts
+                    FROM (SELECT * FROM orders ORDER BY order_ts DESC LIMIT 2) o CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(2)) offsets
+                    ORDER BY order_ts + usec_offs
+                    """;
+            assertQuery(sql)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [ts]
+                                VirtualRecord
+                                  functions: [o.id,o.order_ts+offsets.usec_offs]
+                                    Cross Join
+                                        Limit value: 2 skip-rows: 0 take-rows: 2
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: orders
+                                        VirtualRecord
+                                          functions: [1000000*x-1]
+                                            long_sequence count: 2
+                            """)
+                    .returns("""
+                            id\tts
+                            2\t1970-01-01T00:00:00.000001Z
+                            3\t1970-01-01T00:00:00.000002Z
+                            2\t1970-01-01T00:00:01.000001Z
+                            3\t1970-01-01T00:00:01.000002Z
+                            """);
+        });
+    }
+
+    @Test
     public void testMarkoutJoinKeepsMasterSort() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(order_ts)");

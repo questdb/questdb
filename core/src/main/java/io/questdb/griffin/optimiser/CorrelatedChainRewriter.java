@@ -29,6 +29,8 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
+import io.questdb.griffin.plan.logical.DistinctPlan;
+import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
@@ -39,6 +41,7 @@ import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.ProjectPlan;
 import io.questdb.griffin.plan.logical.SortDirection;
 import io.questdb.griffin.plan.logical.SortPlan;
+import io.questdb.griffin.plan.logical.UnaryPlan;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.griffin.plan.logical.WindowSpec;
 import io.questdb.std.ObjList;
@@ -47,8 +50,23 @@ import static io.questdb.griffin.optimiser.DecorrelationContext.isTrue;
 import static io.questdb.griffin.optimiser.ScalarCompensation.isImplicitlyKeyedByOuterColumns;
 
 /**
- * Rewrites the chain of a body block to read mapped columns: aggregates group by them, windows partition by
- * them, a LIMIT and LATEST ON rank per them and projections expose them.
+ * Rewrites the chain of a body block to read mapped columns. A correlation enters a block at its source or at a
+ * filter, whose equalities between outer and inner columns become join keys; every chain node sits above that
+ * point. Below a filter, {@link Decorrelation} ends the chain at the first node that does not commute with it: that
+ * node starts the block's source and never sees the filter's equalities, as in the equivalent join. Each kind of
+ * chain node takes one rule when the mapping enters below it:
+ * <ul>
+ * <li>Project: exposes each mapped column as a hidden column; ends a filter's chain.</li>
+ * <li>Filter: reads the mapped columns and drops the equalities they satisfy; commutes with a filter.</li>
+ * <li>Sort: none, a LIMIT above it, across filters and distincts, ranks in its order; commutes with a filter.</li>
+ * <li>Distinct: none, its tuples hold the mapped columns; commutes with a filter.</li>
+ * <li>Fill: none, it fills per the keys of the grouping below it; ends a filter's chain.</li>
+ * <li>Limit: numbers the rows of each mapped key and keeps the ones the limit selects; ends a filter's chain.</li>
+ * <li>LatestBy: ranks the rows of each latest key and mapped key by timestamp; ends a filter's chain.</li>
+ * <li>Aggregate and SampleBy: group by the mapped columns; end a filter's chain.</li>
+ * <li>Window: partitions by the mapped columns; ends a filter's chain.</li>
+ * </ul>
+ * Every other kind is a block source, which {@link Decorrelation} rewrites through its inputs or rejects.
  */
 final class CorrelatedChainRewriter {
     private final ScalarCompensation compensation;
@@ -69,6 +87,16 @@ final class CorrelatedChainRewriter {
             }
         }
         return -1;
+    }
+
+    /**
+     * The sort that orders the rows of the plan, under the filters and distincts between them, or null.
+     */
+    private static SortPlan orderingSort(LogicalPlan plan) {
+        while (plan instanceof FilterPlan || plan instanceof DistinctPlan) {
+            plan = plan.inputAt(0);
+        }
+        return plan instanceof SortPlan sort ? sort : null;
     }
 
     /**
@@ -131,12 +159,13 @@ final class CorrelatedChainRewriter {
     }
 
     /**
-     * A LIMIT per outer row: numbers the rows of each mapped key in the order of the sort below and keeps the
-     * rows the limit selects. Below a column projection of the sort, the numbering reads the sort's input.
+     * A LIMIT per outer row: numbers the rows of each mapped key in the order of the sort below, under the filters
+     * and distincts between them, which the numbering replaces, and keeps the rows the limit selects. Below a column
+     * projection of the sort, the numbering reads the projection's input.
      */
     private LogicalPlan rankLimit(LimitPlan limit, LogicalPlan input, int base) throws SqlException {
         final int position = limit.getPosition();
-        final ProjectPlan wrapper = input instanceof ProjectPlan project && project.getChild() instanceof SortPlan
+        final ProjectPlan wrapper = input instanceof ProjectPlan project && orderingSort(project.getChild()) != null
                 && LogicalPlans.isColumnProjection(project) ? project : null;
         LogicalPlan ordered = wrapper != null ? wrapper.getChild() : input;
         final OutputSchema output = ordered.getOutput();
@@ -145,12 +174,22 @@ final class CorrelatedChainRewriter {
             final int columnId = wrapper != null ? LogicalPlans.projectedSourceColumnId(wrapper, ctx.mappedColumnIds.getQuick(k)) : ctx.mappedColumnIds.getQuick(k);
             spec.getPartitionBy().add(ctx.planNodes.columns.next().of(columnId, output.getColumnType(output.getColumnIndexById(columnId)), position));
         }
-        if (ordered instanceof SortPlan sort) {
+        final SortPlan sort = orderingSort(ordered);
+        if (sort != null) {
             for (int i = 0, n = sort.getColumnIds().size(); i < n; i++) {
                 final int columnId = sort.getColumnIds().getQuick(i);
                 spec.addOrderBy(columnId, sort.getDirections().getQuick(i), output.getColumnName(output.getColumnIndexById(columnId)), position);
             }
-            ordered = sort.getChild();
+            if (ordered == sort) {
+                ordered = sort.getChild();
+            } else {
+                LogicalPlan parent = ordered;
+                while (parent.inputAt(0) != sort) {
+                    parent = parent.inputAt(0);
+                }
+                parent.replaceInput(0, sort.getChild());
+                ctx.realignAbove(ordered, sort.getChild());
+            }
         }
         BoundExpression lo = limit.getLo();
         BoundExpression hi = limit.getHi();
@@ -170,21 +209,24 @@ final class CorrelatedChainRewriter {
         return wrapper;
     }
 
-    private LogicalPlan rewriteChainNode(LogicalPlan node, LogicalPlan input, int base) throws SqlException {
+    private LogicalPlan rewriteChainNode(UnaryPlan node, LogicalPlan input, int base) throws SqlException {
         final boolean isCorrelated = ctx.mappedOuterIds.size() > base;
-        switch (node) {
+        return switch (node) {
             case ProjectPlan project -> {
                 for (int k = base, n = ctx.mappedOuterIds.size(); k < n; k++) {
                     ctx.mappedColumnIds.setQuick(k, ctx.exposeColumn(project, input.getOutput(), ctx.mappedColumnIds.getQuick(k),
                             ctx.outerRefName(ctx.mappedOuterIds.getQuick(k)), project.getPosition()));
                 }
-                return project;
+                yield project;
             }
+            case FilterPlan _, SortPlan _, DistinctPlan _, FillPlan _ -> node;
+            case LimitPlan limit -> isCorrelated ? rankLimit(limit, input, base) : limit;
+            case LatestByPlan latest -> isCorrelated ? rankLatest(latest, input, base) : latest;
             case GroupingPlan aggregate -> {
                 if (isCorrelated) {
                     addMappedKeys(aggregate, base);
                 }
-                return aggregate;
+                yield aggregate;
             }
             case WindowPlan window -> {
                 if (isCorrelated) {
@@ -193,18 +235,9 @@ final class CorrelatedChainRewriter {
                     }
                 }
                 ctx.realign(window);
-                return window;
+                yield window;
             }
-            case LimitPlan limit when isCorrelated -> {
-                return rankLimit(limit, input, base);
-            }
-            case LatestByPlan latest when isCorrelated -> {
-                return rankLatest(latest, input, base);
-            }
-            default -> {
-                return node;
-            }
-        }
+        };
     }
 
     private LogicalPlan rowNumberFilter(LogicalPlan input, WindowSpec spec, CharSequence name, int position, BoundExpression lo, BoundExpression hi)
@@ -222,6 +255,16 @@ final class CorrelatedChainRewriter {
                 ? ctx.context.bindCall("=", position, rank, ctx.planNodes.constants.next().ofInt(1, position), window.getOutput())
                 : compensation.limitPredicate(lo, hi, rank, window.getOutput());
         return ctx.planNodes.filters.next().of(window, predicate, position);
+    }
+
+    /**
+     * True when the node commutes with a filter above it: the filter's equalities can move below the node.
+     */
+    static boolean isCommutingWithFilter(UnaryPlan node) {
+        return switch (node) {
+            case FilterPlan _, SortPlan _, DistinctPlan _ -> true;
+            case ProjectPlan _, FillPlan _, LimitPlan _, LatestByPlan _, GroupingPlan _, WindowPlan _ -> false;
+        };
     }
 
     /**
@@ -249,7 +292,7 @@ final class CorrelatedChainRewriter {
                 continue;
             }
             ctx.remapMapped(node, base);
-            input = rewriteChainNode(node, input, base);
+            input = rewriteChainNode((UnaryPlan) node, input, base);
             if (!isUncompensated && i == chainBase && compensation.compensableScalar(input) != null) {
                 input = compensation.compensateBlock((ProjectPlan) input, base);
             }

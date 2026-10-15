@@ -5141,6 +5141,39 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSampleByAlignToFirstObservationKeepsUnreadKey() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, i INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 1, 10.0, '2024-01-01T00:15:00.000000Z'),
+                        ('b', 2, 20.0, '2024-01-01T00:30:00.000000Z'),
+                        ('a', 3, 30.0, '2024-01-01T02:20:00.000000Z'),
+                        ('b', 4, 40.0, '2024-01-01T03:40:00.000000Z')
+                    """);
+            assertQuery("SELECT ts, ls FROM (SELECT ts, k, sum(v) sv, last(i) ls FROM t SAMPLE BY 1h ALIGN TO FIRST OBSERVATION)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tls
+                            2024-01-01T00:15:00.000000Z\t1
+                            2024-01-01T00:15:00.000000Z\t2
+                            2024-01-01T02:15:00.000000Z\t3
+                            2024-01-01T03:15:00.000000Z\t4
+                            """);
+            assertQuery("SELECT count() FROM (SELECT ts, k, last(i) ls FROM t SAMPLE BY 1h ALIGN TO FIRST OBSERVATION)")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            count
+                            4
+                            """);
+        });
+    }
+
+    @Test
     public void testSampleByAlignedToCalendarWithTimezoneAndLimit() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
@@ -8440,6 +8473,91 @@ public class SampleByTest extends AbstractCairoTest {
                     .timestamp("timestamp")
                     .noRandomAccess()
                     .returns(expected);
+        });
+    }
+
+    @Test
+    public void testSampleByOverNullDeclaredTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[] sources = {
+                    "((SELECT NULL::TIMESTAMP ts, 1 k, 1 v FROM long_sequence(1)) TIMESTAMP(ts))",
+                    "((SELECT CASE WHEN x = 1 THEN NULL ELSE (x * 3_600_000_000)::TIMESTAMP END ts, x % 2 k, x v FROM long_sequence(3)) TIMESTAMP(ts))"
+            };
+            final String[] clauses = {
+                    "",
+                    " FILL(NULL)",
+                    " FILL(PREV)",
+                    " FILL(LINEAR)",
+                    " FILL(42)",
+                    " ALIGN TO FIRST OBSERVATION",
+                    " FILL(NULL) ALIGN TO FIRST OBSERVATION",
+                    " FILL(PREV) ALIGN TO FIRST OBSERVATION"
+            };
+            for (String source : sources) {
+                for (String clause : clauses) {
+                    for (String keys : new String[]{"", "k, "}) {
+                        assertQuery("SELECT ts, " + keys + "sum(v) s FROM " + source + " SAMPLE BY 1h" + clause)
+                                .noLeakCheck()
+                                .failsWith("designated timestamp column cannot be NULL");
+                    }
+                }
+            }
+            assertQuery("SELECT ts, sum(v) s FROM ((SELECT (x * 3_600_000_000)::TIMESTAMP ts, x v FROM long_sequence(3)) TIMESTAMP(ts)) SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\ts
+                            1970-01-01T01:00:00.000000Z\t1
+                            1970-01-01T02:00:00.000000Z\t2
+                            1970-01-01T03:00:00.000000Z\t3
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByOverNullRedesignatedTableTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts2 TIMESTAMP, v INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (NULL, 1, '2024-01-01T01:00:00.000000Z'),
+                        ('2024-01-01T02:00:00.000000Z', 2, '2024-01-01T02:00:00.000000Z'),
+                        ('2024-01-01T03:00:00.000000Z', 3, '2024-01-01T03:00:00.000000Z')
+                    """);
+            assertQuery("SELECT ts2, sum(v) s FROM t TIMESTAMP(ts2) SAMPLE BY 1h")
+                    .noLeakCheck()
+                    .timestamp("ts2")
+                    .expectSize()
+                    .returns("""
+                            ts2\ts
+                            \t1
+                            2024-01-01T02:00:00.000000Z\t2
+                            2024-01-01T03:00:00.000000Z\t3
+                            """);
+            assertQuery("SELECT ts2, sum(v) s FROM t TIMESTAMP(ts2) SAMPLE BY 1h FROM '2024-01-01T01:00:00.000000Z' TO '2024-01-01T05:00:00.000000Z' FILL(NULL)")
+                    .noLeakCheck()
+                    .timestamp("ts2")
+                    .noRandomAccess()
+                    .returns("""
+                            ts2\ts
+                            2024-01-01T01:00:00.000000Z\tnull
+                            2024-01-01T02:00:00.000000Z\t2
+                            2024-01-01T03:00:00.000000Z\t3
+                            2024-01-01T04:00:00.000000Z\tnull
+                            """);
+            final String[] clauses = {
+                    " FILL(NULL) LIMIT 3",
+                    " FILL(PREV) LIMIT 3",
+                    " FILL(LINEAR)",
+                    " ALIGN TO FIRST OBSERVATION",
+                    " FILL(NULL) ALIGN TO FIRST OBSERVATION"
+            };
+            for (String clause : clauses) {
+                assertQuery("SELECT ts2, sum(v) s FROM t TIMESTAMP(ts2) SAMPLE BY 1h" + clause)
+                        .noLeakCheck()
+                        .failsWith("designated timestamp column cannot be NULL");
+            }
         });
     }
 

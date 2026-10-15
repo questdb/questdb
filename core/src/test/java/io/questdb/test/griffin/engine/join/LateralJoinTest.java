@@ -84,6 +84,84 @@ public class LateralJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCrossLateralScalarCountWrapperNegatedFilterKeepsPlan() throws Exception {
+        assertMemoryLeak(() -> {
+            createT0("(1), (2)");
+            createT2("(1), (1)");
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    CROSS JOIN LATERAL (
+                        SELECT cnt
+                        FROM (SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a) counted
+                        WHERE NOT (cnt < 1)
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [a]
+                                SelectedRecord
+                                    Hash Join Light
+                                      condition: l1.__qdb_outer_ref__0_a=t0.a
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t0
+                                        Hash
+                                            SelectedRecord
+                                                Filter filter: not (cnt<1)
+                                                    GroupBy vectorized: true workers: 1
+                                                      keys: [x]
+                                                      values: [count(*)]
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t2
+                            """)
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            """);
+            assertQuery("""
+                    SELECT t0.a, l1.cnt
+                    FROM t0
+                    CROSS JOIN LATERAL (
+                        SELECT cnt
+                        FROM (SELECT count(*) AS cnt FROM t2 WHERE t2.x = t0.a) counted
+                        WHERE NOT (cnt < 0)
+                    ) l1
+                    ORDER BY t0.a
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [a]
+                                VirtualRecord
+                                  functions: [t0.a,coalesce(l1.cnt,0)]
+                                    Hash Left Outer Join Light
+                                      condition: l1.__qdb_outer_ref__0_a=t0.a
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: t0
+                                        Hash
+                                            SelectedRecord
+                                                Filter filter: not (cnt<0)
+                                                    GroupBy vectorized: true workers: 1
+                                                      keys: [x]
+                                                      values: [count(*)]
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: t2
+                            """)
+                    .returns("""
+                            a\tcnt
+                            1\t2
+                            2\t0
+                            """);
+        });
+    }
+
+    @Test
     public void testCrossLateralScalarCountWrapperFilterRejectsRows() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE o (a INT)");

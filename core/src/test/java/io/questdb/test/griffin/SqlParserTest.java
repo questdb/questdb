@@ -5657,6 +5657,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: customers
                                         Async Filter workers: 1
+                                          limit: 10
                                           filter: (name ~ X and age=30)
                                             PageFrame
                                                 Row forward scan
@@ -12918,7 +12919,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .withPlan("""
                             Async JIT Filter workers: 1
-                              filter: b>=a
+                              filter: not (b<a)
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
@@ -12935,7 +12936,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .withPlan("""
                             Async JIT Filter workers: 1
-                              filter: a<b
+                              filter: not (a>=b)
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
@@ -12947,26 +12948,26 @@ public class SqlParserTest extends AbstractSqlParserTest {
     @Test
     public void testOptimiseNotInUnionAll() throws Exception {
         assertMemoryLeak(() -> {
-            // optimiseBooleanNot must descend into the union branch so that NOT(a > b)
-            // is rewritten to (a <= b) on BOTH sides of the union.
+            // optimiseBooleanNot must descend into the union branch so that NOT(a = b)
+            // is rewritten to (a != b) on BOTH sides of the union.
             execute("CREATE TABLE t1 (a INT, b INT)");
             execute("CREATE TABLE t2 (a INT, b INT)");
             assertQuery(
-                    "select a, b from t1 where not (a > b) " +
+                    "select a, b from t1 where not (a = b) " +
                             "union all " +
-                            "select a, b from t2 where not (a > b)"
+                            "select a, b from t2 where not (a = b)"
             )
                     .noLeakCheck()
                     .noRandomAccess()
                     .withPlan("""
                             Union All
                                 Async JIT Filter workers: 1
-                                  filter: b>=a
+                                  filter: a!=b
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t1
                                 Async JIT Filter workers: 1
-                                  filter: b>=a
+                                  filter: a!=b
                                     PageFrame
                                         Row forward scan
                                         Frame forward scan on: t2
@@ -12983,7 +12984,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .withPlan("""
                             Async JIT Filter workers: 1
-                              filter: a>=b
+                              filter: not (a<b)
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab
@@ -13000,7 +13001,7 @@ public class SqlParserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .withPlan("""
                             Async JIT Filter workers: 1
-                              filter: b<a
+                              filter: not (b>=a)
                                 PageFrame
                                     Row forward scan
                                     Frame forward scan on: tab

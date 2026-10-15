@@ -34,7 +34,6 @@ public final class SortPlan extends ForwardingPlan {
     private final IntList columnIds = new IntList();
     private final ObjList<SortDirection> directions = new ObjList<>();
     private Algorithm algorithm;
-    private boolean hasAliasedKey;
     private boolean isLimited = true;
     private boolean isMarkoutHorizon;
     private boolean isReversal;
@@ -45,7 +44,6 @@ public final class SortPlan extends ForwardingPlan {
         columnIds.clear();
         directions.clear();
         algorithm = null;
-        hasAliasedKey = false;
         isLimited = true;
         isMarkoutHorizon = false;
         isReversal = false;
@@ -79,13 +77,6 @@ public final class SortPlan extends ForwardingPlan {
     }
 
     /**
-     * True when an ORDER BY key names a computing projection's alias of an input column.
-     */
-    public boolean hasAliasedKey() {
-        return hasAliasedKey;
-    }
-
-    /**
      * False when the query level that orders by this sort has no LIMIT.
      */
     public boolean isLimited() {
@@ -104,10 +95,6 @@ public final class SortPlan extends ForwardingPlan {
      */
     public boolean isReversal() {
         return isReversal;
-    }
-
-    public void markAliasedKey() {
-        hasAliasedKey = true;
     }
 
     public void markMarkoutHorizon() {

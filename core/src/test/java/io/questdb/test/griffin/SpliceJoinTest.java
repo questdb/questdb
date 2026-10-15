@@ -134,6 +134,71 @@ public class SpliceJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimestampEndpointSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00'), (2, '2024-01-01T05:00:00'), (3, '2024-01-02T01:00:00')");
+            assertQuery("SELECT t.l, x.r, x.k FROM t SPLICE JOIN ((SELECT min(ts) r, 42 k FROM t) TIMESTAMP(r)) x")
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Splice Join
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                                    SelectedRecord
+                                        VirtualRecord
+                                          functions: [r,42]
+                                            Timestamp Endpoint
+                                              value: min(ts)
+                                                Limit value: 1 skip-rows: 0 take-rows: 1
+                                                    PageFrame
+                                                        Row forward scan
+                                                        Frame forward scan on: t
+                            """)
+                    .returns("""
+                            l	r	k
+                            1	2024-01-01T00:00:00.000000Z	42
+                            2	2024-01-01T00:00:00.000000Z	42
+                            3	2024-01-01T00:00:00.000000Z	42
+                            """);
+            assertQuery("SELECT t.l, x.r FROM t SPLICE JOIN ((SELECT first(ts) r FROM t WHERE l >= 2) TIMESTAMP(r)) x")
+                    .noRandomAccess()
+                    .returns("""
+                            l	r
+                            1\t
+                            2	2024-01-01T05:00:00.000000Z
+                            3	2024-01-01T05:00:00.000000Z
+                            """);
+            assertQuery("SELECT t.l, x.r, x.k FROM t SPLICE JOIN ((SELECT max(ts) r, 42 k FROM t) TIMESTAMP(r)) x")
+                    .noRandomAccess()
+                    .returns("""
+                            l	r	k
+                            1		null
+                            2		null
+                            3	2024-01-02T01:00:00.000000Z	42
+                            """);
+            assertQuery("SELECT t.l, x.r, x.k FROM t SPLICE JOIN ((SELECT last(ts) r, 42 k FROM t WHERE l < 3) TIMESTAMP(r)) x")
+                    .noRandomAccess()
+                    .returns("""
+                            l	r	k
+                            1		null
+                            2	2024-01-01T05:00:00.000000Z	42
+                            3	2024-01-01T05:00:00.000000Z	42
+                            """);
+            assertQuery("SELECT t.l, x.r, x.k FROM t SPLICE JOIN ((SELECT min(ts) r, 42 k FROM t WHERE l > 1000) TIMESTAMP(r)) x")
+                    .noRandomAccess()
+                    .returns("""
+                            l	r	k
+                            null		42
+                            1		42
+                            2		42
+                            3		42
+                            """);
+        });
+    }
+
+    @Test
     public void testValidationOrderAndFailureOwnership() throws Exception {
         assertMemoryLeak(() -> {
             registerSources(engine.getFunctionFactoryCache());

@@ -865,30 +865,30 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // BYTE * INT (the original fuzzer divergence). Three of the four
             // rows have i = NULL, so the int product is INT_NULL and the
             // f64 cast returns NaN; the (b=5, i=7) row gives 35 and 1.74256
-            // <= 35.0, so the predicate excludes every row.
-            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b * i))")
+            // > 35.0 is false, so the predicate excludes every row.
+            assertQuery("SELECT count(*) FROM x WHERE (0.348512 * b) > (b * i)")
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("count\n0\n");
             // Same shape with addition (int32_add propagates INT_NULL).
-            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b + i))")
+            assertQuery("SELECT count(*) FROM x WHERE (0.348512 * b) > (b + i)")
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("count\n0\n");
             // Subtraction: NaN rows still excluded; the (b=5, i=7) row gives
-            // -2, so NOT(1.74256 <= -2.0) matches and the count is 1.
-            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b - i))")
+            // -2, so 1.74256 > -2.0 matches and the count is 1.
+            assertQuery("SELECT count(*) FROM x WHERE (0.348512 * b) > (b - i)")
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
                     .noLeakCheck()
                     .returns("count\n1\n");
             // SHORT * INT exercises the i16 narrow path.
-            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * s) <= (s * i))")
+            assertQuery("SELECT count(*) FROM x WHERE (0.348512 * s) > (s * i)")
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
@@ -898,8 +898,8 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // when rhs is 0 even though both inputs are BYTE / SHORT, so the
             // i32 widening matters here too. The (0, 0, _) row divides by
             // zero -> NaN -> excluded; the (5, 5, _) row gives 1 and
-            // NOT(1.74256 <= 1.0) matches, so the count is 1.
-            assertQuery("SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b / s))")
+            // 1.74256 > 1.0 matches, so the count is 1.
+            assertQuery("SELECT count(*) FROM x WHERE (0.348512 * b) > (b / s)")
                     .inferTimestamp()
                     .inferRandomAccess()
                     .sizeMayVary()
@@ -909,12 +909,12 @@ public class CompiledFilterTest extends AbstractCairoTest {
             // JIT must still compile each predicate -- the fix is at the C++
             // kernel level (result dtype tagging), the IR side is unchanged.
             try (RecordCursorFactory factory = select(
-                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b * i))")) {
+                    "SELECT count(*) FROM x WHERE (0.348512 * b) > (b * i)")) {
                 Assert.assertTrue("BYTE * INT in DOUBLE context must still JIT",
                         factory.usesCompiledFilter());
             }
             try (RecordCursorFactory factory = select(
-                    "SELECT count(*) FROM x WHERE NOT ((0.348512 * b) <= (b / s))")) {
+                    "SELECT count(*) FROM x WHERE (0.348512 * b) > (b / s)")) {
                 Assert.assertTrue("BYTE / SHORT in DOUBLE context must still JIT",
                         factory.usesCompiledFilter());
             }

@@ -1515,6 +1515,62 @@ public class AsOfJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsOfJoinOnNullDeclaredSlaveTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (l LONG, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        (1, 42, '2024-01-01T01:00:00.000000Z'),
+                        (2, 42, '2024-01-01T02:00:00.000000Z'),
+                        (3, 42, '2024-01-01T03:00:00.000000Z')
+                    """);
+            final String[] slaves = {
+                    "SELECT min(ts) r, 42 k FROM t WHERE l > 1000",
+                    "SELECT NULL::TIMESTAMP r, 42 k FROM long_sequence(1)",
+                    "SELECT CASE WHEN x = 1 THEN NULL ELSE (x * 3_600_000_000)::TIMESTAMP END r, 42 k FROM long_sequence(3)"
+            };
+            for (String join : new String[]{"ASOF", "LT"}) {
+                for (String slave : slaves) {
+                    for (String keys : new String[]{"", " ON (k)"}) {
+                        for (boolean isFullFat : new boolean[]{false, true}) {
+                            assertQuery("SELECT t.l, x.k FROM t " + join + " JOIN ((" + slave + ") TIMESTAMP(r)) x" + keys)
+                                    .noLeakCheck()
+                                    .fullFatJoins(isFullFat)
+                                    .failsWith("designated timestamp column cannot be NULL");
+                        }
+                    }
+                }
+            }
+            for (String keys : new String[]{"", " ON (k)"}) {
+                for (boolean isFullFat : new boolean[]{false, true}) {
+                    assertQuery("SELECT t.l, x.k FROM t ASOF JOIN ((SELECT min(ts) r, 42 k FROM t) TIMESTAMP(r)) x" + keys)
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    l\tk
+                                    1\t42
+                                    2\t42
+                                    3\t42
+                                    """);
+                    assertQuery("SELECT t.l, x.k FROM t LT JOIN ((SELECT min(ts) r, 42 k FROM t) TIMESTAMP(r)) x" + keys)
+                            .noLeakCheck()
+                            .fullFatJoins(isFullFat)
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    l\tk
+                                    1\tnull
+                                    2\t42
+                                    3\t42
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testAsOfJoinOnNullSymbolKeys() throws Exception {
         assertMemoryLeak(() -> {
             final String expected = """
@@ -1571,6 +1627,54 @@ public class AsOfJoinTest extends AbstractCairoTest {
                             BB\t1545253512\t1545253512
                             AA\t1573662097\t1573662097
                             AA\t339631474\t339631474
+                            """);
+        });
+    }
+
+    @Test
+    public void testAsOfJoinOnRedesignatedTableSlave() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE s AS (SELECT x v, (x * 43_200_000_000)::TIMESTAMP ts, (x * 43_200_000_000 + 172_800_000_000)::TIMESTAMP ts2 FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE m AS (SELECT x l, (x * 43_200_000_000 + 100_000_000_000)::TIMESTAMP ts FROM long_sequence(10)) TIMESTAMP(ts) PARTITION BY DAY");
+            final String[] slaves = {"s TIMESTAMP(ts2)", "(SELECT v, ts2, ts FROM s) TIMESTAMP(ts2)", "(SELECT v, ts2 FROM s) TIMESTAMP(ts2)"};
+            for (String join : new String[]{"ASOF", "LT"}) {
+                for (String slave : slaves) {
+                    assertQuery("SELECT m.l, x.v, x.ts2 FROM m " + join + " JOIN (" + slave + ") x")
+                            .noLeakCheck()
+                            .noRandomAccess()
+                            .expectSize()
+                            .returns("""
+                                    l\tv\tts2
+                                    1\tnull\t
+                                    2\tnull\t
+                                    3\t1\t1970-01-03T12:00:00.000000Z
+                                    4\t2\t1970-01-04T00:00:00.000000Z
+                                    5\t3\t1970-01-04T12:00:00.000000Z
+                                    6\t4\t1970-01-05T00:00:00.000000Z
+                                    7\t5\t1970-01-05T12:00:00.000000Z
+                                    8\t6\t1970-01-06T00:00:00.000000Z
+                                    9\t7\t1970-01-06T12:00:00.000000Z
+                                    10\t8\t1970-01-07T00:00:00.000000Z
+                                    """);
+                }
+            }
+            assertQuery("SELECT m.l, x.v FROM m ASOF JOIN s x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlanContaining("AsOf Join Fast")
+                    .returns("""
+                            l\tv
+                            1\t3
+                            2\t4
+                            3\t5
+                            4\t6
+                            5\t7
+                            6\t8
+                            7\t9
+                            8\t10
+                            9\t10
+                            10\t10
                             """);
         });
     }

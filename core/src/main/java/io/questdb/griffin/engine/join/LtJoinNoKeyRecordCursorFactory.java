@@ -38,6 +38,7 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 
+import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.nullSlaveTimestamp;
 import static io.questdb.griffin.engine.join.AbstractAsOfJoinFastRecordCursor.scaleTimestamp;
 
 public class LtJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFactory {
@@ -201,12 +202,26 @@ public class LtJoinNoKeyRecordCursorFactory extends AbstractJoinRecordCursorFact
             record.hasSlave(slaveBTimestamp >= masterTimestamp - toleranceInterval);
         }
 
+        private boolean isFirstSlaveRowLater(long masterTimestamp) {
+            slaveATimestamp = scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex), slaveTimestampScale);
+            if (slaveATimestamp == Numbers.LONG_NULL) {
+                throw nullSlaveTimestamp();
+            }
+            latestSlaveRowID = slaveRecA.getRowId();
+            return slaveATimestamp >= masterTimestamp;
+        }
+
         private void nextSlave(long masterTimestamp) {
             while (true) {
                 boolean slaveHasNext = slaveCursor.hasNext();
                 if (latestSlaveRowID != Long.MIN_VALUE) {
                     record.hasSlave(true);
                     slaveCursor.recordAt(slaveRecB, latestSlaveRowID);
+                } else if (slaveHasNext) {
+                    if (isFirstSlaveRowLater(masterTimestamp)) {
+                        break;
+                    }
+                    continue;
                 }
                 if (slaveHasNext) {
                     slaveATimestamp = scaleTimestamp(slaveRecA.getTimestamp(slaveTimestampIndex), slaveTimestampScale);

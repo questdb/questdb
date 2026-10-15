@@ -344,7 +344,10 @@ public class NanosTimestampDriver implements TimestampDriver {
         if (date == Numbers.LONG_NULL) {
             return Numbers.LONG_NULL;
         }
-        throw ImplicitCastException.inconvertibleValue(date * Micros.MILLI_MICROS, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO);
+        final long micros = date * Micros.MILLI_MICROS;
+        throw micros / Micros.MILLI_MICROS == date
+                ? ImplicitCastException.inconvertibleValue(micros, ColumnType.TIMESTAMP_MICRO, ColumnType.TIMESTAMP_NANO)
+                : ImplicitCastException.inconvertibleValue(date, ColumnType.DATE, ColumnType.TIMESTAMP_NANO);
     }
 
     @Override

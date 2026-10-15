@@ -219,6 +219,83 @@ public class IntervalExtractionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegatedRuntimeTimestampComparisonsSubtractTheirRange() throws Exception {
+        for (boolean isNanos : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                createRows(isNanos);
+                final long point = isNanos ? 1_577_923_200_000_000_001L : 1_577_923_200_000_001L;
+                final String[] predicates = {
+                        "NOT (ts < $1)", "NOT ($1 > ts)", "NOT (ts <= $1)", "NOT ($1 >= ts)",
+                        "NOT (ts > $1)", "NOT ($1 < ts)", "NOT (ts >= $1)", "NOT ($1 <= ts)"
+                };
+                final long[] bounds = {point, point - 2, Numbers.LONG_NULL, Long.MAX_VALUE};
+                final String[][] expectedIds = {
+                        {"4 5", "2 3 4 5", "1 2 3 4 5", ""},
+                        {"5", "3 4 5", "1 2 3 4 5", ""},
+                        {"1 2 3 4", "1 2", "1 2 3 4 5", "1 2 3 4 5"},
+                        {"1 2 3", "1", "1 2 3 4 5", "1 2 3 4 5"}
+                };
+                for (int i = 0; i < predicates.length; i++) {
+                    setTimestamp(0, point, isNanos);
+                    try (RecordCursorFactory factory = select("SELECT ts,id FROM lp_interval WHERE " + predicates[i])) {
+                        assertPlan(factory, "Interval forward scan", false, "PageFrame > Row forward scan > Interval forward scan on: lp_interval");
+                        for (int b = 0; b < bounds.length; b++) {
+                            setTimestamp(0, bounds[b], isNanos);
+                            assertRowsOnly(factory, rows("ts\tid", isNanos, expectedIds[i / 2][b]));
+                        }
+                    }
+                }
+                bindVariableService.clear();
+                execute("DROP TABLE lp_interval");
+            });
+        }
+    }
+
+    @Test
+    public void testNegatedTimestampComparisonsKeepStaticIntervals() throws Exception {
+        for (boolean isNanos : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                createRows(isNanos);
+                final String fraction = isNanos ? "00000000" : "00000";
+                final String point = "'2020-01-02T00:00:00." + fraction + "1Z'";
+                final String[] predicates = {
+                        "NOT (ts < " + point + ")", "NOT (" + point + " > ts)", "NOT (ts <= " + point + ")", "NOT (" + point + " >= ts)",
+                        "NOT (ts > " + point + ")", "NOT (" + point + " < ts)", "NOT (ts >= " + point + ")", "NOT (" + point + " <= ts)"
+                };
+                final String[] intervals = {
+                        "(\"2020-01-02T00:00:00." + fraction + "1Z\",\"MAX\")",
+                        "(\"2020-01-02T00:00:00." + fraction + "2Z\",\"MAX\")",
+                        "(\"MIN\",\"2020-01-02T00:00:00." + fraction + "1Z\")",
+                        "(\"MIN\",\"2020-01-02T00:00:00." + fraction + "0Z\")"
+                };
+                final String[] expectedIds = {"4 5", "5", "1 2 3 4", "1 2 3"};
+                for (int i = 0; i < predicates.length; i++) {
+                    assertQuery("SELECT ts,id FROM lp_interval WHERE " + predicates[i])
+                            .noLeakCheck()
+                            .timestamp("ts")
+                            .withPlan("""
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: lp_interval
+                                          intervals: [""" + intervals[i / 2] + "]\n")
+                            .returns(rows("ts\tid", isNanos, expectedIds[i / 2]));
+                }
+                assertQuery("SELECT ts,id FROM lp_interval WHERE NOT (ts < NULL)")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns(rows("ts\tid", isNanos, "1 2 3 4 5"));
+                assertQuery("SELECT ts,id FROM lp_interval WHERE NOT (dateadd('h', 1, ts) < '2020-01-02T01:00:00." + fraction + "1Z')")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .withPlanContaining("Interval forward scan on: lp_interval")
+                        .withPlanNotContaining("Filter")
+                        .returns(rows("ts\tid", isNanos, "4 5"));
+                execute("DROP TABLE lp_interval");
+            });
+        }
+    }
+
+    @Test
     public void testOrAndMixedPrecisionColumnsRemainResidual() throws Exception {
         assertMemoryLeak(() -> {
             createRows(true);

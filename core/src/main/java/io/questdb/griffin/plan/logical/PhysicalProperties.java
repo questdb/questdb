@@ -197,6 +197,9 @@ public final class PhysicalProperties {
         if (factory == PlanToFactoryRules.AggregateFactory.COUNT) {
             return computed(Capability.NO, ScanDirection.FORWARD, isLongSequence);
         }
+        if (factory == PlanToFactoryRules.AggregateFactory.TIMESTAMP_ENDPOINT) {
+            return computed(Capability.YES, ScanDirection.FORWARD, isLongSequence);
+        }
         final ScanDirection direction = switch (aggregate.getAlgorithm()) {
             case PARALLEL -> direction(input);
             case PARALLEL_STOLEN_FILTER -> stolenFilterDirection(aggregate.getChild(), input);
@@ -224,8 +227,8 @@ public final class PhysicalProperties {
     }
 
     /**
-     * Count and posting-index factories designate no timestamp, nor does the vectorised GROUP BY; before order
-     * planning records the algorithm, a single key over page frames may still pick the vectorised one.
+     * Count, timestamp endpoint and posting-index factories designate no timestamp, nor does the vectorised GROUP BY;
+     * before order planning records the algorithm, a single key over page frames may still pick the vectorised one.
      */
     private static int aggregateTimestampIndex(AggregatePlan aggregate) {
         final int timestampIndex = aggregate.getOutput().getTimestampIndex();
@@ -524,8 +527,13 @@ public final class PhysicalProperties {
         return properties;
     }
 
+    /**
+     * Time frames follow the partitions of the table's own designated timestamp, so a scan that designates another
+     * column has none.
+     */
     private static Capability pageFrameTimeFrame(ScanPlan scan, boolean isRandomAccess) {
-        return Capability.of(isRandomAccess && scanTimestampIndex(scan) >= 0 && scan.getScanDirection() != SortDirection.DESCENDING);
+        return Capability.of(isRandomAccess && scanTimestampIndex(scan) >= 0 && scan.getScanDirection() != SortDirection.DESCENDING
+                && scan.getOutput().getTimestampColumnId() == scan.getNativeTimestampColumnId());
     }
 
     private static int pageFrames(ScanPlan scan) {
@@ -704,7 +712,7 @@ public final class PhysicalProperties {
         final boolean isInputOrder = sort.getAlgorithm() == SortPlan.Algorithm.INPUT_ORDER;
         return switch (limit.getApplication()) {
             case INPUT -> isInputOrder ? input : sorted(sort, input, Capability.NO);
-            case OPERATOR -> isInputOrder ? limited(input) : sorted(sort, input, Capability.YES);
+            case OPERATOR, MASTER_SUFFIX -> isInputOrder ? limited(input) : sorted(sort, input, Capability.YES);
             case SORT -> sorted(sort, input, Capability.YES);
             case null -> unknown(ScanDirection.UNKNOWN, capability(input, LONG_SEQUENCE));
         };

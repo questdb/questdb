@@ -379,6 +379,15 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
+     * Reads the order of the master of a join step, the first {@code inputCount} ordered inputs of the join, and
+     * reports whether it emits its rows in ascending designated timestamp order.
+     */
+    private boolean isAscendingMasterRead(JoinPlan join, int inputCount) {
+        readJoinOrder(join, inputCount, false, true);
+        return PhysicalProperties.masterScanDirection(join, inputCount) == PhysicalProperties.ScanDirection.FORWARD;
+    }
+
+    /**
      * True when the SAMPLE BY, which nothing fills, reads the first and last values of its buckets from the index of its base: a table scan,
      * under a fused filter or identity projections, of the bitmap index of a single SYMBOL key without a residual, of a table whose parquet partitions store no
      * column under a converted type, which the SAMPLE BY keys by that symbol or by none.
@@ -611,7 +620,8 @@ final class OperatorPlanning implements Mutable {
     private void planLimit(LimitPlan limit) {
         final LogicalPlan limited = limit.getChild();
         if (!LogicalPlans.hasSortUnderStableProjects(limited)) {
-            limit.setApplication(isInputLimit(limited) ? LimitPlan.Application.INPUT : LimitPlan.Application.OPERATOR);
+            limit.setApplication(isInputLimit(limited) ? LimitPlan.Application.INPUT
+                    : PlanToFactoryRules.masterSuffixScan(limit) != null ? LimitPlan.Application.MASTER_SUFFIX : LimitPlan.Application.OPERATOR);
             return;
         }
         final SortPlan sort = (SortPlan) LogicalPlans.skipProjects(limited);
@@ -654,13 +664,13 @@ final class OperatorPlanning implements Mutable {
         final int markoutIndex = join.getOrderedInputs().getQuick(inputIndex - 1).getOutput().getColumnIndexById(step.getMarkoutTimestampColumnId());
         if (markoutIndex >= 0 && markoutIndex == PhysicalProperties.masterTimestampIndex(join, inputIndex)
                 && PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) == PhysicalProperties.Capability.YES
-                && PhysicalProperties.isLongSequence(slave) == PhysicalProperties.Capability.YES) {
+                && PhysicalProperties.isLongSequence(slave) == PhysicalProperties.Capability.YES
+                && isAscendingMasterRead(join, inputIndex)) {
             step.setAlgorithm(JoinInput.Algorithm.MARKOUT);
         } else if (step.getMasterKeyColumnIds().size() == 0) {
             step.setAlgorithm(JoinInput.Algorithm.NESTED_LOOP);
         } else {
-            final boolean isSlaveRandomAccess = step.getJoinType() == JoinKind.LEFT_OUTER && step.getOnResidual() != null
-                    && LogicalPlans.constantTruth(step.getOnResidual()) == 0 || isRandomAccess(slave);
+            final boolean isSlaveRandomAccess = PlanToFactoryRules.isSlaveEmptied(step) || isRandomAccess(slave);
             step.setAlgorithm(isSlaveRandomAccess && !isFullFatJoins ? JoinInput.Algorithm.LIGHT_HASH : JoinInput.Algorithm.HASH);
             if (step.getMasterSide() == null) {
                 if (PhysicalProperties.masterSupportsRandomAccess(join, inputIndex) == PhysicalProperties.Capability.NO) {

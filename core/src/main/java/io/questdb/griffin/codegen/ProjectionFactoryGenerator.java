@@ -68,6 +68,7 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
+import io.questdb.griffin.plan.logical.ForwardingPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
@@ -107,12 +108,15 @@ final class ProjectionFactoryGenerator {
 
     /**
      * Whether the plan's answer to the identity of the column projection must match the generator's: everywhere but
-     * over a join of several inputs, whose factory names its columns qualifier.name, which the plan does not model;
-     * no planner decision reads that answer differently.
+     * over a join of several inputs, directly or through nodes that forward its columns, whose factories name its
+     * columns qualifier.name, which the plan does not model; no planner decision reads that answer differently.
      */
     private static boolean isPlannedIdentityChecked(ProjectPlan project) {
-        return !LogicalPlans.isComputedProjection(project)
-                && !(LogicalPlans.skipFilters(project.getChild()) instanceof JoinPlan join && join.getOrderedInputs().size() > 1);
+        LogicalPlan input = project.getChild();
+        while (input instanceof ForwardingPlan forwarding) {
+            input = forwarding.getChild();
+        }
+        return !LogicalPlans.isComputedProjection(project) && !(input instanceof JoinPlan join && join.getOrderedInputs().size() > 1);
     }
 
     private static RecordCursorFactory newSelected(GenericRecordMetadata metadata, IntList mapping, RecordCursorFactory base, LogicalPlan input) {

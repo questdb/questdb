@@ -138,6 +138,16 @@ public final class ParquetPushdownExtractor {
         return true;
     }
 
+    private static int complement(int operation) {
+        return switch (operation) {
+            case PushdownFilterExtractor.OP_LT -> PushdownFilterExtractor.OP_GE;
+            case PushdownFilterExtractor.OP_LE -> PushdownFilterExtractor.OP_GT;
+            case PushdownFilterExtractor.OP_GT -> PushdownFilterExtractor.OP_LE;
+            case PushdownFilterExtractor.OP_GE -> PushdownFilterExtractor.OP_LT;
+            default -> PushdownFilterExtractor.OP_UNSUPPORTED;
+        };
+    }
+
     private static int flip(int operation) {
         return switch (operation) {
             case PushdownFilterExtractor.OP_LT -> PushdownFilterExtractor.OP_GT;
@@ -176,13 +186,15 @@ public final class ParquetPushdownExtractor {
         return index < 0 || sourceIndexes == null ? index : sourceIndexes.getQuick(index);
     }
 
-    private void add(RecordMetadata source, int index, int operation, BoundExpression value) {
-        conditions.add(new PushdownFilterCondition(source.getColumnName(index), source.getWriterIndex(index),
-                source.getColumnType(index), operation));
+    private PushdownFilterCondition add(RecordMetadata source, int index, int operation, BoundExpression value) {
+        final PushdownFilterCondition condition = new PushdownFilterCondition(source.getColumnName(index), source.getWriterIndex(index),
+                source.getColumnType(index), operation);
+        conditions.add(condition);
         valueCounts.add(value == null ? 0 : 1);
         if (value != null) {
             conditionValues.add(value);
         }
+        return condition;
     }
 
     private void collect(BoundExpression expression, OutputSchema input, IntList sourceIndexes, RecordMetadata source) {
@@ -214,36 +226,51 @@ public final class ParquetPushdownExtractor {
                 conditionValues.add(call.argumentAt(2));
             }
         } else if (call.getArgumentCount() == 2) {
-            final int operation = operation(name);
-            if (operation == PushdownFilterExtractor.OP_UNSUPPORTED) {
+            collectComparison(call, false, input, sourceIndexes, source);
+        } else if (call.getArgumentCount() == 1 && "not".equals(name) && call.argumentAt(0) instanceof FunctionExpression comparison
+                && comparison.getArgumentCount() == 2) {
+            collectComparison(comparison, true, input, sourceIndexes, source);
+        }
+    }
+
+    /**
+     * Collects a comparison of a column with a value. A negated range comparison keeps the rows its complement keeps
+     * and every NULL row, so its condition carries the complementary operation and prunes only row groups without NULLs.
+     */
+    private void collectComparison(FunctionExpression call, boolean negated, OutputSchema input, IntList sourceIndexes, RecordMetadata source) {
+        final int operation = operation(call.getName());
+        if (operation == PushdownFilterExtractor.OP_UNSUPPORTED || negated && complement(operation) == PushdownFilterExtractor.OP_UNSUPPORTED) {
+            return;
+        }
+        int index = sourceIndex(call.argumentAt(0), input, sourceIndexes);
+        BoundExpression value = call.argumentAt(1);
+        int effective = operation;
+        if (index < 0 || value instanceof ColumnExpression) {
+            if (call.argumentAt(0) instanceof ColumnExpression) {
                 return;
             }
-            int index = sourceIndex(call.argumentAt(0), input, sourceIndexes);
-            BoundExpression value = call.argumentAt(1);
-            int effective = operation;
-            if (index < 0 || value instanceof ColumnExpression) {
-                if (call.argumentAt(0) instanceof ColumnExpression) {
-                    return;
-                }
-                index = sourceIndex(call.argumentAt(1), input, sourceIndexes);
-                value = call.argumentAt(0);
-                effective = flip(operation);
+            index = sourceIndex(call.argumentAt(1), input, sourceIndexes);
+            value = call.argumentAt(0);
+            effective = flip(operation);
+        }
+        if (index < 0) {
+            return;
+        }
+        final int type = source.getColumnType(index);
+        if (negated) {
+            if (!isNull(value) && PushdownFilterExtractor.isNullMatchingPushable(type)) {
+                add(source, index, complement(effective), value).setNullMatching();
             }
-            if (index < 0) {
-                return;
+        } else if (operation == PushdownFilterExtractor.OP_IS_NOT_NULL) {
+            if (isNull(value) && PushdownFilterExtractor.isNullOpPushable(type, PushdownFilterExtractor.OP_IS_NOT_NULL)) {
+                add(source, index, PushdownFilterExtractor.OP_IS_NOT_NULL, null);
             }
-            final int type = source.getColumnType(index);
-            if (operation == PushdownFilterExtractor.OP_IS_NOT_NULL) {
-                if (isNull(value) && PushdownFilterExtractor.isNullOpPushable(type, PushdownFilterExtractor.OP_IS_NOT_NULL)) {
-                    add(source, index, PushdownFilterExtractor.OP_IS_NOT_NULL, null);
-                }
-            } else if (operation == PushdownFilterExtractor.OP_EQ && isNull(value)) {
-                if (PushdownFilterExtractor.isNullOpPushable(type, PushdownFilterExtractor.OP_IS_NULL)) {
-                    add(source, index, PushdownFilterExtractor.OP_IS_NULL, null);
-                }
-            } else {
-                add(source, index, effective, value);
+        } else if (operation == PushdownFilterExtractor.OP_EQ && isNull(value)) {
+            if (PushdownFilterExtractor.isNullOpPushable(type, PushdownFilterExtractor.OP_IS_NULL)) {
+                add(source, index, PushdownFilterExtractor.OP_IS_NULL, null);
             }
+        } else {
+            add(source, index, effective, value);
         }
     }
 

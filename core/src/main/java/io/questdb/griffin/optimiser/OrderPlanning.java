@@ -79,15 +79,17 @@ final class OrderPlanning implements OptimiserPass {
     };
     private final IntHashSet columnIds;
     private final FunctionFactoryCache functionFactoryCache;
+    private final int maxNegativeLimit;
     private final ObjectPool<SortPlan> sorts;
     private boolean isJoinSlaveInput;
     private boolean isRandomAccessRequired;
     private boolean isReorderedTimestampRead;
 
-    OrderPlanning(FunctionFactoryCache functionFactoryCache, ObjectPool<SortPlan> sorts, IntHashSet columnIds) {
+    OrderPlanning(FunctionFactoryCache functionFactoryCache, ObjectPool<SortPlan> sorts, IntHashSet columnIds, int maxNegativeLimit) {
         this.columnIds = columnIds;
         this.functionFactoryCache = functionFactoryCache;
         this.sorts = sorts;
+        this.maxNegativeLimit = maxNegativeLimit;
     }
 
     @Override
@@ -347,6 +349,14 @@ final class OrderPlanning implements OptimiserPass {
     }
 
     /**
+     * True when a parallel filter stops at the LIMIT instead of rejecting it: a constant LIMIT within the negative LIMIT
+     * the filter accepts.
+     */
+    private boolean isFilterLimit(LimitPlan limit) {
+        return limit.getLo() instanceof ConstantExpression lo && LogicalPlans.limitValue(lo) >= -maxNegativeLimit;
+    }
+
+    /**
      * Re-expresses an order over the aggregate's grouping keys as an order over its input, or returns null when a key
      * is not a grouping column.
      */
@@ -369,10 +379,10 @@ final class OrderPlanning implements OptimiserPass {
 
     /**
      * Re-expresses an order over the projection's output as an order over its input, or returns null when a key is
-     * computed or aliased.
+     * computed.
      */
     private SortPlan projectedOrder(ProjectPlan project, SortPlan order) {
-        if (order == null || order.hasAliasedKey()) {
+        if (order == null) {
             return null;
         }
         final SortPlan mapped = sorts.next().of(project.getChild(), order.getPosition());
@@ -466,7 +476,11 @@ final class OrderPlanning implements OptimiserPass {
 
     /**
      * A plain LIMIT reaches the master of a join that emits at least one row for each master row, in master order:
-     * the first or last {@code n} joined rows come from the first or last {@code n} master rows.
+     * the first or last {@code n} joined rows come from the first or last {@code n} master rows. A LIMIT that may be
+     * negative reaches the master of the join under it that may emit no row for a master row, see
+     * {@link PlanToFactoryRules#masterSuffixJoin}. A constant LIMIT the input's filter accepts reaches the last input of
+     * a CROSS join without a filter as well: the first or last {@code n} joined rows join the first or last {@code n}
+     * of its rows.
      */
     private void requireJoin(JoinPlan join, int orderColumnId, SortDirection direction, SortPlan order, LimitPlan limit, boolean isRowOrderRequired) {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
@@ -482,8 +496,9 @@ final class OrderPlanning implements OptimiserPass {
         } else if (isMasterOrderPreserved && hasColumns(masterOutput, order)) {
             require(master, -1, null, order, null, isRowOrderRequired);
         } else {
-            require(master, -1, null, null, order == null && LogicalPlans.isMasterRowPreserved(join) ? limit : null,
-                    isMasterTimestampRequired || isRowOrderRequired);
+            final boolean isMasterLimited = order == null && limit != null
+                    && (LogicalPlans.isMasterRowPreserved(join) || PlanToFactoryRules.masterSuffixJoin(limit) == join);
+            require(master, -1, null, null, isMasterLimited ? limit : null, isMasterTimestampRequired || isRowOrderRequired);
         }
         final boolean wasJoinSlaveInput = isJoinSlaveInput;
         final boolean wasRandomAccessRequired = isRandomAccessRequired;
@@ -493,7 +508,9 @@ final class OrderPlanning implements OptimiserPass {
                 final JoinInput step = ordered.getQuick(i);
                 if (step.getJoinType() != JoinKind.UNNEST) {
                     isRandomAccessRequired = step.getJoinType() == JoinKind.SPLICE;
-                    require(step.getInput(), -1, null, null, null, step.getJoinType().isTemporal() || isRowOrderRequired);
+                    final boolean isLimited = order == null && limit != null && i == n - 1 && step.getJoinType() == JoinKind.CROSS
+                            && step.getPostJoinFilter() == null && isFilterLimit(limit);
+                    require(step.getInput(), -1, null, null, isLimited ? limit : null, step.getJoinType().isTemporal() || isRowOrderRequired);
                 }
             }
         } finally {
@@ -623,7 +640,7 @@ final class OrderPlanning implements OptimiserPass {
         }
         window.getQueryOrder().of(isQueryOrder ? order : null);
         require(input, inputOrderColumnId, inputOrderColumnId < 0 ? null : inputDirection,
-                hasColumns(input.getOutput(), order) && !order.hasAliasedKey() ? order : null, null,
+                hasColumns(input.getOutput(), order) ? order : null, null,
                 !isQueryOrder && isRowOrderRequired && !hasGroupByWindowFunction(window));
     }
 

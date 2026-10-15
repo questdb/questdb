@@ -120,14 +120,6 @@ final class OrderBinder implements Mutable {
             final ExpressionNode originalOrder = source.getOrderBy().getQuick(i);
             ExpressionNode order = orderExpressions == null ? originalOrder : orderExpressions.getQuick(i);
             int index = orderProjectionIndex(order, project.getOutput(), visibleCount);
-            if (index >= 0 && hasComputedProjection(project) && order.type == ExpressionNode.LITERAL
-                    && project.getExpressions().getQuick(index) instanceof ColumnExpression column) {
-                final OutputSchema projectInput = project.getChild().getOutput();
-                final int inputIndex = projectInput.getColumnIndexById(column.getColumnId());
-                if (inputIndex < 0 || !Chars.equalsIgnoreCase(order.token, projectInput.getColumnName(inputIndex))) {
-                    sort.markAliasedKey();
-                }
-            }
             if (index < 0) {
                 index = resolveOrderIndex(originalOrder, model != null && originalOrder.type != ExpressionNode.LITERAL ? selectExpressions(model) : null,
                         sourcePlan.getOutput(), source, null, source.getOrderBy(), i);

@@ -36,6 +36,7 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.LimitRecordCursorFactory;
 import io.questdb.griffin.engine.functions.LongFunction;
+import io.questdb.griffin.engine.join.CrossJoinRecordCursorFactory;
 import io.questdb.std.Misc;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
@@ -128,6 +129,35 @@ public class LimitPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFirstRowsLimitAsksJoinMasterForLimitedIteration() throws Exception {
+        // An async filter under the join master turns expectLimitedIteration() into a cap on the page frames it
+        // dispatches, which neither rows nor plan show, so count the calls the join forwards to its inputs.
+        final int[] calls = {0, 0};
+        final long[] count = {3};
+        final Function lo = new LongFunction() {
+            @Override
+            public long getLong(Record record) {
+                return count[0];
+            }
+        };
+        try (
+                LimitRecordCursorFactory factory = new LimitRecordCursorFactory(
+                        new CrossJoinRecordCursorFactory(new GenericRecordMetadata(), countingFactory(calls, 0), countingFactory(calls, 1), 0),
+                        lo, null, 0, null
+                )
+        ) {
+            factory.getCursor(sqlExecutionContext).close();
+            Assert.assertArrayEquals(new int[]{1, 0}, calls);
+            count[0] = -3;
+            factory.getCursor(sqlExecutionContext).close();
+            Assert.assertArrayEquals(new int[]{1, 0}, calls);
+            count[0] = 0;
+            factory.getCursor(sqlExecutionContext).close();
+            Assert.assertArrayEquals(new int[]{1, 0}, calls);
+        }
+    }
+
+    @Test
     public void testLimitOwnsBothExpressionsEvenWhenBaseCloseFails() {
         final int[] closes = {0, 0, 0};
         final RuntimeException baseFailure = new RuntimeException("base close");
@@ -172,7 +202,7 @@ public class LimitPlanningTest extends AbstractCairoTest {
                 return 2;
             }
         };
-        final LimitRecordCursorFactory factory = new LimitRecordCursorFactory(base, lo, hi, 0);
+        final LimitRecordCursorFactory factory = new LimitRecordCursorFactory(base, lo, hi, 0, null);
         try {
             factory.close();
             Assert.fail("expected close failure");
@@ -264,6 +294,64 @@ public class LimitPlanningTest extends AbstractCairoTest {
                 }
             }
         });
+    }
+
+    private static RecordCursorFactory countingFactory(int[] calls, int index) {
+        final RecordCursor cursor = new RecordCursor() {
+            @Override
+            public void close() {
+            }
+
+            @Override
+            public void expectLimitedIteration() {
+                calls[index]++;
+            }
+
+            @Override
+            public Record getRecord() {
+                return null;
+            }
+
+            @Override
+            public Record getRecordB() {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public boolean hasNext() {
+                return false;
+            }
+
+            @Override
+            public long preComputedStateSize() {
+                return 0;
+            }
+
+            @Override
+            public void recordAt(Record record, long atRowId) {
+                throw new UnsupportedOperationException();
+            }
+
+            @Override
+            public long size() {
+                return -1;
+            }
+
+            @Override
+            public void toTop() {
+            }
+        };
+        return new AbstractRecordCursorFactory(new GenericRecordMetadata()) {
+            @Override
+            public RecordCursor getCursor(SqlExecutionContext executionContext) {
+                return cursor;
+            }
+
+            @Override
+            public boolean recordCursorSupportsRandomAccess() {
+                return false;
+            }
+        };
     }
 
     private void assertLimitFailsOnCompilerReuse(SqlCompilerImpl compiler, String limit, int position, String message) throws Exception {

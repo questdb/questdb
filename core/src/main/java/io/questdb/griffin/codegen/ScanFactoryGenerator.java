@@ -392,7 +392,7 @@ final class ScanFactoryGenerator {
             frame.stolenFilter.of(residual, scan.getOutput(), coveredFilter, false);
             return factory;
         }
-        return filterGenerator.generateCovering(residual, scan.getOutput(), (CoveringIndexRecordCursorFactory) factory, coveredFilter,
+        return filterGenerator.generateCovering(frame, residual, scan.getOutput(), (CoveringIndexRecordCursorFactory) factory, coveredFilter,
                 executionContext, scan.getResidualAlgorithm() == FilterPlan.Algorithm.PARALLEL,
                 scan.getCoveredFilterLimit(), scan.hasHint(ScanPlan.HINT_PRE_TOUCH));
     }
@@ -611,7 +611,7 @@ final class ScanFactoryGenerator {
             if (isParallel) {
                 workerFilters = filterGenerator.instantiatePatternWorkers(frame, pattern, residual, input, metadata, filter, executionContext);
                 if (limitCount != null) {
-                    limit = functionInstantiator.instantiate(limitCount, input, executionContext);
+                    limit = filterGenerator.instantiateLimit(frame, limitCount, input, executionContext);
                 }
             }
             final PartitionFrameCursorFactory frames = newFrames(scan, buildIntervals(scanIntervals, reader), readerMetadata, frameOrder(scan));

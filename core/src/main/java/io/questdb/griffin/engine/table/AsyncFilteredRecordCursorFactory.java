@@ -157,6 +157,9 @@ public class AsyncFilteredRecordCursorFactory extends AbstractRecordCursorFactor
         this.maxNegativeLimit = maxNegativeLimit;
         this.limitLoFunction = limitLoFunction;
         this.workerCount = workerCount;
+        if (limitLoFunction instanceof MasterSuffixLimitFunction masterSuffixLimit) {
+            masterSuffixLimit.of(negativeLimitCursor);
+        }
     }
 
     /**

@@ -45,6 +45,11 @@ public abstract class AbstractJoinCursor implements NoRandomAccessRecordCursor {
     }
 
     @Override
+    public void expectLimitedIteration() {
+        masterCursor.expectLimitedIteration();
+    }
+
+    @Override
     public SymbolTable getSymbolTable(int columnIndex) {
         if (columnIndex < columnSplit) {
             return masterCursor.getSymbolTable(columnIndex);

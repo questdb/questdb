@@ -305,7 +305,13 @@ final class FilterPushdown implements OptimiserPass {
     }
 
     private static boolean isLatestKeyResidual(BoundExpression expression) {
-        if (!(expression instanceof FunctionExpression call) || call.getArgumentCount() != 2) {
+        if (!(expression instanceof FunctionExpression call)) {
+            return false;
+        }
+        if (call.getArgumentCount() == 1 && "not".equals(call.getName())) {
+            return isLatestKeyResidual(call.argumentAt(0));
+        }
+        if (call.getArgumentCount() != 2) {
             return false;
         }
         switch (call.getName()) {

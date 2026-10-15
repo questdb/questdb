@@ -68,7 +68,10 @@ public final class PlanToFactoryRules {
         if (aggregate.getChild() instanceof HorizonJoinPlan) {
             return AggregateFactory.HORIZON;
         }
-        return LogicalPlans.isCount(aggregate) ? AggregateFactory.COUNT : AggregateFactory.GROUP_BY;
+        if (LogicalPlans.isCount(aggregate)) {
+            return AggregateFactory.COUNT;
+        }
+        return isSingleRowTimestamp(aggregate) ? AggregateFactory.TIMESTAMP_ENDPOINT : AggregateFactory.GROUP_BY;
     }
 
     /**
@@ -238,10 +241,10 @@ public final class PlanToFactoryRules {
     /**
      * True when the generator builds no factory for the projection over the factory of its input, see
      * {@link #isIdentityProjection(ProjectPlan, RecordMetadata, int, int)}, whose columns operator planning takes to be
-     * the input's output schema. Over a join of several inputs, or a filter over one, the factory names its columns
-     * qualifier.name, so the generator builds a selection where this answers true; the planner reads the answer only
-     * to look through the projection for a filter, a scan or page frames, which such a join exposes no more than the
-     * selection does.
+     * the input's output schema. Over a join of several inputs, or a node that forwards its columns, such as a filter
+     * or a sort over one, the factory names its columns qualifier.name, so the generator builds a selection where this
+     * answers true; the planner reads the answer only to look through the projection for a filter, a scan or page
+     * frames, which such a join exposes no more than the selection does.
      */
     public static boolean isIdentityProjection(ProjectPlan project) {
         return isIdentityProjection(project, null, PhysicalProperties.timestampIndex(project),
@@ -323,6 +326,14 @@ public final class PlanToFactoryRules {
      */
     public static boolean isPostJoinFilterFolded(JoinInput step, BoundExpression filter) {
         return step.getJoinType() == JoinKind.UNNEST || filter instanceof ConstantExpression constant && constant.isLiteral();
+    }
+
+    /**
+     * Whether the generator joins the step to an empty slave instead of its input: a LEFT join whose ON residual is
+     * constant false.
+     */
+    public static boolean isSlaveEmptied(JoinInput step) {
+        return step.getJoinType() == JoinKind.LEFT_OUTER && LogicalPlans.constantTruth(step.getOnResidual()) == 0;
     }
 
     /**
@@ -424,6 +435,31 @@ public final class PlanToFactoryRules {
      */
     public static ScanPlan latestByScan(LatestByPlan latest) {
         return LogicalPlans.scanThroughFilter(latest.getChild());
+    }
+
+    /**
+     * The join whose master rows a LIMIT reads a growing suffix of: the join under the LIMIT and its projections, when
+     * the LIMIT may be negative and the join may emit no row for a master row, but emits the rows of each master row
+     * together, in master order. The last {@code n} rows of such a join are the last {@code n} rows it emits for any
+     * suffix of master rows it emits at least {@code n} rows for. Null otherwise.
+     */
+    public static JoinPlan masterSuffixJoin(LimitPlan limit) {
+        return limit.getHi() == null && LogicalPlans.mayBeNegativeLimit(limit.getLo())
+                && LogicalPlans.skipProjects(limit.getChild()) instanceof JoinPlan join
+                && !LogicalPlans.isMasterRowPreserved(join) && LogicalPlans.isMasterRowGrouped(join) ? join : null;
+    }
+
+    /**
+     * The master scan of {@link #masterSuffixJoin} the LIMIT reaches, whose parallel filter, when the scan has one,
+     * returns as many of its last rows as the LIMIT asks for; null otherwise.
+     */
+    public static ScanPlan masterSuffixScan(LimitPlan limit) {
+        final JoinPlan join = masterSuffixJoin(limit);
+        if (join == null) {
+            return null;
+        }
+        final ScanPlan scan = LogicalPlans.scanThroughFilter(LogicalPlans.skipProjects(join.getOrderedInputs().getQuick(0).getInput()));
+        return scan != null && scan.getLimitLo() == limit.getLo() ? scan : null;
     }
 
     /**
@@ -589,6 +625,17 @@ public final class PlanToFactoryRules {
     }
 
     /**
+     * Whether the aggregate returns a TIMESTAMP column of the only row of its input, a LIMIT 1, see
+     * {@link LogicalPlans#endpointColumn}: the shape {@link LogicalPlans#isTimestampEndpoint timestamp endpoints}
+     * take once planned.
+     */
+    private static boolean isSingleRowTimestamp(AggregatePlan aggregate) {
+        final ColumnExpression column = LogicalPlans.endpointColumn(aggregate);
+        return column != null && ColumnType.isTimestamp(column.getDataType()) && aggregate.getChild() instanceof LimitPlan limit
+                && limit.getHi() == null && limit.getLo() instanceof ConstantExpression lo && LogicalPlans.limitValue(lo) == 1;
+    }
+
+    /**
      * The designated timestamp a projection declares over an input whose factory designates
      * {@code inputTimestampIndex}: its own, else the column its requested order reaches when that column is the
      * input's timestamp.
@@ -624,6 +671,11 @@ public final class PlanToFactoryRules {
          * The count of the input rows, see {@link LogicalPlans#isCount}.
          */
         COUNT,
+        /**
+         * The timestamp the aggregate reads from the only row of its input, or NULL without one, see
+         * {@link #isSingleRowTimestamp}.
+         */
+        TIMESTAMP_ENDPOINT,
         /**
          * The GROUP BY by the algorithm operator planning records.
          */

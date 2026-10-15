@@ -110,7 +110,7 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
                 sink.val(">=");
@@ -133,7 +133,7 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
                 sink.val(">=");
@@ -156,7 +156,7 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
         }
 
         @Override
-        public void toPlan(PlanSink sink) {
+        protected void toComparisonPlan(PlanSink sink) {
             sink.val(left);
             if (negated) {
                 sink.val(">=");
@@ -182,6 +182,15 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        private boolean isMatch(Record rec) {
             left.getDecimal128(rec, decimalLeft);
             right.getDecimal128(rec, decimalRight);
 
@@ -195,11 +204,6 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
             }
             return negated == (Long.compareUnsigned(decimalLeft.getLow(), decimalRight.getLow()) >= 0);
         }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
     }
 
     private static class UnscaledDecimal16Func extends AbstractLtBinaryFunction {
@@ -210,6 +214,10 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
+        }
+
+        private boolean isMatch(Record rec) {
             final long a = left.getDecimal16(rec);
             final long b = right.getDecimal16(rec);
             if (a == Decimals.DECIMAL16_NULL || b == Decimals.DECIMAL16_NULL) {
@@ -231,6 +239,15 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
+        }
+
+        @Override
+        public boolean isThreadSafe() {
+            return false;
+        }
+
+        private boolean isMatch(Record rec) {
             left.getDecimal256(rec, decimalLeft);
             right.getDecimal256(rec, decimalRight);
 
@@ -256,11 +273,6 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
             final long bLL = decimalRight.getLl();
             return negated == (Long.compareUnsigned(aLL, bLL) >= 0);
         }
-
-        @Override
-        public boolean isThreadSafe() {
-            return false;
-        }
     }
 
     private static class UnscaledDecimal32Func extends AbstractLtBinaryFunction {
@@ -271,6 +283,10 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
+        }
+
+        private boolean isMatch(Record rec) {
             final long a = left.getDecimal32(rec);
             final long b = right.getDecimal32(rec);
             if (a == Decimals.DECIMAL32_NULL || b == Decimals.DECIMAL32_NULL) {
@@ -289,6 +305,10 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
+        }
+
+        private boolean isMatch(Record rec) {
             final long a = left.getDecimal64(rec);
             final long b = right.getDecimal64(rec);
             if (a == Decimals.DECIMAL64_NULL || b == Decimals.DECIMAL64_NULL) {
@@ -307,6 +327,10 @@ public class LtDecimalFunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
+        }
+
+        private boolean isMatch(Record rec) {
             final long a = left.getDecimal8(rec);
             final long b = right.getDecimal8(rec);
             if (a == Decimals.DECIMAL8_NULL || b == Decimals.DECIMAL8_NULL) {

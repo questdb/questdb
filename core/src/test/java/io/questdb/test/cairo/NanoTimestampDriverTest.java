@@ -88,13 +88,19 @@ public class NanoTimestampDriverTest extends AbstractCairoTest {
             driver.fromDate(-9_223_372_036_855L);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+            TestUtils.assertEquals("inconvertible value: -9223372036855000 [TIMESTAMP -> TIMESTAMP_NS]", e.getFlyweightMessage());
         }
         try {
             driver.fromDate(18_446_744_073_709_552L);
             Assert.fail();
         } catch (ImplicitCastException e) {
-            TestUtils.assertContains(e.getFlyweightMessage(), "inconvertible value");
+            TestUtils.assertEquals("inconvertible value: 18446744073709552 [DATE -> TIMESTAMP_NS]", e.getFlyweightMessage());
+        }
+        try {
+            driver.fromDate(Long.MIN_VALUE + 1);
+            Assert.fail();
+        } catch (ImplicitCastException e) {
+            TestUtils.assertEquals("inconvertible value: -9223372036854775807 [DATE -> TIMESTAMP_NS]", e.getFlyweightMessage());
         }
     }
 

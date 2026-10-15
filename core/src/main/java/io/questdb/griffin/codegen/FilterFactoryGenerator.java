@@ -52,6 +52,7 @@ import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
 import io.questdb.griffin.engine.table.FilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.LatestByCompiledFilter;
+import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
 import io.questdb.griffin.engine.table.RuntimeConstGateRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
@@ -208,7 +209,7 @@ final class FilterFactoryGenerator {
         final ObjList<Function> workerFilters;
         try {
             if (limitCount != null) {
-                limit = functionInstantiator.instantiate(limitCount, input, executionContext);
+                limit = instantiateLimit(frame, limitCount, input, executionContext);
             }
             workerFilters = functionInstantiator.instantiateWorkers(predicate, input, base.getMetadata(), filter,
                     executionContext.getSharedQueryWorkerCount(), executionContext);
@@ -371,7 +372,7 @@ final class FilterFactoryGenerator {
      * {@code isParallel}, as operator planning records it, else the serial one.
      */
     RecordCursorFactory generateCovering(
-            BoundExpression predicate, OutputSchema input, CoveringIndexRecordCursorFactory base, Function filter,
+            GenerationFrame frame, BoundExpression predicate, OutputSchema input, CoveringIndexRecordCursorFactory base, Function filter,
             SqlExecutionContext executionContext, boolean isParallel, BoundExpression limitCount, boolean enablePreTouch
     ) throws SqlException {
         Function limit = null;
@@ -381,7 +382,7 @@ final class FilterFactoryGenerator {
             IntHashSet columns = null;
             if (isParallel) {
                 if (limitCount != null) {
-                    limit = functionInstantiator.instantiate(limitCount, input, executionContext);
+                    limit = instantiateLimit(frame, limitCount, input, executionContext);
                 }
                 columns = new IntHashSet();
                 collectColumnIndexes(predicate, input, columns);
@@ -473,6 +474,19 @@ final class FilterFactoryGenerator {
     ) throws SqlException {
         return generate(frame, predicate, step.getOutput(), base, filter, executionContext, false, false, null,
                 false, PlanToFactoryRules.isPostJoinFilterFolded(step, predicate));
+    }
+
+    /**
+     * The LIMIT count a parallel filter over the scan with output {@code input} stops at; over the master scan of a
+     * MASTER_SUFFIX LIMIT, the count that LIMIT sets, recorded on the frame.
+     */
+    Function instantiateLimit(GenerationFrame frame, BoundExpression limitCount, OutputSchema input, SqlExecutionContext executionContext)
+            throws SqlException {
+        final Function limit = functionInstantiator.instantiate(limitCount, input, executionContext);
+        if (frame.masterSuffixScan == null || frame.masterSuffixScan.getOutput() != input) {
+            return limit;
+        }
+        return frame.masterSuffixLimit = new MasterSuffixLimitFunction(limit);
     }
 
     /**
@@ -647,7 +661,7 @@ final class FilterFactoryGenerator {
         final int limitPosition;
         try {
             if (limitCount != null) {
-                limit = functionInstantiator.instantiate(limitCount, input, executionContext);
+                limit = instantiateLimit(frame, limitCount, input, executionContext);
                 limitPosition = limitCount.getPosition();
             } else {
                 limitPosition = 0;

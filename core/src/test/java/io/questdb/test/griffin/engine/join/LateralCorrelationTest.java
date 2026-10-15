@@ -47,6 +47,30 @@ public class LateralCorrelationTest extends AbstractCairoTest {
             """;
 
     @Test
+    public void testAggregateAboveOrBelowCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            assertQuery("SELECT o.id, d.c, d.s FROM o JOIN LATERAL (SELECT count() c, sum(x) s FROM t WHERE k = o.k) d ORDER BY o.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tc\ts
+                            1\t3\t10
+                            2\t3\t15
+                            3\t2\t11
+                            4\t0\tnull
+                            """);
+            assertQuery("SELECT o.id, d.s FROM o JOIN LATERAL (SELECT s FROM (SELECT k, sum(x) s FROM t) d WHERE d.k = o.k) d ORDER BY o.id")
+                    .noLeakCheck()
+                    .returns("""
+                            id\ts
+                            1\t10
+                            2\t15
+                            3\t11
+                            """);
+        });
+    }
+
+    @Test
     public void testAsofAndLtJoinOverCorrelatedSlave() throws Exception {
         assertMemoryLeak(() -> {
             createTemporalJoinTables();
@@ -350,6 +374,90 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCorrelatedSourceKinds() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            assertQuery("""
+                    SELECT o.id, d.x FROM o JOIN LATERAL (
+                        SELECT a.x FROM t a JOIN t b ON a.x = b.x AND b.k = o.k ORDER BY a.x LIMIT 1
+                    ) d ORDER BY o.id, d.x
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx
+                            1\t1
+                            2\t3
+                            3\t5
+                            """);
+            assertQuery("SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM t WHERE k = o.k UNION SELECT x FROM t WHERE x = o.id) d ORDER BY o.id, d.x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tx
+                            1\t1
+                            1\t2
+                            1\t7
+                            2\t2
+                            2\t3
+                            2\t4
+                            2\t8
+                            3\t3
+                            3\t5
+                            3\t6
+                            4\t4
+                            """);
+            assertQuery("""
+                    SELECT o.id, d.x, d.b FROM o JOIN LATERAL (
+                        SELECT e.x, sum(q.bid) b FROM e WINDOW JOIN q ON (s) RANGE BETWEEN 1 hour PRECEDING AND CURRENT ROW WHERE e.k = o.k
+                    ) d ORDER BY o.id, d.x
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tx\tb
+                            1\t1\tnull
+                            1\t2\tnull
+                            1\t7\t30.0
+                            2\t3\t10.0
+                            2\t4\t20.0
+                            2\t8\t40.0
+                            3\t5\t40.0
+                            3\t6\t20.0
+                            """);
+            assertQuery("""
+                    SELECT o.id, d.n, d.b FROM o JOIN LATERAL (
+                        SELECT count() n, sum(q.bid) b FROM e HORIZON JOIN q ON (s) LIST (0) AS h WHERE e.k = o.k
+                    ) d ORDER BY o.id
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tn\tb
+                            1\t3\t30.0
+                            2\t3\t70.0
+                            3\t2\t50.0
+                            4\t0\tnull
+                            """);
+            execute("CREATE TABLE arrs (id INT, arr DOUBLE[])");
+            execute("INSERT INTO arrs VALUES (1, ARRAY[1.0, 2.0]), (2, ARRAY[3.0])");
+            assertQuery("""
+                    SELECT o.id, d.x, d.v FROM arrs o JOIN LATERAL (
+                        SELECT t.x, u.v FROM t CROSS JOIN UNNEST(o.arr) u(v) WHERE t.x = o.id
+                    ) d ORDER BY o.id, d.x, d.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tx\tv
+                            1\t1\t1.0
+                            1\t1\t2.0
+                            2\t2\t3.0
+                            """);
+            final String functionSource = "SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM long_sequence(o.id)) d";
+            assertQuery(functionSource).noLeakCheck().fails(functionSource.indexOf("o.id)"), "constant expected");
+        });
+    }
+
+    @Test
     public void testCorrelatedSubQueryAroundRightOrFullJoin() throws Exception {
         // #7724
         assertMemoryLeak(() -> {
@@ -539,6 +647,40 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             1\t1
                             2\t1
                             3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testDistinctAboveOrBelowCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            assertQuery("SELECT o.id, d.s FROM o JOIN LATERAL (SELECT DISTINCT sum(x) s FROM t WHERE x > o.id GROUP BY k) d ORDER BY o.id, d.s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\t9
+                            1\t11
+                            1\t15
+                            2\t7
+                            2\t11
+                            2\t15
+                            3\t7
+                            3\t11
+                            3\t12
+                            4\t7
+                            4\t8
+                            4\t11
+                            """);
+            assertQuery("SELECT o.id, d.s FROM o JOIN LATERAL (SELECT s FROM (SELECT DISTINCT sum(x) s, k FROM t GROUP BY k) d WHERE d.k = o.k) d ORDER BY o.id, d.s")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\ts
+                            1\t10
+                            2\t15
+                            3\t11
                             """);
         });
     }
@@ -855,6 +997,93 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                     ) l
                     """;
             assertExceptionNoLeakCheck(sql2, sql2.indexOf("ASOF JOIN b s"), "left side of time series join has no timestamp");
+        });
+    }
+
+    @Test
+    public void testFillAboveOrBelowCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            final String expected = """
+                    id\tts\tc
+                    1\t2024-01-01T00:00:00.000000Z\t2
+                    1\t2024-01-01T02:00:00.000000Z\tnull
+                    1\t2024-01-01T04:00:00.000000Z\tnull
+                    1\t2024-01-01T06:00:00.000000Z\t1
+                    2\t2024-01-01T00:00:00.000000Z\tnull
+                    2\t2024-01-01T02:00:00.000000Z\t2
+                    2\t2024-01-01T04:00:00.000000Z\tnull
+                    2\t2024-01-01T06:00:00.000000Z\t1
+                    3\t2024-01-01T00:00:00.000000Z\tnull
+                    3\t2024-01-01T02:00:00.000000Z\tnull
+                    3\t2024-01-01T04:00:00.000000Z\t2
+                    3\t2024-01-01T06:00:00.000000Z\tnull
+                    """;
+            assertQuery("SELECT o.id, d.ts, d.c FROM o JOIN LATERAL (SELECT ts, count() c FROM e WHERE k = o.k SAMPLE BY 2h FILL(NULL)) d ORDER BY o.id, d.ts")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, d.ts, d.c FROM o JOIN LATERAL (
+                        SELECT ts, c FROM (SELECT ts, k, count() c FROM e SAMPLE BY 2h FILL(NULL)) d WHERE d.k = o.k
+                    ) d ORDER BY o.id, d.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
+            final String everyBucketOfFirstRow = """
+                    id\tts\tc
+                    1\t2024-01-01T00:00:00.000000Z\t2
+                    1\t2024-01-01T02:00:00.000000Z\t2
+                    1\t2024-01-01T04:00:00.000000Z\t2
+                    1\t2024-01-01T06:00:00.000000Z\t2
+                    """;
+            assertQuery("""
+                    SELECT o.id, d.ts, d.c FROM o JOIN LATERAL (
+                        SELECT ts, c FROM (SELECT ts, count() c FROM e SAMPLE BY 2h FILL(NULL)) d WHERE d.c > o.id
+                    ) d ORDER BY o.id, d.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(everyBucketOfFirstRow);
+            assertQuery("""
+                    SELECT o.id, d.ts, d.c FROM o JOIN LATERAL (
+                        SELECT * FROM (SELECT ts, count() c FROM e SAMPLE BY 2h FILL(NULL)) d WHERE d.c > o.id
+                    ) d ORDER BY o.id, d.ts
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(everyBucketOfFirstRow);
+        });
+    }
+
+    @Test
+    public void testFilterAboveOrBelowCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            assertQuery("SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM t WHERE k = o.k AND x > o.id) d ORDER BY o.id, d.x")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx
+                            1\t2
+                            1\t7
+                            2\t3
+                            2\t4
+                            2\t8
+                            3\t5
+                            3\t6
+                            """);
+            assertQuery("SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM (SELECT x, k FROM t WHERE x > 2) d WHERE d.k = o.k) d ORDER BY o.id, d.x")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx
+                            1\t7
+                            2\t3
+                            2\t4
+                            2\t8
+                            3\t5
+                            3\t6
+                            """);
         });
     }
 
@@ -1579,6 +1808,38 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLatestOnAboveOrBelowCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            assertQuery("SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x, s FROM e WHERE k = o.k LATEST ON ts PARTITION BY s) d ORDER BY o.id, d.x")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx
+                            1\t2
+                            1\t7
+                            2\t3
+                            2\t8
+                            3\t5
+                            3\t6
+                            """);
+            final String latestPerSymbol = """
+                    id\tx
+                    1\t7
+                    2\t8
+                    """;
+            assertQuery("SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM (SELECT x, k, ts FROM e LATEST ON ts PARTITION BY s) d WHERE d.k = o.k) d ORDER BY o.id, d.x")
+                    .noLeakCheck()
+                    .returns(latestPerSymbol);
+            assertQuery("SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM (e LATEST ON ts PARTITION BY s) WHERE k = o.k) d ORDER BY o.id, d.x")
+                    .noLeakCheck()
+                    .returns(latestPerSymbol);
+            assertQuery("SELECT o.id, d.x FROM o JOIN (SELECT x, k FROM e LATEST ON ts PARTITION BY s) d ON d.k = o.k ORDER BY o.id, d.x")
+                    .noLeakCheck()
+                    .returns(latestPerSymbol);
+        });
+    }
+
+    @Test
     public void testLeftJoinedCorrelatedSubQueryAfterInnerJoinWithWhereEquality() throws Exception {
         // #7725
         assertMemoryLeak(() -> {
@@ -2015,6 +2276,193 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitAboveOrBelowCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            assertQuery("SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM t WHERE k = o.k ORDER BY x LIMIT 2) d ORDER BY o.id, d.x")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx
+                            1\t1
+                            1\t2
+                            2\t3
+                            2\t4
+                            3\t5
+                            3\t6
+                            """);
+            final String firstThree = """
+                    id\tx
+                    1\t1
+                    1\t2
+                    2\t3
+                    """;
+            assertLimitBelowCorrelation("SELECT o.id, d.x FROM o JOIN (SELECT x, k FROM t ORDER BY x LIMIT 3) d ON d.k = o.k ORDER BY o.id, d.x", firstThree);
+            assertLimitBelowCorrelation(
+                    "SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM (SELECT x, k FROM t ORDER BY x LIMIT 3) d WHERE d.k = o.k) d ORDER BY o.id, d.x",
+                    firstThree
+            );
+            assertLimitBelowCorrelation(
+                    "SELECT o.id, d.x FROM o JOIN LATERAL (SELECT * FROM (SELECT x, k FROM t ORDER BY x LIMIT 3) d WHERE d.k = o.k) d ORDER BY o.id, d.x",
+                    firstThree
+            );
+            assertLimitBelowCorrelation("""
+                    WITH c AS (SELECT x, k FROM t ORDER BY x LIMIT 3)
+                    SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM c WHERE c.k = o.k) d ORDER BY o.id, d.x
+                    """, firstThree);
+            assertLimitBelowCorrelation(
+                    "SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM (SELECT x, k FROM t LIMIT 3) d WHERE d.k = o.k) d ORDER BY o.id, d.x",
+                    firstThree
+            );
+            assertLimitBelowCorrelation(
+                    "SELECT o.id, d.x FROM o JOIN LATERAL (((SELECT x, k FROM t ORDER BY x LIMIT 3) WHERE x > 0) WHERE k = o.k) d ORDER BY o.id, d.x",
+                    firstThree
+            );
+            assertLimitBelowCorrelation("""
+                    SELECT o.id, d.x FROM o JOIN LATERAL (
+                        SELECT x FROM (SELECT x, k FROM (SELECT x, k FROM t ORDER BY x LIMIT 3) e WHERE e.x > 0) d WHERE d.k = o.k
+                    ) d ORDER BY o.id, d.x
+                    """, firstThree);
+            assertQuery("""
+                    SELECT o.id, d.x FROM o JOIN LATERAL (
+                        SELECT a.x FROM (SELECT x, k FROM t ORDER BY x LIMIT 3) a JOIN t b ON a.x = b.x AND b.k = o.k
+                    ) d ORDER BY o.id, d.x
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(firstThree);
+            final String leftFirstThree = """
+                    id\tx
+                    1\t1
+                    1\t2
+                    2\t3
+                    3\tnull
+                    4\tnull
+                    """;
+            assertLimitBelowCorrelation("SELECT o.id, d.x FROM o LEFT JOIN (SELECT x, k FROM t ORDER BY x LIMIT 3) d ON d.k = o.k ORDER BY o.id, d.x", leftFirstThree);
+            assertLimitBelowCorrelation(
+                    "SELECT o.id, d.x FROM o LEFT JOIN LATERAL (SELECT x FROM (SELECT x, k FROM t ORDER BY x LIMIT 3) d WHERE d.k = o.k) d ON true ORDER BY o.id, d.x",
+                    leftFirstThree
+            );
+            final String secondToFourth = """
+                    id\tx
+                    1\t2
+                    2\t3
+                    2\t4
+                    """;
+            assertLimitBelowCorrelation("SELECT o.id, d.x FROM o JOIN (SELECT x, k FROM t ORDER BY x LIMIT 1, 4) d ON d.k = o.k ORDER BY o.id, d.x", secondToFourth);
+            assertLimitBelowCorrelation(
+                    "SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM (SELECT x, k FROM t ORDER BY x LIMIT 1, 4) d WHERE d.k = o.k) d ORDER BY o.id, d.x",
+                    secondToFourth
+            );
+            final String lastThree = """
+                    id\tx
+                    1\t7
+                    2\t8
+                    3\t6
+                    """;
+            assertLimitBelowCorrelation("SELECT o.id, d.x FROM o JOIN (SELECT x, k FROM t ORDER BY x DESC LIMIT 3) d ON d.k = o.k ORDER BY o.id, d.x", lastThree);
+            assertLimitBelowCorrelation(
+                    "SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM (SELECT x, k FROM t ORDER BY x DESC LIMIT 3) d WHERE d.k = o.k) d ORDER BY o.id, d.x",
+                    lastThree
+            );
+            final String scalarFirstThree = """
+                    id\tc\ts
+                    1\t2\t3
+                    2\t1\t3
+                    3\t0\tnull
+                    4\t0\tnull
+                    """;
+            assertQuery("SELECT o.id, count(d.x) c, sum(d.x) s FROM o LEFT JOIN (SELECT x, k FROM t ORDER BY x LIMIT 3) d ON d.k = o.k GROUP BY o.id ORDER BY o.id")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(scalarFirstThree);
+            assertLimitBelowCorrelation(
+                    "SELECT o.id, d.c, d.s FROM o JOIN LATERAL (SELECT count() c, sum(x) s FROM (SELECT x, k FROM t ORDER BY x LIMIT 3) d WHERE d.k = o.k) d ORDER BY o.id",
+                    scalarFirstThree
+            );
+            assertLimitBelowCorrelation("""
+                    SELECT o.id, d.c, d.s FROM o LEFT JOIN LATERAL (
+                        SELECT count() c, sum(x) s FROM (SELECT x, k FROM t ORDER BY x LIMIT 3) d WHERE d.k = o.k
+                    ) d ON true ORDER BY o.id
+                    """, scalarFirstThree);
+            assertLimitBelowCorrelation("""
+                    SELECT o.id, d.x FROM o JOIN LATERAL (
+                        SELECT x FROM (SELECT x, k FROM t ORDER BY x LIMIT 4) d WHERE d.k = o.k AND d.x > o.id
+                    ) d ORDER BY o.id, d.x
+                    """, """
+                    id\tx
+                    1\t2
+                    2\t3
+                    2\t4
+                    """);
+            assertQuery("""
+                    SELECT o.id, d.x FROM o JOIN LATERAL (
+                        SELECT x FROM (SELECT x, k FROM t ORDER BY x LIMIT 5) d WHERE d.k = o.k LIMIT 1
+                    ) d ORDER BY o.id, d.x
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tx
+                            1\t1
+                            2\t3
+                            3\t5
+                            """);
+        });
+    }
+
+    @Test
+    public void testLimitBetweenCorrelatedPredicates() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            final String expected = """
+                    id\tx
+                    1\t2
+                    2\t3
+                    2\t4
+                    3\t5
+                    3\t6
+                    """;
+            assertQuery("""
+                    SELECT 1 id, x FROM (SELECT x FROM (SELECT x, k FROM t WHERE x > 1 ORDER BY x LIMIT 3) WHERE k = 1)
+                    UNION ALL SELECT 2, x FROM (SELECT x FROM (SELECT x, k FROM t WHERE x > 2 ORDER BY x LIMIT 3) WHERE k = 2)
+                    UNION ALL SELECT 3, x FROM (SELECT x FROM (SELECT x, k FROM t WHERE x > 3 ORDER BY x LIMIT 3) WHERE k = 3)
+                    UNION ALL SELECT 4, x FROM (SELECT x FROM (SELECT x, k FROM t WHERE x > 10 ORDER BY x LIMIT 3) WHERE k = 10)
+                    ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, d.x FROM o JOIN LATERAL (
+                        SELECT x FROM (SELECT x, k FROM t WHERE x > o.id ORDER BY x LIMIT 3) d WHERE d.k = o.k
+                    ) d ORDER BY o.id, d.x
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, d.x FROM o JOIN LATERAL (
+                        SELECT x FROM (SELECT x, k FROM t WHERE x > o.k ORDER BY x LIMIT 3) d WHERE d.k = o.k
+                    ) d ORDER BY o.id, d.x
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, d.x FROM o JOIN LATERAL (
+                        SELECT x FROM (SELECT x, k FROM t WHERE x > o.id ORDER BY x LIMIT 3) d WHERE d.k = o.k LIMIT 1
+                    ) d ORDER BY o.id, d.x
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\tx
+                            1\t2
+                            2\t3
+                            3\t5
+                            """);
+        });
+    }
+
+    @Test
     public void testLimitBodySelectingCorrelatedColumnOrWildcard() throws Exception {
         // #7803 section 10
         assertMemoryLeak(() -> {
@@ -2247,6 +2695,98 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testLimitRanksInOrderOfSortUnderFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            assertQuery("SELECT o.id, d.s FROM o JOIN LATERAL (SELECT s FROM (SELECT k, sum(x) s FROM t GROUP BY k ORDER BY s) WHERE s > o.id * 3 LIMIT 1) d ORDER BY o.id, d.s")
+                    .noLeakCheck()
+                    .withPlanContaining("orderedFunctions: [[s] => [row_number()")
+                    .returns("""
+                            id\ts
+                            1\t10
+                            2\t10
+                            3\t10
+                            4\t15
+                            """);
+            assertQuery("SELECT o.id, d.s FROM o JOIN LATERAL (SELECT s FROM (SELECT k, sum(x) s FROM t GROUP BY k ORDER BY s DESC) WHERE s < o.id * 5 LIMIT 1) d ORDER BY o.id, d.s")
+                    .noLeakCheck()
+                    .withPlanContaining("orderedFunctions: [[s desc] => [row_number()")
+                    .returns("""
+                            id\ts
+                            3\t11
+                            4\t15
+                            """);
+            assertQuery("SELECT o.id, d.y FROM o JOIN LATERAL (SELECT y FROM (SELECT x * 2 y, k FROM t ORDER BY y) WHERE y > o.id * 2 LIMIT 2) d ORDER BY o.id, d.y")
+                    .noLeakCheck()
+                    .withPlanContaining("orderedFunctions: [[y] => [row_number()")
+                    .returns("""
+                            id\ty
+                            1\t4
+                            1\t6
+                            2\t6
+                            2\t8
+                            3\t8
+                            3\t10
+                            4\t10
+                            4\t12
+                            """);
+            assertQuery("""
+                    SELECT o.id, d.ts, d.s FROM o JOIN LATERAL (
+                        SELECT ts, s FROM (SELECT ts, sum(x) s FROM e SAMPLE BY 2h FILL(NULL)) WHERE s > o.id * 4 LIMIT 2
+                    ) d ORDER BY o.id, d.ts
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("orderedFunctions: [[ts] => [row_number()")
+                    .returns("""
+                            id\tts\ts
+                            1\t2024-01-01T02:00:00.000000Z\t7
+                            1\t2024-01-01T04:00:00.000000Z\t11
+                            2\t2024-01-01T04:00:00.000000Z\t11
+                            2\t2024-01-01T06:00:00.000000Z\t15
+                            3\t2024-01-01T06:00:00.000000Z\t15
+                            """);
+            assertQuery("""
+                    SELECT o.id, d.ts, d.s FROM o LEFT JOIN LATERAL (
+                        SELECT * FROM (SELECT ts, sum(x) s FROM e SAMPLE BY 2h FILL(NULL)) WHERE s > o.id * 4 LIMIT 1, 2
+                    ) d ON true ORDER BY o.id, d.ts
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("orderedFunctions: [[ts] => [row_number()")
+                    .returns("""
+                            id\tts\ts
+                            1\t2024-01-01T04:00:00.000000Z\t11
+                            2\t2024-01-01T06:00:00.000000Z\t15
+                            3\t\tnull
+                            4\t\tnull
+                            """);
+            final String nextTwo = """
+                    id\tx
+                    1\t2
+                    1\t3
+                    2\t3
+                    2\t4
+                    3\t4
+                    3\t5
+                    4\t5
+                    4\t6
+                    """;
+            assertQuery("""
+                    SELECT 1 id, x FROM (SELECT x FROM (SELECT x, k FROM t ORDER BY x) WHERE x > 1 LIMIT 2)
+                    UNION ALL SELECT 2, x FROM (SELECT x FROM (SELECT x, k FROM t ORDER BY x) WHERE x > 2 LIMIT 2)
+                    UNION ALL SELECT 3, x FROM (SELECT x FROM (SELECT x, k FROM t ORDER BY x) WHERE x > 3 LIMIT 2)
+                    UNION ALL SELECT 4, x FROM (SELECT x FROM (SELECT x, k FROM t ORDER BY x) WHERE x > 4 LIMIT 2)
+                    ORDER BY 1, 2
+                    """)
+                    .noLeakCheck()
+                    .returns(nextTwo);
+            assertQuery("SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM (SELECT x, k FROM t ORDER BY x) WHERE x > o.id LIMIT 2) d ORDER BY o.id, d.x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(nextTwo);
+        });
+    }
+
+    @Test
     public void testLimitScalarBodyKeepsJoinCondition() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m (k INT, n INT)");
@@ -2357,6 +2897,55 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             """);
                 }
             }
+        });
+    }
+
+    @Test
+    public void testNegativeLimitAboveOrBelowCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            final String correlated = "SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM t WHERE k = o.k ORDER BY x LIMIT -2) d";
+            assertQuery(correlated).noLeakCheck().fails(correlated.indexOf("-2"), "negative LIMIT is not supported in a correlated lateral sub-query");
+            final String lastThree = """
+                    id\tx
+                    1\t7
+                    2\t8
+                    3\t6
+                    """;
+            assertLimitBelowCorrelation("SELECT o.id, d.x FROM o JOIN (SELECT x, k FROM t ORDER BY x LIMIT -3) d ON d.k = o.k ORDER BY o.id, d.x", lastThree);
+            assertLimitBelowCorrelation(
+                    "SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM (SELECT x, k FROM t ORDER BY x LIMIT -3) d WHERE d.k = o.k) d ORDER BY o.id, d.x",
+                    lastThree
+            );
+            assertLimitBelowCorrelation(
+                    "SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM (SELECT x, k FROM t LIMIT -3) d WHERE d.k = o.k) d ORDER BY o.id, d.x",
+                    lastThree
+            );
+            assertLimitBelowCorrelation("""
+                    WITH c AS (SELECT x, k FROM t ORDER BY x LIMIT -3)
+                    SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM c WHERE c.k = o.k) d ORDER BY o.id, d.x
+                    """, lastThree);
+            assertLimitBelowCorrelation(
+                    "SELECT o.id, d.x FROM o LEFT JOIN LATERAL (SELECT x FROM (SELECT x, k FROM t ORDER BY x LIMIT -3) d WHERE d.k = o.k) d ON true ORDER BY o.id, d.x",
+                    """
+                            id\tx
+                            1\t7
+                            2\t8
+                            3\t6
+                            4\tnull
+                            """
+            );
+            assertLimitBelowCorrelation("""
+                    SELECT o.id, d.c, d.s FROM o LEFT JOIN LATERAL (
+                        SELECT count() c, sum(x) s FROM (SELECT x, k FROM t ORDER BY x LIMIT -3) d WHERE d.k = o.k
+                    ) d ON true ORDER BY o.id
+                    """, """
+                    id\tc\ts
+                    1\t1\t7
+                    2\t1\t8
+                    3\t1\t6
+                    4\t0\tnull
+                    """);
         });
     }
 
@@ -3343,6 +3932,39 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectAboveOrBelowCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            assertQuery("SELECT o.id, d.v FROM o JOIN LATERAL (SELECT x * 10 + o.id v FROM t WHERE k = o.k) d ORDER BY o.id, d.v")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t11
+                            1\t21
+                            1\t71
+                            2\t32
+                            2\t42
+                            2\t82
+                            3\t53
+                            3\t63
+                            """);
+            assertQuery("SELECT o.id, d.v FROM o JOIN LATERAL (SELECT v FROM (SELECT x * 10 v, k FROM t) d WHERE d.k = o.k) d ORDER BY o.id, d.v")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tv
+                            1\t10
+                            1\t20
+                            1\t70
+                            2\t30
+                            2\t40
+                            2\t80
+                            3\t50
+                            3\t60
+                            """);
+        });
+    }
+
+    @Test
     public void testRightAndFullJoinInBodyMatchedRows() throws Exception {
         // #7803
         assertMemoryLeak(() -> {
@@ -3800,6 +4422,67 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             id\taid\trid
                             1\t10\t20
                             2\t11\t21
+                            """);
+        });
+    }
+
+    @Test
+    public void testSampleByAboveOrBelowCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            final String expected = """
+                    id\tts\ta
+                    1\t2024-01-01T00:00:00.000000Z\t1.5
+                    1\t2024-01-01T02:00:00.000000Z\t3.3333333333333335
+                    1\t2024-01-01T04:00:00.000000Z\t5.166666666666667
+                    1\t2024-01-01T06:00:00.000000Z\t7.0
+                    2\t2024-01-01T00:00:00.000000Z\t1.25
+                    2\t2024-01-01T02:00:00.000000Z\t3.5
+                    2\t2024-01-01T04:00:00.000000Z\t5.75
+                    2\t2024-01-01T06:00:00.000000Z\t8.0
+                    3\t2024-01-01T00:00:00.000000Z\tnull
+                    3\t2024-01-01T02:00:00.000000Z\tnull
+                    3\t2024-01-01T04:00:00.000000Z\t5.5
+                    3\t2024-01-01T06:00:00.000000Z\tnull
+                    """;
+            assertQuery("SELECT o.id, d.ts, d.a FROM o JOIN LATERAL (SELECT ts, avg(x) a FROM e WHERE k = o.k SAMPLE BY 2h FILL(LINEAR)) d ORDER BY o.id, d.ts")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("""
+                    SELECT o.id, d.ts, d.a FROM o JOIN LATERAL (
+                        SELECT ts, a FROM (SELECT ts, k, avg(x) a FROM e SAMPLE BY 2h FILL(LINEAR)) d WHERE d.k = o.k
+                    ) d ORDER BY o.id, d.ts
+                    """)
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testSampleByFillOuterCopiedIntoDomain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sb (sym SYMBOL INDEX, s STRING, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO sb VALUES
+                        ('a', 'x', 1, '2024-01-01T00:10:00.000000Z'),
+                        ('b', 'q', 2, '2024-01-01T00:20:00.000000Z'),
+                        ('a', 'y', 3, '2024-01-01T03:10:00.000000Z')
+                    """);
+            assertQuery("""
+                    SELECT o.ts, o.f, l.c
+                    FROM (SELECT ts, first(s) f, last(i) li FROM sb WHERE sym = 'a' SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION) o
+                    JOIN LATERAL (SELECT count() c FROM sb x WHERE x.i <= o.li) l
+                    ORDER BY o.ts
+                    """)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tf\tc
+                            2024-01-01T00:10:00.000000Z\tx\t1
+                            2024-01-01T01:10:00.000000Z\tx\t1
+                            2024-01-01T02:10:00.000000Z\tx\t1
+                            2024-01-01T03:10:00.000000Z\ty\t3
                             """);
         });
     }
@@ -4309,6 +4992,30 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSortAboveOrBelowCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            final String expected = """
+                    id\tx
+                    1\t1
+                    1\t2
+                    1\t7
+                    2\t3
+                    2\t4
+                    2\t8
+                    3\t5
+                    3\t6
+                    """;
+            assertQuery("SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM t WHERE k = o.k ORDER BY x DESC) d ORDER BY o.id, d.x")
+                    .noLeakCheck()
+                    .returns(expected);
+            assertQuery("SELECT o.id, d.x FROM o JOIN LATERAL (SELECT x FROM (SELECT x, k FROM t ORDER BY x DESC) d WHERE d.k = o.k) d ORDER BY o.id, d.x")
+                    .noLeakCheck()
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testTwoInnerJoinedCorrelatedSubQueries() throws Exception {
         // #7803 section 4
         assertMemoryLeak(() -> {
@@ -4331,6 +5038,26 @@ public class LateralCorrelationTest extends AbstractCairoTest {
                             1\t10\t20\t30
                             2\t10\t21\t31
                             """);
+        });
+    }
+
+    @Test
+    public void testUncrossableCorrelatedSourcesRejected() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            final String horizonSlave = """
+                    SELECT o.id, d.n FROM o JOIN LATERAL (
+                        SELECT count() n FROM e HORIZON JOIN (SELECT * FROM q WHERE k = o.k) q ON (s) LIST (0) AS h
+                    ) d
+                    """;
+            assertQuery(horizonSlave)
+                    .noLeakCheck()
+                    .fails(horizonSlave.indexOf("HORIZON"), "outer column reference in a HORIZON JOIN slave is not supported in a LATERAL sub-query");
+            execute("CREATE TABLE arrs (id INT, arr DOUBLE[])");
+            final String standaloneUnnest = "SELECT o.id, d.v FROM arrs o JOIN LATERAL (SELECT u.v FROM UNNEST(o.arr) u(v)) d";
+            assertQuery(standaloneUnnest)
+                    .noLeakCheck()
+                    .fails(standaloneUnnest.indexOf("UNNEST"), "outer column reference in UNNEST without a table before it is not supported in a LATERAL sub-query");
         });
     }
 
@@ -4599,6 +5326,43 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowAboveOrBelowCorrelation() throws Exception {
+        assertMemoryLeak(() -> {
+            createCorrelationPointTables();
+            assertQuery("SELECT o.id, d.x, d.rn FROM o JOIN LATERAL (SELECT x, row_number() OVER (ORDER BY x) rn FROM t WHERE k = o.k) d ORDER BY o.id, d.x")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx\trn
+                            1\t1\t1
+                            1\t2\t2
+                            1\t7\t3
+                            2\t3\t1
+                            2\t4\t2
+                            2\t8\t3
+                            3\t5\t1
+                            3\t6\t2
+                            """);
+            assertQuery("""
+                    SELECT o.id, d.x, d.rn FROM o JOIN LATERAL (
+                        SELECT x, rn FROM (SELECT x, k, row_number() OVER (ORDER BY x) rn FROM t) d WHERE d.k = o.k
+                    ) d ORDER BY o.id, d.x
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tx\trn
+                            1\t1\t1
+                            1\t2\t2
+                            1\t7\t7
+                            2\t3\t3
+                            2\t4\t4
+                            2\t8\t8
+                            3\t5\t5
+                            3\t6\t6
+                            """);
+        });
+    }
+
+    @Test
     public void testWindowAndLatestOnAboveJoinedCorrelatedSubQuery() throws Exception {
         // #7803 section 7
         assertMemoryLeak(() -> {
@@ -4756,6 +5520,12 @@ public class LateralCorrelationTest extends AbstractCairoTest {
         execute("DROP TABLE b");
     }
 
+    private void assertLimitBelowCorrelation(String sql, String expected) throws Exception {
+        assertQuery(sql)
+                .noLeakCheck()
+                .returns(expected);
+    }
+
     private void assertNullOuterValueFindsDomainRow(String type, String value1, String value2) throws Exception {
         execute("CREATE TABLE o (id INT, x INT)");
         execute("INSERT INTO o VALUES (1, 1), (2, 2)");
@@ -4842,6 +5612,33 @@ public class LateralCorrelationTest extends AbstractCairoTest {
     private void createB(String rows) throws Exception {
         execute("CREATE TABLE b (id INT, k INT, x INT)");
         execute("INSERT INTO b VALUES " + rows);
+    }
+
+    private void createCorrelationPointTables() throws Exception {
+        execute("CREATE TABLE t (x INT, k INT)");
+        execute("INSERT INTO t VALUES (1, 1), (2, 1), (3, 2), (4, 2), (5, 3), (6, 3), (7, 1), (8, 2)");
+        execute("CREATE TABLE o (id INT, k INT)");
+        execute("INSERT INTO o VALUES (1, 1), (2, 2), (3, 3), (4, 10)");
+        execute("CREATE TABLE e (x INT, k INT, s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO e VALUES
+                (1, 1, 'a', '2024-01-01T00:00:00.000000Z'),
+                (2, 1, 'b', '2024-01-01T01:00:00.000000Z'),
+                (3, 2, 'a', '2024-01-01T02:00:00.000000Z'),
+                (4, 2, 'b', '2024-01-01T03:00:00.000000Z'),
+                (5, 3, 'a', '2024-01-01T04:00:00.000000Z'),
+                (6, 3, 'b', '2024-01-01T05:00:00.000000Z'),
+                (7, 1, 'a', '2024-01-01T06:00:00.000000Z'),
+                (8, 2, 'b', '2024-01-01T07:00:00.000000Z')
+                """);
+        execute("CREATE TABLE q (s SYMBOL, k INT, bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO q VALUES
+                ('a', 1, 10.0, '2024-01-01T00:30:00.000000Z'),
+                ('b', 2, 20.0, '2024-01-01T01:30:00.000000Z'),
+                ('a', 3, 30.0, '2024-01-01T03:30:00.000000Z'),
+                ('b', 1, 40.0, '2024-01-01T05:30:00.000000Z')
+                """);
     }
 
     private void createOrdersTradesRefunds() throws Exception {

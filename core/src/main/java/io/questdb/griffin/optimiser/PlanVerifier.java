@@ -102,6 +102,7 @@ public final class PlanVerifier {
     public static final String FUNCTION_OVERLOAD = "function call has no overload";
     public static final String HORIZON_JOIN_SHAPE = "horizon join output does not start with the master columns";
     public static final String INPUT_NULL = "input is null";
+    public static final String INPUT_RANDOM_ACCESS = "physical choice reads an input by row id that lacks random access";
     public static final String JOIN_ALGORITHM = "join step algorithm contradicts its kind, keys or hints";
     public static final String JOIN_FILTER_ORIGINS = "join filter conjuncts and their origins differ in length";
     public static final String JOIN_INPUT_SOURCE = "join input has neither a plan nor an UNNEST, or both";
@@ -936,7 +937,7 @@ public final class PlanVerifier {
             }
         }
         requestedColumn(operation.getRequestedOrderColumnId(), operation.getOutput());
-        failIfViolated(PhysicalChoiceVerifier.setOperation(operation));
+        failIfViolated(PhysicalChoiceVerifier.setOperation(operation, isAccessPathRequired));
     }
 
     private int sharedSource(LogicalPlan plan) {

@@ -857,11 +857,11 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
     @Test
     public void testNestedLoopFullJoinFailsOnLargeInput() throws Exception {
         // A one-row master keeps the nested loop cheap while the non-equi FULL
-        // OUTER condition matches nearly every slave row, growing the matched-id
-        // map past the limit.
+        // OUTER condition matches nearly every slave row, growing the matched-row
+        // bitmap past the limit.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT 1L AS k FROM long_sequence(1))");
-            execute("CREATE TABLE s AS (SELECT x AS k FROM long_sequence(100_000))");
+            execute("CREATE TABLE s AS (SELECT x AS k FROM long_sequence(5_000_000))");
             drainWalQueue();
             final String sql = "SELECT count(*) FROM m FULL OUTER JOIN s ON m.k <> s.k";
             assertUsesFactory(sql, NestedLoopFullJoinRecordCursorFactory.class);
@@ -871,14 +871,15 @@ public class JoinMemoryTrackerTest extends AbstractCairoTest {
 
     @Test
     public void testNestedLoopFullJoinOpenFailureReleasesAllocations() throws Exception {
-        // Inflate the matched-id map far above the limit so the nested-loop full join's of()
-        // breaches on matchIdsMap.reopen() with isOpen already set. A small input keeps every other
-        // allocation under the limit; reusing one factory across opens catches the isOpen desync.
-        setProperty(PropertyKey.CAIRO_SQL_SMALL_MAP_KEY_CAPACITY, 50_000);
+        // The nested-loop full join's of() reopens its tracker-bound matched-row bitmap with isOpen
+        // already set; a tiny limit breaches that reopen. Reusing one factory across opens catches
+        // the isOpen desync.
         assertMemoryLeak(() -> {
             execute("CREATE TABLE m AS (SELECT x AS k FROM long_sequence(20))");
             execute("CREATE TABLE s AS (SELECT x AS k FROM long_sequence(20))");
             drainWalQueue();
+            // Set the tiny limit only after table creation so the populating SELECT does not breach it.
+            setProperty(PropertyKey.CAIRO_QUERY_MEMORY_LIMIT_BYTES, 4L);
             assertOpenFailureReleasesAllocations(
                     "SELECT * FROM m FULL OUTER JOIN s ON m.k <> s.k",
                     NestedLoopFullJoinRecordCursorFactory.class

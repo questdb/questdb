@@ -500,6 +500,8 @@ public class LatestByTest extends AbstractCairoTest {
                 execute("INSERT INTO " + table + " VALUES ('a', NULL, '2024-01-04')");
                 assertQuery(latestKeyQuery(table, "s = 'a' AND v = NULL", false))
                         .withPlanContaining("Filter filter:", singleKeyPlan).sizeMayVary().returns("v\nnull\n");
+                assertQuery(latestKeyQuery(table, "s = 'a' AND NOT (v < 10_000)", false))
+                        .withPlanContaining("Filter filter: not (v<10000)", singleKeyPlan).sizeMayVary().returns("v\nnull\n");
             }
         });
     }

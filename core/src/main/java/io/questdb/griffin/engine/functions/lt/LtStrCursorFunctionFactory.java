@@ -58,7 +58,7 @@ public class LtStrCursorFunctionFactory extends AbstractStrCursorFunctionFactory
 
         @Override
         public boolean getBool(Record rec) {
-            return Chars.lessThan(leftFunc.getStrA(rec), value, negated);
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
         }
 
         @Override
@@ -69,6 +69,10 @@ public class LtStrCursorFunctionFactory extends AbstractStrCursorFunctionFactory
         @Override
         protected String operator() {
             return " < ";
+        }
+
+        private boolean isMatch(Record rec) {
+            return Chars.lessThan(leftFunc.getStrA(rec), value, negated);
         }
     }
 }

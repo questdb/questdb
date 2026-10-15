@@ -209,7 +209,7 @@ public final class IntervalAnalysis {
 
         @Override
         public Function newMonotonicInverter(Function head, Function lo, short loAdjustment, long loValue, Function hi, short hiAdjustment,
-                                             long hiValue, boolean isBetween, TimestampDriver timestampDriver) {
+                                             long hiValue, boolean isBetween, boolean isNullBoundMatching, TimestampDriver timestampDriver) {
             return placeholder();
         }
 

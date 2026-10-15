@@ -6387,11 +6387,6 @@ public class ExplainPlanTest extends AbstractCairoTest {
 
     @Test
     public void testOrderByAdvicePushdown() throws Exception {
-        // TODO: improve :
-        // - limit propagation to async filter factory
-        // - negative limit rewrite
-        // if order by is via alias of designated timestamp
-
         assertMemoryLeak(() -> {
             execute("create table device_data " + "( " + "  timestamp timestamp, " + "  val double, " + "  id symbol " + ") timestamp(timestamp)");
 
@@ -6523,14 +6518,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .timestampDesc("date")
                     .sizeMayVary()
                     .withPlan("""
-                            Limit value: 1 skip-rows-max: 0 take-rows-max: 1
-                                VirtualRecord
-                                  functions: [timestamp,val,val+1]
-                                    Async JIT Filter workers: 1
-                                      filter: id='12345678'
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: device_data
+                            VirtualRecord
+                              functions: [timestamp,val,val+1]
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: id='12345678'
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: device_data
                             """)
                     .returns("""
                             date\tval\tcolumn
@@ -6542,14 +6537,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .timestamp("date")
                     .sizeMayVary()
                     .withPlan("""
-                            Limit value: -1 skip-rows: baseRows-1 take-rows-max: 1
-                                VirtualRecord
-                                  functions: [timestamp,val,val+1]
-                                    Async JIT Filter workers: 1
-                                      filter: id='12345678'
-                                        PageFrame
-                                            Row forward scan
-                                            Frame forward scan on: device_data
+                            VirtualRecord
+                              functions: [timestamp,val,val+1]
+                                Async JIT Filter workers: 1
+                                  limit: 1
+                                  filter: id='12345678'
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: device_data
                             """)
                     .returns("""
                             date\tval\tcolumn
@@ -6561,14 +6556,14 @@ public class ExplainPlanTest extends AbstractCairoTest {
                     .timestampDesc("date")
                     .sizeMayVary()
                     .withPlan("""
-                            Limit value: -2 skip-rows: baseRows-2 take-rows-max: 2
-                                VirtualRecord
-                                  functions: [timestamp,val,val+1]
-                                    Async JIT Filter workers: 1
-                                      filter: id='12345678'
-                                        PageFrame
-                                            Row backward scan
-                                            Frame backward scan on: device_data
+                            VirtualRecord
+                              functions: [timestamp,val,val+1]
+                                Async JIT Filter workers: 1
+                                  limit: 2
+                                  filter: id='12345678'
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: device_data
                             """)
                     .returns("""
                             date\tval\tcolumn

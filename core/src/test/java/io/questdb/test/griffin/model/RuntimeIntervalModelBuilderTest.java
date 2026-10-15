@@ -809,6 +809,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
                 (short) 0,
                 0L,
                 true,
+                false,
                 ColumnType.getTimestampDriver(ColumnType.TIMESTAMP)
         ));
         Assert.assertEquals(1, head.closeCount);
@@ -888,6 +889,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
                 (short) 0,
                 0L,
                 true,
+                false,
                 ColumnType.getTimestampDriver(ColumnType.TIMESTAMP)
         );
         try {
@@ -917,6 +919,7 @@ public class RuntimeIntervalModelBuilderTest extends AbstractCairoTest {
                 (short) 0,
                 0L,
                 true,
+                false,
                 ColumnType.getTimestampDriver(ColumnType.TIMESTAMP)
         );
         try {

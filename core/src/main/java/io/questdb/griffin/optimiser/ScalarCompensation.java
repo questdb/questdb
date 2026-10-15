@@ -112,6 +112,14 @@ final class ScalarCompensation implements Mutable {
     }
 
     /**
+     * The comparison a count conjunct applies: the operand of a NOT, otherwise the conjunct itself.
+     */
+    private static FunctionExpression countComparison(FunctionExpression call) {
+        return call.getArgumentCount() == 1 && "not".equals(call.getName()) && call.argumentAt(0) instanceof FunctionExpression comparison
+                ? comparison : call;
+    }
+
+    /**
      * The argument index of the count column in a comparison of a count of the scalar projection with an
      * integer constant, or -1.
      */
@@ -129,6 +137,26 @@ final class ScalarCompensation implements Mutable {
             }
         }
         return -1;
+    }
+
+    /**
+     * The operator a count conjunct applies. A count is never NULL, so a negated comparison applies the
+     * complementary operator.
+     */
+    private static CharSequence countOperator(FunctionExpression call, FunctionExpression comparison) {
+        final String name = comparison.getName();
+        if (call == comparison) {
+            return name;
+        }
+        return switch (name) {
+            case "<" -> ">=";
+            case "<=" -> ">";
+            case ">" -> "<=";
+            case ">=" -> "<";
+            case "=" -> "!=";
+            case "!=", "<>" -> "=";
+            default -> "";
+        };
     }
 
     private static boolean hasAggregateColumn(BoundExpression expression, AggregatePlan aggregate) {
@@ -190,12 +218,13 @@ final class ScalarCompensation implements Mutable {
         if (call.isAnd()) {
             return keepsEveryCount(call.argumentAt(0), scalar) && keepsEveryCount(call.argumentAt(1), scalar);
         }
-        final int countSide = countComparisonSide(call, scalar);
-        if (countSide < 0 || !(call.argumentAt(1 - countSide) instanceof ConstantExpression constant)) {
+        final FunctionExpression comparison = countComparison(call);
+        final int countSide = countComparisonSide(comparison, scalar);
+        if (countSide < 0 || !(comparison.argumentAt(1 - countSide) instanceof ConstantExpression constant)) {
             return false;
         }
         final long value = constant.getLongValue();
-        final String name = call.getName();
+        final CharSequence name = countOperator(call, comparison);
         if (Chars.equals(name, "!=") || Chars.equals(name, "<>")) {
             return value < 0;
         }
@@ -460,14 +489,15 @@ final class ScalarCompensation implements Mutable {
         if (call.isAnd()) {
             return rejectsZeroCount(call.argumentAt(0), scalar) || rejectsZeroCount(call.argumentAt(1), scalar);
         }
-        final int countSide = countComparisonSide(call, scalar);
-        if (countSide < 0 || !(call.argumentAt(1 - countSide) instanceof ConstantExpression constant)) {
+        final FunctionExpression comparison = countComparison(call);
+        final int countSide = countComparisonSide(comparison, scalar);
+        if (countSide < 0 || !(comparison.argumentAt(1 - countSide) instanceof ConstantExpression constant)) {
             return false;
         }
         final long value = constant.getLongValue();
         final long left = countSide == 0 ? 0 : value;
         final long right = countSide == 0 ? value : 0;
-        final String name = call.getName();
+        final CharSequence name = countOperator(call, comparison);
         if (Chars.equals(name, '=')) {
             return left != right;
         }

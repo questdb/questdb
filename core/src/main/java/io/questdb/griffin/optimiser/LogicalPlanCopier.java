@@ -360,9 +360,6 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         final SortPlan clone = planNodes.sorts.next().of(sort.getChild(), sort.getPosition());
         clone.getColumnIds().addAll(sort.getColumnIds());
         clone.getDirections().addAll(sort.getDirections());
-        if (sort.hasAliasedKey()) {
-            clone.markAliasedKey();
-        }
         if (!sort.isLimited()) {
             clone.markUnlimited();
         }

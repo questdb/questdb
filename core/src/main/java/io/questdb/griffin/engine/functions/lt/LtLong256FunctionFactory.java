@@ -32,7 +32,7 @@ import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BinaryFunction;
-import io.questdb.griffin.engine.functions.NegatableBooleanFunction;
+import io.questdb.griffin.engine.functions.ComparisonFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Long256;
 import io.questdb.std.Long256Impl;
@@ -59,7 +59,7 @@ public class LtLong256FunctionFactory implements FunctionFactory {
         return new Func(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class Func extends NegatableBooleanFunction implements BinaryFunction {
+    private static class Func extends ComparisonFunction implements BinaryFunction {
         private final Function left;
         private final Function right;
 
@@ -70,6 +70,31 @@ public class LtLong256FunctionFactory implements FunctionFactory {
 
         @Override
         public boolean getBool(Record rec) {
+            return isComplemented ? !isMatch(rec) : isMatch(rec);
+        }
+
+        @Override
+        public Function getLeft() {
+            return left;
+        }
+
+        @Override
+        public Function getRight() {
+            return right;
+        }
+
+        @Override
+        protected void toComparisonPlan(PlanSink sink) {
+            sink.val(left);
+            if (negated) {
+                sink.val(">=");
+            } else {
+                sink.val('<');
+            }
+            sink.val(right);
+        }
+
+        private boolean isMatch(Record rec) {
             final Long256 lv = left.getLong256A(rec);
             final Long256 rv = right.getLong256B(rec);
 
@@ -86,27 +111,6 @@ public class LtLong256FunctionFactory implements FunctionFactory {
                 return negated == (Long.compareUnsigned(lv.getLong1(), rv.getLong1()) > 0);
             }
             return negated == (Long.compareUnsigned(lv.getLong0(), rv.getLong0()) >= 0);
-        }
-
-        @Override
-        public Function getLeft() {
-            return left;
-        }
-
-        @Override
-        public Function getRight() {
-            return right;
-        }
-
-        @Override
-        public void toPlan(PlanSink sink) {
-            sink.val(left);
-            if (negated) {
-                sink.val(">=");
-            } else {
-                sink.val('<');
-            }
-            sink.val(right);
         }
     }
 }

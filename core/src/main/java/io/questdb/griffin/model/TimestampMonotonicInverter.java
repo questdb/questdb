@@ -56,6 +56,7 @@ public class TimestampMonotonicInverter extends UntypedFunction {
     private final long hiConst;
     private final Interval io = new Interval();
     private final boolean isBetween;
+    private final boolean isNullBoundMatching;
     private final Function loBound;
     private final short loBoundAdjustment;
     private final long loConst;
@@ -70,6 +71,7 @@ public class TimestampMonotonicInverter extends UntypedFunction {
             short hiBoundAdjustment,
             long hiConst,
             boolean isBetween,
+            boolean isNullBoundMatching,
             TimestampDriver timestampDriver
     ) {
         this.head = head;
@@ -80,6 +82,7 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         this.hiBoundAdjustment = hiBoundAdjustment;
         this.hiConst = hiConst;
         this.isBetween = isBetween;
+        this.isNullBoundMatching = isNullBoundMatching;
         this.timestampDriver = timestampDriver;
     }
 
@@ -102,13 +105,15 @@ public class TimestampMonotonicInverter extends UntypedFunction {
      * Appends a single inverted {@code [lo, hi]} pair to {@code out}, or nothing
      * when the predicate matches no rows (a NULL bound, or an empty preimage). The
      * empty case relies on the enclosing {@code INTERSECT_INTERVALS} to reduce the
-     * result to the empty set.
+     * result to the empty set. A NULL bound of a negated comparison matches every
+     * row instead.
      */
     public void evaluate(LongList out) {
         long lo;
         if (loBound != null) {
             lo = resolveBound(loBound);
             if (lo == Numbers.LONG_NULL) {
+                addNullBoundIntervals(out);
                 return;
             }
             if (loBoundAdjustment > 0 && lo == Long.MAX_VALUE) {
@@ -132,6 +137,7 @@ public class TimestampMonotonicInverter extends UntypedFunction {
         if (hiBound != null) {
             hi = resolveBound(hiBound);
             if (hi == Numbers.LONG_NULL) {
+                addNullBoundIntervals(out);
                 return;
             }
             hi += hiBoundAdjustment;
@@ -195,6 +201,12 @@ public class TimestampMonotonicInverter extends UntypedFunction {
     @Override
     public void toPlan(PlanSink sink) {
         sink.val("monotonic_ts_interval");
+    }
+
+    private void addNullBoundIntervals(LongList out) {
+        if (isNullBoundMatching) {
+            out.add(Numbers.LONG_NULL, Long.MAX_VALUE);
+        }
     }
 
     private long resolveBound(Function f) {

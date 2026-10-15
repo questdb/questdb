@@ -85,6 +85,7 @@ class StringAggGroupByFunction extends StrFunction implements UnaryFunction, Gro
 
     @Override
     public void close() {
+        UnaryFunction.super.close();
         Misc.freeObjListAndClear(sinks);
     }
 

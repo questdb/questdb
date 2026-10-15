@@ -30,6 +30,126 @@ import org.junit.Test;
 public class OrderPlanningTest extends AbstractCairoTest {
 
     @Test
+    public void testAliasedKeyOrderThroughComputedProjectionReachesSymbolIndex() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            assertQuery("SELECT s k, x + 1 v FROM t WHERE ts IN '2024-01-01' ORDER BY k, ts LIMIT 2")
+                    .noLeakCheck()
+                    .withPlan("""
+                            SelectedRecord
+                                Limit value: 2 skip-rows-max: 0 take-rows-max: 2
+                                    VirtualRecord
+                                      functions: [s,x+1,ts]
+                                        SortedSymbolIndex
+                                            Index forward scan on: s
+                                              symbolOrder: asc
+                                            Interval forward scan on: t
+                                              intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            k	v
+                            a	3
+                            b	2
+                            """);
+            assertQuery("SELECT s k, x + 1 v FROM t WHERE ts IN '2024-01-01' ORDER BY k DESC")
+                    .noLeakCheck()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [s,x+1]
+                                SortedSymbolIndex
+                                    Index forward scan on: s
+                                      symbolOrder: desc
+                                    Interval forward scan on: t
+                                      intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            k	v
+                            b	2
+                            b	4
+                            a	3
+                            """);
+            assertQuery("SELECT x s, s x, x + 1 v FROM t WHERE ts IN '2024-01-01' ORDER BY x")
+                    .noLeakCheck()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [x,s,x+1]
+                                SortedSymbolIndex
+                                    Index forward scan on: s
+                                      symbolOrder: asc
+                                    Interval forward scan on: t
+                                      intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s	x	v
+                            2	a	3
+                            1	b	2
+                            3	b	4
+                            """);
+            assertQuery("SELECT x s, s x, x + 1 v FROM t WHERE ts IN '2024-01-01' ORDER BY s")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [s]
+                                VirtualRecord
+                                  functions: [x,s,x+1]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            s	x	v
+                            1	b	2
+                            2	a	3
+                            3	b	4
+                            """);
+            assertQuery("SELECT s::STRING k, x + 1 v FROM t WHERE ts IN '2024-01-01' ORDER BY k")
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [k]
+                                VirtualRecord
+                                  functions: [s::string,x+1]
+                                    PageFrame
+                                        Row forward scan
+                                        Interval forward scan on: t
+                                          intervals: [("2024-01-01T00:00:00.000000Z","2024-01-01T23:59:59.999999Z")]
+                            """)
+                    .returns("""
+                            k	v
+                            a	3
+                            b	2
+                            b	4
+                            """);
+        });
+    }
+
+    @Test
+    public void testAliasedTimestampOrderThroughComputedProjectionReachesFilter() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable();
+            assertQuery("SELECT ts k, x + 1 v FROM t WHERE x > 1 ORDER BY k DESC LIMIT 2")
+                    .noLeakCheck()
+                    .timestampDesc("k")
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [ts,x+1]
+                                Async JIT Filter workers: 1
+                                  limit: 2
+                                  filter: 1<x
+                                    PageFrame
+                                        Row backward scan
+                                        Frame backward scan on: t
+                            """)
+                    .returns("""
+                            k	v
+                            2024-01-02T00:00:00.000000Z	5
+                            2024-01-01T02:00:00.000000Z	4
+                            """);
+        });
+    }
+
+    @Test
     public void testDescendingScanThroughProjection() throws Exception {
         assertMemoryLeak(() -> {
             createTable();

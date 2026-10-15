@@ -1484,6 +1484,49 @@ public class GroupByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupBySingleVarcharKeyFromVarcharAggregate() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (sym SYMBOL, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('a', 'apple', '2024-01-01T00:00:01.000000Z'),
+                        ('a', 'żółć-żółć', '2024-01-01T00:00:02.000000Z'),
+                        ('b', 'apple', '2024-01-01T00:00:03.000000Z'),
+                        ('b', 'cherry', '2024-01-01T00:00:04.000000Z'),
+                        ('c', 'żółć-żółć', '2024-01-01T00:00:05.000000Z'),
+                        ('c', 'apple', '2024-01-01T00:00:06.000000Z'),
+                        ('d', NULL, '2024-01-01T00:00:07.000000Z')
+                    """);
+            final String query = "SELECT k, count() c FROM (SELECT sym, %s(v) k FROM t GROUP BY sym) GROUP BY k ORDER BY k";
+            assertQuery(String.format(query, "first")).noLeakCheck().expectSize().returns("""
+                    k\tc
+                    \t1
+                    apple\t2
+                    żółć-żółć\t1
+                    """);
+            assertQuery(String.format(query, "last")).noLeakCheck().expectSize().returns("""
+                    k\tc
+                    \t1
+                    apple\t1
+                    cherry\t1
+                    żółć-żółć\t1
+                    """);
+            assertQuery(String.format(query, "min")).noLeakCheck().expectSize().returns("""
+                    k\tc
+                    \t1
+                    apple\t3
+                    """);
+            assertQuery(String.format(query, "max")).noLeakCheck().expectSize().returns("""
+                    k\tc
+                    \t1
+                    cherry\t1
+                    żółć-żółć\t2
+                    """);
+        });
+    }
+
+    @Test
     public void testGroupByTrivialExpressionKeyBesideUnaryKey() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (a INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

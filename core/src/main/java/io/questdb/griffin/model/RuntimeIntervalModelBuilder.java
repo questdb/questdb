@@ -168,39 +168,11 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersect(long lo, Function hi, short adjustment, int functionPosition) {
-        if (isEmptySet()) {
-            // the model is already an empty set, but this builder owns the incoming function
-            Misc.free(hi);
-            return;
-        }
-
-        try {
-            final boolean isCursor = hi.getType() == ColumnType.CURSOR;
-            reserveEncodedIntervals(1, isCursor ? 1 : 0);
-            IntervalUtils.encodeInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
-            addDynamicFunction(hi, functionPosition, isCursor);
-            intervalApplied = true;
-        } catch (Throwable th) {
-            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, hi));
-        }
+        addDynamicInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.INTERSECT, hi, functionPosition);
     }
 
     public void intersect(Function lo, long hi, short adjustment, int functionPosition) {
-        if (isEmptySet()) {
-            // the model is already an empty set, but this builder owns the incoming function
-            Misc.free(lo);
-            return;
-        }
-
-        try {
-            final boolean isCursor = lo.getType() == ColumnType.CURSOR;
-            reserveEncodedIntervals(1, isCursor ? 1 : 0);
-            IntervalUtils.encodeInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
-            addDynamicFunction(lo, functionPosition, isCursor);
-            intervalApplied = true;
-        } catch (Throwable th) {
-            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, lo));
-        }
+        addDynamicInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.INTERSECT, lo, functionPosition);
     }
 
     public void intersect(long lo, long hi) {
@@ -300,21 +272,7 @@ public class RuntimeIntervalModelBuilder implements Mutable {
     }
 
     public void intersectRuntimeTimestamp(Function function, int functionPosition) {
-        if (isEmptySet()) {
-            // the model is already an empty set, but this builder owns the incoming function
-            Misc.free(function);
-            return;
-        }
-
-        try {
-            final boolean isCursor = function.getType() == ColumnType.CURSOR;
-            reserveEncodedIntervals(1, isCursor ? 1 : 0);
-            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, staticIntervals);
-            addDynamicFunction(function, functionPosition, isCursor);
-            intervalApplied = true;
-        } catch (Throwable th) {
-            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
-        }
+        addDynamicInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.INTERSECT, function, functionPosition);
     }
 
     /**
@@ -766,22 +724,22 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         betweenNegated = isNegated;
     }
 
-    public void subtractEquals(Function function, int functionPosition) {
-        if (isEmptySet()) {
-            // the model is already an empty set, but this builder owns the incoming function
-            Misc.free(function);
-            return;
-        }
+    /**
+     * Subtracts {@code [lo, hi + adjustment]}; a NULL {@code hi} subtracts nothing.
+     */
+    public void subtract(long lo, Function hi, short adjustment, int functionPosition) {
+        addDynamicInterval(lo, 0, adjustment, IntervalDynamicIndicator.IS_HI_DYNAMIC, IntervalOperation.SUBTRACT, hi, functionPosition);
+    }
 
-        try {
-            final boolean isCursor = function.getType() == ColumnType.CURSOR;
-            reserveEncodedIntervals(1, isCursor ? 1 : 0);
-            IntervalUtils.encodeInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.SUBTRACT, staticIntervals);
-            addDynamicFunction(function, functionPosition, isCursor);
-            intervalApplied = true;
-        } catch (Throwable th) {
-            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
-        }
+    /**
+     * Subtracts {@code [lo + adjustment, hi]}; a NULL {@code lo} subtracts nothing.
+     */
+    public void subtract(Function lo, long hi, short adjustment, int functionPosition) {
+        addDynamicInterval(0, hi, adjustment, IntervalDynamicIndicator.IS_LO_DYNAMIC, IntervalOperation.SUBTRACT, lo, functionPosition);
+    }
+
+    public void subtractEquals(Function function, int functionPosition) {
+        addDynamicInterval(0, 0, (short) 0, IntervalDynamicIndicator.IS_LO_HI_DYNAMIC, IntervalOperation.SUBTRACT, function, functionPosition);
     }
 
     public void subtractInterval(long lo, long hi) {
@@ -1024,6 +982,24 @@ public class RuntimeIntervalModelBuilder implements Mutable {
         dynamicRangeList.add(function);
         if (isCursor) {
             cursorFunctionPositions.add(functionPosition);
+        }
+    }
+
+    private void addDynamicInterval(long lo, long hi, short adjustment, short dynamicIndicator, short operation, Function function, int functionPosition) {
+        if (isEmptySet()) {
+            // the model is already an empty set, but this builder owns the incoming function
+            Misc.free(function);
+            return;
+        }
+
+        try {
+            final boolean isCursor = function.getType() == ColumnType.CURSOR;
+            reserveEncodedIntervals(1, isCursor ? 1 : 0);
+            IntervalUtils.encodeInterval(lo, hi, adjustment, dynamicIndicator, operation, staticIntervals);
+            addDynamicFunction(function, functionPosition, isCursor);
+            intervalApplied = true;
+        } catch (Throwable th) {
+            CairoException.rethrowCleanupFailure(Misc.freeBestEffort(th, function));
         }
     }
 

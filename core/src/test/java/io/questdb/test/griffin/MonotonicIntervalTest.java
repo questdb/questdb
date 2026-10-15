@@ -184,6 +184,38 @@ public class MonotonicIntervalTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNegatedRuntimeBoundsKeepIntervalsAndNullBoundMatchesEveryRow() throws Exception {
+        for (boolean nanos : new boolean[]{false, true}) {
+            assertMemoryLeak(() -> {
+                createRows(nanos);
+                final long point = nanos ? 1_577_923_200_000_000_000L : 1_577_923_200_000_000L;
+                final String[] operators = {"<", "<=", ">", ">="};
+                final long[] values = {point, point - 1, Numbers.LONG_NULL, Long.MAX_VALUE, point};
+                final String[] below = {"IF:1 2 3 4", "IF:1 2 3 4", "IF:1 2 3 4 5 6 7 8 9", "IF:1 2 3 4 5 6 7 8 9", "IF:1 2 3 4"};
+                final String[] above = {"IF:5 6 7 8 9", "IF:5 6 7 8 9", "IF:1 2 3 4 5 6 7 8 9", "IF:", "IF:5 6 7 8 9"};
+                for (int o = 0; o < operators.length; o++) {
+                    final boolean isLess = operators[o].charAt(0) == '<';
+                    for (int reversed = 0; reversed < 2; reversed++) {
+                        setTimestamp(point, nanos);
+                        final String operand = "dateadd('h',-1,timestamp_floor('d',ts))";
+                        final String query = "SELECT ts,id FROM lp_monotonic WHERE NOT ("
+                                + (reversed == 1 ? "$1" + operators[o] + operand : operand + operators[o] + "$1") + ")";
+                        final String[] expected = isLess == (reversed == 0) ? above : below;
+                        try (RecordCursorFactory factory = select(query)) {
+                            for (int v = 0; v < values.length; v++) {
+                                setTimestamp(values[v], nanos);
+                                assertMonotonic(factory, nanos, expected[v]);
+                            }
+                        }
+                    }
+                }
+                bindVariableService.clear();
+                execute("DROP TABLE lp_monotonic");
+            });
+        }
+    }
+
+    @Test
     public void testRuntimeBoundsRebindAfterCompilerReuseAndClose() throws Exception {
         for (boolean nanos : new boolean[]{false, true}) {
             assertMemoryLeak(() -> {

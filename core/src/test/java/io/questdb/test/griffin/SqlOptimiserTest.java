@@ -289,8 +289,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [first(ts)]
+                            Timestamp Endpoint
+                              value: first(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
@@ -323,8 +323,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [last(ts)]
+                            Timestamp Endpoint
+                              value: last(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
@@ -357,8 +357,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [max(ts)]
+                            Timestamp Endpoint
+                              value: max(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
@@ -389,8 +389,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [min(ts)]
+                            Timestamp Endpoint
+                              value: min(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
@@ -578,8 +578,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [first(ts)]
+                            Timestamp Endpoint
+                              value: first(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
@@ -629,8 +629,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             String planTemplate = """
                     VirtualRecord
                       functions: [dateadd('m',-15,%1$s)]
-                        GroupBy vectorized: false
-                          values: [%1$s(ts)]
+                        Timestamp Endpoint
+                          value: %1$s(ts)
                             Limit value: 1 skip-rows: 0 take-rows: 0
                                 PageFrame
                                     Row %2$s scan
@@ -948,7 +948,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                 assertQuery(query)
                         .noLeakCheck()
                         .assertsPlan("SelectedRecord\n" +
-                                "    Hash Join\n" +
+                                "    Hash Join Light\n" +
                                 "      condition: y2.LAST=y1.ts\n" +
                                 "        Hash #JOIN_TYPE Outer Join Light\n".replaceAll("#JOIN_TYPE", Character.toUpperCase(joinType.charAt(0)) + joinType.substring(1)) +
                                 "          condition: y1.x=y.x\n" +
@@ -960,8 +960,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                 "                    Row forward scan\n" +
                                 "                    Frame forward scan on: y1\n" +
                                 "        Hash\n" +
-                                "            GroupBy vectorized: false\n" +
-                                "              values: [last(ts)]\n" +
+                                "            Timestamp Endpoint\n" +
+                                "              value: last(ts)\n" +
                                 "                Async Top K lo: 1 workers: 1\n" +
                                 "                  filter: null\n" +
                                 "                  keys: [ts desc]\n" +
@@ -1088,8 +1088,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [last(ts)]
+                            Timestamp Endpoint
+                              value: last(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
@@ -1153,8 +1153,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [max(ts)]
+                            Timestamp Endpoint
+                              value: max(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
@@ -1216,8 +1216,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [min(ts)]
+                            Timestamp Endpoint
+                              value: min(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
@@ -1348,8 +1348,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [first(ts)]
+                            Timestamp Endpoint
+                              value: first(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
@@ -1382,8 +1382,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [last(ts)]
+                            Timestamp Endpoint
+                              value: last(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
@@ -1416,8 +1416,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [max(ts)]
+                            Timestamp Endpoint
+                              value: max(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
@@ -1448,8 +1448,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [min(ts)]
+                            Timestamp Endpoint
+                              value: min(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
@@ -1523,26 +1523,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Union
                                 Union
                                     Union
-                                        GroupBy vectorized: false
-                                          values: [first(ts)]
+                                        Timestamp Endpoint
+                                          value: first(ts)
                                             Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: y
-                                        GroupBy vectorized: false
-                                          values: [last(ts)]
+                                        Timestamp Endpoint
+                                          value: last(ts)
                                             Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    GroupBy vectorized: false
-                                      values: [min(ts)]
+                                    Timestamp Endpoint
+                                      value: min(ts)
                                         Limit value: 1 skip-rows: 0 take-rows: 0
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                GroupBy vectorized: false
-                                  values: [max(ts)]
+                                Timestamp Endpoint
+                                  value: max(ts)
                                     Limit value: 1 skip-rows: 0 take-rows: 0
                                         PageFrame
                                             Row backward scan
@@ -3341,10 +3341,10 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsLogicalPlan("""
-                            Sort
-                              keys: [ts, s]
-                              Project
-                                columns: [s, ts]
+                            Project
+                              columns: [s, ts]
+                              Sort
+                                keys: [ts, s]
                                 Limit
                                   lo: 10
                                   Sort
@@ -3549,8 +3549,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [first(ts)]
+                            Timestamp Endpoint
+                              value: first(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
@@ -3666,7 +3666,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                     .noLeakCheck()
                     .assertsPlan("""
                             SelectedRecord
-                                Hash Join
+                                Hash Join Light
                                   condition: y2.LAST=y1.ts
                                     Hash Left Outer Join Light
                                       condition: y1.x=y.x
@@ -3678,8 +3678,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                                 Row forward scan
                                                 Frame forward scan on: y1
                                     Hash
-                                        GroupBy vectorized: false
-                                          values: [last(ts)]
+                                        Timestamp Endpoint
+                                          value: last(ts)
                                             Async Top K lo: 1 workers: 1
                                               filter: null
                                               keys: [ts desc]
@@ -3715,8 +3715,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [last(ts)]
+                            Timestamp Endpoint
+                              value: last(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
@@ -3781,8 +3781,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [max(ts)]
+                            Timestamp Endpoint
+                              value: max(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
@@ -3845,8 +3845,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [min(ts)]
+                            Timestamp Endpoint
+                              value: min(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
@@ -3909,8 +3909,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [first(ts)]
+                            Timestamp Endpoint
+                              value: first(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
@@ -3943,8 +3943,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [last(ts)]
+                            Timestamp Endpoint
+                              value: last(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
@@ -3977,8 +3977,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [max(ts)]
+                            Timestamp Endpoint
+                              value: max(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
@@ -4009,8 +4009,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [min(ts)]
+                            Timestamp Endpoint
+                              value: min(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
@@ -4084,26 +4084,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Union
                                 Union
                                     Union
-                                        GroupBy vectorized: false
-                                          values: [first(ts)]
+                                        Timestamp Endpoint
+                                          value: first(ts)
                                             Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: y
-                                        GroupBy vectorized: false
-                                          values: [last(ts)]
+                                        Timestamp Endpoint
+                                          value: last(ts)
                                             Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    GroupBy vectorized: false
-                                      values: [min(ts)]
+                                    Timestamp Endpoint
+                                      value: min(ts)
                                         Limit value: 1 skip-rows: 0 take-rows: 0
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                GroupBy vectorized: false
-                                  values: [max(ts)]
+                                Timestamp Endpoint
+                                  value: max(ts)
                                     Limit value: 1 skip-rows: 0 take-rows: 0
                                         PageFrame
                                             Row backward scan
@@ -4300,26 +4300,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Union
                                 Union
                                     Union
-                                        GroupBy vectorized: false
-                                          values: [first(ts)]
+                                        Timestamp Endpoint
+                                          value: first(ts)
                                             Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: y
-                                        GroupBy vectorized: false
-                                          values: [last(ts)]
+                                        Timestamp Endpoint
+                                          value: last(ts)
                                             Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    GroupBy vectorized: false
-                                      values: [min(ts)]
+                                    Timestamp Endpoint
+                                      value: min(ts)
                                         Limit value: 1 skip-rows: 0 take-rows: 0
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                GroupBy vectorized: false
-                                  values: [max(ts)]
+                                Timestamp Endpoint
+                                  value: max(ts)
                                     Limit value: 1 skip-rows: 0 take-rows: 0
                                         PageFrame
                                             Row backward scan
@@ -4485,8 +4485,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [first(ts)]
+                            Timestamp Endpoint
+                              value: first(ts)
                                 Async JIT Filter workers: 1
                                   limit: 1
                                   filter: x=3
@@ -4525,8 +4525,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [last(ts)]
+                            Timestamp Endpoint
+                              value: last(ts)
                                 SelectedRecord
                                     Async JIT Filter workers: 1
                                       limit: 1
@@ -4566,8 +4566,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [max(ts)]
+                            Timestamp Endpoint
+                              value: max(ts)
                                 SelectedRecord
                                     Async JIT Filter workers: 1
                                       limit: 1
@@ -4603,8 +4603,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [min(ts)]
+                            Timestamp Endpoint
+                              value: min(ts)
                                 Async JIT Filter workers: 1
                                   limit: 1
                                   filter: x=3
@@ -4637,8 +4637,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [first(ts)]
+                            Timestamp Endpoint
+                              value: first(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
@@ -4671,8 +4671,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [last(ts)]
+                            Timestamp Endpoint
+                              value: last(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
@@ -4705,8 +4705,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [max(ts)]
+                            Timestamp Endpoint
+                              value: max(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row backward scan
@@ -4737,8 +4737,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [min(ts)]
+                            Timestamp Endpoint
+                              value: min(ts)
                                 Limit value: 1 skip-rows: 0 take-rows: 0
                                     PageFrame
                                         Row forward scan
@@ -7799,26 +7799,26 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                             Union
                                 Union
                                     Union
-                                        GroupBy vectorized: false
-                                          values: [first(ts)]
+                                        Timestamp Endpoint
+                                          value: first(ts)
                                             Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row forward scan
                                                     Frame forward scan on: y
-                                        GroupBy vectorized: false
-                                          values: [last(ts)]
+                                        Timestamp Endpoint
+                                          value: last(ts)
                                             Limit value: 1 skip-rows: 0 take-rows: 0
                                                 PageFrame
                                                     Row backward scan
                                                     Frame backward scan on: y
-                                    GroupBy vectorized: false
-                                      values: [min(ts)]
+                                    Timestamp Endpoint
+                                      value: min(ts)
                                         Limit value: 1 skip-rows: 0 take-rows: 0
                                             PageFrame
                                                 Row forward scan
                                                 Frame forward scan on: y
-                                GroupBy vectorized: false
-                                  values: [max(ts)]
+                                Timestamp Endpoint
+                                  value: max(ts)
                                     Limit value: 1 skip-rows: 0 take-rows: 0
                                         PageFrame
                                             Row backward scan
@@ -8077,8 +8077,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [first(ts)]
+                            Timestamp Endpoint
+                              value: first(ts)
                                 Async JIT Filter workers: 1
                                   limit: 1
                                   filter: x=3
@@ -8117,8 +8117,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [last(ts)]
+                            Timestamp Endpoint
+                              value: last(ts)
                                 SelectedRecord
                                     Async JIT Filter workers: 1
                                       limit: 1
@@ -8158,8 +8158,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [max(ts)]
+                            Timestamp Endpoint
+                              value: max(ts)
                                 SelectedRecord
                                     Async JIT Filter workers: 1
                                       limit: 1
@@ -8195,8 +8195,8 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
             assertQuery(query)
                     .noLeakCheck()
                     .assertsPlan("""
-                            GroupBy vectorized: false
-                              values: [min(ts)]
+                            Timestamp Endpoint
+                              value: min(ts)
                                 Async JIT Filter workers: 1
                                   limit: 1
                                   filter: x=3

@@ -70,21 +70,21 @@ public class TimestampEndpointTest extends AbstractCairoTest {
                         "SELECT * FROM (SELECT " + call + " FROM lp_endpoint_empty)"
                 };
                 for (String sql : emptyQueries) {
-                    assertQuery(sql).noLeakCheck().noRandomAccess().expectSize()
-                            .withPlanContaining("GroupBy vectorized: false")
+                    assertQuery(sql).noLeakCheck().expectSize()
+                            .withPlanContaining("Timestamp Endpoint")
                             .returns("endpoint\n\n");
                 }
-                assertQuery("SELECT " + function + "(ts) FROM lp_endpoint_empty").noLeakCheck().noRandomAccess().expectSize()
+                assertQuery("SELECT " + function + "(ts) FROM lp_endpoint_empty").noLeakCheck().expectSize()
                         .returns(function + "\n\n");
                 assertQuery("SELECT " + call + " FROM lp_endpoint WHERE x<0 ORDER BY endpoint DESC").noLeakCheck().timestampDesc("endpoint").expectSize()
-                        .withPlanContaining("GroupBy vectorized: false")
+                        .withPlanContaining("Timestamp Endpoint")
                         .returns("endpoint\n\n");
                 final String scan = isBackward ? "Frame backward scan on: lp_endpoint" : "Frame forward scan on: lp_endpoint";
-                assertQuery("SELECT " + call + " FROM lp_endpoint WHERE x>=2 AND x<4").noLeakCheck().noRandomAccess().expectSize()
-                        .withPlanContaining("GroupBy vectorized: false", scan)
+                assertQuery("SELECT " + call + " FROM lp_endpoint WHERE x>=2 AND x<4").noLeakCheck().expectSize()
+                        .withPlanContaining("Timestamp Endpoint", scan)
                         .returns(isBackward ? "endpoint\n2024-01-03T00:00:00.000000Z\n" : "endpoint\n2024-01-02T00:00:00.000000Z\n");
                 assertQuery("SELECT " + call + " FROM lp_endpoint WHERE ts>='2024-01-02' ORDER BY endpoint").noLeakCheck().timestamp("endpoint").expectSize()
-                        .withPlanContaining("GroupBy vectorized: false", "Limit value: 1")
+                        .withPlanContaining("Timestamp Endpoint", "Limit value: 1")
                         .returns(isBackward ? "endpoint\n2024-01-04T00:00:00.000000Z\n" : "endpoint\n2024-01-02T00:00:00.000000Z\n");
             }
         });
@@ -103,8 +103,8 @@ public class TimestampEndpointTest extends AbstractCairoTest {
                     final String endpoint = "SELECT " + function + "(ts) r FROM t";
                     final String empty = endpoint + " WHERE l > 1000";
 
-                    assertQuery(endpoint).noLeakCheck().noRandomAccess().expectSize().returns("r\n" + value);
-                    assertQuery(empty).noLeakCheck().noRandomAccess().expectSize().returns("r\n\n");
+                    assertQuery(endpoint).noLeakCheck().expectSize().returns("r\n" + value);
+                    assertQuery(empty).noLeakCheck().expectSize().returns("r\n\n");
 
                     execute("CREATE TABLE w AS (" + endpoint + ")");
                     assertQuery("w").noLeakCheck().expectSize().returns("r\n" + value);
@@ -138,6 +138,125 @@ public class TimestampEndpointTest extends AbstractCairoTest {
                 }
                 execute("DROP TABLE t");
             }
+        });
+    }
+
+    @Test
+    public void testEndpointSupportsRandomAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00'), (2, '2024-01-01T05:00:00'), (3, '2024-01-02T01:00:00')");
+            assertQuery("SELECT min(ts) r, 42 k FROM t").noLeakCheck().expectSize()
+                    .returns("""
+                            r	k
+                            2024-01-01T00:00:00.000000Z	42
+                            """);
+            assertQuery("SELECT max(ts) r FROM t WHERE l < 3").noLeakCheck().expectSize()
+                    .withPlan("""
+                            Timestamp Endpoint
+                              value: max(ts)
+                                SelectedRecord
+                                    Async JIT Filter workers: 1
+                                      limit: 1
+                                      filter: l<3
+                                        PageFrame
+                                            Row backward scan
+                                            Frame backward scan on: t
+                            """)
+                    .returns("""
+                            r
+                            2024-01-01T05:00:00.000000Z
+                            """);
+            assertQuery("SELECT last(ts) r FROM t WHERE l > 1000").noLeakCheck().expectSize()
+                    .returns("""
+                            r
+
+                            """);
+            assertQuery("SELECT t.l, x.r FROM t JOIN (SELECT max(ts) r FROM t) x ON t.ts = x.r")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlan("""
+                            SelectedRecord
+                                Hash Join Light
+                                  condition: x.r=t.ts
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                                    Hash
+                                        Timestamp Endpoint
+                                          value: max(ts)
+                                            Async Top K lo: 1 workers: 1
+                                              filter: null
+                                              keys: [ts desc]
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                            """)
+                    .returns("""
+                            l	r
+                            3	2024-01-02T01:00:00.000000Z
+                            """);
+            assertQuery("SELECT t.l, x.r FROM t JOIN (SELECT first(ts) r FROM t WHERE l >= 2) x ON t.ts = x.r")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Join Light", "Timestamp Endpoint")
+                    .returns("""
+                            l	r
+                            2	2024-01-01T05:00:00.000000Z
+                            """);
+            assertQuery("SELECT t.l, x.r FROM t JOIN (SELECT min(ts) r FROM t WHERE l > 1000) x ON t.ts = x.r")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Join Light", "Timestamp Endpoint")
+                    .returns("l\tr\n");
+            assertQuery("SELECT t.l, x.r FROM t LEFT JOIN (SELECT last(ts) r FROM t WHERE l > 1000) x ON t.ts = x.r")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Hash Left Outer Join Light", "Timestamp Endpoint")
+                    .returns("""
+                            l	r
+                            1\t
+                            2\t
+                            3\t
+                            """);
+        });
+    }
+
+    @Test
+    public void testDescendingEndpointServesTimeSeriesJoins() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00'), (2, '2024-01-01T05:00:00'), (3, '2024-01-02T01:00:00')");
+            assertQuery("SELECT t.l, x.r, x.k FROM t ASOF JOIN ((SELECT max(ts) r, 42 k FROM t) TIMESTAMP(r)) x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            l\tr\tk
+                            1\t\tnull
+                            2\t\tnull
+                            3\t2024-01-02T01:00:00.000000Z\t42
+                            """);
+            assertQuery("SELECT t.l, x.r FROM t ASOF JOIN ((SELECT last(ts) r FROM t WHERE l < 3) TIMESTAMP(r)) x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            l\tr
+                            1\t
+                            2\t2024-01-01T05:00:00.000000Z
+                            3\t2024-01-01T05:00:00.000000Z
+                            """);
+            assertQuery("SELECT t.l, x.r FROM t LT JOIN ((SELECT last(ts) r FROM t WHERE l < 3) TIMESTAMP(r)) x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            l\tr
+                            1\t
+                            2\t
+                            3\t2024-01-01T05:00:00.000000Z
+                            """);
         });
     }
 

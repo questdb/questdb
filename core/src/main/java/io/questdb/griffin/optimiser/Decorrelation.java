@@ -36,30 +36,29 @@ import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.CursorExpression;
-import io.questdb.griffin.plan.logical.DistinctPlan;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
-import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
-import io.questdb.griffin.plan.logical.GroupingPlan;
+import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
+import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
-import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.ProjectPlan;
+import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.griffin.plan.logical.SetOperationPlan;
 import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
+import io.questdb.griffin.plan.logical.UnaryPlan;
 import io.questdb.griffin.plan.logical.UniqueColumnNames;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
-import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
 import io.questdb.std.ObjList;
@@ -73,7 +72,10 @@ import static io.questdb.griffin.optimiser.ScalarCompensation.*;
  * into an ordinary step. Runs before any other pass.
  * <p>
  * The body is processed block by block from its leaves; a block is a chain of single-input nodes with at
- * most one projection, over a source. An outer column a block reads is satisfied, in order of preference,
+ * most one projection, over a source. Below a filter the chain continues only through the nodes that commute with
+ * it, so a node the filter's WHERE equalities do not reach starts a block of its own, as in the equivalent join;
+ * {@link CorrelatedChainRewriter} holds the rule of each kind of chain node. An outer column a block reads is
+ * satisfied, in order of preference,
  * by a column a deeper block exposes for it, by an inner column its WHERE equates it to (when the block is
  * the body itself and reads no aggregate, or when every outer column of the block is equated), or by a
  * decorrelation domain: the distinct values of the outer columns, read from a copy of the master input or
@@ -91,6 +93,9 @@ import static io.questdb.griffin.optimiser.ScalarCompensation.*;
  * Any other keyless aggregate restores its empty values with a LEFT join from its own domain.
  */
 final class Decorrelation implements OptimiserPass {
+    private static final String HORIZON_SLAVE_CORRELATION = "outer column reference in a HORIZON JOIN slave is not supported in a LATERAL sub-query";
+    private static final String SOURCE_CORRELATION = "outer column reference in this source is not supported in a LATERAL sub-query";
+    private static final String STANDALONE_UNNEST_CORRELATION = "outer column reference in UNNEST without a table before it is not supported in a LATERAL sub-query";
     private static final ExpressionVisitor NON_NULLABLE_OUTER_COLUMNS = expression -> expression instanceof OuterColumnExpression outer
             && (ColumnType.isArray(outer.getDataType()) || ColumnType.isGeoHash(outer.getDataType()) || ColumnType.isCursor(outer.getDataType()))
             ? TreeWalk.STOP : TreeWalk.CONTINUE;
@@ -205,13 +210,9 @@ final class Decorrelation implements OptimiserPass {
         return expression.walk(NON_NULLABLE_OUTER_COLUMNS);
     }
 
-    private static boolean isChainNode(LogicalPlan node, boolean hasProject) {
-        return switch (node) {
-            case LimitPlan _, SortPlan _, DistinctPlan _, WindowPlan _, GroupingPlan _, FillPlan _, FilterPlan _,
-                 LatestByPlan _ -> true;
-            case ProjectPlan _ -> !hasProject;
-            default -> false;
-        };
+    private static boolean isChainNode(LogicalPlan node, boolean hasProject, boolean hasFilter) {
+        return node instanceof UnaryPlan unary && !(hasProject && node instanceof ProjectPlan)
+                && (!hasFilter || CorrelatedChainRewriter.isCommutingWithFilter(unary));
     }
 
     private static boolean isLiftable(BoundExpression expression) {
@@ -311,14 +312,17 @@ final class Decorrelation implements OptimiserPass {
     }
 
     /**
-     * Rewrites one block of the body: the chain from {@code top} down to the block's source.
+     * Rewrites one block of the body: the chain from {@code top} down to the block's source. Below a filter, the
+     * chain continues only through the nodes that commute with it.
      */
     private LogicalPlan decorrelateBlock(LogicalPlan top, boolean isBodyTop, int base) throws SqlException {
         final int chainBase = ctx.chain.size();
         LogicalPlan node = top;
         boolean hasProject = false;
-        while (isChainNode(node, hasProject)) {
+        boolean hasFilter = false;
+        while (isChainNode(node, hasProject, hasFilter)) {
             hasProject |= node instanceof ProjectPlan;
+            hasFilter |= node instanceof FilterPlan;
             ctx.chain.add(node);
             node = node.inputAt(0);
         }
@@ -423,6 +427,9 @@ final class Decorrelation implements OptimiserPass {
                 final int lastMasterNulling = LogicalPlans.lastMasterNullingStep(join);
                 for (int i = 0, n = join.getInputs().size(); i < n; i++) {
                     final JoinInput input = join.getInputs().getQuick(i);
+                    if (input.getUnnest() != null && input.getUnnest().isStandalone() && readsMasterOuterColumn(input.getUnnest().getExpressions())) {
+                        throw SqlException.$(input.getPosition(), STANDALONE_UNNEST_CORRELATION);
+                    }
                     if (input.getInput() != null && hasMasterOuterColumn(input.getInput())) {
                         final int inputBase = ctx.mappedOuterIds.size();
                         final ProjectPlan driven = i > 0 && consumer != null && LogicalPlans.orderedSteps(join).indexOf(input) > lastMasterNulling
@@ -463,13 +470,20 @@ final class Decorrelation implements OptimiserPass {
                 return windowJoin;
             }
             case HorizonJoinPlan horizon -> {
+                final ObjList<HorizonJoinSlave> slaves = horizon.getSlaves();
+                for (int i = 0, n = slaves.size(); i < n; i++) {
+                    if (hasMasterOuterColumn(slaves.getQuick(i).getInput())) {
+                        throw SqlException.$(slaves.getQuick(i).getPosition(), HORIZON_SLAVE_CORRELATION);
+                    }
+                }
                 horizon.replaceInput(0, decorrelateBlock(horizon.getMaster(), false, base));
                 ctx.realign(horizon);
                 return horizon;
             }
-            default -> {
-                return decorrelateBlock(source, false, base);
+            case UnaryPlan block -> {
+                return decorrelateBlock(block, false, base);
             }
+            case ScanPlan _, FunctionSourcePlan _ -> throw SqlException.$(source.getPosition(), SOURCE_CORRELATION);
         }
     }
 
@@ -827,6 +841,15 @@ final class Decorrelation implements OptimiserPass {
         final CharacterStoreEntry entry = ctx.characterStore.newEntry();
         entry.put("__qdb_lifted_").put(ctx.carrierSequence++).put('_').put(name);
         return entry.toImmutable();
+    }
+
+    private boolean readsMasterOuterColumn(ObjList<BoundExpression> expressions) {
+        for (int i = 0, n = expressions.size(); i < n; i++) {
+            if (ctx.readsAnyOuter(expressions.getQuick(i), ctx.masterOuterIds)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**

@@ -11878,6 +11878,25 @@ create table tab as (
     }
 
     @Test
+    public void testUnexpectedErrorWithoutMessage() throws Exception {
+        final String[] queries = {
+                "SELECT * FROM long_sequence(1) WHERE npe()",
+                "SELECT npe() FROM long_sequence(1)",
+                "CREATE TABLE npe_tab AS (SELECT * FROM long_sequence(1) WHERE npe())"
+        };
+        assertWithPgServer(CONN_AWARE_ALL, (connection, _, _, _) -> {
+            for (String query : queries) {
+                try (Statement statement = connection.createStatement()) {
+                    statement.execute(query);
+                    Assert.fail(query);
+                } catch (PSQLException e) {
+                    TestUtils.assertContains(e.getMessage(), "ERROR: java.lang.NullPointerException");
+                }
+            }
+        });
+    }
+
+    @Test
     public void testUnnamedPortalCursorAbandon() throws Exception {
         // Tests that abandoning a suspended unnamed portal cursor by starting a new
         // query properly frees resources without leaking.
@@ -12617,7 +12636,7 @@ create table tab as (
     @Test
     @Ignore("""
             Legacy server's error message: 'bind variable at 18 is defined as unknown and cannot accept STRING'
-            Modern server's error message: 'Internal error. Exception type: UnsupportedOperationException'
+            Modern server's error message: 'java.lang.UnsupportedOperationException'
             thrown from ShortFunction.getByte()""")
     public void testVarargBindVariables() throws Exception {
         skipOnWalRun();

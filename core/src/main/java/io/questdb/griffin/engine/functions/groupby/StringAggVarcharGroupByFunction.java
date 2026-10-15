@@ -79,6 +79,7 @@ class StringAggVarcharGroupByFunction extends VarcharFunction implements UnaryFu
 
     @Override
     public void close() {
+        UnaryFunction.super.close();
         Misc.freeObjListAndClear(sinks);
     }
 

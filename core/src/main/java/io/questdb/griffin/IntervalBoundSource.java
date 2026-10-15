@@ -57,8 +57,11 @@ public interface IntervalBoundSource {
      */
     int monotonicColumnId(BoundExpression operand, Function head) throws SqlException;
 
+    /**
+     * @param isNullBoundMatching whether a NULL runtime bound matches every row, as it does for a negated comparison
+     */
     Function newMonotonicInverter(Function head, Function lo, short loAdjustment, long loValue, Function hi, short hiAdjustment,
-                                  long hiValue, boolean isBetween, TimestampDriver timestampDriver);
+                                  long hiValue, boolean isBetween, boolean isNullBoundMatching, TimestampDriver timestampDriver);
 
     /**
      * Hands a sub-query bound the extraction declined to the residual, which adopts it; returns what is left to free.

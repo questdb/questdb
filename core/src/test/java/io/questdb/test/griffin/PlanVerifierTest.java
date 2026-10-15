@@ -40,6 +40,7 @@ import io.questdb.griffin.plan.logical.FunctionSourcePlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinKind;
 import io.questdb.griffin.plan.logical.JoinPlan;
+import io.questdb.griffin.plan.logical.LatestByPlan;
 import io.questdb.griffin.plan.logical.LimitPlan;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
@@ -667,6 +668,33 @@ public class PlanVerifierTest extends AbstractCairoTest {
         sort.replaceInput(0, filter);
         Assert.assertEquals(-1, sort.getOutput().getTimestampIndex());
         verifier.verify(sort, PASS);
+    }
+
+    @Test
+    public void testRowIdReadOfInputWithoutRandomAccess() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE ra_a (k INT, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE ra_b (k INT, x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            final String union = "(SELECT k, x, ts FROM ra_a UNION ALL SELECT k, x, ts FROM ra_b)";
+            assertAlgorithmContradicts("SELECT k, x FROM " + union + " ORDER BY x", SortPlan.class, sort -> {
+                Assert.assertEquals(SortPlan.Algorithm.MATERIALIZED, sort.getAlgorithm());
+                sort.setAlgorithm(SortPlan.Algorithm.LIGHT);
+            }, PlanVerifier.INPUT_RANDOM_ACCESS);
+            assertAlgorithmContradicts("SELECT a.x, u.x FROM ra_a a JOIN " + union + " u ON a.k = u.k", JoinPlan.class, join -> {
+                final JoinInput step = join.getOrderedInputs().getQuick(1);
+                Assert.assertEquals(JoinInput.Algorithm.HASH, step.getAlgorithm());
+                step.setAlgorithm(JoinInput.Algorithm.LIGHT_HASH);
+            }, PlanVerifier.INPUT_RANDOM_ACCESS);
+            assertAlgorithmContradicts("SELECT x, sum(x) OVER (ORDER BY k) s FROM " + union, WindowPlan.class, window -> {
+                Assert.assertEquals(WindowPlan.Algorithm.CACHED, window.getAlgorithm());
+                window.setAlgorithm(WindowPlan.Algorithm.CACHED_LIGHT);
+            }, PlanVerifier.INPUT_RANDOM_ACCESS);
+            assertAlgorithmContradicts("SELECT ts, k, x FROM (SELECT a.ts, a.k, b.x FROM ra_a a CROSS JOIN ra_b b) LATEST ON ts PARTITION BY k",
+                    LatestByPlan.class, latest -> {
+                Assert.assertEquals(LatestByPlan.Algorithm.MATERIALIZED, latest.getAlgorithm());
+                latest.setAlgorithm(LatestByPlan.Algorithm.LIGHT);
+            }, PlanVerifier.INPUT_RANDOM_ACCESS);
+        });
     }
 
     @Test

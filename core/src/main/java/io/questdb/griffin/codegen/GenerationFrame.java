@@ -35,12 +35,14 @@ import io.questdb.cairo.ListColumnFilter;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.RecordCursorFactory;
+import io.questdb.griffin.engine.table.MasterSuffixLimitFunction;
 import io.questdb.griffin.engine.window.WindowFunction;
 import io.questdb.griffin.engine.window.WindowMapSpec;
 import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
+import io.questdb.griffin.plan.logical.ScanPlan;
 import io.questdb.std.BitSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
@@ -95,6 +97,15 @@ final class GenerationFrame implements Closeable, Mutable {
     private final ObjList<TableColumnMetadata> projectionSlotColumns = new ObjList<>();
     Function limitHi;
     Function limitLo;
+    /**
+     * The LIMIT count the parallel filter of {@link #masterSuffixScan} applies, which the LIMIT over the scan's join
+     * sets.
+     */
+    MasterSuffixLimitFunction masterSuffixLimit;
+    /**
+     * The master scan of the join a MASTER_SUFFIX LIMIT is generated over, matched by its output schema.
+     */
+    ScanPlan masterSuffixScan;
     RecordCursorFactory sharedHeadFactory;
     int sharedHeadId;
     LogicalPlan sharedHeadTarget;
@@ -130,6 +141,8 @@ final class GenerationFrame implements Closeable, Mutable {
         joinKeys.clear();
         limitHi = null;
         limitLo = null;
+        masterSuffixLimit = null;
+        masterSuffixScan = null;
         expressions.clear();
         schema.clear();
         columnReferenceCounts.clear();

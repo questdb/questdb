@@ -730,6 +730,28 @@ public class HashJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testHashJoinVarcharAggregateKey() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
+        assertMemoryLeak(() -> {
+            createVarcharAggregateKeyTable();
+            assertVarcharAggregateKeyJoins("t");
+        });
+    }
+
+    @Test
+    public void testHashJoinVarcharAggregateKeyWithPrunedWindowColumn() throws Exception {
+        setProperty(PropertyKey.CAIRO_SQL_UNORDERED_MAP_MAX_ENTRY_SIZE, 32);
+        assertMemoryLeak(() -> {
+            createVarcharAggregateKeyTable();
+            execute("CREATE VIEW vw AS (SELECT sym, i, v, ts, row_number() OVER (PARTITION BY sym ORDER BY ts) rn FROM t)");
+            assertQuery("SELECT b.sym, c.i FROM (SELECT sym, first(v) k FROM t GROUP BY sym) b JOIN vw c ON b.k = c.v")
+                    .noLeakCheck()
+                    .assertsPlanContaining("Hash Join Light");
+            assertVarcharAggregateKeyJoins("vw");
+        });
+    }
+
+    @Test
     public void testHashLeftJoinSymbolAndStringKeyIndexCollision() throws Exception {
         assertMemoryLeak(() -> {
             createOrdersAndFills("STRING");
@@ -1144,6 +1166,48 @@ public class HashJoinTest extends AbstractCairoTest {
                         """);
     }
 
+    private void assertVarcharAggregateKeyJoin(String aggregate, String slave, String expected) throws Exception {
+        final String query = "SELECT b.sym, c.i FROM (SELECT sym, " + aggregate + "(v) k FROM t GROUP BY sym) b %s " + slave + " c ON b.k = c.v ORDER BY b.sym, c.i";
+        assertLightAndFullFatJoin(String.format(query, "JOIN"), expected, null);
+        assertLightAndFullFatJoin(String.format(query, "LEFT JOIN"), expected, null);
+    }
+
+    private void assertVarcharAggregateKeyJoins(String slave) throws Exception {
+        assertVarcharAggregateKeyJoin("first", slave, """
+                sym\ti
+                a\t1
+                a\t6
+                b\t2
+                b\t4
+                c\t3
+                c\t7
+                """);
+        assertVarcharAggregateKeyJoin("last", slave, """
+                sym\ti
+                a\t3
+                a\t7
+                b\t1
+                b\t6
+                c\t9
+                """);
+        assertVarcharAggregateKeyJoin("min", slave, """
+                sym\ti
+                a\t1
+                a\t6
+                b\t1
+                b\t6
+                c\t3
+                c\t7
+                """);
+        assertVarcharAggregateKeyJoin("max", slave, """
+                sym\ti
+                a\t3
+                a\t7
+                b\t5
+                c\t8
+                """);
+    }
+
     private void createBook() throws Exception {
         execute("CREATE TABLE book (ts TIMESTAMP, sym SYMBOL, side SYMBOL, side_str STRING, qty LONG) TIMESTAMP(ts) PARTITION BY DAY");
         execute("""
@@ -1180,5 +1244,21 @@ public class HashJoinTest extends AbstractCairoTest {
                     ('2024-01-01T00:00:00.000000Z', 'AAPL', 'NYSE', 10),
                     ('2024-01-01T00:00:00.000000Z', 'MSFT', 'NASDAQ', 20),
                     ('2024-01-01T00:00:00.000000Z', 'IBM', 'ARCA', 30)""");
+    }
+
+    private void createVarcharAggregateKeyTable() throws Exception {
+        execute("CREATE TABLE t (sym SYMBOL, i INT, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO t VALUES
+                    ('a', 1, 'apple', '2024-01-01T00:00:01.000000Z'),
+                    ('a', 2, 'banana-banana-banana', '2024-01-01T00:00:02.000000Z'),
+                    ('a', 3, 'cherry', '2024-01-01T00:00:03.000000Z'),
+                    ('b', 4, 'banana-banana-banana', '2024-01-01T00:00:04.000000Z'),
+                    ('b', 5, 'żółć-żółć', '2024-01-01T00:00:05.000000Z'),
+                    ('b', 6, 'apple', '2024-01-01T00:00:06.000000Z'),
+                    ('c', 7, 'cherry', '2024-01-01T00:00:07.000000Z'),
+                    ('c', 8, 'dates', '2024-01-01T00:00:08.000000Z'),
+                    ('c', 9, NULL, '2024-01-01T00:00:09.000000Z')
+                """);
     }
 }

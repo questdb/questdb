@@ -1114,7 +1114,6 @@ public class GroupByPlanningTest extends AbstractCairoTest {
             execute("INSERT INTO single_row VALUES ('a', '2024-01-01'), ('b', '2024-01-02')");
             assertQuery("SELECT 'Z' AS e0, last(ts) AS a0 FROM single_row ORDER BY e0 LIMIT 27")
                     .noLeakCheck()
-                    .noRandomAccess()
                     .expectSize()
                     .returns("""
                             e0\ta0

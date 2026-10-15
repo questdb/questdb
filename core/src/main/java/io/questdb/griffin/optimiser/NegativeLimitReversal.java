@@ -92,15 +92,6 @@ final class NegativeLimitReversal implements OptimiserPass {
         return plan instanceof ScanPlan;
     }
 
-    private static int liftColumnId(LogicalPlan plan, LogicalPlan target, int columnId) {
-        if (plan == target) {
-            return columnId;
-        }
-        final int id = liftColumnId(plan.inputAt(0), target, columnId);
-        final int index = id < 0 ? -1 : LogicalPlans.projectedUncastColumnIndex((ProjectPlan) plan, id);
-        return index < 0 ? -1 : plan.getOutput().getColumnId(index);
-    }
-
     private BoundExpression reversedCount(BoundExpression lo) {
         if (lo instanceof FunctionExpression negation) {
             return negation.argumentAt(0);
@@ -149,21 +140,20 @@ final class NegativeLimitReversal implements OptimiserPass {
         if (!isTableSource(source)) {
             return plan;
         }
-        final SortPlan restored = sorts.next().of(upperTop, sort.getPosition());
+        final SortPlan restored = sorts.next().of(lowerTop, sort.getPosition());
         final IntList sourceIds = limitKeyIds;
         sourceIds.clear();
         for (int i = 0, n = ids.size(); i < n; i++) {
-            final int id = liftColumnId(upperTop, sort, ids.getQuick(i));
             int sourceId = ids.getQuick(i);
             for (LogicalPlan p = lowerTop; p != source && sourceId >= 0; p = p.inputAt(0)) {
                 final int index = p.getOutput().getColumnIndexById(sourceId);
                 sourceId = index >= 0 && ((ProjectPlan) p).getExpressions().getQuick(index) instanceof ColumnExpression column
                         && column.isDirectReference() && !column.isCast() ? column.getColumnId() : -1;
             }
-            if (id < 0 || sourceId < 0) {
+            if (sourceId < 0) {
                 return plan;
             }
-            restored.getColumnIds().add(id);
+            restored.getColumnIds().add(ids.getQuick(i));
             restored.getDirections().add(directions.getQuick(i));
             sourceIds.add(sourceId);
         }
@@ -175,24 +165,23 @@ final class NegativeLimitReversal implements OptimiserPass {
         sort.replaceInput(0, source);
         limit.of(sort, reversedCount(lo), null, limit.getPosition());
         limit.deriveOutput();
-        final LogicalPlan lower = lowerBottom == null ? limit : lowerTop;
         if (lowerBottom != null) {
             lowerBottom.replaceInput(0, limit);
         }
-        if (upperBottom != limit) {
-            upperBottom.replaceInput(0, lower);
-        }
-        final LogicalPlan upper = upperBottom == limit ? lower : upperTop;
-        restored.replaceInput(0, upper);
+        restored.replaceInput(0, lowerBottom == null ? limit : lowerTop);
         restoredSorts.add(restored);
-        return restored;
+        if (upperBottom == limit) {
+            return restored;
+        }
+        upperBottom.replaceInput(0, restored);
+        return upperTop;
     }
 
     /**
      * Reads the last rows of an ascending timestamp-led multi-key sort as the
-     * first rows of the reversed sort below the projection, then restores the order:
-     * {@code ORDER BY ts, a LIMIT -n} becomes {@code ORDER BY ts, a} over {@code ORDER BY ts DESC, a DESC LIMIT n}.
-     * An enclosing sort replaces the restoring one.
+     * first rows of the reversed sort below the projection, then restores the order below the projection, which may
+     * drop the sort keys: {@code ORDER BY ts, a LIMIT -n} becomes {@code ORDER BY ts, a} over
+     * {@code ORDER BY ts DESC, a DESC LIMIT n}. An enclosing sort replaces the restoring one.
      */
     private LogicalPlan reverseNegativeLimits(LogicalPlan root) throws SqlException {
         restoredSorts.clear();

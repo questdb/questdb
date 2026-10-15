@@ -45,11 +45,13 @@ import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
 import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Checks the physical choices operator planning records on plan nodes against the rules the planner and the generator
- * decide them by. Each check returns the {@link PlanVerifier} invariant the node violates, or null; under access path
- * planning's output, {@code isPlanned}, every choice the generator builds the node by is recorded.
+ * decide them by, including that every input a choice reads back by row id derives random access. Each check returns
+ * the {@link PlanVerifier} invariant the node violates, or null; under access path planning's output,
+ * {@code isPlanned}, every choice the generator builds the node by is recorded.
  */
 final class PhysicalChoiceVerifier {
 
@@ -64,14 +66,44 @@ final class PhysicalChoiceVerifier {
         return (step.getHints() & JoinInput.HINT_ASOF_LINEAR) != 0;
     }
 
+    /**
+     * Whether the join step reads its master back by row id, which requires a master with random access.
+     */
+    private static boolean isMasterReadByRowId(JoinInput.Algorithm algorithm) {
+        return algorithm == JoinInput.Algorithm.MARKOUT;
+    }
+
+    /**
+     * Whether the sort reads its input back by row id, which requires an input with random access.
+     */
+    private static boolean isRowIdSort(@Nullable SortPlan.Algorithm algorithm) {
+        return algorithm == SortPlan.Algorithm.LIGHT || algorithm == SortPlan.Algorithm.LIMITED
+                || algorithm == SortPlan.Algorithm.PRESORTED_LIMITED || algorithm == SortPlan.Algorithm.LONG_TOP_K;
+    }
+
     private static boolean isScanLimited(LogicalPlan plan, LimitPlan limit) {
         final ScanPlan scan = (ScanPlan) LogicalPlans.skipProjects(plan).inputAt(0);
         return scan.getLimitLo() == limit.getLo() && scan.getLimitHi() == limit.getHi();
     }
 
+    /**
+     * Whether the join step reads its slave back by row id, which requires a slave with random access.
+     */
+    private static boolean isSlaveReadByRowId(JoinInput.Algorithm algorithm) {
+        return algorithm == JoinInput.Algorithm.LIGHT_HASH || algorithm == JoinInput.Algorithm.TEMPORAL;
+    }
+
     private static boolean isTopK(SortPlan.Algorithm algorithm) {
         return algorithm == SortPlan.Algorithm.LONG_TOP_K || algorithm == SortPlan.Algorithm.PARALLEL_TOP_K
                 || algorithm == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K;
+    }
+
+    /**
+     * Whether a derived capability fails an input requirement: it is absent, or, once every physical choice is
+     * recorded, the plan cannot confirm it.
+     */
+    private static boolean isUnsatisfied(PhysicalProperties.Capability capability, boolean isPlanned) {
+        return capability == PhysicalProperties.Capability.NO || isPlanned && capability == PhysicalProperties.Capability.UNKNOWN;
     }
 
     static String aggregate(AggregatePlan aggregate, boolean isPlanned) {
@@ -132,19 +164,33 @@ final class PhysicalChoiceVerifier {
             case TEMPORAL_STOLEN_FILTER ->
                     joinType == JoinKind.ASOF && !isLinear(step) && PlanToFactoryRules.temporalStolenFilter(step.getInput()) != null;
             case SPLICE, FULL_FAT_SPLICE -> joinType == JoinKind.SPLICE;
-            case MARKOUT -> joinType.isRelational() && step.getMarkoutTimestampColumnId() >= 0;
+            case MARKOUT -> joinType.isRelational() && step.getMarkoutTimestampColumnId() >= 0 && position > 0
+                    && PhysicalProperties.masterScanDirection(join, position) == PhysicalProperties.ScanDirection.FORWARD;
             case NESTED_LOOP -> joinType.isRelational() && step.getMasterKeyColumnIds().size() == 0;
             case HASH, LIGHT_HASH -> joinType.isRelational() && step.getMasterKeyColumnIds().size() > 0;
         };
-        return isValid ? null : PlanVerifier.JOIN_ALGORITHM;
+        if (!isValid) {
+            return PlanVerifier.JOIN_ALGORITHM;
+        }
+        return isSlaveReadByRowId(algorithm) && !PlanToFactoryRules.isSlaveEmptied(step)
+                && isUnsatisfied(PhysicalProperties.supportsRandomAccess(step.getInput()), isPlanned)
+                || isMasterReadByRowId(algorithm) && position > 0
+                && isUnsatisfied(PhysicalProperties.masterSupportsRandomAccess(join, position), isPlanned)
+                ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
     }
 
     static String latestBy(LatestByPlan latest, boolean isPlanned) {
+        final LatestByPlan.Algorithm algorithm = latest.getAlgorithm();
         final boolean isScanned = PlanToFactoryRules.latestByScan(latest) != null;
-        if (latest.getAlgorithm() != null && isScanned) {
+        if (algorithm != null && isScanned) {
             return PlanVerifier.LATEST_BY_ALGORITHM;
         }
-        return isPlanned && !isScanned && latest.getAlgorithm() == null ? PlanVerifier.CHOICE_UNPLANNED : null;
+        if (algorithm == null) {
+            return isPlanned && !isScanned ? PlanVerifier.CHOICE_UNPLANNED : null;
+        }
+        return algorithm != LatestByPlan.Algorithm.MATERIALIZED
+                && isUnsatisfied(PhysicalProperties.supportsRandomAccess(PlanToFactoryRules.latestByBase(latest)), isPlanned)
+                ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
     }
 
     static String limit(LimitPlan limit, boolean isPlanned) {
@@ -155,7 +201,8 @@ final class PhysicalChoiceVerifier {
         final LogicalPlan limited = limit.getChild();
         final SortPlan sort = LogicalPlans.hasSortUnderStableProjects(limited) ? (SortPlan) LogicalPlans.skipProjects(limited) : null;
         final boolean isInput = OperatorPlanning.isInputLimit(sort != null ? sort.getChild() : limited);
-        if ((application == LimitPlan.Application.INPUT) != isInput || isInput && !isScanLimited(sort != null ? sort.getChild() : limited, limit)) {
+        if ((application == LimitPlan.Application.INPUT) != isInput || isInput && !isScanLimited(sort != null ? sort.getChild() : limited, limit)
+                || (application == LimitPlan.Application.MASTER_SUFFIX) != (PlanToFactoryRules.masterSuffixScan(limit) != null)) {
             return PlanVerifier.LIMIT_APPLICATION;
         }
         final SortPlan.Algorithm algorithm = sort != null ? sort.getAlgorithm() : null;
@@ -201,11 +248,14 @@ final class PhysicalChoiceVerifier {
         return isPlanned && hasChoice && scan.getResidualAlgorithm() == null ? PlanVerifier.CHOICE_UNPLANNED : null;
     }
 
-    static String setOperation(SetOperationPlan operation) {
+    static String setOperation(SetOperationPlan operation, boolean isPlanned) {
         final SortPlan.Algorithm rightSort = operation.getRightBranchSort();
-        return (operation.isMerged() || rightSort != null) && operation.getOperation() != SetOperationKind.UNION_ALL
-                || rightSort != null && rightSort != SortPlan.Algorithm.LIGHT && rightSort != SortPlan.Algorithm.MATERIALIZED
-                ? PlanVerifier.SET_OPERATION_MERGE : null;
+        if ((operation.isMerged() || rightSort != null) && operation.getOperation() != SetOperationKind.UNION_ALL
+                || rightSort != null && rightSort != SortPlan.Algorithm.LIGHT && rightSort != SortPlan.Algorithm.MATERIALIZED) {
+            return PlanVerifier.SET_OPERATION_MERGE;
+        }
+        return isRowIdSort(rightSort) && isUnsatisfied(PhysicalProperties.supportsRandomAccess(operation.getRight()), isPlanned)
+                ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
     }
 
     static String sort(SortPlan sort, boolean isPlanned) {
@@ -213,10 +263,13 @@ final class PhysicalChoiceVerifier {
         if (algorithm == null) {
             return isPlanned ? PlanVerifier.CHOICE_UNPLANNED : null;
         }
-        return algorithm == SortPlan.Algorithm.TIMESTAMP_DECLARATION && !sort.isMarkoutHorizon()
+        if (algorithm == SortPlan.Algorithm.TIMESTAMP_DECLARATION && !sort.isMarkoutHorizon()
                 || isBounded(algorithm) && !sort.isLimited()
-                || algorithm == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K && PlanToFactoryRules.stolenFilter(PlanToFactoryRules.parallelTopKSource(sort)) == null
-                ? PlanVerifier.SORT_ALGORITHM : null;
+                || algorithm == SortPlan.Algorithm.PARALLEL_FILTERED_TOP_K && PlanToFactoryRules.stolenFilter(PlanToFactoryRules.parallelTopKSource(sort)) == null) {
+            return PlanVerifier.SORT_ALGORITHM;
+        }
+        return isRowIdSort(algorithm) && isUnsatisfied(PhysicalProperties.supportsRandomAccess(sort.getChild()), isPlanned)
+                ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
     }
 
     static String window(WindowPlan window, boolean isPlanned) {
@@ -228,7 +281,11 @@ final class PhysicalChoiceVerifier {
         for (int i = 0, n = window.getSpecs().size(); i < n; i++) {
             isStreamed &= OperatorPlanning.isStreamedWindow(window.getSpecs().getQuick(i), window.getFunctions().getQuick(i));
         }
-        return (algorithm == WindowPlan.Algorithm.STREAMING) != isStreamed ? PlanVerifier.WINDOW_ALGORITHM : null;
+        if ((algorithm == WindowPlan.Algorithm.STREAMING) != isStreamed) {
+            return PlanVerifier.WINDOW_ALGORITHM;
+        }
+        return algorithm == WindowPlan.Algorithm.CACHED_LIGHT && isUnsatisfied(PhysicalProperties.supportsRandomAccess(window.getChild()), isPlanned)
+                ? PlanVerifier.INPUT_RANDOM_ACCESS : null;
     }
 
     static String windowJoinStep(WindowJoinPlan windowJoin, int index, WindowJoinStep step, boolean isPlanned) {
