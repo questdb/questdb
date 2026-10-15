@@ -91,6 +91,13 @@ public class PostingIndexUtilsTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCoverFileHostTxn() {
+        Assert.assertEquals(0, PostingIndexUtils.coverFileHostTxn(COLUMN_NAME_TXN_NONE));
+        Assert.assertEquals(0, PostingIndexUtils.coverFileHostTxn(0));
+        Assert.assertEquals(7, PostingIndexUtils.coverFileHostTxn(7));
+    }
+
+    @Test
     public void testRemoveAllSealedFilesRemovesOnlyTheFilesOfPostingColumnNameTxn() throws Exception {
         assertMemoryLeak(() -> {
             for (long postingColumnNameTxn : new long[]{COLUMN_NAME_TXN_NONE, 0, 1, 10, 5}) {
@@ -115,6 +122,43 @@ public class PostingIndexUtilsTest extends AbstractCairoTest {
                 Assert.assertEquals("posting column name txn " + postingColumnNameTxn, expected.toString(), new TreeSet<>(Arrays.asList(remaining)).toString());
             }
         });
+    }
+
+    @Test
+    public void testSealedFileColumnNameTxn() {
+        final long[] postingColumnNameTxns = {COLUMN_NAME_TXN_NONE, 0, 1, 10, 1_000_000_007L, Long.MAX_VALUE - 1};
+        final long[] coveredColumnNameTxns = {COLUMN_NAME_TXN_NONE, 0, 5};
+        final long[] sealTxns = {0, 1, 1_000_000};
+        final int[] includeIdxs = {0, 1, 12};
+        try (Path path = new Path()) {
+            for (long postingColumnNameTxn : postingColumnNameTxns) {
+                // a .pc name writes NONE as the token 0
+                final long hostToken = postingColumnNameTxn == COLUMN_NAME_TXN_NONE ? 0 : postingColumnNameTxn;
+                for (long sealTxn : sealTxns) {
+                    final String valueFile = Utf8s.stringFromUtf8Bytes(PostingIndexUtils.valueFileName(path.of(""), "s", postingColumnNameTxn, sealTxn));
+                    Assert.assertEquals(valueFile, postingColumnNameTxn, PostingIndexUtils.sealedFileColumnNameTxn(valueFile, 2));
+                    for (long coveredColumnNameTxn : coveredColumnNameTxns) {
+                        for (int includeIdx : includeIdxs) {
+                            final String coverFile = Utf8s.stringFromUtf8Bytes(PostingIndexUtils.coverDataFileName(
+                                    path.of(""), "s", includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn));
+                            Assert.assertEquals(coverFile, hostToken, PostingIndexUtils.sealedFileColumnNameTxn(coverFile, 2));
+                        }
+                    }
+                }
+            }
+        }
+        // the offset is the position after the column name and its dot
+        Assert.assertEquals(7, PostingIndexUtils.sealedFileColumnNameTxn("price.pv.7.3", 6));
+        Assert.assertEquals(7, PostingIndexUtils.sealedFileColumnNameTxn("price.pc2.7.1.3", 6));
+        Assert.assertEquals(COLUMN_NAME_TXN_NONE, PostingIndexUtils.sealedFileColumnNameTxn("price.pv.3", 6));
+        for (String fileName : new String[]{
+                "s.pk", "s.pk.3", "s.pci", "s.pci.3", "s.d", "s.d.3", "s.c", "s.c.0", "s.k.0", "s.v.0", "s.",
+                "s.p", "s.px.1", "s.pvv.1", "s.pv", "s.pv.", "s.pv.a", "s.pv.1.", "s.pv.1.a", "s.pv.a.1", "s.pv.1.2.3",
+                "s.pc", "s.pc.0.1", "s.pcx.0.1", "s.pc0", "s.pc0.", "s.pc0.1", "s.pc0.1.", "s.pc0.a.1", "s.pc0.1.a",
+                "s.pc0.1.a.1", "s.pc0.1.2.a", "s.pc0.1.2.3.4", "s.pc0x.1.2"
+        }) {
+            Assert.assertEquals(fileName, PostingIndexUtils.PARSE_FAIL, PostingIndexUtils.sealedFileColumnNameTxn(fileName, 2));
+        }
     }
 
     @Test

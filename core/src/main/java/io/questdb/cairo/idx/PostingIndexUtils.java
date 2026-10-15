@@ -354,7 +354,10 @@ public final class PostingIndexUtils {
     private static final int EF_RANK_TRAILER_HEADER_SIZE = 16;
     private static final int EF_RANK_TRAILER_MAGIC = 0x32465245; // "EFR2" in little-endian bytes
     private static final int EF_RANK_TRAILER_VERSION = 2;
-    private static final long PARSE_FAIL = Long.MIN_VALUE;
+    /**
+     * Returned by {@link #sealedFileColumnNameTxn} for a name that is not a sealed posting file name.
+     */
+    public static final long PARSE_FAIL = Long.MIN_VALUE;
     /**
      * Tri-state sentinel returned by {@link #readSealTxnFromKeyFdTriState} to
      * mark a read-or-corruption failure. Distinct from {@link #V2_NO_HEAD},
@@ -428,6 +431,15 @@ public final class PostingIndexUtils {
         }
         path.put('.').put(sealTxn);
         return path.$();
+    }
+
+    /**
+     * The posting column name txn segment of a {@code .pc} file name. The segment is always present,
+     * so that the optional covered column name txn segment after it parses unambiguously, which
+     * makes {@code COLUMN_NAME_TXN_NONE} and txn 0 share the token 0.
+     */
+    public static long coverFileHostTxn(long postingColumnNameTxn) {
+        return postingColumnNameTxn == COLUMN_NAME_TXN_NONE ? 0 : postingColumnNameTxn;
     }
 
     public static LPSZ coverInfoFileName(Path path, CharSequence name, long postingColumnNameTxn) {
@@ -1731,6 +1743,60 @@ public final class PostingIndexUtils {
     }
 
     /**
+     * The posting column name txn segment of a sealed posting file name, given the index {@code lo} of
+     * the first character after {@code <columnName>.}:
+     * <ul>
+     *   <li>{@code pv.<sealTxn>} gives {@code COLUMN_NAME_TXN_NONE}</li>
+     *   <li>{@code pv.<postingColumnNameTxn>.<sealTxn>} gives the posting column name txn</li>
+     *   <li>{@code pc<includeIdx>.<coverFileHostTxn>[.<coveredColumnNameTxn>].<sealTxn>} gives the
+     *   {@link #coverFileHostTxn(long)} token, 0 for both {@code COLUMN_NAME_TXN_NONE} and txn 0</li>
+     * </ul>
+     * Any other name, including {@code .pk} and {@code .pci}, gives {@link #PARSE_FAIL}.
+     */
+    public static long sealedFileColumnNameTxn(CharSequence fileName, int lo) {
+        final int fileLen = fileName.length();
+        if (lo + 2 >= fileLen || fileName.charAt(lo) != 'p') {
+            return PARSE_FAIL;
+        }
+        final char kind = fileName.charAt(lo + 1);
+        int pos = lo + 2;
+        if (kind == 'v') {
+            if (fileName.charAt(pos) != '.') {
+                return PARSE_FAIL;
+            }
+            pos++;
+            final int dot = nextDot(fileName, pos, fileLen);
+            if (dot < 0) {
+                return parseTxnSegment(fileName, pos, fileLen) == PARSE_FAIL ? PARSE_FAIL : COLUMN_NAME_TXN_NONE;
+            }
+            final long columnNameTxn = parseTxnSegment(fileName, pos, dot);
+            return parseTxnSegment(fileName, dot + 1, fileLen) == PARSE_FAIL ? PARSE_FAIL : columnNameTxn;
+        }
+        if (kind != 'c') {
+            return PARSE_FAIL;
+        }
+        final int includeIdxLo = pos;
+        while (pos < fileLen && fileName.charAt(pos) >= '0' && fileName.charAt(pos) <= '9') {
+            pos++;
+        }
+        if (pos == includeIdxLo || pos == fileLen || fileName.charAt(pos) != '.') {
+            return PARSE_FAIL;
+        }
+        pos++;
+        final int hostDot = nextDot(fileName, pos, fileLen);
+        if (hostDot < 0) {
+            return PARSE_FAIL;
+        }
+        final long hostTxn = parseTxnSegment(fileName, pos, hostDot);
+        final int secondDot = nextDot(fileName, hostDot + 1, fileLen);
+        final boolean isTailValid = secondDot < 0
+                ? parseTxnSegment(fileName, hostDot + 1, fileLen) != PARSE_FAIL
+                : parseTxnSegment(fileName, hostDot + 1, secondDot) != PARSE_FAIL
+                && parseTxnSegment(fileName, secondDot + 1, fileLen) != PARSE_FAIL;
+        return isTailValid ? hostTxn : PARSE_FAIL;
+    }
+
+    /**
      * Returns the preferred FLAT width, or zero for DELTA. FLAT uses int-sized
      * counts and buffers; DELTA has long stride offsets and can exceed that limit.
      */
@@ -1897,15 +1963,6 @@ public final class PostingIndexUtils {
         pos += BitpackUtils.packedDataSize(numDeltas, bitWidth);
 
         return (int) (pos - destAddr);
-    }
-
-    /**
-     * The posting column name txn segment of a {@code .pc} file name. The segment is always present,
-     * so that the optional covered column name txn segment after it parses unambiguously, which
-     * makes {@code COLUMN_NAME_TXN_NONE} and txn 0 share the token 0.
-     */
-    private static long coverFileHostTxn(long postingColumnNameTxn) {
-        return postingColumnNameTxn == COLUMN_NAME_TXN_NONE ? 0 : postingColumnNameTxn;
     }
 
     private static int nextDot(CharSequence s, int from, int end) {
