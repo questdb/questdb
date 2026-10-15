@@ -114,6 +114,7 @@ public class FuzzRunner {
     private int fuzzRowCount;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
+    private boolean isNoSentinelTypeChangeEnabled;
     private boolean isO3;
     private double notSetProb;
     private double nullSetProb;
@@ -532,7 +533,8 @@ public class FuzzRunner {
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
                 setParquetEncodingProb,
-                addCoveringIndexProb, setTableFormatProb
+                addCoveringIndexProb, setTableFormatProb,
+                isNoSentinelTypeChangeEnabled
         );
     }
 
@@ -815,6 +817,15 @@ public class FuzzRunner {
         this.setParquetEncodingProb = setParquetEncodingProb;
         this.setTableFormatProb = setTableFormatProb;
         this.addCoveringIndexProb = addCoveringIndexProb;
+    }
+
+    /**
+     * Makes the generator change a STRING, SYMBOL or VARCHAR column to BOOLEAN, BYTE or SHORT on a parquet
+     * partition and those types back to text, with in-order writes only, see
+     * FuzzTransactionGenerator.generateSet(). The parallel WAL apply needs one WAL writer to keep the order.
+     */
+    public void setNoSentinelTypeChangeEnabled(boolean isNoSentinelTypeChangeEnabled) {
+        this.isNoSentinelTypeChangeEnabled = isNoSentinelTypeChangeEnabled;
     }
 
     /**

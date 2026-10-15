@@ -12081,6 +12081,21 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         }
                     } else {
                         final long dstFixFd = columnFdAndDataSize.get(3L * columnIndex + 1);
+                        final int colTopRows = (int) rowGroupBuffers.getChunkColumnTop(columnIndex);
+                        assert isFirstChunk || colTopRows == 0 : "leading nulls after the first chunk [colTopRows=" + colTopRows + ']';
+                        // Rust resets the buffers of a chunk the column top covers whole (skipped above)
+                        assert colTopRows < rowGroupRowCount : "column top covers the chunk [colTopRows=" + colTopRows + ']';
+                        // No-sentinel columns (BOOLEAN/BYTE/SHORT/CHAR) decode or convert their column-top
+                        // rows to an in-band 0/false the reader cannot tell from a real value. Make them part
+                        // of the native column top and skip the region in the data file so it reads as NULL --
+                        // matching native, and so a subsequent ALTER ... TYPE SYMBOL (which runs after this
+                        // parquet->native pre-pass) sees the column top instead of a literal 0/false.
+                        final long skipBytes = ColumnType.isNoNullSentinelFixedType(tableColumnType)
+                                ? (long) colTopRows * ColumnType.sizeOf(tableColumnType)
+                                : 0;
+                        if (skipBytes > 0) {
+                            parquetToNativeTops.setQuick(columnIndex, rowGroupFirstRow + colTopRows);
+                        }
                         final int srcTag2 = ColumnType.tagOf(parquetColumnType);
                         final int dstTag2 = ColumnType.tagOf(tableColumnType);
 
@@ -12099,35 +12114,13 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                                         directUtf8String, utf16Sink,
                                         d64, d128, d256
                                 );
-                                appendBuffer(dstFixFd, fixBuf, fixSize);
+                                appendBuffer(dstFixFd, fixBuf + skipBytes, fixSize - skipBytes);
                             } finally {
                                 Unsafe.free(fixBuf, fixSize, MemoryTag.NATIVE_DEFAULT);
                             }
                         } else {
                             // Same type, or fixed->fixed conversion handled by Rust post_convert.
-                            final int dstTagFixed = ColumnType.tagOf(tableColumnType);
-                            final boolean noNullSentinel = dstTagFixed == ColumnType.BOOLEAN
-                                    || dstTagFixed == ColumnType.BYTE
-                                    || dstTagFixed == ColumnType.SHORT
-                                    || dstTagFixed == ColumnType.CHAR;
-                            final int colTopRows = (int) rowGroupBuffers.getChunkColumnTop(columnIndex);
-                            assert isFirstChunk || colTopRows == 0 : "leading nulls after the first chunk [colTopRows=" + colTopRows + ']';
-                            if (noNullSentinel && colTopRows > 0) {
-                                // No-sentinel columns (BOOLEAN/BYTE/SHORT/CHAR) decode their
-                                // column-top rows to an in-band 0/false the reader cannot tell
-                                // from a real value. Make them part of the native column top
-                                // and skip the region in the data file so it reads as NULL --
-                                // matching native, and so a subsequent ALTER ... TYPE SYMBOL
-                                // (which runs after this parquet->native pre-pass) sees the
-                                // column top instead of a literal 0/false.
-                                final long skipBytes = (long) colTopRows * ColumnType.sizeOf(tableColumnType);
-                                if (srcDataSize > skipBytes) {
-                                    appendBuffer(dstFixFd, srcDataPtr + skipBytes, srcDataSize - skipBytes);
-                                }
-                                parquetToNativeTops.setQuick(columnIndex, rowGroupFirstRow + colTopRows);
-                            } else {
-                                appendBuffer(dstFixFd, srcDataPtr, srcDataSize);
-                            }
+                            appendBuffer(dstFixFd, srcDataPtr + skipBytes, srcDataSize - skipBytes);
                         }
                     }
                 }

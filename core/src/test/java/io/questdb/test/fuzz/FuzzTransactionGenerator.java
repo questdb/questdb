@@ -79,6 +79,99 @@ public class FuzzTransactionGenerator {
             double probabilityOfAddCoveringIndex,
             double probabilityOfSetTableFormat
     ) {
+        return generateSet(
+                initialRowCount,
+                sequencerMetadata,
+                tableMetadata,
+                rnd,
+                minTimestamp,
+                maxTimestamp,
+                rowCount,
+                transactionCount,
+                o3,
+                probabilityOfCancelRow,
+                probabilityOfUnassignedColumnValue,
+                probabilityOfAssigningNull,
+                probabilityOfTransactionRollback,
+                probabilityOfAddingNewColumn,
+                probabilityOfRemovingColumn,
+                probabilityOfRenamingColumn,
+                probabilityOfColumnTypeChange,
+                probabilityOfDataInsert,
+                probabilityOfSameTimestamp,
+                probabilityOfDropPartition,
+                probabilityOfConvertPartitionToParquet,
+                probabilityOfConvertPartitionToNative,
+                probabilityOfTruncate,
+                probabilityOfDropTable,
+                probabilityOfSetTtl,
+                replaceInsertProb,
+                probabilityOfSymbolAccessValidation,
+                probabilityOfQuery,
+                maxStrLenForStrColumns,
+                symbols,
+                metaVersion,
+                probabilityOfSetParquetEncoding,
+                probabilityOfAddCoveringIndex,
+                probabilityOfSetTableFormat,
+                false
+        );
+    }
+
+    /**
+     * {@code isNoSentinelTypeChangeEnabled} makes the first column type change after the first CONVERT TO
+     * PARQUET change a STRING, SYMBOL or VARCHAR column to BOOLEAN, BYTE or SHORT, lazily on the parquet
+     * partition, and lets BOOLEAN, BYTE and SHORT columns change to text. Those types read their column
+     * top as 0 or false; the change back to text shows whether CONVERT TO NATIVE and the ALTER COLUMN TYPE
+     * pre-pass kept the top, as the non-WAL twin does.
+     * <p>
+     * That change back also shows every other place where the WAL tables and the twin hold the top rows
+     * differently, so the generator keeps those out. A native O3 merge and an in-place parquet update
+     * write the top rows of these types as 0 or false at points that differ between the tables: the
+     * generator writes every row in order and converts to parquet only the partitions before the one taking
+     * writes, and the caller applies the WAL with one writer, which keeps that order. A parquet to native
+     * conversion stores the top of a text column from the start of its first row group with data, the
+     * rows after it as NULL values, which a change to BOOLEAN, BYTE or SHORT turns into 0 or false: the
+     * text to BOOLEAN, BYTE or SHORT change comes once, before any partition goes back to native.
+     */
+    public static ObjList<FuzzTransaction> generateSet(
+            long initialRowCount,
+            TableRecordMetadata sequencerMetadata,
+            TableMetadata tableMetadata,
+            Rnd rnd,
+            long minTimestamp,
+            long maxTimestamp,
+            int rowCount,
+            int transactionCount,
+            boolean o3,
+            double probabilityOfCancelRow,
+            double probabilityOfUnassignedColumnValue,
+            double probabilityOfAssigningNull,
+            double probabilityOfTransactionRollback,
+            double probabilityOfAddingNewColumn,
+            double probabilityOfRemovingColumn,
+            double probabilityOfRenamingColumn,
+            double probabilityOfColumnTypeChange,
+            double probabilityOfDataInsert,
+            double probabilityOfSameTimestamp,
+            double probabilityOfDropPartition,
+            double probabilityOfConvertPartitionToParquet,
+            double probabilityOfConvertPartitionToNative,
+            double probabilityOfTruncate,
+            double probabilityOfDropTable,
+            double probabilityOfSetTtl,
+            double replaceInsertProb,
+            double probabilityOfSymbolAccessValidation,
+            double probabilityOfQuery,
+            int maxStrLenForStrColumns,
+            String[] symbols,
+            int metaVersion,
+            double probabilityOfSetParquetEncoding,
+            double probabilityOfAddCoveringIndex,
+            double probabilityOfSetTableFormat,
+            boolean isNoSentinelTypeChangeEnabled
+    ) {
+        Assert.assertFalse("no-sentinel type changes need in-order writes", isNoSentinelTypeChangeEnabled && o3);
         ObjList<FuzzTransaction> transactionList = new ObjList<>();
         int waitBarrierVersion = 0;
         RecordMetadata meta = deepMetadataCopyOf(sequencerMetadata, tableMetadata);
@@ -150,6 +243,10 @@ public class FuzzTransactionGenerator {
         }
 
         long estimatedTotalRows = rowCount + initialRowCount;
+        // see the javadoc: the first type change after the first CONVERT TO PARQUET changes text to BOOLEAN,
+        // BYTE or SHORT, unless a CONVERT TO NATIVE comes first
+        boolean isTextToNoSentinelChangeDue = false;
+        boolean isTextToNoSentinelChangeSpent = !isNoSentinelTypeChangeEnabled;
 
         for (int i = 0; i < transactionCount; i++) {
             if (i == tableDropIteration) {
@@ -242,16 +339,29 @@ public class FuzzTransactionGenerator {
             } else if (wantToDropPartition) {
                 generateDropPartition(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
             } else if (wantToConvertPartitionToParquet) {
-                generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
-            } else if (wantToConvertPartitionToNative) {
+                final long cutoffTimestamp = generateConvertPartitionToParquet(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd, isNoSentinelTypeChangeEnabled);
+                // the partition of the cutoff has rows when its day is not before the first day of data
+                isTextToNoSentinelChangeDue |= !isTextToNoSentinelChangeSpent
+                        && cutoffTimestamp - cutoffTimestamp % DAY_MICROS >= minTimestamp - minTimestamp % DAY_MICROS;
+            } else if (wantToConvertPartitionToNative && !isTextToNoSentinelChangeDue) {
+                // waits for the due text to BOOLEAN, BYTE or SHORT change
                 generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
             } else if (wantToAddCoveringIndex) {
                 generateAddCoveringIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
-                // 20% chance to change symbol capacity
-                if (rnd.nextInt(5) != 0 ||
+                RecordMetadata textToNoSentinelMeta = null;
+                if (isTextToNoSentinelChangeDue) {
+                    isTextToNoSentinelChangeDue = false;
+                    isTextToNoSentinelChangeSpent = true;
+                    textToNoSentinelMeta = FuzzChangeColumnTypeOperation.generateTextToNoSentinelChange(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
+                }
+                if (textToNoSentinelMeta != null) {
+                    meta = textToNoSentinelMeta;
+                    metaVersion++;
+                    waitBarrierVersion++;
+                } else if (rnd.nextInt(5) != 0 ||
                         !FuzzChangeSymbolCapacityOperation.generateSymbolCapacityChange(
                                 transactionList,
                                 metaVersion,
@@ -259,8 +369,9 @@ public class FuzzTransactionGenerator {
                                 rnd,
                                 meta
                         )) {
-                    // If symbol capacity change was not generated, generate column type change
-                    meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedTotalRows, metaVersion++, waitBarrierVersion++, rnd, meta);
+                    // a symbol capacity change takes 20% of the others; if it was not generated, generate a
+                    // column type change
+                    meta = FuzzChangeColumnTypeOperation.generateColumnTypeChange(transactionList, estimatedTotalRows, metaVersion++, waitBarrierVersion++, rnd, meta, isNoSentinelTypeChangeEnabled);
                 }
             } else if (wantToValidateSymbolAccess) {
                 FuzzTransaction transaction = new FuzzTransaction();
@@ -295,7 +406,7 @@ public class FuzzTransactionGenerator {
                     }
                 } else {
                     long writeInterval = rnd.nextLong((maxTimestamp - minTimestamp) / transactionCount);
-                    startTs = lastTimestamp - writeInterval;
+                    startTs = isNoSentinelTypeChangeEnabled ? lastTimestamp : lastTimestamp - writeInterval;
                 }
                 long step = (maxTimestamp - minTimestamp) / transactionCount;
                 if (o3) {
@@ -444,11 +555,13 @@ public class FuzzTransactionGenerator {
         transactionList.add(transaction);
     }
 
-    private static void generateConvertPartitionToParquet(
+    private static long generateConvertPartitionToParquet(
             ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
-            long lastTimestamp, Rnd rnd
+            long lastTimestamp, Rnd rnd, boolean isBeforeLastPartition
     ) {
-        long cutoffTimestamp = lastTimestamp;
+        // The WHERE clause matches partition timestamps in (cutoff - 1 day, cutoff), and the tables partition
+        // by DAY: a cutoff just before the day of lastTimestamp selects the partition before the one taking writes
+        long cutoffTimestamp = isBeforeLastPartition ? lastTimestamp - lastTimestamp % DAY_MICROS - 1 : lastTimestamp;
         if (rnd.nextInt(100) <= 20) {
             cutoffTimestamp -= DAY_MICROS;
         }
@@ -458,6 +571,7 @@ public class FuzzTransactionGenerator {
         transaction.structureVersion = metadataVersion;
         transaction.waitAllDone = true;
         transactionList.add(transaction);
+        return cutoffTimestamp;
     }
 
 
