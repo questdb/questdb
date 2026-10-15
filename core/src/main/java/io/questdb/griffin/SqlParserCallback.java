@@ -103,22 +103,22 @@ public interface SqlParserCallback {
 
     default RecordCursorFactory generateShowCreateLiveViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken viewToken = getLiveViewToken(model.getTableNameExpr(), executionContext, path);
-        return new ShowCreateLiveViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
+        return new ShowCreateLiveViewRecordCursorFactory(viewToken, model.getTableNameExpr().position, executionContext.getTableFunctionView());
     }
 
     default RecordCursorFactory generateShowCreateMatViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken viewToken = getMatViewToken(model.getTableNameExpr(), executionContext, path);
-        return new ShowCreateMatViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
+        return new ShowCreateMatViewRecordCursorFactory(viewToken, model.getTableNameExpr().position, executionContext.getTableFunctionView());
     }
 
     default RecordCursorFactory generateShowCreateTableFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken tableToken = getTableToken(model.getTableNameExpr(), executionContext, path);
-        return new ShowCreateTableRecordCursorFactory(tableToken, model.getTableNameExpr().position);
+        return new ShowCreateTableRecordCursorFactory(tableToken, model.getTableNameExpr().position, executionContext.getTableFunctionView());
     }
 
     default RecordCursorFactory generateShowCreateViewFactory(IQueryModel model, SqlExecutionContext executionContext, Path path) throws SqlException {
         final TableToken viewToken = getViewToken(model.getTableNameExpr(), executionContext, path);
-        return new ShowCreateViewRecordCursorFactory(viewToken, model.getTableNameExpr().position);
+        return new ShowCreateViewRecordCursorFactory(viewToken, model.getTableNameExpr().position, executionContext.getTableFunctionView());
     }
 
     default RecordCursorFactory generateShowSqlFactory(IQueryModel model) {
@@ -174,6 +174,24 @@ public interface SqlParserCallback {
         return builder;
     }
 
+    /**
+     * Takes the clauses after the bracketed body of a {@code CREATE OR REPLACE VIEW} that replaces
+     * an existing view, the ones {@link #parseCreateViewExt} takes when the statement creates it.
+     * The base grammar has none, so any token is unexpected.
+     *
+     * @param tok the first token after the body, null at the end of the statement
+     */
+    default void parseReplaceViewExt(
+            GenericLexer lexer,
+            SqlExecutionContext executionContext,
+            TableToken viewToken,
+            @Nullable CharSequence tok
+    ) throws SqlException {
+        if (tok != null) {
+            throw SqlException.unexpectedToken(lexer.lastTokenPosition(), tok);
+        }
+    }
+
     default int parseShowSql(
             GenericLexer lexer,
             IQueryModel model,
@@ -203,9 +221,13 @@ public interface SqlParserCallback {
         return tok;
     }
 
+    // An object the principal may not see resolves exactly like a missing one, and before the
+    // callers' object kind checks, whose "got view name" style errors would disclose it too. A SHOW
+    // written in a view reads the object through that view, see SqlExecutionContext.isTableFunctionVisible().
     private static TableToken getTableToken(ExpressionNode tableNameExpr, SqlExecutionContext executionContext, Path path, SqlException notExistsError) throws SqlException {
         final TableToken tableToken = executionContext.getTableTokenIfExists(tableNameExpr.token);
-        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS) {
+        if (executionContext.getTableStatus(path, tableToken) != TableUtils.TABLE_EXISTS
+                || !executionContext.isTableFunctionVisibleAtCompile(tableToken, executionContext.getTableFunctionView())) {
             throw notExistsError;
         }
         return tableToken;
