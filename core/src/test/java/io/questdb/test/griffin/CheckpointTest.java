@@ -1265,11 +1265,15 @@ public class CheckpointTest extends AbstractCairoTest {
                 createTriggerFile();
                 testFilesFacade.isSyncfsForced = true;
                 testFilesFacade.isEntryTypeUnknown = isEntryTypeUnknown;
+                testFilesFacade.unknownTypes = 0;
                 try {
                     engine.checkpointRecover();
                 } finally {
                     testFilesFacade.isSyncfsForced = false;
                     testFilesFacade.isEntryTypeUnknown = false;
+                }
+                if (isEntryTypeUnknown) {
+                    Assert.assertTrue("the volume flush must list entries of unknown type", testFilesFacade.unknownTypes > 0);
                 }
 
                 final String volumePath = volume.getCanonicalPath();
@@ -6349,6 +6353,8 @@ public class CheckpointTest extends AbstractCairoTest {
         boolean isSyncfsForced = false;
         // Plays Windows: no filesystem-wide syncfs, a restricted file system, and a sync() that returns -1.
         boolean isWindowsSyncSimulated = false;
+        // The unknown types findType returned, so a test can see that the method it selects still lists.
+        int unknownTypes = 0;
 
         @Override
         public int copy(LPSZ from, LPSZ to) {
@@ -6365,6 +6371,7 @@ public class CheckpointTest extends AbstractCairoTest {
         public int findType(long findPtr) {
             if (isEntryTypeUnknown && StackWalker.getInstance().walk(frames -> frames.anyMatch(
                     frame -> frame.getClassName().endsWith(".DatabaseCheckpointAgent") && frame.getMethodName().equals("syncVolumes")))) {
+                unknownTypes++;
                 return Files.DT_UNKNOWN;
             }
             return super.findType(findPtr);
