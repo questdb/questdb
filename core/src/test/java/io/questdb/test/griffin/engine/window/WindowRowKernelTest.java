@@ -157,6 +157,29 @@ public class WindowRowKernelTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFoldedAndReplayedStandIns() throws Exception {
+        // the workers output a folded running sum's or a replayed frame's argument, as the stand-in
+        // reads it (AsyncWindowFoldEcho), for the query's thread to compute the function over
+        assertMemoryLeak(() -> {
+            createTable(engine, sqlExecutionContext);
+            // a running sum of any of them folds; a bounded frame's DOUBLE avg or sum replays
+            final String[] functions = {
+                    "sum(i) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                    "sum(l) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                    "sum(d) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                    "sum(f) OVER (ORDER BY time ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)",
+                    "avg(d) OVER (ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)",
+                    "avg(f) OVER (ORDER BY time ROWS BETWEEN 19 PRECEDING AND CURRENT ROW)",
+                    "sum(d) OVER (ORDER BY time ROWS BETWEEN 4 PRECEDING AND CURRENT ROW)"
+            };
+            for (String fn : functions) {
+                final String query = "SELECT time, " + fn + " w FROM t WHERE sym = 'BIG'";
+                Assert.assertTrue(query, assertKernelMatches(engine, sqlExecutionContext, query) > 0);
+            }
+        });
+    }
+
+    @Test
     public void testIdx61() throws Exception {
         assertMemoryLeak(() -> {
             createTable(engine, sqlExecutionContext);

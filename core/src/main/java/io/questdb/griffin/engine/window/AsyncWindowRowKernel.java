@@ -64,7 +64,9 @@ import java.util.Arrays;
  * run at a time, for the chains whose every step it can evaluate exactly: {@code lag} over a
  * column, then projections of column references, constants, {@code +} and {@code -}, and filters
  * that compare such values (NYSE TAQ idx 61:
- * {@code seq < lag(seq) OVER (PARTITION BY sym ORDER BY time)}, or {@code seq - lag(seq) < 0}).
+ * {@code seq < lag(seq) OVER (PARTITION BY sym ORDER BY time)}, or {@code seq - lag(seq) < 0}), and
+ * the stand-ins of folded or replayed functions ({@link AsyncWindowFoldEcho}), which output their argument
+ * for the query's thread to compute the function over (idx 52: a running sum of one symbol's sizes).
  * <p>
  * The row path ({@code AsyncWindowAtom.Slot.compute}) moves a record to each row and calls the
  * window functions, every step and the record sink through their virtual getters, which on a
@@ -720,10 +722,16 @@ public final class AsyncWindowRowKernel {
             return own != null ? convert(own, rep) : null;
         }
 
-        // The window's function of a column: a column of the scan, or a lag of one.
+        // The window's function of a column: a column of the scan, a lag of one, or the stand-in
+        // of a folded or replayed function, which outputs its argument.
         @Nullable
         Node compileWindowFunction(Function function, int rep) {
             function = unwrap(function);
+            if (function.getClass() == AsyncWindowFoldEcho.class) {
+                // AsyncWindowFoldEcho.computeNext() reads its argument's getDouble(), and getDouble()
+                // returns it
+                return rep == V_DOUBLE ? compile(((AsyncWindowFoldEcho) function).getKeyRunArgument(), V_DOUBLE, scanResolver()) : null;
+            }
             if (function instanceof WindowFunction) {
                 final int lagRep;
                 final long offset;
