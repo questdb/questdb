@@ -30,9 +30,11 @@ import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableReaderMetadata;
 import io.questdb.cairo.TableUtils;
+import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacadeImpl;
+import io.questdb.std.IntList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
@@ -450,6 +452,43 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
         runTxnZeroCoveredSymbolFuzz(rnd);
+    }
+
+    @Test
+    public void testVacuumWithCoveringIndexesOnTxnZeroAndTxnNoneSymbols() throws Exception {
+        // Pins VACUUM TABLE over covering indexes on sym0, added to the still-empty table (column name
+        // txn 0), and on c2, declared in CREATE TABLE (column name txn NONE) and covered by a fuzz
+        // operation. The .pc sidecar names of both carry the token 0, and VACUUM once purged them as
+        // files of a stale column version.
+        Rnd rnd = generateRandom(LOG, 1L, 2L);
+        setTestParams(rnd);
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.1,
+                0.05,
+                0.05,
+                0.0,
+                0.0,
+                1.0,
+                0.01,
+                0.01,
+                0.5,
+                0.5,
+                0.0,
+                0.0,
+                0.8,
+                0.00,
+                0,
+                0.01,
+                0.1,
+                0.3, // addCoveringIndexProb
+                0.0
+        );
+        setFuzzCounts(true, 2_000, 60, 20, 10, 100, 100, 3);
+        runTxnZeroCoveredSymbolFuzz(rnd, "c2[-1, -1, -1] sym0[0, 0, 0]");
     }
 
     @Test
@@ -1034,19 +1073,78 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
     }
 
     /**
+     * The POSTING indexed columns of tableName that cover other columns, each with its column name txn
+     * in every partition: {@code name[txn, ...]}, separated by spaces.
+     */
+    private static String coveringIndexInstances(String tableName) {
+        final StringBuilder instances = new StringBuilder();
+        try (TableReader reader = getReader(tableName)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                final IntList coveredIndices = metadata.getCoveringColumnIndices(i);
+                if (!IndexType.isPosting(metadata.getColumnIndexType(i)) || coveredIndices == null || coveredIndices.size() == 0) {
+                    continue;
+                }
+                instances.append(instances.isEmpty() ? "" : " ").append(metadata.getColumnName(i)).append('[');
+                for (int p = 0, m = reader.getPartitionCount(); p < m; p++) {
+                    instances.append(p > 0 ? ", " : "").append(reader.getColumnVersionReader().getColumnNameTxn(
+                            reader.getPartitionTimestampByIndex(p),
+                            metadata.getWriterIndex(i)
+                    ));
+                }
+                instances.append(']');
+            }
+        }
+        return instances.toString();
+    }
+
+    private void runTxnZeroCoveredSymbolFuzz(Rnd rnd) throws Exception {
+        runTxnZeroCoveredSymbolFuzz(rnd, null);
+    }
+
+    /**
      * Runs the fuzz on tables that start with a covering index on a column of column name txn 0, see
      * FuzzRunner.setTxnZeroCoveredSymbol(). runFuzz() checks that the covered queries read what the
      * uncovered ones read and that the WAL tables equal the non-WAL twin. After the column purge, no .pc
-     * sidecar of a dropped column version stays in a live partition of any of the three tables.
+     * sidecar of a dropped column version stays in a live partition of any of the three tables. Then
+     * VACUUM TABLE and the column purge run on the three tables, which must still match, read their
+     * covered values and hold no .pc sidecar of a dropped column version.
+     *
+     * @param expectedVacuumedCoveringIndexes when not null, the {@link #coveringIndexInstances} of the
+     *                                        WAL table that VACUUM TABLE runs over
      */
-    private void runTxnZeroCoveredSymbolFuzz(Rnd rnd) throws Exception {
+    private void runTxnZeroCoveredSymbolFuzz(Rnd rnd, String expectedVacuumedCoveringIndexes) throws Exception {
         fuzzer.setTxnZeroCoveredSymbol(rnd);
         runFuzz(rnd);
         assertMemoryLeak(() -> {
             purgeColumnVersions();
             final String tableName = getTestName();
-            for (String table : new String[]{tableName + "_wal", tableName + "_wal_parallel", tableName + "_nonwal"}) {
-                assertNoCoverFilesOfDroppedColumnVersions(table);
+            final String tableNameNoWal = tableName + "_nonwal";
+            final String[] walTableNames = {tableName + "_wal", tableName + "_wal_parallel"};
+            assertNoCoverFilesOfDroppedColumnVersions(tableNameNoWal);
+            for (String walTableName : walTableNames) {
+                assertNoCoverFilesOfDroppedColumnVersions(walTableName);
+            }
+
+            final String vacuumedCoveringIndexes = coveringIndexInstances(walTableNames[0]);
+            LOG.info().$("vacuum covering indexes [table=").$(walTableNames[0]).$(", indexes=").$(vacuumedCoveringIndexes).I$();
+            if (expectedVacuumedCoveringIndexes != null) {
+                Assert.assertEquals(expectedVacuumedCoveringIndexes, vacuumedCoveringIndexes);
+            }
+            execute("VACUUM TABLE " + tableNameNoWal);
+            for (String walTableName : walTableNames) {
+                execute("VACUUM TABLE " + walTableName);
+            }
+            purgeColumnVersions();
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String walTableName : walTableNames) {
+                    TestUtils.assertSqlCursors(compiler, sqlExecutionContext, tableNameNoWal, walTableName, LOG);
+                    fuzzer.assertRandomIndexes(tableNameNoWal, walTableName, rnd);
+                }
+            }
+            assertNoCoverFilesOfDroppedColumnVersions(tableNameNoWal);
+            for (String walTableName : walTableNames) {
+                assertNoCoverFilesOfDroppedColumnVersions(walTableName);
             }
         });
     }
