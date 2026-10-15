@@ -733,6 +733,7 @@ final class SampleByBinder {
         // LATEST ON names its timestamp without declaring the sampled input's order.
         plan.setTimestampRequired(source.getTimestamp() == null || !source.isExplicitTimestamp() && source.getLatestBy().size() > 0);
         plan.setJoinInput(source.getJoinModels().size() > 1);
+        plan.setFillInput(isFillPlanned(source));
         plan.setTimezone(bindSampleByParameter(source.getSampleByTimezoneName(), ColumnType.STRING, executionContext));
         plan.setOffset(bindSampleByParameter(source.getSampleByOffset(), ColumnType.STRING, executionContext));
         validateRuntimeConstant(plan.getTimezone(), ColumnType.STRING, "timezone must be a constant expression of STRING or CHAR type");

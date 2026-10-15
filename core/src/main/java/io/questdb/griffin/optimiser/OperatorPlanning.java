@@ -25,7 +25,6 @@
 package io.questdb.griffin.optimiser;
 
 import io.questdb.cairo.CairoConfiguration;
-import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
 import io.questdb.cairo.sql.TableAccessInfo;
@@ -33,7 +32,6 @@ import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SqlKeywords;
-import io.questdb.griffin.engine.groupby.SampleByFillRecordCursorFactory;
 import io.questdb.griffin.engine.orderby.SortKeyEncoder;
 import io.questdb.griffin.plan.logical.AggregatePlan;
 import io.questdb.griffin.plan.logical.BoundExpression;
@@ -131,26 +129,6 @@ final class OperatorPlanning implements Mutable {
     private static boolean hasNoParallelism(ObjList<? extends BoundExpression> expressions) {
         for (int i = 0, n = expressions.size(); i < n; i++) {
             if ((expressions.getQuick(i).getFunctionFlags() & BoundExpression.NO_PARALLELISM) != 0) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /**
-     * True when the fill re-reads the row of a PREV value it cannot keep in a fixed-size slot.
-     */
-    private static boolean hasPrevReadBack(FillPlan fill) {
-        final OutputSchema input = fill.getChild().getOutput();
-        final IntList targets = fill.getTargetColumnIds();
-        for (int i = 0, n = targets.size(); i < n; i++) {
-            final int mode = fill.getModes().getQuick(i);
-            if (mode != FillPlan.FILL_PREV && mode != FillPlan.FILL_PREV_COLUMN) {
-                continue;
-            }
-            final int sourceId = mode == FillPlan.FILL_PREV ? targets.getQuick(i) : fill.getSourceColumnIds().getQuick(i);
-            if (targets.indexOf(sourceId, 0, n) >= 0
-                    && !SampleByFillRecordCursorFactory.isPrevSlotEligible(ColumnType.tagOf(input.getColumnType(input.getColumnIndexById(sourceId))))) {
                 return true;
             }
         }
@@ -401,7 +379,7 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * True when the SAMPLE BY reads the first and last values of its buckets from the index of its base: a table scan,
+     * True when the SAMPLE BY, which nothing fills, reads the first and last values of its buckets from the index of its base: a table scan,
      * under a fused filter or identity projections, of the bitmap index of a single SYMBOL key without a residual, of a table whose parquet partitions store no
      * column under a converted type, which the SAMPLE BY keys by that symbol or by none.
      */
@@ -412,7 +390,7 @@ final class OperatorPlanning implements Mutable {
         if (base instanceof FilterPlan filter && PlanToFactoryRules.isFusedFilter(filter)) {
             base = filter.getChild();
         }
-        if (sample.getFillMode() != SampleByPlan.FILL_NONE || !(base instanceof ScanPlan scan)
+        if (sample.getFillMode() != SampleByPlan.FILL_NONE || sample.isFillInput() || !(base instanceof ScanPlan scan)
                 || scan.getAccessPath() != ScanPlan.AccessPath.SYMBOL_INDEX || scan.getIndexKeys().size() != 1
                 || scan.getResidual() != null || scan.getIndexRead() == ScanPlan.IndexRead.COVERING
                 || scan.getTableToken().isLiveView() && !scan.isUpdate()) {
@@ -558,24 +536,10 @@ final class OperatorPlanning implements Mutable {
     }
 
     /**
-     * Decides how the fill reads the buckets of its input and rejects a fill that would re-read the rows of an input
-     * without random access.
+     * Decides how the fill reads the buckets of its input.
      */
     private void planFill(FillPlan fill) {
-        final LogicalPlan input = fill.getChild();
-        final int timestampIndex = input.getOutput().getColumnIndexById(fill.getTimestampColumnId());
-        final FillPlan.Algorithm algorithm;
-        if (isSampleByRowsFill(fill)) {
-            algorithm = FillPlan.Algorithm.SAMPLE_BY_ROWS;
-        } else if (timestampIndex(input) == timestampIndex) {
-            if (!isRandomAccess(input) && hasPrevReadBack(fill)) {
-                throw CairoException.critical(0).put("FILL(PREV) cannot re-read rows of a base without random access");
-            }
-            algorithm = FillPlan.Algorithm.INPUT_ORDER;
-        } else {
-            algorithm = FillPlan.Algorithm.SORTED;
-        }
-        fill.setAlgorithm(algorithm);
+        fill.setAlgorithm(isSampleByRowsFill(fill) ? FillPlan.Algorithm.SAMPLE_BY_ROWS : FillPlan.Algorithm.SORTED);
     }
 
     /**

@@ -314,6 +314,7 @@ final class LogicalPlanCopier implements PlanExpressionVisitor, Mutable {
         clone.setPeriod(sampleBy.getPeriodToken(), sampleBy.getPeriod(), sampleBy.getPeriodPosition(),
                 sampleBy.getPeriodUnit(), sampleBy.getPeriodUnitPosition());
         clone.setTimestampColumnId(sampleBy.getTimestampColumnId());
+        clone.setFillInput(sampleBy.isFillInput());
         clone.setJoinInput(sampleBy.isJoinInput());
         clone.setTimestampRequired(sampleBy.isTimestampRequired());
         clone.setAlgorithm(sampleBy.getAlgorithm());

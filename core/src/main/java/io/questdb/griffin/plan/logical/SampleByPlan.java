@@ -42,6 +42,7 @@ public final class SampleByPlan extends GroupingPlan {
     private Algorithm algorithm;
     private int fillMode;
     private BoundExpression from;
+    private boolean isFillInput;
     private boolean isJoinInput;
     private boolean isTimestampRequired = true;
     private BoundExpression offset;
@@ -62,6 +63,7 @@ public final class SampleByPlan extends GroupingPlan {
         algorithm = null;
         fillMode = FILL_NONE;
         from = null;
+        isFillInput = false;
         isJoinInput = false;
         isTimestampRequired = true;
         offset = null;
@@ -153,6 +155,13 @@ public final class SampleByPlan extends GroupingPlan {
         return to == null ? 0 : to.getPosition();
     }
 
+    /**
+     * True when a FILL the clause states fills the buckets this node emits.
+     */
+    public boolean isFillInput() {
+        return isFillInput;
+    }
+
     public boolean isJoinInput() {
         return isJoinInput;
     }
@@ -176,6 +185,10 @@ public final class SampleByPlan extends GroupingPlan {
 
     public void setFrom(BoundExpression from) {
         this.from = from;
+    }
+
+    public void setFillInput(boolean isFillInput) {
+        this.isFillInput = isFillInput;
     }
 
     public void setJoinInput(boolean isJoinInput) {

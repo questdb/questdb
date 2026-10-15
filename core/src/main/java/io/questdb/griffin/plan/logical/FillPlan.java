@@ -189,9 +189,9 @@ public final class FillPlan extends ForwardingPlan {
 
     /**
      * How the fill reads the buckets of its input: from the rows of a SAMPLE BY cursor without a fill, which keeps its
-     * latest rows readable; in the timestamp order the input designates; or after sorting them by timestamp.
+     * latest rows readable, or after sorting them by timestamp.
      */
     public enum Algorithm {
-        INPUT_ORDER, SAMPLE_BY_ROWS, SORTED
+        SAMPLE_BY_ROWS, SORTED
     }
 }

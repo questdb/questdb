@@ -866,7 +866,7 @@ final class SampleByFactoryGenerator {
             }
             final GenericRecordMetadata metadata = new GenericRecordMetadata();
             int symbolKeyIndex = -1;
-            boolean isFirstLast = plan.getFillMode() == SampleByPlan.FILL_NONE;
+            boolean isFirstLast = plan.getFillMode() == SampleByPlan.FILL_NONE && !plan.isFillInput();
             final IntList firstLastIndexes = columnIndexes;
             firstLastIndexes.clear();
             firstLastKinds.clear();

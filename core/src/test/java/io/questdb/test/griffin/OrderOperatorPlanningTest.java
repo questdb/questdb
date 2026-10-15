@@ -223,10 +223,10 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
             createSampledTable();
             final String sampleByRows = "SELECT ts, sym, first(i) f FROM a SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION";
             final String sorted = "SELECT ts, sym, first(i) f FROM a SAMPLE BY 1h FILL(PREV) ALIGN TO CALENDAR";
-            final String inputOrder = "SELECT ts, sym, first(i) f FROM a WHERE sym = 'S' SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION";
+            final String indexed = "SELECT ts, sym, first(i) f FROM a WHERE sym = 'S' SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION";
             assertPlanned(engine, sqlExecutionContext, sampleByRows, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.SAMPLE_BY_ROWS, fill.getAlgorithm()));
             assertPlanned(engine, sqlExecutionContext, sorted, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.SORTED, fill.getAlgorithm()));
-            assertPlanned(engine, sqlExecutionContext, inputOrder, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.INPUT_ORDER, fill.getAlgorithm()));
+            assertPlanned(engine, sqlExecutionContext, indexed, FillPlan.class, fill -> Assert.assertEquals(FillPlan.Algorithm.SAMPLE_BY_ROWS, fill.getAlgorithm()));
             final String prevRows = """
                     ts\tsym\tf
                     2024-01-01T00:00:00.000000Z\tS\t1
@@ -270,15 +270,15 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                                             Frame forward scan on: a
                             """)
                     .returns(prevRows);
-            assertQuery(inputOrder)
+            assertQuery(indexed)
                     .timestamp("ts")
                     .noRandomAccess()
                     .withPlan("""
                             Sample By Fill
                               stride: '1h'
                               fill: null
-                                SampleByFirstLast
-                                  keys: [ts, sym]
+                                Sample By
+                                  keys: [ts,sym]
                                   values: [first(i)]
                                     DeferredSingleSymbolFilterPageFrame
                                         Index forward scan on: sym deferred: true
@@ -291,8 +291,6 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                             2024-01-01T01:00:00.000000Z\tS\tnull
                             2024-01-01T02:00:00.000000Z\tS\t3
                             """);
-            assertQuery("SELECT ts, sym, first(v) f FROM a WHERE sym = 'S' SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION")
-                    .fails(0, "FILL(PREV) cannot re-read rows of a base without random access");
         });
     }
 

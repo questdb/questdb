@@ -2874,6 +2874,48 @@ public class SampleByTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testIndexSampleByFirstObservationFill() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE sb (sym SYMBOL INDEX, s STRING, v VARCHAR, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO sb VALUES
+                        ('a', 'x', 'vx', 1, '2024-01-01T00:10:00.000000Z'),
+                        ('b', 'q', 'vq', 2, '2024-01-01T00:20:00.000000Z'),
+                        ('a', NULL, NULL, NULL, '2024-01-01T01:10:00.000000Z'),
+                        ('a', 'y', 'vy', 3, '2024-01-01T03:10:00.000000Z'),
+                        ('b', 'r', 'vr', 4, '2024-01-01T04:10:00.000000Z'),
+                        ('a', 'z', 'vz', 5, '2024-01-01T05:30:00.000000Z')
+                    """);
+            assertQuery("SELECT ts, first(s) s, last(v) v, last(i) i FROM sb WHERE sym = 'a' SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\ts\tv\ti
+                            2024-01-01T00:10:00.000000Z\tx\tvx\t1
+                            2024-01-01T01:10:00.000000Z\t\t\tnull
+                            2024-01-01T02:10:00.000000Z\t\t\tnull
+                            2024-01-01T03:10:00.000000Z\ty\tvy\t3
+                            2024-01-01T04:10:00.000000Z\ty\tvy\t3
+                            2024-01-01T05:10:00.000000Z\tz\tvz\t5
+                            """);
+            assertQuery("SELECT ts, first(s) s FROM sb WHERE sym = 'a' SAMPLE BY 1h FILL(NULL) ALIGN TO FIRST OBSERVATION")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\ts
+                            2024-01-01T00:10:00.000000Z\tx
+                            2024-01-01T01:10:00.000000Z\t
+                            2024-01-01T02:10:00.000000Z\t
+                            2024-01-01T03:10:00.000000Z\ty
+                            2024-01-01T04:10:00.000000Z\t
+                            2024-01-01T05:10:00.000000Z\tz
+                            """);
+        });
+    }
+
+    @Test
     public void testIndexSampleByIndexFrameExceedsPartitionFrame() throws Exception {
         Rnd rnd = TestUtils.generateRandom(LOG);
         setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, rnd.nextInt(4));
