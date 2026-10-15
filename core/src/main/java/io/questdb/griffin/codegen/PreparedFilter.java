@@ -27,23 +27,27 @@ package io.questdb.griffin.codegen;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryCARW;
+import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.plan.logical.BoundExpression;
+import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.jit.CompiledCountOnlyFilter;
 import io.questdb.jit.CompiledFilter;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
+import org.jetbrains.annotations.Nullable;
 
 import java.io.Closeable;
 
 /**
  * The filter the generator prepares, without building a filter factory, for the consumer that steals it from a
  * filter node, a parallel operator or a HORIZON JOIN over its slave: the filter function over the factory under the
- * node, and, once {@link FilterFactoryGenerator#prepareParallel} ran, the column set it reads, its per-worker clones
- * and its compiled JIT filter with the bind variables it reads; a parallel HORIZON JOIN sets only the clones. It owns
- * every resource it holds until the consumer's constructor adopts them, see {@link #adopt()}; {@link #close()} frees
- * what it still holds.
+ * node, with the pattern and residual a symbol pattern filter builds its per-worker clones from, and, once
+ * {@link FilterFactoryGenerator#prepareParallel} ran, the column set it reads, its per-worker clones and its compiled
+ * JIT filter with the bind variables it reads; a parallel HORIZON JOIN sets only the clones. It owns every resource
+ * it holds until the consumer's constructor adopts them, see {@link #adopt()}; {@link #close()} frees what it still
+ * holds.
  */
 final class PreparedFilter implements Closeable {
     private ObjList<Function> bindVarFunctions;
@@ -54,6 +58,8 @@ final class PreparedFilter implements Closeable {
     private Function filter;
     private OutputSchema input;
     private boolean isJitAllowed;
+    private FunctionExpression pattern;
+    private BoundExpression patternResidual;
     private BoundExpression predicate;
     private ObjList<Function> workers;
 
@@ -81,6 +87,8 @@ final class PreparedFilter implements Closeable {
         filter = null;
         input = null;
         isJitAllowed = false;
+        pattern = null;
+        patternResidual = null;
         predicate = null;
         workers = null;
     }
@@ -113,6 +121,14 @@ final class PreparedFilter implements Closeable {
         return input;
     }
 
+    FunctionExpression getPattern() {
+        return pattern;
+    }
+
+    BoundExpression getPatternResidual() {
+        return patternResidual;
+    }
+
     BoundExpression getPredicate() {
         return predicate;
     }
@@ -134,6 +150,21 @@ final class PreparedFilter implements Closeable {
         this.input = input;
         this.filter = filter;
         this.isJitAllowed = isJitAllowed;
+    }
+
+    /**
+     * Takes the symbol pattern filter of {@code pattern} and {@code residual}, which the holder owns from here on.
+     */
+    void ofPattern(
+            BoundExpression predicate,
+            OutputSchema input,
+            AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter,
+            FunctionExpression pattern,
+            @Nullable BoundExpression residual
+    ) {
+        of(predicate, input, filter, false);
+        this.pattern = pattern;
+        this.patternResidual = residual;
     }
 
     void setBindVarMemory(MemoryCARW bindVarMemory) {

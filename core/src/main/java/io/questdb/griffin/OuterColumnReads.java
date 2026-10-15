@@ -28,16 +28,20 @@ import io.questdb.griffin.plan.logical.BoundExpression;
 import io.questdb.griffin.plan.logical.ExpressionVisitor;
 import io.questdb.griffin.plan.logical.LogicalPlan;
 import io.questdb.griffin.plan.logical.OuterColumnExpression;
+import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanExpressionVisitor;
 import io.questdb.griffin.plan.logical.PlanVisitor;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.std.IntList;
+import io.questdb.std.ObjList;
 
 /**
  * Finds the outer columns, those of an enclosing LATERAL's outer input, that plan nodes read.
  */
 public final class OuterColumnReads implements ExpressionVisitor, PlanExpressionVisitor {
     private final PlanVisitor readingNodes = this::findReadingNode;
+    private final PlanVisitor scopeReadingNodes = this::findScopeReadingNode;
+    private ObjList<OutputSchema> scopes;
     private IntList sink;
 
     /**
@@ -78,6 +82,24 @@ public final class OuterColumnReads implements ExpressionVisitor, PlanExpression
         }
     }
 
+    /**
+     * True when the plan or one of its inputs reads a column of one of the scopes as an outer column; the outer
+     * columns a LATERAL inside the plan reads from the plan's own inputs do not count. {@code tmpColumnIds} is
+     * restored on return.
+     */
+    public boolean isScopeReadBy(LogicalPlan plan, ObjList<OutputSchema> scopes, IntList tmpColumnIds) {
+        final int base = tmpColumnIds.size();
+        sink = tmpColumnIds;
+        this.scopes = scopes;
+        try {
+            return !plan.walkTopDown(scopeReadingNodes);
+        } finally {
+            sink = null;
+            this.scopes = null;
+            tmpColumnIds.setPos(base);
+        }
+    }
+
     @Override
     public int visit(BoundExpression expression) {
         if (expression instanceof OuterColumnExpression outer) {
@@ -101,5 +123,19 @@ public final class OuterColumnReads implements ExpressionVisitor, PlanExpression
         final int base = sink.size();
         plan.visitReads(this);
         return sink.size() > base ? TreeWalk.STOP : TreeWalk.CONTINUE;
+    }
+
+    private int findScopeReadingNode(LogicalPlan plan) {
+        final int base = sink.size();
+        plan.visitReads(this);
+        for (int i = base, n = sink.size(); i < n; i++) {
+            for (int k = 0, m = scopes.size(); k < m; k++) {
+                if (scopes.getQuick(k).getColumnIndexById(sink.getQuick(i)) > -1) {
+                    return TreeWalk.STOP;
+                }
+            }
+        }
+        sink.setPos(base);
+        return TreeWalk.CONTINUE;
     }
 }

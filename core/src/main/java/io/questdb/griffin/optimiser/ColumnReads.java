@@ -35,6 +35,7 @@ import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.JoinInput;
 import io.questdb.griffin.plan.logical.JoinPlan;
@@ -326,12 +327,12 @@ final class ColumnReads implements Mutable {
     }
 
     /**
-     * Adds the output columns the plan keeps whether or not a consumer reads them: an aggregate keeps its grouping
-     * keys, which define its groups, and a projection keeps its declared designated timestamp.
+     * Adds the output columns the plan keeps whether or not a consumer reads them: an aggregate or a SAMPLE BY keeps its
+     * grouping keys, which define its groups, and a projection keeps its declared designated timestamp.
      */
     void retainOutputs(LogicalPlan plan) {
-        if (plan instanceof AggregatePlan aggregate) {
-            if (aggregate.getSharedSource() != null) {
+        if (plan instanceof GroupingPlan grouping) {
+            if (grouping instanceof AggregatePlan aggregate && aggregate.getSharedSource() != null) {
                 LogicalPlan input = aggregate.getChild();
                 while (input instanceof ProjectPlan project && LogicalPlans.isColumnProjection(project)) {
                     input = input.inputAt(0);
@@ -340,8 +341,8 @@ final class ColumnReads implements Mutable {
                     sharedSetOperations.add(input);
                 }
             }
-            final OutputSchema output = aggregate.getOutput();
-            for (int i = 0, n = aggregate.getGroupingExpressions().size(); i < n; i++) {
+            final OutputSchema output = grouping.getOutput();
+            for (int i = 0, n = grouping.getGroupingExpressions().size(); i < n; i++) {
                 readColumnIds.add(output.getColumnId(i));
             }
         } else if (plan instanceof ProjectPlan project && project.hasTimestampDeclaration()) {

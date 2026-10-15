@@ -44,6 +44,9 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
 import io.questdb.griffin.engine.LimitOverflowException;
+import io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory;
+import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
+import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncJitFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.CoveringIndexRecordCursorFactory;
@@ -103,6 +106,10 @@ final class FilterFactoryGenerator {
         this.functionInstantiator = functionInstantiator;
         this.jitIRSerializer = new CompiledFilterIRSerializer(characterStore, tmpSink, tmpIndexes, tmpValues, tmpLongs);
         this.enableJitDebug = configuration.isSqlJitDebugEnabled();
+    }
+
+    private static boolean isNegated(FunctionExpression pattern) {
+        return pattern.getArgumentCount() == 1 || "!~".equals(pattern.getName());
     }
 
     private void clearJitScratch(Throwable failure) {
@@ -213,6 +220,35 @@ final class FilterFactoryGenerator {
         }
         return generateJavaFilter(base, filter, true, columns, workerFilters, limit,
                 limitCount == null ? 0 : limitCount.getPosition(), enablePreTouch, executionContext);
+    }
+
+    private Function positivePattern(GenerationFrame frame, FunctionExpression pattern, OutputSchema input, RecordMetadata metadata,
+                                     SqlExecutionContext executionContext) throws SqlException {
+        if (!isNegated(pattern)) {
+            return functionInstantiator.instantiate(pattern, input, metadata, executionContext);
+        }
+        if (pattern.getArgumentCount() == 1) {
+            return functionInstantiator.instantiate(pattern.argumentAt(0), input, metadata, executionContext);
+        }
+        final ObjList<Function> arguments = frame.functions;
+        final IntList positions = frame.intListA;
+        arguments.clear();
+        positions.clear();
+        try {
+            for (int i = 0; i < 2; i++) {
+                arguments.add(functionInstantiator.instantiate(pattern.argumentAt(i), input, metadata, executionContext));
+                positions.add(pattern.getArgumentPosition(i));
+            }
+            final Function match = MatchSymbolFunctionFactory.positivePatternFactory(pattern).newInstance(pattern.getPosition(),
+                    arguments, positions, configuration, executionContext);
+            arguments.clear();
+            return match;
+        } catch (Throwable th) {
+            Misc.freeObjList(arguments, th);
+            throw th;
+        } finally {
+            arguments.clear();
+        }
     }
 
     static void collectColumnIndexes(BoundExpression expression, OutputSchema input, IntHashSet columns) {
@@ -440,8 +476,77 @@ final class FilterFactoryGenerator {
     }
 
     /**
+     * Builds the filter of a symbol pattern over the key set of its column, and over the residual of the other
+     * conjuncts of the scan, if any. Returns null when the pattern does not compile to a symbol key-set provider.
+     */
+    @Nullable AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter instantiatePatternFilter(
+            GenerationFrame frame,
+            FunctionExpression pattern,
+            @Nullable BoundExpression residual,
+            OutputSchema input,
+            RecordMetadata metadata,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        Function provider = null;
+        Function residualFilter = null;
+        try {
+            provider = positivePattern(frame, pattern, input, metadata, executionContext);
+            if (!(provider instanceof SymbolKeySetProvider)) {
+                Misc.free(provider);
+                return null;
+            }
+            if (residual != null) {
+                residualFilter = functionInstantiator.instantiate(residual, input, metadata, executionContext);
+            }
+            final FunctionExpression positive = pattern.getArgumentCount() == 1 ? (FunctionExpression) pattern.argumentAt(0) : pattern;
+            final int keyIndex = input.getColumnIndexById(((ColumnExpression) positive.argumentAt(0)).getColumnId());
+            final AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter =
+                    new AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter(provider, residualFilter, isNegated(pattern), keyIndex);
+            provider = null;
+            residualFilter = null;
+            return filter;
+        } catch (Throwable th) {
+            Misc.free(provider, th);
+            Misc.free(residualFilter, th);
+            throw th;
+        }
+    }
+
+    /**
+     * Builds one clone of the symbol pattern filter per worker, in its shape, so that the filter donates its prepared
+     * key set and its sub-query values to the clones. Returns null when the filter is thread-safe.
+     */
+    @Nullable ObjList<Function> instantiatePatternWorkers(
+            GenerationFrame frame,
+            FunctionExpression pattern,
+            @Nullable BoundExpression residual,
+            OutputSchema input,
+            RecordMetadata metadata,
+            Function filter,
+            SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (filter.isThreadSafe()) {
+            return null;
+        }
+        final int workerCount = executionContext.getSharedQueryWorkerCount();
+        final ObjList<Function> workers = new ObjList<>(workerCount);
+        functionInstantiator.beginWorkerClones();
+        try {
+            for (int i = 0; i < workerCount; i++) {
+                workers.add(instantiatePatternFilter(frame, pattern, residual, input, metadata, executionContext));
+            }
+            return workers;
+        } catch (Throwable th) {
+            Misc.freeObjList(workers, th);
+            throw th;
+        } finally {
+            functionInstantiator.endWorkerClones();
+        }
+    }
+
+    /**
      * Fills the prepared filter's column set, its JIT filter where the prepared filter allows one, with the bind
-     * variable memory the consumer reads them from, and its per-worker clones.
+     * variable memory the consumer reads them from, and its per-worker clones in the shape of its filter.
      */
     void prepareParallel(GenerationFrame frame, PreparedFilter target, RecordCursorFactory leaf, SqlExecutionContext executionContext)
             throws SqlException {
@@ -477,8 +582,12 @@ final class FilterFactoryGenerator {
                 ));
             }
         }
-        target.setWorkers(functionInstantiator.instantiateWorkers(predicate, input, leaf.getMetadata(), target.getFilter(),
-                executionContext.getSharedQueryWorkerCount(), executionContext));
+        final FunctionExpression pattern = target.getPattern();
+        target.setWorkers(pattern == null
+                ? functionInstantiator.instantiateWorkers(predicate, input, leaf.getMetadata(), target.getFilter(),
+                executionContext.getSharedQueryWorkerCount(), executionContext)
+                : instantiatePatternWorkers(frame, pattern, target.getPatternResidual(), input, leaf.getMetadata(),
+                target.getFilter(), executionContext));
     }
 
     void setEnableJitNullChecks(boolean value) {

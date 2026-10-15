@@ -31,11 +31,15 @@ import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.SqlExecutionContext;
-import io.questdb.griffin.engine.functions.AbstractUnaryLongFunction;
+import io.questdb.griffin.engine.functions.BinaryFunction;
+import io.questdb.griffin.engine.functions.LongFunction;
 import io.questdb.std.IntList;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
+/**
+ * A LIMIT bound of a correlated LATERAL body: the first argument, or the constant second one when the first is NULL.
+ */
 public class LateralLimitFunctionFactory implements FunctionFactory {
     @Override
     public int getResultType(IntList argTypes) {
@@ -44,23 +48,35 @@ public class LateralLimitFunctionFactory implements FunctionFactory {
 
     @Override
     public String getSignature() {
-        return "__lateral_limit(L)";
+        return "__lateral_limit(Ll)";
     }
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return new LateralLimitFunction(args.getQuick(0));
+        return new LateralLimitFunction(args.getQuick(0), args.getQuick(1));
     }
 
-    private static class LateralLimitFunction extends AbstractUnaryLongFunction {
-        public LateralLimitFunction(Function arg) {
-            super(arg);
+    private static class LateralLimitFunction extends LongFunction implements BinaryFunction {
+        private final Function limit;
+        private final Function nullLimit;
+
+        public LateralLimitFunction(Function limit, Function nullLimit) {
+            this.limit = limit;
+            this.nullLimit = nullLimit;
+        }
+
+        @Override
+        public Function getLeft() {
+            return limit;
         }
 
         @Override
         public long getLong(Record rec) {
-            final long value = arg.getLong(rec);
-            if (value < 0 && value != Numbers.LONG_NULL) {
+            final long value = limit.getLong(rec);
+            if (value == Numbers.LONG_NULL) {
+                return nullLimit.getLong(rec);
+            }
+            if (value < 0) {
                 throw CairoException.nonCritical()
                         .put("negative LIMIT is not supported in a correlated lateral sub-query [limit=")
                         .put(value)
@@ -72,6 +88,11 @@ public class LateralLimitFunctionFactory implements FunctionFactory {
         @Override
         public String getName() {
             return "__lateral_limit";
+        }
+
+        @Override
+        public Function getRight() {
+            return nullLimit;
         }
     }
 }

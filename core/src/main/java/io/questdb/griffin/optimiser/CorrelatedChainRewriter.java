@@ -218,14 +218,9 @@ final class CorrelatedChainRewriter {
         window.getFunctionColumnIds().add(rowNumberId);
         window.getOutput().add(rowNumberId, name, rowNumber.getDataType(), false);
         final ColumnExpression rank = ctx.planNodes.columns.next().of(rowNumberId, rowNumber.getDataType(), position);
-        final BoundExpression predicate;
-        if (lo == null && hi == null) {
-            predicate = ctx.context.bindCall("=", position, rank, ctx.planNodes.constants.next().ofInt(1, position), window.getOutput());
-        } else {
-            final BoundExpression upper = compensation.limitComparison(">=", hi == null ? lo : hi, rank, window.getOutput(), position);
-            predicate = hi != null && lo != null
-                    ? ctx.context.getRewriter().combineConjunction(upper, compensation.limitComparison("<", lo, rank, window.getOutput(), position), position) : upper;
-        }
+        final BoundExpression predicate = lo == null
+                ? ctx.context.bindCall("=", position, rank, ctx.planNodes.constants.next().ofInt(1, position), window.getOutput())
+                : compensation.limitPredicate(lo, hi, rank, window.getOutput());
         return ctx.planNodes.filters.next().of(window, predicate, position);
     }
 

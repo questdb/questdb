@@ -1387,6 +1387,97 @@ public class SampleByFillPrevTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillPrevKeyedPercentileNoPrevYet() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, d DOUBLE, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('A', 1.0, 1, '2024-01-01T00:10:00.000000Z'),
+                    ('B', 2.0, 2, '2024-01-01T01:10:00.000000Z'),
+                    ('A', 3.0, 3, '2024-01-01T02:10:00.000000Z')
+                    """);
+            final String sql = """
+                    SELECT ts, k, approx_percentile(d, 0.5) pd, approx_percentile(d, 0.5, 3) pp, approx_percentile(l, 0.5, 3) pl
+                    FROM %s SAMPLE BY 1h %s ORDER BY ts, k""";
+            final String expected = """
+                    ts\tk\tpd\tpp\tpl
+                    2024-01-01T00:%1$s:00.000000Z\tA\t1.0\t1.0\t1.0
+                    2024-01-01T00:%1$s:00.000000Z\tB\tnull\tnull\tnull
+                    2024-01-01T01:%1$s:00.000000Z\tA\t1.0\t1.0\t1.0
+                    2024-01-01T01:%1$s:00.000000Z\tB\t2.0\t2.0\t2.0
+                    2024-01-01T02:%1$s:00.000000Z\tA\t3.0\t3.0\t3.0
+                    2024-01-01T02:%1$s:00.000000Z\tB\t2.0\t2.0\t2.0
+                    """;
+            assertQuery(String.format(sql, "(SELECT * FROM t WHERE d > 0)", "FILL(PREV)"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(String.format(expected, "00"));
+            assertQuery(String.format(sql, "t", "FILL(PREV) ALIGN TO FIRST OBSERVATION"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(String.format(expected, "10"));
+        });
+    }
+
+    @Test
+    public void testFillPrevKeyedPooledStringAggregates() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, s STRING, vc VARCHAR, sy SYMBOL, d DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('A', 'A1', 'A1', 'A1', 1.0, '2024-01-01T00:10:00.000000Z'),
+                    ('B', 'B1', 'B1', 'B1', 2.0, '2024-01-01T01:10:00.000000Z'),
+                    ('B', 'B2', 'B2', 'B2', 3.0, '2024-01-01T02:10:00.000000Z'),
+                    ('A', 'A2', 'A2', 'A2', 4.0, '2024-01-01T03:10:00.000000Z'),
+                    ('A', 'A3', 'A3', 'A3', 5.0, '2024-01-01T03:20:00.000000Z')
+                    """);
+            final String sql = """
+                    SELECT ts, k, string_agg(s, ',') sa, string_agg(vc, ',') va, string_distinct_agg(s, ',') sd,
+                    string_distinct_agg(vc, ',') vd, string_distinct_agg(sy, ',') yd, count_distinct(s) cs, count_distinct(vc) cv
+                    FROM %s SAMPLE BY 1h %s ORDER BY ts, k""";
+            final String expected = """
+                    ts\tk\tsa\tva\tsd\tvd\tyd\tcs\tcv
+                    2024-01-01T00:%1$s:00.000000Z\tA\tA1\tA1\tA1\tA1\tA1\t1\t1
+                    2024-01-01T00:%1$s:00.000000Z\tB\t\t\t\t\t\tnull\tnull
+                    2024-01-01T01:%1$s:00.000000Z\tA\tA1\tA1\tA1\tA1\tA1\t1\t1
+                    2024-01-01T01:%1$s:00.000000Z\tB\tB1\tB1\tB1\tB1\tB1\t1\t1
+                    2024-01-01T02:%1$s:00.000000Z\tA\tA1\tA1\tA1\tA1\tA1\t1\t1
+                    2024-01-01T02:%1$s:00.000000Z\tB\tB2\tB2\tB2\tB2\tB2\t1\t1
+                    2024-01-01T03:%1$s:00.000000Z\tA\tA2,A3\tA2,A3\tA2,A3\tA2,A3\tA2,A3\t2\t2
+                    2024-01-01T03:%1$s:00.000000Z\tB\tB2\tB2\tB2\tB2\tB2\t1\t1
+                    """;
+            assertQuery(String.format(sql, "(SELECT * FROM t WHERE d > 0)", "FROM '2024-01-01' TO '2024-01-01T04:00:00.000000Z' FILL(PREV)"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(String.format(expected, "00"));
+            assertQuery(String.format(sql, "(SELECT * FROM t WHERE d > 0)", "FILL(PREV)"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(String.format(expected, "00"));
+            assertQuery(String.format(sql, "t", "FILL(PREV) ALIGN TO FIRST OBSERVATION"))
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(String.format(expected, "10"));
+            assertQuery("""
+                    SELECT ts, k, string_agg(s, ',') sa, string_distinct_agg(vc, ',') vd, sum(d) sm
+                    FROM (SELECT * FROM t WHERE d > 0) SAMPLE BY 1h FILL(PREV, PREV, NULL) ORDER BY ts, k""")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tsa\tvd\tsm
+                            2024-01-01T00:00:00.000000Z\tA\tA1\tA1\t1.0
+                            2024-01-01T00:00:00.000000Z\tB\t\t\tnull
+                            2024-01-01T01:00:00.000000Z\tA\tA1\tA1\tnull
+                            2024-01-01T01:00:00.000000Z\tB\tB1\tB1\t2.0
+                            2024-01-01T02:00:00.000000Z\tA\tA1\tA1\tnull
+                            2024-01-01T02:00:00.000000Z\tB\tB2\tB2\t3.0
+                            2024-01-01T03:00:00.000000Z\tA\tA2,A3\tA2,A3\t9.0
+                            2024-01-01T03:00:00.000000Z\tB\tB2\tB2\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testFillPrevLong() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");

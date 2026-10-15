@@ -67,23 +67,76 @@ public class TimestampEndpointTest extends AbstractCairoTest {
                         "SELECT " + call + " FROM lp_endpoint_empty WHERE x>0",
                         "SELECT " + call + " FROM lp_endpoint WHERE x<0",
                         "SELECT " + call + " FROM lp_endpoint WHERE ts IN '2023'",
-                        "SELECT " + call + " FROM lp_endpoint WHERE x<0 ORDER BY endpoint DESC",
                         "SELECT * FROM (SELECT " + call + " FROM lp_endpoint_empty)"
                 };
                 for (String sql : emptyQueries) {
-                    assertQuery(sql).noLeakCheck().timestamp("endpoint").noRandomAccess().expectSize()
+                    assertQuery(sql).noLeakCheck().noRandomAccess().expectSize()
                             .withPlanContaining("GroupBy vectorized: false")
                             .returns("endpoint\n\n");
                 }
-                assertQuery("SELECT " + function + "(ts) FROM lp_endpoint_empty").noLeakCheck().timestamp(function).noRandomAccess().expectSize()
+                assertQuery("SELECT " + function + "(ts) FROM lp_endpoint_empty").noLeakCheck().noRandomAccess().expectSize()
                         .returns(function + "\n\n");
+                assertQuery("SELECT " + call + " FROM lp_endpoint WHERE x<0 ORDER BY endpoint DESC").noLeakCheck().timestampDesc("endpoint").expectSize()
+                        .withPlanContaining("GroupBy vectorized: false")
+                        .returns("endpoint\n\n");
                 final String scan = isBackward ? "Frame backward scan on: lp_endpoint" : "Frame forward scan on: lp_endpoint";
-                assertQuery("SELECT " + call + " FROM lp_endpoint WHERE x>=2 AND x<4").noLeakCheck().timestamp("endpoint").noRandomAccess().expectSize()
+                assertQuery("SELECT " + call + " FROM lp_endpoint WHERE x>=2 AND x<4").noLeakCheck().noRandomAccess().expectSize()
                         .withPlanContaining("GroupBy vectorized: false", scan)
                         .returns(isBackward ? "endpoint\n2024-01-03T00:00:00.000000Z\n" : "endpoint\n2024-01-02T00:00:00.000000Z\n");
-                assertQuery("SELECT " + call + " FROM lp_endpoint WHERE ts>='2024-01-02' ORDER BY endpoint").noLeakCheck().timestamp("endpoint").noRandomAccess().expectSize()
+                assertQuery("SELECT " + call + " FROM lp_endpoint WHERE ts>='2024-01-02' ORDER BY endpoint").noLeakCheck().timestamp("endpoint").expectSize()
                         .withPlanContaining("GroupBy vectorized: false", "Limit value: 1")
                         .returns(isBackward ? "endpoint\n2024-01-04T00:00:00.000000Z\n" : "endpoint\n2024-01-02T00:00:00.000000Z\n");
+            }
+        });
+    }
+
+    @Test
+    public void testEndpointDesignatesNoTimestamp() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String wal : new String[]{"BYPASS WAL", "WAL"}) {
+                execute("CREATE TABLE t (l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY " + wal);
+                execute("INSERT INTO t VALUES (1, '2024-01-01T00:00:00'), (2, '2024-01-01T05:00:00'), (3, '2024-01-02T01:00:00')");
+                drainWalQueue();
+                for (String function : new String[]{"first", "min", "last", "max"}) {
+                    final boolean isBackward = function.equals("last") || function.equals("max");
+                    final String value = isBackward ? "2024-01-02T01:00:00.000000Z\n" : "2024-01-01T00:00:00.000000Z\n";
+                    final String endpoint = "SELECT " + function + "(ts) r FROM t";
+                    final String empty = endpoint + " WHERE l > 1000";
+
+                    assertQuery(endpoint).noLeakCheck().noRandomAccess().expectSize().returns("r\n" + value);
+                    assertQuery(empty).noLeakCheck().noRandomAccess().expectSize().returns("r\n\n");
+
+                    execute("CREATE TABLE w AS (" + endpoint + ")");
+                    assertQuery("w").noLeakCheck().expectSize().returns("r\n" + value);
+                    execute("DROP TABLE w");
+                    execute("CREATE TABLE w AS (" + empty + ")");
+                    assertQuery("w").noLeakCheck().expectSize().returns("r\n\n");
+                    execute("DROP TABLE w");
+
+                    final String partitioned = "CREATE TABLE w AS (" + endpoint + ") PARTITION BY DAY WAL";
+                    assertQuery(partitioned).noLeakCheck()
+                            .fails(partitioned.indexOf("DAY"), "partitioning is possible only on tables with designated timestamps");
+                    execute("CREATE TABLE w AS (" + endpoint + ") TIMESTAMP(r) PARTITION BY DAY WAL");
+                    drainWalQueue();
+                    assertQuery("w").noLeakCheck().timestamp("r").expectSize().returns("r\n" + value);
+                    execute("DROP TABLE w");
+                    assertQuery("CREATE TABLE w AS (" + empty + ") TIMESTAMP(r) PARTITION BY DAY WAL").noLeakCheck()
+                            .fails(-1, "designated timestamp column cannot be NULL");
+                    Assert.assertNull(engine.getTableTokenIfExists("w"));
+
+                    assertQuery("SELECT r, count() FROM (" + endpoint + ") SAMPLE BY 1h").noLeakCheck()
+                            .fails(0, "base query does not provide designated TIMESTAMP column");
+                    assertQuery("SELECT r, count() FROM (" + empty + ") SAMPLE BY 1h").noLeakCheck()
+                            .fails(0, "base query does not provide designated TIMESTAMP column");
+                    assertQuery("SELECT t.l, x.r FROM t ASOF JOIN (" + endpoint + ") x").noLeakCheck()
+                            .fails(23, "right side of time series join has no timestamp");
+                    assertQuery("SELECT t.l, x.k FROM t ASOF JOIN (SELECT " + function + "(ts) r, 42 k FROM t WHERE l > 1000) x").noLeakCheck()
+                            .fails(23, "right side of time series join has no timestamp");
+                    final String endpointMaster = "SELECT x.r, t.l FROM (" + endpoint + ") x ASOF JOIN t";
+                    assertQuery(endpointMaster).noLeakCheck()
+                            .fails(endpointMaster.indexOf("ASOF"), "left side of time series join has no timestamp");
+                }
+                execute("DROP TABLE t");
             }
         });
     }
@@ -240,7 +293,7 @@ public class TimestampEndpointTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testDesignationIsAvailableToParentBinding() throws Exception {
+    public void testParentQueriesReadTheEndpoint() throws Exception {
         assertMemoryLeak(() -> {
             createRows("lp_endpoint", "TIMESTAMP");
             assertEndpoint(
@@ -256,14 +309,6 @@ public class TimestampEndpointTest extends AbstractCairoTest {
                     """
                             endpoint
                             2024-01-01T00:00:00.000000Z
-                            """,
-                    null
-            );
-            assertEndpoint(
-                    "SELECT a.endpoint,b.x FROM (SELECT first(ts) endpoint FROM lp_endpoint) a ASOF JOIN lp_endpoint b",
-                    """
-                            endpoint	x
-                            2024-01-01T00:00:00.000000Z	1
                             """,
                     null
             );

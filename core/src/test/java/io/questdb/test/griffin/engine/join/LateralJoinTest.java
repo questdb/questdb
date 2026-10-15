@@ -1446,8 +1446,8 @@ public class LateralJoinTest extends AbstractCairoTest {
                     bindVariableService -> bindVariableService.setLong("lim", 1)
             ));
             countCases.add(BindVarTuple.ok(
-                    "null limit keeps dropping the aggregate row",
-                    "k\tc\n1\tnull\n2\tnull\n3\tnull\n",
+                    "null limit keeps the aggregate row",
+                    "k\tc\n1\t2\n2\t1\n3\t0\n",
                     bindVariableService -> bindVariableService.setLong("lim", Numbers.LONG_NULL)
             ));
 

@@ -65,7 +65,7 @@ public final class ResultTypes {
 
     /**
      * The type of a decimal rounded to zero decimal places: unchanged without a fraction, otherwise the integer
-     * digits plus a carry digit for every rounding mode except {@link RoundingMode#DOWN}.
+     * digits plus a carry digit for every rounding mode except {@link RoundingMode#DOWN}, at least one digit.
      */
     public static int decimalRoundedToZeroScale(int argType, RoundingMode roundingMode) {
         final int scale = ColumnType.getDecimalScale(argType);
@@ -73,7 +73,7 @@ public final class ResultTypes {
             return argType;
         }
         final int carry = roundingMode == RoundingMode.DOWN ? 0 : 1;
-        return ColumnType.getDecimalType(ColumnType.getDecimalPrecision(argType) - scale + carry, 0);
+        return ColumnType.getDecimalType(Math.max(1, ColumnType.getDecimalPrecision(argType) - scale + carry), 0);
     }
 
     /**

@@ -48,6 +48,6 @@ public class RoundUpDecimalZeroScaleFunctionFactory implements FunctionFactory {
 
     @Override
     public Function newInstance(int position, ObjList<Function> args, IntList argPositions, CairoConfiguration configuration, SqlExecutionContext sqlExecutionContext) {
-        return RoundDecimalFunctionFactory.newInstance(args.getQuick(0), IntConstant.ZERO, RoundingMode.UP);
+        return RoundDecimalFunctionFactory.newInstance(position, args.getQuick(0), IntConstant.ZERO, RoundingMode.UP);
     }
 }

@@ -296,6 +296,123 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillCursorPathOuterProjectionDropsAggregate() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, i INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    ('a', 1, 10.0, '2024-01-01T00:15:00.000000Z'),
+                    ('b', 2, 20.0, '2024-01-01T00:30:00.000000Z'),
+                    ('a', 3, 30.0, '2024-01-01T02:20:00.000000Z'),
+                    ('b', 4, 40.0, '2024-01-01T03:40:00.000000Z')
+                    """);
+            final String firstObservation = "SELECT ts, sum(v) sv, last(i) ls FROM t SAMPLE BY 1h %s ALIGN TO FIRST OBSERVATION";
+            final String subQuery = "SELECT ts, sum(v) sv, last(i) ls FROM (SELECT * FROM t WHERE v > 0) SAMPLE BY 1h %s";
+            assertDroppedAggregate(firstObservation, "FILL(NULL)", """
+                    ts\tls
+                    2024-01-01T00:15:00.000000Z\t2
+                    2024-01-01T01:15:00.000000Z\tnull
+                    2024-01-01T02:15:00.000000Z\t3
+                    2024-01-01T03:15:00.000000Z\t4
+                    """);
+            assertDroppedAggregate(firstObservation, "FILL(PREV)", """
+                    ts\tls
+                    2024-01-01T00:15:00.000000Z\t2
+                    2024-01-01T01:15:00.000000Z\t2
+                    2024-01-01T02:15:00.000000Z\t3
+                    2024-01-01T03:15:00.000000Z\t4
+                    """);
+            assertDroppedAggregate(firstObservation, "FILL(7)", """
+                    ts\tls
+                    2024-01-01T00:15:00.000000Z\t2
+                    2024-01-01T01:15:00.000000Z\t7
+                    2024-01-01T02:15:00.000000Z\t3
+                    2024-01-01T03:15:00.000000Z\t4
+                    """);
+            assertDroppedAggregate(subQuery, "FILL(NULL)", """
+                    ts\tls
+                    2024-01-01T00:00:00.000000Z\t2
+                    2024-01-01T01:00:00.000000Z\tnull
+                    2024-01-01T02:00:00.000000Z\t3
+                    2024-01-01T03:00:00.000000Z\t4
+                    """);
+            assertDroppedAggregate(subQuery, "FILL(PREV)", """
+                    ts\tls
+                    2024-01-01T00:00:00.000000Z\t2
+                    2024-01-01T01:00:00.000000Z\t2
+                    2024-01-01T02:00:00.000000Z\t3
+                    2024-01-01T03:00:00.000000Z\t4
+                    """);
+            assertDroppedAggregate(subQuery, "FILL(7)", """
+                    ts\tls
+                    2024-01-01T00:00:00.000000Z\t2
+                    2024-01-01T01:00:00.000000Z\t7
+                    2024-01-01T02:00:00.000000Z\t3
+                    2024-01-01T03:00:00.000000Z\t4
+                    """);
+
+            final String nullFill = String.format(firstObservation, "FILL(NULL)");
+            execute("CREATE VIEW fo AS (" + nullFill + ")");
+            assertQuery("SELECT ts, ls FROM fo")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tls
+                            2024-01-01T00:15:00.000000Z\t2
+                            2024-01-01T01:15:00.000000Z\tnull
+                            2024-01-01T02:15:00.000000Z\t3
+                            2024-01-01T03:15:00.000000Z\t4
+                            """);
+            assertQuery("SELECT ts, ls FROM (" + nullFill + ") WHERE ls > 2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tls
+                            2024-01-01T02:15:00.000000Z\t3
+                            2024-01-01T03:15:00.000000Z\t4
+                            """);
+            assertQuery("SELECT ts, ls FROM (" + nullFill + ") LIMIT 2")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tls
+                            2024-01-01T00:15:00.000000Z\t2
+                            2024-01-01T01:15:00.000000Z\tnull
+                            """);
+            assertQuery("SELECT ts, k, ls FROM (SELECT ts, k, sum(v) sv, last(i) ls FROM t SAMPLE BY 1h FILL(PREV) ALIGN TO FIRST OBSERVATION) ORDER BY ts, k")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns("""
+                            ts\tk\tls
+                            2024-01-01T00:15:00.000000Z\ta\t1
+                            2024-01-01T00:15:00.000000Z\tb\t2
+                            2024-01-01T01:15:00.000000Z\ta\t1
+                            2024-01-01T01:15:00.000000Z\tb\t2
+                            2024-01-01T02:15:00.000000Z\ta\t3
+                            2024-01-01T02:15:00.000000Z\tb\t2
+                            2024-01-01T03:15:00.000000Z\ta\t3
+                            2024-01-01T03:15:00.000000Z\tb\t4
+                            """);
+            assertQuery("SELECT ts, ls FROM (" + nullFill + ")")
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Sample By Fill
+                              stride: '1h'
+                              fill: null
+                                Sample By
+                                  fill: none
+                                  values: [last(i)]
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """);
+        });
+    }
+
+    @Test
     public void testFillDayStrideAcrossDstOverSampleByCursor() throws Exception {
         // Day strides over a SAMPLE BY cursor keep local midnights on both sides of a DST transition.
         assertMemoryLeak(() -> {
@@ -3683,5 +3800,27 @@ public class SampleByFillTest extends AbstractCairoTest {
                 (3, 3, 3.0, 3.0, '3.3.3.3', '2024-01-03', 'c', false, 'b', 'z', 'z', '33333333-3333-3333-3333-333333333333', 3.75m,
                  '2024-01-03T00:00:00.000000001Z', '2024-01-01T02:00:00.000000Z')
                 """);
+    }
+
+    private void assertDroppedAggregate(String sql, String fill, String expected) throws Exception {
+        final String sampleBy = String.format(sql, fill);
+        assertQuery("SELECT ts, ls FROM (" + sampleBy + ")")
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
+        assertQuery("WITH c AS (" + sampleBy + ") SELECT ts, ls FROM c")
+                .noLeakCheck()
+                .timestamp("ts")
+                .noRandomAccess()
+                .returns(expected);
+        assertQuery("SELECT count() FROM (" + sampleBy + ")")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("""
+                        count
+                        4
+                        """);
     }
 }

@@ -1108,7 +1108,7 @@ public class GroupByPlanningTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testSingleRowOrderKeepsDesignatedTimestamp() throws Exception {
+    public void testSingleRowOrderByConstantDesignatesNoTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE single_row (k SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
             execute("INSERT INTO single_row VALUES ('a', '2024-01-01'), ('b', '2024-01-02')");
@@ -1116,7 +1116,6 @@ public class GroupByPlanningTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .noRandomAccess()
                     .expectSize()
-                    .timestamp("a0")
                     .returns("""
                             e0\ta0
                             Z\t2024-01-02T00:00:00.000000Z

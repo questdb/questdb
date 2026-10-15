@@ -51,7 +51,6 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
-import io.questdb.griffin.model.ExpressionNode;
 import io.questdb.std.IntList;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -875,9 +874,7 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
     public static final class PreparedSymbolPatternFilter extends BooleanFunction {
         private final boolean isNegated;
         private final SymbolKeySetProvider provider;
-        private final ExpressionNode providerExpression;
         private final Function providerFunction;
-        private final ExpressionNode residualExpression;
         private final Function residualFilter;
         private final int symbolColumnIndex;
         // Set by prepare(). getBool() asserts it, because isThreadSafe() rests on it - see that override.
@@ -889,22 +886,9 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
                 boolean isNegated,
                 int symbolColumnIndex
         ) {
-            this(providerFunction, residualFilter, isNegated, symbolColumnIndex, null, null);
-        }
-
-        public PreparedSymbolPatternFilter(
-                @NotNull Function providerFunction,
-                @Nullable Function residualFilter,
-                boolean isNegated,
-                int symbolColumnIndex,
-                @Nullable ExpressionNode providerExpression,
-                @Nullable ExpressionNode residualExpression
-        ) {
             this.providerFunction = providerFunction;
             this.provider = (SymbolKeySetProvider) providerFunction;
-            this.providerExpression = providerExpression;
             this.residualFilter = residualFilter;
-            this.residualExpression = residualExpression;
             this.isNegated = isNegated;
             this.symbolColumnIndex = symbolColumnIndex;
         }
@@ -935,14 +919,6 @@ public class AdaptiveSymbolPatternRecordCursorFactory extends AbstractRecordCurs
 
         public IntList getMatchedSymbolKeys() {
             return provider.getMatchedSymbolKeys();
-        }
-
-        public ExpressionNode getProviderExpression() {
-            return providerExpression;
-        }
-
-        public ExpressionNode getResidualExpression() {
-            return residualExpression;
         }
 
         public int getSymbolColumnIndex() {

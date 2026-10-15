@@ -44,6 +44,7 @@ import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.SingleSymbolFilter;
 import io.questdb.griffin.FunctionInstantiator;
 import io.questdb.griffin.FunctionResolver;
+import io.questdb.griffin.LogicalPlans;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
@@ -69,6 +70,7 @@ import io.questdb.griffin.plan.logical.ColumnExpression;
 import io.questdb.griffin.plan.logical.ConstantExpression;
 import io.questdb.griffin.plan.logical.FillPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
+import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.OutputSchema;
 import io.questdb.griffin.plan.logical.PlanToFactoryRules;
 import io.questdb.griffin.plan.logical.SampleByPlan;
@@ -724,6 +726,7 @@ final class SampleByFactoryGenerator {
             assignUndefinedType(offset, STRING, executionContext);
 
             final int columnCount = metadata.getColumnCount();
+            final int keyCount = ((GroupingPlan) LogicalPlans.skipFilters(plan.getChild())).getGroupingExpressions().size();
             final IntList columnToEntry = columnIndexes;
             columnToEntry.setAll(columnCount, -1);
             for (int i = 0; i < entryCount; i++) {
@@ -736,7 +739,7 @@ final class SampleByFactoryGenerator {
                 if (col == timestampIndex) {
                     modes.add(SampleByFillRecordCursorFactory.FILL_CONSTANT);
                     constants.add(NullConstant.NULL);
-                } else if (entry < 0) {
+                } else if (col < keyCount) {
                     modes.add(SampleByFillRecordCursorFactory.FILL_KEY);
                     constants.add(NullConstant.NULL);
                 } else {

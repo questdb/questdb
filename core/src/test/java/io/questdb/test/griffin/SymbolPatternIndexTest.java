@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
@@ -45,6 +46,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.RowCursor;
+import io.questdb.cairo.sql.StatefulAtom;
 import io.questdb.griffin.FunctionParser;
 import io.questdb.griffin.OrderByMnemonic;
 import io.questdb.griffin.PlanSink;
@@ -56,8 +58,13 @@ import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.regex.AbstractLikeSymbolFunctionFactory;
 import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
+import io.questdb.griffin.engine.join.AsyncWindowJoinAtom;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilterAtom;
+import io.questdb.griffin.engine.table.AsyncGroupByAtom;
+import io.questdb.griffin.engine.table.AsyncGroupByNotKeyedAtom;
+import io.questdb.griffin.engine.table.AsyncTopKAtom;
+import io.questdb.griffin.engine.table.BaseAsyncHorizonJoinAtom;
 import io.questdb.griffin.engine.table.HeapRowCursorFactory;
 import io.questdb.griffin.engine.table.SymbolPatternIndexRecordCursorFactory;
 import io.questdb.griffin.model.QueryModel;
@@ -78,6 +85,7 @@ import org.junit.Test;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.function.IntFunction;
 
 public class SymbolPatternIndexTest extends AbstractCairoTest {
     private static final long COMMIT_PROBE_EXISTING_SYMBOL_TIMESTAMP = 172_800_000_000L; // 1970-01-03
@@ -4005,6 +4013,75 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testStolenPatternFilterWorkersInheritPreparedSymbolKeys() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE m (sym SYMBOL INDEX, txt VARCHAR, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO m SELECT 'k' || (x % 20), 't' || (x % 7), x, timestamp_sequence(0, 60_000_000) FROM long_sequence(20_000)");
+            try (SqlExecutionContextImpl context = TestUtils.createSqlExecutionCtx(engine, 4)) {
+                for (String query : new String[]{
+                        "SELECT count(), sum(v) FROM m WHERE sym LIKE 'k1_' AND txt = 't1'",
+                        "SELECT ts, v FROM m WHERE sym LIKE 'k1_' AND txt = 't1' ORDER BY v DESC LIMIT 5"
+                }) {
+                    try (RecordCursorFactory factory = engine.select(query, context)) {
+                        Assert.assertTrue(query, stolenFilters(factory, query).apply(0) instanceof AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter);
+                        Assert.assertEquals(query, 1, countSymbolKeyScans(factory, context, null));
+                    }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testStolenPatternFilterWorkersInheritSubqueryState() throws Exception {
+        assertMemoryLeak(() -> {
+            try (WorkerPool pool = new WorkerPool(() -> 4)) {
+                TestUtils.execute(pool, (testEngine, _, executionContext) -> {
+                    final StringSink sink = new StringSink();
+                    testEngine.execute("CREATE TABLE q (qs SYMBOL, qv LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", executionContext);
+                    testEngine.execute(
+                            "INSERT INTO q SELECT 'z' || (x % 3), x, timestamp_sequence(0, 90_000_000) FROM long_sequence(10_000)",
+                            executionContext
+                    );
+                    for (String index : new String[]{"INDEX", "INDEX TYPE POSTING INCLUDE (s2, txt, v)"}) {
+                        testEngine.execute("CREATE TABLE m (sym SYMBOL " + index + ", s2 SYMBOL, txt VARCHAR, v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY",
+                                executionContext);
+                        testEngine.execute("""
+                                INSERT INTO m SELECT 'k' || (x % 20), 'z' || (x % 3), 't' || (x % 7), x, timestamp_sequence(0, 60_000_000)
+                                FROM long_sequence(20_000)
+                                """, executionContext);
+                        for (String pattern : new String[]{"sym LIKE 'k1%'", "sym NOT LIKE 'k1%'"}) {
+                            for (String residual : new String[]{"s2 IN (SELECT 'z1')", "s2 = (SELECT 'z1')", "txt = (SELECT 't1') AND v > 0"}) {
+                                final String filter = pattern + " AND " + residual;
+                                assertStolenPatternFilter(testEngine, executionContext, sink,
+                                        "SELECT count(), sum(v) FROM m WHERE " + filter,
+                                        "Async Group By workers: 4", "long_sequence count: 1");
+                                assertStolenPatternFilter(testEngine, executionContext, sink,
+                                        "SELECT sym, count(), sum(v) FROM m WHERE " + filter + " ORDER BY sym",
+                                        "Async Group By workers: 4", "long_sequence count: 1");
+                                assertStolenPatternFilter(testEngine, executionContext, sink,
+                                        "SELECT ts, count(), sum(v) FROM m WHERE " + filter + " SAMPLE BY 1d",
+                                        "Async Group By workers: 4", "long_sequence count: 1");
+                                assertStolenPatternFilter(testEngine, executionContext, sink,
+                                        "SELECT ts, v FROM m WHERE " + filter + " ORDER BY v DESC LIMIT 5",
+                                        "Async Top K lo: 5 workers: 4", "long_sequence count: 1");
+                                assertStolenPatternFilter(testEngine, executionContext, sink,
+                                        "SELECT m.ts, m.v, sum(q.qv) s FROM m WINDOW JOIN q ON (m.s2 = q.qs) "
+                                                + "RANGE BETWEEN 1 MINUTE PRECEDING AND CURRENT ROW WHERE " + filter + " ORDER BY m.ts, m.v",
+                                        "Async Window Fast Join workers: 4", "long_sequence count: 1");
+                                assertStolenPatternFilter(testEngine, executionContext, sink,
+                                        "SELECT h.offset, sum(m.v), sum(q.qv) FROM m HORIZON JOIN q ON (m.s2 = q.qs) "
+                                                + "RANGE FROM 0s TO 2s STEP 1s AS h WHERE " + filter + " ORDER BY 1",
+                                        "Async Horizon Join workers: 4");
+                            }
+                        }
+                        testEngine.execute("DROP TABLE m", executionContext);
+                    }
+                }, configuration, LOG);
+            }
+        });
+    }
+
     /**
      * A plain (non-covering) {@code SYMBOL INDEX} table that the adaptive factory enters in
      * self-filtering mode. It carries an over-threshold pattern ('a%', 9% of rows, scan route) and an
@@ -4020,6 +4097,36 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
                   'k' || (x % 5),
                   x
                 FROM long_sequence(1_000)""");
+    }
+
+    private void assertStolenPatternFilter(
+            CairoEngine engine,
+            SqlExecutionContext executionContext,
+            StringSink sink,
+            String query,
+            String... planFragments
+    ) throws Exception {
+        final String oracle = query.replaceFirst("SELECT", "SELECT /*+ no_symbol_pattern_index(m) */");
+        try (RecordCursorFactory factory = engine.select(oracle, executionContext)) {
+            Assert.assertFalse(oracle, stolenFilters(factory, oracle).apply(-1) instanceof AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter);
+        }
+        try (RecordCursorFactory factory = engine.select(query, executionContext)) {
+            final IntFunction<Function> filters = stolenFilters(factory, query);
+            Assert.assertTrue(query, filters.apply(-1) instanceof AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter);
+            Assert.assertNotSame(query, filters.apply(-1), filters.apply(0));
+            Assert.assertTrue(query, filters.apply(0) instanceof AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter);
+        }
+        final String expected = TestUtils.printSqlToString(engine, executionContext, oracle, sink);
+        Assert.assertTrue(expected, expected.indexOf('\n') < expected.length() - 1);
+        assertQuery(query)
+                .withEngine(engine)
+                .withContext(executionContext)
+                .noLeakCheck()
+                .inferRandomAccess()
+                .inferTimestamp()
+                .sizeMayVary()
+                .withPlanContaining(planFragments)
+                .returns(expected);
     }
 
     private void assertCoveredWorkerCloneEvaluatesRegexProvider(String patternExpression, String bindPattern) throws Exception {
@@ -4115,6 +4222,17 @@ public class SymbolPatternIndexTest extends AbstractCairoTest {
         }
         Assert.assertNotNull("expected an adaptive symbol-pattern factory", current);
         return ((AdaptiveSymbolPatternRecordCursorFactory) current).getEffectiveKeysForTesting();
+    }
+
+    private static IntFunction<Function> stolenFilters(RecordCursorFactory factory, String query) {
+        return switch (TestUtils.findAtom(factory, query)) {
+            case AsyncGroupByAtom atom -> atom.getFilterContext()::getFilter;
+            case AsyncGroupByNotKeyedAtom atom -> atom.getFilterContext()::getFilter;
+            case AsyncTopKAtom atom -> atom.getFilterContext()::getFilter;
+            case BaseAsyncHorizonJoinAtom atom -> atom.getFilterContext()::getFilter;
+            case AsyncWindowJoinAtom atom -> atom::getMasterFilter;
+            case StatefulAtom atom -> throw new AssertionError(atom.getClass().getName());
+        };
     }
 
     private void assertOverProbeCapDoesNotRetainEffectiveKeys(String predicate) throws Exception {

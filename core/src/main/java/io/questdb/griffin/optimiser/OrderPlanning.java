@@ -82,6 +82,7 @@ final class OrderPlanning implements OptimiserPass {
     private final ObjectPool<SortPlan> sorts;
     private boolean isJoinSlaveInput;
     private boolean isRandomAccessRequired;
+    private boolean isReorderedTimestampRead;
 
     OrderPlanning(FunctionFactoryCache functionFactoryCache, ObjectPool<SortPlan> sorts, IntHashSet columnIds) {
         this.columnIds = columnIds;
@@ -119,6 +120,15 @@ final class OrderPlanning implements OptimiserPass {
     private static boolean hasNestedUnionAll(LogicalPlan plan) {
         return LogicalPlans.skipProjectsAndFilters(plan) instanceof SetOperationPlan operation
                 && operation.getOperation() == SetOperationKind.UNION_ALL;
+    }
+
+    private static boolean hasTimestampWindowFunction(WindowPlan window) {
+        for (int i = 0, n = window.getFunctions().size(); i < n; i++) {
+            if ((window.getFunctions().getQuick(i).getFunctionFlags() & BoundExpression.DESIGNATED_TIMESTAMP) != 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean isHiddenSortKeyPrefix(ProjectPlan project, ProjectPlan inner) {
@@ -234,24 +244,32 @@ final class OrderPlanning implements OptimiserPass {
      * designated timestamp; a window's own ORDER BY and a markout sort stay.
      */
     private LogicalPlan removeReorderedSorts(LogicalPlan root) {
+        isReorderedTimestampRead = false;
         return removeReorderedSorts0(root, false, false);
     }
 
     /**
      * {@code isReordered}: a consumer above re-sorts or discards the order of {@code plan};
-     * {@code isSetBranchReordered}: that consumer is a set operation, whose branch order never survives.
+     * {@code isSetBranchReordered}: that consumer is a set operation, whose branch order never survives;
+     * {@link #isReorderedTimestampRead}: the sort that re-sorts {@code plan}, or a window between them, reads the
+     * designated timestamp of {@code plan}: a markout sort reads its input in that order, any other sort designates its
+     * own key.
      */
     private LogicalPlan removeReorderedSorts0(LogicalPlan plan, boolean isReordered, boolean isSetBranchReordered) {
         switch (plan) {
             case SortPlan sort -> {
                 final LogicalPlan source = LogicalPlans.skipProjects(sort.getChild());
+                final boolean wasTimestampRead = isReorderedTimestampRead;
+                isReorderedTimestampRead = sort.isMarkoutHorizon();
                 final LogicalPlan input = removeReorderedSorts0(sort.getChild(), true, false);
+                isReorderedTimestampRead = wasTimestampRead;
                 if (source instanceof WindowPlan) {
                     sort.replaceInput(0, input);
                     return sort;
                 }
                 if (isReordered && !sort.isMarkoutHorizon() && (isSetBranchReordered && !(source instanceof FillPlan) || sort.getOutput().getTimestampIndex() < 0
-                        || sort.getOutput().getTimestampIndex() == input.getOutput().getTimestampIndex())) {
+                        || sort.getOutput().getTimestampIndex() == input.getOutput().getTimestampIndex()
+                        || !isSetBranchReordered && !isReorderedTimestampRead)) {
                     return input;
                 }
                 if (isSingleRow(input) && sort.getOutput().getTimestampIndex() == input.getOutput().getTimestampIndex()) {
@@ -272,8 +290,12 @@ final class OrderPlanning implements OptimiserPass {
                 project.deriveColumnReferenceCounts(columnIds);
             }
             case FilterPlan filter -> replaceReorderedInput(filter, isReordered, isSetBranchReordered);
-            case WindowPlan window ->
-                    replaceReorderedInput(window, isReordered && LogicalPlans.isInputOrderIgnored(window), false);
+            case WindowPlan window -> {
+                final boolean wasTimestampRead = isReorderedTimestampRead;
+                isReorderedTimestampRead |= hasTimestampWindowFunction(window);
+                replaceReorderedInput(window, isReordered && LogicalPlans.isInputOrderIgnored(window), false);
+                isReorderedTimestampRead = wasTimestampRead;
+            }
             case JoinPlan join -> {
                 final ObjList<JoinInput> ordered = join.getOrderedInputs();
                 final boolean isMasterReordered = isReordered && LogicalPlans.isMasterOrderPreserved(join);
@@ -282,7 +304,9 @@ final class OrderPlanning implements OptimiserPass {
                     if (input.getInput() != null) {
                         input.setInput(removeReorderedSorts0(input.getInput(), i == 0 && isMasterReordered, false));
                     }
+                    input.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, i + 1));
                 }
+                join.getOutput().setTimestampColumnId(LogicalPlans.joinTimestampColumnId(join, ordered.size()));
             }
             case SetOperationPlan _ -> {
                 for (int i = 0, n = plan.inputCount(); i < n; i++) {
@@ -401,7 +425,7 @@ final class OrderPlanning implements OptimiserPass {
             case LimitPlan sortedLimit when LogicalPlans.hasSortUnderStableProjects(sortedLimit.getChild()) ->
                     requireSortedLimit(sortedLimit.getChild(), sortedLimit);
             case AggregatePlan aggregate -> requireAggregate(aggregate, orderColumnId, direction, order);
-            case JoinPlan join -> requireJoin(join, orderColumnId, direction, order, isRowOrderRequired);
+            case JoinPlan join -> requireJoin(join, orderColumnId, direction, order, limit, isRowOrderRequired);
             case WindowJoinPlan windowJoin -> requireWindowJoin(windowJoin);
             case SetOperationPlan operation when wasRandomAccessRequired ->
                     requireSetOperation(operation, -1, null, isRowOrderRequired);
@@ -440,7 +464,11 @@ final class OrderPlanning implements OptimiserPass {
                 inputOrderColumnId < 0 ? null : direction, inputOrder, null, isInputRowOrderRequired);
     }
 
-    private void requireJoin(JoinPlan join, int orderColumnId, SortDirection direction, SortPlan order, boolean isRowOrderRequired) {
+    /**
+     * A plain LIMIT reaches the master of a join that emits at least one row for each master row, in master order:
+     * the first or last {@code n} joined rows come from the first or last {@code n} master rows.
+     */
+    private void requireJoin(JoinPlan join, int orderColumnId, SortDirection direction, SortPlan order, LimitPlan limit, boolean isRowOrderRequired) {
         final ObjList<JoinInput> ordered = join.getOrderedInputs();
         final LogicalPlan master = ordered.getQuick(0).getInput();
         boolean isMasterTimestampRequired = false;
@@ -454,7 +482,8 @@ final class OrderPlanning implements OptimiserPass {
         } else if (isMasterOrderPreserved && hasColumns(masterOutput, order)) {
             require(master, -1, null, order, null, isRowOrderRequired);
         } else {
-            require(master, -1, null, null, null, isMasterTimestampRequired || isRowOrderRequired);
+            require(master, -1, null, null, order == null && LogicalPlans.isMasterRowPreserved(join) ? limit : null,
+                    isMasterTimestampRequired || isRowOrderRequired);
         }
         final boolean wasJoinSlaveInput = isJoinSlaveInput;
         final boolean wasRandomAccessRequired = isRandomAccessRequired;
@@ -533,6 +562,9 @@ final class OrderPlanning implements OptimiserPass {
                 } else if (project.getChild() instanceof AggregatePlan || project.getChild() instanceof WindowPlan
                         || PlanToFactoryRules.hasOrderedJoinMasterInput(project)) {
                     inputOrder = projectedOrder(project, order);
+                }
+                if (order == null && LogicalPlans.skipProjects(project.getChild()) instanceof JoinPlan) {
+                    inputLimit = limit;
                 }
             }
             case SortPlan sort -> {

@@ -343,8 +343,8 @@ public class AsyncWindowJoinFastRecordCursorFactory extends AbstractRecordCursor
             sink.setMetadata(null);
         }
         sink.val(atom);
-        if (atom.getMasterFilter(0) != null) {
-            sink.attr("master filter").val(atom.getMasterFilter(0), masterFactory);
+        if (atom.getMasterFilter(-1) != null) {
+            sink.attr("master filter").val(atom.getMasterFilter(-1), masterFactory);
         }
         sink.child(masterFactory);
         sink.child(slaveFactory);

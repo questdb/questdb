@@ -93,6 +93,86 @@ public class UpdateCastTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTemporalAssignmentsConvertFromTheSourcePrecision() throws Exception {
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                execute("CREATE TABLE uc_temporal (d DATE, us TIMESTAMP, ns TIMESTAMP_NS, d2 DATE, us2 TIMESTAMP, ns2 TIMESTAMP_NS, ts TIMESTAMP)"
+                        + " TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                execute("""
+                        INSERT INTO uc_temporal VALUES
+                        ('2020-01-01T00:00:00.123Z', '2020-01-01T00:00:00.123456Z', '2020-01-01T00:00:00.123456789Z', NULL, NULL, NULL, '2020-01-01'),
+                        (NULL, NULL, NULL, NULL, NULL, NULL, '2020-01-02')
+                        """);
+                drainWalQueue();
+
+                execute("UPDATE uc_temporal SET d2 = '1999-01-01', us2 = '1999-01-01', ns2 = '1999-01-01'");
+                execute("UPDATE uc_temporal SET d2 = d, us2 = d, ns2 = d");
+                drainWalQueue();
+                assertQuery("SELECT d2, us2, ns2 FROM uc_temporal").noLeakCheck().expectSize().returns("""
+                        d2\tus2\tns2
+                        2020-01-01T00:00:00.123Z\t2020-01-01T00:00:00.123000Z\t2020-01-01T00:00:00.123000000Z
+                        \t\t
+                        """);
+
+                execute("UPDATE uc_temporal SET us2 = '1999-01-01', ns2 = '1999-01-01'");
+                execute("UPDATE uc_temporal SET us2 = us, ns2 = us");
+                drainWalQueue();
+                assertQuery("SELECT us2, ns2 FROM uc_temporal").noLeakCheck().expectSize().returns("""
+                        us2\tns2
+                        2020-01-01T00:00:00.123456Z\t2020-01-01T00:00:00.123456000Z
+                        \t
+                        """);
+
+                execute("UPDATE uc_temporal SET us2 = '1999-01-01', ns2 = '1999-01-01'");
+                execute("UPDATE uc_temporal SET us2 = ns, ns2 = ns");
+                drainWalQueue();
+                assertQuery("SELECT us2, ns2 FROM uc_temporal").noLeakCheck().expectSize().returns("""
+                        us2\tns2
+                        2020-01-01T00:00:00.123456Z\t2020-01-01T00:00:00.123456789Z
+                        \t
+                        """);
+
+                assertExceptionNoLeakCheck("UPDATE uc_temporal SET d2 = us", 28, "inconvertible types: TIMESTAMP -> DATE [from=, to=d2]");
+                assertExceptionNoLeakCheck("UPDATE uc_temporal SET d2 = ns", 28, "inconvertible types: TIMESTAMP_NS -> DATE [from=, to=d2]");
+                execute("DROP TABLE uc_temporal");
+            }
+        });
+    }
+
+    @Test
+    public void testDateBeyondNanosecondRange() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE uc_range (d DATE, ns TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            execute("INSERT INTO uc_range VALUES ('2020-01-01', NULL, '2020-01-01'), ('3000-01-01', NULL, '2020-01-02')");
+            assertExceptionNoLeakCheck("UPDATE uc_range SET ns = d", -1, "inconvertible value: 32503680000000000 [TIMESTAMP -> TIMESTAMP_NS]");
+            assertQuery("SELECT d, ns FROM uc_range").noLeakCheck().expectSize().returns("""
+                    d\tns
+                    2020-01-01T00:00:00.000Z\t
+                    3000-01-01T00:00:00.000Z\t
+                    """);
+
+            execute("CREATE TABLE uc_range_wal (d DATE, ns TIMESTAMP_NS, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("INSERT INTO uc_range_wal VALUES ('2020-01-01', NULL, '2020-01-01'), ('3000-01-01', NULL, '2020-01-02')");
+            drainWalQueue();
+            execute("UPDATE uc_range_wal SET ns = d");
+            drainWalQueue();
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(engine.verifyTableName("uc_range_wal")));
+            assertQuery("SELECT suspended, writerTxn, sequencerTxn, errorMessage FROM wal_tables() WHERE name = 'uc_range_wal'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            suspended\twriterTxn\tsequencerTxn\terrorMessage
+                            true\t1\t2\tinconvertible value: 32503680000000000 [TIMESTAMP -> TIMESTAMP_NS]
+                            """);
+            assertQuery("SELECT d, ns FROM uc_range_wal").noLeakCheck().expectSize().returns("""
+                    d\tns
+                    2020-01-01T00:00:00.000Z\t
+                    3000-01-01T00:00:00.000Z\t
+                    """);
+        });
+    }
+
+    @Test
     public void testJoinConversionsRebuildArrayLayoutsAndKeepSymbols() throws Exception {
         assertMemoryLeak(() -> {
             createRows();

@@ -56,8 +56,6 @@ import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.SymbolKeyExtractor;
 import io.questdb.griffin.TableFunctionSources;
 import io.questdb.griffin.engine.EmptyTableRecordCursorFactory;
-import io.questdb.griffin.engine.functions.regex.MatchSymbolFunctionFactory;
-import io.questdb.griffin.engine.functions.regex.SymbolKeySetProvider;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.griffin.engine.table.AdaptiveSymbolPatternRecordCursorFactory;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
@@ -228,10 +226,6 @@ final class ScanFactoryGenerator {
 
     private static int indexDirection(ScanPlan scan) {
         return scan.getIndexDirection() == SortDirection.DESCENDING ? IndexReader.DIR_BACKWARD : IndexReader.DIR_FORWARD;
-    }
-
-    private static boolean isNegated(FunctionExpression pattern) {
-        return pattern.getArgumentCount() == 1 || "!~".equals(pattern.getName());
     }
 
     private static int keyPosition(BoundExpression expression, IntList keyIds) {
@@ -593,10 +587,18 @@ final class ScanFactoryGenerator {
         final boolean isCovering = scan.getIndexRead() == ScanPlan.IndexRead.COVERING;
         frame.expressions.clear();
         LogicalPlans.collectConjuncts(predicate, frame.expressions);
+        BoundExpression residual = null;
+        for (int i = 0, n = frame.expressions.size(); i < n; i++) {
+            final BoundExpression conjunct = frame.expressions.getQuick(i);
+            if (conjunct != pattern) {
+                residual = expressionRewriter.combineConjunction(conjunct, residual, 0);
+            }
+        }
         if ("!~".equals(pattern.getName())) {
             Misc.free(functionInstantiator.instantiate(pattern, input, metadata, executionContext));
         }
-        AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter = preparePatternFilter(frame, pattern, input, metadata, executionContext);
+        AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter =
+                filterGenerator.instantiatePatternFilter(frame, pattern, residual, input, metadata, executionContext);
         if (filter == null) {
             throw new AssertionError("symbol pattern provider declaration differs from the instantiated function");
         }
@@ -607,18 +609,7 @@ final class ScanFactoryGenerator {
         final boolean isParallel = scan.getResidualAlgorithm() == FilterPlan.Algorithm.PARALLEL && stolenFilter == null;
         try {
             if (isParallel) {
-                if (!filter.isThreadSafe()) {
-                    final int workerCount = executionContext.getSharedQueryWorkerCount();
-                    workerFilters = new ObjList<>(workerCount);
-                    functionInstantiator.beginWorkerClones();
-                    try {
-                        for (int i = 0; i < workerCount; i++) {
-                            workerFilters.add(preparePatternFilter(frame, pattern, input, metadata, executionContext));
-                        }
-                    } finally {
-                        functionInstantiator.endWorkerClones();
-                    }
-                }
+                workerFilters = filterGenerator.instantiatePatternWorkers(frame, pattern, residual, input, metadata, filter, executionContext);
                 if (limitCount != null) {
                     limit = functionInstantiator.instantiate(limitCount, input, executionContext);
                 }
@@ -636,7 +627,7 @@ final class ScanFactoryGenerator {
             filter = null;
             workerFilters = null;
             limit = null;
-            return generateSymbolPatternIndex(frames, metadata, reader, indexes, shifts, ownedFilter, predicate, input,
+            return generateSymbolPatternIndex(frames, metadata, reader, indexes, shifts, ownedFilter, predicate, pattern, residual, input,
                     ownedWorkers, ownedLimit, limitCount == null ? 0 : limitCount.getPosition(), orderMnemonic(scan),
                     isOrderByTimestampOnly, isCovering, isParallel, scan.hasHint(ScanPlan.HINT_PRE_TOUCH), stolenFilter, executionContext);
         } catch (Throwable th) {
@@ -706,73 +697,6 @@ final class ScanFactoryGenerator {
         keys.checkCapacity(keys.size() + values.size());
         for (int i = 0, n = values.size(); i < n; i++) {
             keys.add(SymbolKeyExtractor.instantiateValue(values.getQuick(i), scan.getOutput(), metadata, functionInstantiator, executionContext));
-        }
-    }
-
-    private Function positivePattern(GenerationFrame frame, FunctionExpression pattern, OutputSchema input, RecordMetadata metadata,
-                                     SqlExecutionContext executionContext) throws SqlException {
-        if (!isNegated(pattern)) {
-            return functionInstantiator.instantiate(pattern, input, metadata, executionContext);
-        }
-        if (pattern.getArgumentCount() == 1) {
-            return functionInstantiator.instantiate(pattern.argumentAt(0), input, metadata, executionContext);
-        }
-        final ObjList<Function> arguments = frame.functions;
-        final IntList positions = frame.intListA;
-        arguments.clear();
-        positions.clear();
-        try {
-            for (int i = 0; i < 2; i++) {
-                arguments.add(functionInstantiator.instantiate(pattern.argumentAt(i), input, metadata, executionContext));
-                positions.add(pattern.getArgumentPosition(i));
-            }
-            final Function match = MatchSymbolFunctionFactory.positivePatternFactory(pattern).newInstance(pattern.getPosition(),
-                    arguments, positions, configuration, executionContext);
-            arguments.clear();
-            return match;
-        } catch (Throwable th) {
-            Misc.freeObjList(arguments, th);
-            throw th;
-        } finally {
-            arguments.clear();
-        }
-    }
-
-    /**
-     * Returns null when the pattern does not compile to a symbol key-set provider.
-     */
-    private AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter preparePatternFilter(
-            GenerationFrame frame, FunctionExpression pattern, OutputSchema input, RecordMetadata metadata, SqlExecutionContext executionContext
-    ) throws SqlException {
-        Function provider = null;
-        Function residual = null;
-        try {
-            provider = positivePattern(frame, pattern, input, metadata, executionContext);
-            if (!(provider instanceof SymbolKeySetProvider)) {
-                Misc.free(provider);
-                return null;
-            }
-            BoundExpression residualExpression = null;
-            for (int i = 0, n = frame.expressions.size(); i < n; i++) {
-                final BoundExpression conjunct = frame.expressions.getQuick(i);
-                if (conjunct != pattern) {
-                    residualExpression = expressionRewriter.combineConjunction(conjunct, residualExpression, 0);
-                }
-            }
-            if (residualExpression != null) {
-                residual = functionInstantiator.instantiate(residualExpression, input, metadata, executionContext);
-            }
-            final FunctionExpression positive = pattern.getArgumentCount() == 1 ? (FunctionExpression) pattern.argumentAt(0) : pattern;
-            final int keyIndex = input.getColumnIndexById(((ColumnExpression) positive.argumentAt(0)).getColumnId());
-            final AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter =
-                    new AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter(provider, residual, isNegated(pattern), keyIndex, null, null);
-            provider = null;
-            residual = null;
-            return filter;
-        } catch (Throwable th) {
-            Misc.free(provider, th);
-            Misc.free(residual, th);
-            throw th;
         }
     }
 
@@ -973,6 +897,8 @@ final class ScanFactoryGenerator {
             IntList columnSizeShifts,
             AdaptiveSymbolPatternRecordCursorFactory.PreparedSymbolPatternFilter filter,
             BoundExpression predicate,
+            FunctionExpression pattern,
+            @Nullable BoundExpression residual,
             OutputSchema input,
             @Nullable ObjList<Function> workerFilters,
             @Nullable Function limit,
@@ -998,7 +924,7 @@ final class ScanFactoryGenerator {
                 Misc.free(filter, th);
                 throw th;
             }
-            stolenFilter.of(predicate, input, filter, false);
+            stolenFilter.ofPattern(predicate, input, filter, pattern, residual);
             return leaf;
         }
         final IntHashSet filterColumnIndexes = new IntHashSet();
@@ -1060,7 +986,7 @@ final class ScanFactoryGenerator {
             return adaptive;
         }
         if (stolenFilter != null) {
-            stolenFilter.of(predicate, input, filter, false);
+            stolenFilter.ofPattern(predicate, input, filter, pattern, residual);
             return adaptive;
         }
         if (!isParallel) {

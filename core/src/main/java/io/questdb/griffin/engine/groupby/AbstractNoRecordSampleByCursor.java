@@ -266,7 +266,10 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
         areTimestampsInitialized = true;
     }
 
-    protected void nextSamplePeriod(long timestamp) {
+    /**
+     * Moves to the bucket of the timestamp, keeping the state the group-by functions hold for earlier buckets.
+     */
+    protected void moveToSamplePeriod(long timestamp) {
         localEpoch = timestampSampler.round(timestamp);
         // After a DST transition, rounding down (common for multi-hour or day units) can place
         // the new bucket's boundary at a local time whose UTC instant lies before the transition
@@ -279,6 +282,10 @@ public abstract class AbstractNoRecordSampleByCursor extends AbstractSampleByCur
             final long boundaryTzOffset = rules.getOffset(localEpoch - tzOffset);
             localEpoch += (tzOffset - boundaryTzOffset);
         }
+    }
+
+    protected void nextSamplePeriod(long timestamp) {
+        moveToSamplePeriod(timestamp);
         GroupByUtils.toTop(groupByFunctions);
     }
 

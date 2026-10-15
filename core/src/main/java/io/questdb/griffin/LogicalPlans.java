@@ -573,6 +573,22 @@ public final class LogicalPlans {
     }
 
     /**
+     * True when every step of the join emits at least one row for each row of its master, in its master's order: left
+     * outer, ASOF and LT joins without a post-join filter.
+     */
+    public static boolean isMasterRowPreserved(JoinPlan join) {
+        final ObjList<JoinInput> ordered = join.getOrderedInputs();
+        for (int i = 1, n = ordered.size(); i < n; i++) {
+            final JoinInput step = ordered.getQuick(i);
+            final JoinKind joinType = step.getJoinType();
+            if (joinType != JoinKind.LEFT_OUTER && joinType != JoinKind.ASOF && joinType != JoinKind.LT || step.getPostJoinFilter() != null) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
      * True when the step can emit the columns of the input as NULL: the input's own step null-extends it, or a step
      * the join orders after the input null-extends its master.
      */
@@ -940,11 +956,12 @@ public final class LogicalPlans {
 
     /**
      * The type an UPDATE stores a value of type {@code type} as in a column of type {@code targetType}: the target
-     * type for a built-in widening cast other than text to TIMESTAMP, the value's own type otherwise.
+     * type for a built-in widening cast, except into a timestamp column from a type with a timestamp precision of its
+     * own (DATE, text), which the update converts from; the value's own type otherwise.
      */
     public static int updateColumnType(int type, int targetType) {
         return targetType < 0 || !ColumnType.isBuiltInWideningCast(type, targetType)
-                || targetType == ColumnType.TIMESTAMP && (type == ColumnType.STRING || type == ColumnType.VARCHAR) ? type : targetType;
+                || ColumnType.isTimestamp(targetType) && ColumnType.getTimestampType(type) != ColumnType.UNDEFINED ? type : targetType;
     }
 
     private static boolean areStable(ObjList<? extends BoundExpression> expressions) {

@@ -325,6 +325,16 @@ final class ScalarCompensation implements Mutable {
         return true;
     }
 
+    private BoundExpression limitComparison(CharSequence operator, BoundExpression limit, long nullLimit, BoundExpression rank, OutputSchema input)
+            throws SqlException {
+        final int position = limit.getPosition();
+        ctx.context.getCallArguments().clear();
+        ctx.context.getCallArguments().add(limit);
+        ctx.context.getCallArguments().add(ctx.planNodes.constants.next().ofLong(nullLimit, position));
+        final BoundExpression bound = ctx.context.bindCall("__lateral_limit", position, input);
+        return ctx.context.bindCall(operator, position, bound, rank, input);
+    }
+
     /**
      * A condition over the master join that holds on each row of the inputs before the step being decorrelated
      * and fails on a row a later step null-extends them on: each such row holds a row of the first input or of
@@ -827,24 +837,11 @@ final class ScalarCompensation implements Mutable {
         return true;
     }
 
-    BoundExpression limitComparison(CharSequence operator, BoundExpression limit, BoundExpression rank, OutputSchema input, int position)
-            throws SqlException {
-        ctx.context.getCallArguments().clear();
-        ctx.context.getCallArguments().add(limit);
-        final BoundExpression guard = ctx.context.bindCall("__lateral_limit", limit.getPosition(), input);
-        return ctx.context.bindCall(operator, position, guard, rank, input);
-    }
-
     /**
      * Whether the body's LIMIT keeps the single row a scalar body yields.
      */
     BoundExpression limitGuard(BoundExpression lo, BoundExpression hi, OutputSchema input) throws SqlException {
-        final ConstantExpression one = ctx.planNodes.constants.next().ofInt(1, lo.getPosition());
-        if (hi == null) {
-            return limitComparison(">=", lo, one, input, lo.getPosition());
-        }
-        final BoundExpression upper = limitComparison(">=", hi, one, input, hi.getPosition());
-        return ctx.context.getRewriter().combineConjunction(limitComparison("<", lo, one, input, lo.getPosition()), upper, lo.getPosition());
+        return limitPredicate(lo, hi, ctx.planNodes.constants.next().ofInt(1, lo.getPosition()), input);
     }
 
     /**
@@ -856,6 +853,18 @@ final class ScalarCompensation implements Mutable {
             throw SqlException.$(outerLimit.getPosition(), OUTER_LIMIT_OVER_COUNT);
         }
         return ctx.planNodes.filters.next().of(input, limitGuard(limit.getLo(), limit.getHi(), input.getOutput()), limit.getPosition());
+    }
+
+    /**
+     * Whether the LIMIT keeps the row at the 1-based rank. A lone bound keeps the ranks up to it, or every rank when
+     * it is NULL; two bounds keep the ranks after the first up to the second, each reading 0 when NULL.
+     */
+    BoundExpression limitPredicate(BoundExpression lo, BoundExpression hi, BoundExpression rank, OutputSchema input) throws SqlException {
+        if (hi == null) {
+            return limitComparison(">=", lo, Long.MAX_VALUE, rank, input);
+        }
+        final BoundExpression upper = limitComparison(">=", hi, 0, rank, input);
+        return ctx.context.getRewriter().combineConjunction(limitComparison("<", lo, 0, rank, input), upper, lo.getPosition());
     }
 
     AggregatePlan scalarAggregateBelow(ProjectPlan project) {

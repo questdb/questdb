@@ -99,7 +99,11 @@ public class ApproxPercentileDoublePackedGroupByFunction extends DoubleFunction 
             return Double.NaN;
         }
 
-        final PackedDoubleHistogram histogram = histograms.getQuick(rec.getInt(valueIndex));
+        final long index = rec.getLong(valueIndex);
+        if (index == Numbers.LONG_NULL) {
+            return Double.NaN;
+        }
+        final PackedDoubleHistogram histogram = histograms.getQuick((int) index);
         if (histogram.getTotalCount() == 0) {
             return Double.NaN;
         }

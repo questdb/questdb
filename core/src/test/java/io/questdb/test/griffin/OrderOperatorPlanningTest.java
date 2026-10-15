@@ -471,6 +471,41 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testMarkoutJoinKeepsMasterSort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (id INT, order_ts TIMESTAMP, ts2 TIMESTAMP) TIMESTAMP(order_ts)");
+            execute("INSERT INTO orders VALUES (1, 0::TIMESTAMP, 5_000_000::TIMESTAMP), (2, 1::TIMESTAMP, 2_000_000::TIMESTAMP)");
+            assertQuery("""
+                    SELECT /*+ markout_horizon(o offsets) */ id, ts2 + usec_offs AS ts
+                    FROM (SELECT * FROM orders ORDER BY ts2) o CROSS JOIN (SELECT 1_000_000 * (x-1) AS usec_offs FROM long_sequence(2)) offsets
+                    ORDER BY ts2 + usec_offs
+                    """)
+                    .noRandomAccess()
+                    .expectSize()
+                    .withPlan("""
+                            VirtualRecord
+                              functions: [o.id,o.ts2+offsets.usec_offs]
+                                Markout Horizon Join timestampColumn: 1 offsetColumn: 0
+                                    Encode sort light
+                                      keys: [ts2]
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: orders
+                                    VirtualRecord
+                                      functions: [1000000*x-1]
+                                        long_sequence count: 2
+                            """)
+                    .returns("""
+                            id\tts
+                            2\t1970-01-01T00:00:02.000000Z
+                            2\t1970-01-01T00:00:03.000000Z
+                            1\t1970-01-01T00:00:05.000000Z
+                            1\t1970-01-01T00:00:06.000000Z
+                            """);
+        });
+    }
+
+    @Test
     public void testOrderedSwappableJoinDeclaresTimestamp() throws Exception {
         assertMemoryLeak(() -> {
             createSwappableJoinTables();
@@ -493,6 +528,287 @@ public class OrderOperatorPlanningTest extends AbstractCairoTest {
                                             Frame forward scan on: b
                             """)
                     .returns(FIXED_JOIN_ROWS);
+        });
+    }
+
+    @Test
+    public void testRangeWindowKeepsSampleBySort() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("""
+                    SELECT * FROM (
+                        SELECT ts, sx, sum(sx) OVER (ORDER BY ts RANGE BETWEEN 1 HOUR PRECEDING AND CURRENT ROW) s
+                        FROM (SELECT ts, sum(x) sx FROM t SAMPLE BY 1h)
+                    ) ORDER BY sx DESC
+                    """)
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [sx desc]
+                                Window
+                                  functions: [sum(sx) over (range between 3600000000 preceding and current row)]
+                                    Encode sort light
+                                      keys: [ts]
+                                        Async Group By workers: 1
+                                          keys: [ts]
+                                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                          values: [sum(x)]
+                                          filter: null
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                            """)
+                    .returns("""
+                            ts\tsx\ts
+                            2024-01-02T00:00:00.000000Z\t4\t4.0
+                            2024-01-01T02:00:00.000000Z\t3\t5.0
+                            2024-01-01T01:00:00.000000Z\t2\t3.0
+                            2024-01-01T00:00:00.000000Z\t1\t1.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testResortDropsJoinMasterSort() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            assertQuery("SELECT * FROM (SELECT * FROM t ORDER BY x DESC) a LEFT JOIN u ON a.x = u.x ORDER BY a.ts DESC, u.y LIMIT 3")
+                    .timestampDesc("ts")
+                    .withPlan("""
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                Encode sort
+                                  keys: [ts desc, y]
+                                    SelectedRecord
+                                        Hash Left Outer Join Light
+                                          condition: u.x=a.x
+                                            PageFrame
+                                                Row backward scan
+                                                Frame backward scan on: t
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: u
+                            """)
+                    .returns("""
+                            ts\tx\tx1\ty
+                            2024-01-02T00:00:00.000000Z\t4\t4\t3
+                            2024-01-02T00:00:00.000000Z\t4\t4\t7
+                            2024-01-02T00:00:00.000000Z\t4\t4\t11
+                            """);
+        });
+    }
+
+    @Test
+    public void testResortDropsSampleBySort() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            execute("CREATE VIEW v AS (SELECT ts, count() c, sum(x) sx FROM t SAMPLE BY 1h)");
+            drainWalAndViewQueues();
+            final String descendingTopK = """
+                    Long Top K lo: 3
+                      keys: [ts desc]
+                        Async Group By workers: 1
+                          keys: [ts]
+                          keyFunctions: [timestamp_floor_utc('1h',ts)]
+                          values: [count(*),sum(x)]
+                          filter: null
+                            PageFrame
+                                Row forward scan
+                                Frame forward scan on: t
+                    """;
+            final String descendingRows = """
+                    ts\tc\tsx
+                    2024-01-02T00:00:00.000000Z\t1\t4
+                    2024-01-01T02:00:00.000000Z\t1\t3
+                    2024-01-01T01:00:00.000000Z\t1\t2
+                    """;
+            assertQuery("SELECT * FROM v ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlan(descendingTopK)
+                    .returns(descendingRows);
+            assertQuery("WITH s AS (SELECT ts, count() c, sum(x) sx FROM t SAMPLE BY 1h) SELECT * FROM s ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlan(descendingTopK)
+                    .returns(descendingRows);
+            assertQuery("SELECT * FROM (SELECT ts, count() c, sum(x) sx FROM t SAMPLE BY 1h) ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlan(descendingTopK)
+                    .returns(descendingRows);
+            assertQuery("SELECT * FROM v ORDER BY ts LIMIT 3")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Long Top K lo: 3
+                              keys: [ts asc]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [count(*),sum(x)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """)
+                    .returns("""
+                            ts\tc\tsx
+                            2024-01-01T00:00:00.000000Z\t1\t1
+                            2024-01-01T01:00:00.000000Z\t1\t2
+                            2024-01-01T02:00:00.000000Z\t1\t3
+                            """);
+            assertQuery("SELECT * FROM v ORDER BY sx DESC")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort light
+                              keys: [sx desc]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                  values: [count(*),sum(x)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """)
+                    .returns("""
+                            ts\tc\tsx
+                            2024-01-02T00:00:00.000000Z\t1\t4
+                            2024-01-01T02:00:00.000000Z\t1\t3
+                            2024-01-01T01:00:00.000000Z\t1\t2
+                            2024-01-01T00:00:00.000000Z\t1\t1
+                            """);
+            assertQuery("SELECT * FROM (SELECT ts, count() c FROM t GROUP BY ts ORDER BY ts) ORDER BY ts DESC LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .expectSize()
+                    .withPlan("""
+                            Long Top K lo: 3
+                              keys: [ts desc]
+                                Async Group By workers: 1
+                                  keys: [ts]
+                                  values: [count(*)]
+                                  filter: null
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: t
+                            """)
+                    .returns("""
+                            ts\tc
+                            2024-01-02T00:00:00.000000Z\t1
+                            2024-01-01T02:00:00.000000Z\t1
+                            2024-01-01T01:00:00.000000Z\t1
+                            """);
+            assertQuery("SELECT v.ts, v.sx, u.y FROM v LEFT JOIN u ON v.sx = u.x ORDER BY v.ts DESC, u.y LIMIT 3")
+                    .noLeakCheck()
+                    .timestampDesc("ts")
+                    .withPlan("""
+                            Limit value: 3 skip-rows-max: 0 take-rows-max: 3
+                                Encode sort
+                                  keys: [ts desc, y]
+                                    SelectedRecord
+                                        Hash Left Outer Join Light
+                                          condition: u.x=v.sx
+                                            Async Group By workers: 1
+                                              keys: [ts]
+                                              keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                              values: [sum(x)]
+                                              filter: null
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: t
+                                            Hash
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: u
+                            """)
+                    .returns("""
+                            ts\tsx\ty
+                            2024-01-02T00:00:00.000000Z\t4\t3
+                            2024-01-02T00:00:00.000000Z\t4\t7
+                            2024-01-02T00:00:00.000000Z\t4\t11
+                            """);
+        });
+    }
+
+    @Test
+    public void testResortKeepsTemporalJoinMasterSort() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, ts2 TIMESTAMP, x INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                        ('1970-01-01T00:00:01.000000Z', '1970-01-01T00:00:10.000000Z', 1),
+                        ('1970-01-01T00:00:02.000000Z', '1970-01-01T00:00:05.000000Z', 2),
+                        ('1970-01-01T00:00:03.000000Z', '1970-01-01T00:00:01.000000Z', 3)
+                    """);
+            execute("CREATE TABLE u (ts TIMESTAMP, y INT) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO u VALUES
+                        ('1970-01-01T00:00:00.500000Z', 10),
+                        ('1970-01-01T00:00:04.000000Z', 20),
+                        ('1970-01-01T00:00:08.000000Z', 30)
+                    """);
+            final String rows = """
+                    x\ty
+                    1\t30
+                    2\t20
+                    3\t10
+                    """;
+            assertQuery("SELECT a.x, u.y FROM (SELECT * FROM t ORDER BY ts2) a ASOF JOIN u ORDER BY a.x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlan("""
+                            Encode sort
+                              keys: [x]
+                                SelectedRecord
+                                    AsOf Join Fast
+                                        Encode sort light
+                                          keys: [ts2]
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: t
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: u
+                            """)
+                    .returns(rows);
+            assertQuery("SELECT a.x, u.y FROM (SELECT * FROM t ORDER BY ts2) a LT JOIN u ORDER BY a.x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(rows);
+            assertQuery("SELECT a.x, u.y FROM (SELECT * FROM t ORDER BY ts2) a SPLICE JOIN u ORDER BY a.x, u.y")
+                    .noLeakCheck()
+                    .returns("""
+                            x\ty
+                            null\t10
+                            1\t30
+                            2\t20
+                            2\t30
+                            3\t10
+                            3\t20
+                            """);
+            assertQuery("SELECT a.x, b.y, u.y FROM (SELECT * FROM t ORDER BY ts2) a LEFT JOIN u b ON a.x = b.y ASOF JOIN u ORDER BY a.x")
+                    .noLeakCheck()
+                    .returns("""
+                            x\ty\ty1
+                            1\tnull\t30
+                            2\tnull\t20
+                            3\tnull\t10
+                            """);
+            assertQuery("SELECT a.x, u.y FROM (SELECT * FROM t ORDER BY ts2) a ASOF JOIN u ORDER BY a.x DESC LIMIT 2")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            x\ty
+                            3\t10
+                            2\t20
+                            """);
         });
     }
 

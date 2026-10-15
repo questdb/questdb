@@ -350,6 +350,21 @@ public interface GroupByFunction extends Function, Mutable {
     }
 
     /**
+     * Performs the first aggregation of a new group in a map value that holds an earlier group's state, set by
+     * {@link #setNull(MapValue)} or computed since the last {@link #toTop()}. A keyed SAMPLE BY that fills keys from
+     * their previous buckets keeps one value per key across its buckets, without {@link #toTop()} between them, and
+     * recomputes the value for each bucket with rows of the key. A function that keeps a group's state in storage the
+     * map value refers to reuses the storage the value holds, so that no other group takes it.
+     *
+     * @param mapValue map value holding the earlier group
+     * @param record   record holding the aggregated row
+     * @param rowId    row id; the value may be different from record.getRowId()
+     */
+    default void recomputeFirst(MapValue mapValue, Record record, long rowId) {
+        computeFirst(mapValue, record, rowId);
+    }
+
+    /**
      * Reset statistics for functions that support cardinality counter. After calling this method and prior
      * to any compute calls, {@link #getCardinalityStat()} will return 0.
      */

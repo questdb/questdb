@@ -58,9 +58,20 @@ public class GroupByFilterCompilationLeakTest extends AbstractCairoTest {
         );
     }
 
-    private void assertWorkerFilterFailure(String query, String expected) throws Exception {
+    @Test
+    public void testSymbolPatternWorkerFilterFailureKeepsOriginalFilterOwned() throws Exception {
+        assertWorkerFilterFailure(
+                "SELECT sum(x) s FROM tab WHERE sym LIKE 'a1%' AND test_throwing_filter()",
+                "s\n1717\n",
+                "Async Group By workers: 4",
+                "AdaptiveSymbolPattern"
+        );
+    }
+
+    private void assertWorkerFilterFailure(String query, String expected, String... planFragments) throws Exception {
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE tab AS (SELECT x, x::timestamp ts FROM long_sequence(100)) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE tab (x LONG, sym SYMBOL INDEX TYPE POSTING INCLUDE (x), ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tab SELECT x, 'a' || (x % 3), x::timestamp FROM long_sequence(100)");
             try (
                     SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 4);
                     SqlCompilerImpl compiler = new SqlCompilerImpl(engine)
@@ -81,6 +92,10 @@ public class GroupByFilterCompilationLeakTest extends AbstractCairoTest {
                 }
                 compiler.clear();
                 try (RecordCursorFactory factory = compiler.compile(query, ctx).getRecordCursorFactory()) {
+                    final String plan = planText(factory);
+                    for (String fragment : planFragments) {
+                        TestUtils.assertContains(plan, fragment);
+                    }
                     assertFactory(factory).withContext(ctx).inferRandomAccess().inferTimestamp().sizeMayVary().returns(expected);
                 }
                 Assert.assertEquals(TestThrowingFilterFunctionFactory.CONSTRUCT_COUNT.get(), TestThrowingFilterFunctionFactory.CLOSE_COUNT.get());

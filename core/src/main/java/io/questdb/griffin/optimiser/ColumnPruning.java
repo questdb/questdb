@@ -34,6 +34,7 @@ import io.questdb.griffin.plan.logical.FilterPlan;
 import io.questdb.griffin.plan.logical.ForwardingPlan;
 import io.questdb.griffin.plan.logical.FunctionExpression;
 import io.questdb.griffin.plan.logical.FunctionSourcePlan;
+import io.questdb.griffin.plan.logical.GroupingPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinPlan;
 import io.questdb.griffin.plan.logical.HorizonJoinSlave;
 import io.questdb.griffin.plan.logical.JoinInput;
@@ -280,6 +281,11 @@ final class ColumnPruning implements OptimiserPass {
                 return;
             }
             case SampleByPlan sample -> {
+                // FILL values follow the aggregates by position.
+                if (sample.getFillTokens().size() == 0) {
+                    columnReads.retainOutputs(sample);
+                    pruneOutput(sample);
+                }
                 columnReads.collectInputReads(sample);
                 pruneColumns(sample.getChild());
                 return;
@@ -516,11 +522,11 @@ final class ColumnPruning implements OptimiserPass {
         final ProjectPlan project = plan instanceof ProjectPlan projectPlan ? projectPlan : null;
         final ObjList<BoundExpression> expressions = project != null ? project.getExpressions() : null;
         final IntList updateTypes = project != null && project.hasUpdateConversions() ? project.getUpdateTargetTypes() : null;
-        final AggregatePlan aggregate = plan instanceof AggregatePlan aggregatePlan ? aggregatePlan : null;
-        final ObjList<BoundExpression> keys = aggregate == null ? null : aggregate.getGroupingExpressions();
+        final GroupingPlan grouping = plan instanceof GroupingPlan groupingPlan ? groupingPlan : null;
+        final ObjList<BoundExpression> keys = grouping == null ? null : grouping.getGroupingExpressions();
         final int keyCount = keys == null ? 0 : keys.size();
         int keptKeyCount = 0;
-        final ObjList<FunctionExpression> aggregates = aggregate == null ? null : aggregate.getAggregates();
+        final ObjList<FunctionExpression> aggregates = grouping == null ? null : grouping.getAggregates();
         for (int index = 0, n = retainedColumnIndexes.size(); index < n; index++) {
             final int i = retainedColumnIndexes.getQuick(index);
             if (indexes != null) {

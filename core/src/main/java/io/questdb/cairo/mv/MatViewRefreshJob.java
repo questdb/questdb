@@ -1531,7 +1531,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
 
                     assert factory != null;
                     assert copier != null;
-                    final int timestampType = factory.getMetadata().getTimestampType();
+                    // The view's timestamp is the query column of the same name, designated or not.
+                    final CharSequence timestampName = walWriter.getMetadata().getColumnName(walWriter.getMetadata().getTimestampIndex());
+                    final int cursorTimestampIndex = factory.getMetadata().getColumnIndexQuiet(timestampName);
+                    final int timestampType = cursorTimestampIndex < 0 ? ColumnType.NULL : factory.getMetadata().getColumnType(cursorTimestampIndex);
                     if (timestampType != walWriter.getMetadata().getTimestampType()) {
                         throw CairoException.nonCritical().put("timestamp type mismatch between materialized view and query [view=")
                                 .put(ColumnType.nameOf(walWriter.getMetadata().getTimestampType()))
@@ -1539,10 +1542,6 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                                 .put(ColumnType.nameOf(timestampType))
                                 .put(']');
                     }
-
-                    final CharSequence timestampName = walWriter.getMetadata().getColumnName(walWriter.getMetadata().getTimestampIndex());
-                    final int cursorTimestampIndex = factory.getMetadata().getColumnIndex(timestampName);
-                    assert cursorTimestampIndex > -1;
 
                     long commitTarget = batchSize;
                     long rowCount = 0;

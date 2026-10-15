@@ -3642,6 +3642,61 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByTimestampFloorRefresh() throws Exception {
+        assertMemoryLeak(() -> {
+            executeWithRewriteTimestamp("CREATE TABLE base (ts #TIMESTAMP, sym SYMBOL, v DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                        ('2024-01-01T00:10:00', 'a', 1),
+                        ('2024-01-01T01:10:00', 'b', 2),
+                        ('2024-01-01T03:10:00', 'a', 3),
+                        ('2024-01-02T05:10:00', 'b', 4)
+                    """);
+            drainQueues();
+            final String[] queries = {
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY bucket, sym",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY 1, 2",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY timestamp_floor('2h', ts), sym",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY bucket, sym ORDER BY bucket",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base",
+                    "SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base ORDER BY bucket",
+                    "SELECT bucket, sym, c FROM (SELECT timestamp_floor('2h', ts) bucket, sym, count() c FROM base GROUP BY bucket, sym)"
+            };
+            final int viewCount = 2 * queries.length;
+            for (int i = 0; i < queries.length; i++) {
+                execute("CREATE MATERIALIZED VIEW mv" + (2 * i) + " AS (" + queries[i] + ") PARTITION BY DAY");
+                execute("CREATE MATERIALIZED VIEW mv" + (2 * i + 1) + " AS (" + queries[i] + ") TIMESTAMP(bucket) PARTITION BY DAY");
+            }
+            drainQueues();
+            assertGroupByTimestampFloorViews(viewCount, """
+                    bucket\tsym\tc
+                    2024-01-01T00:00:00.000000Z\ta\t1
+                    2024-01-01T00:00:00.000000Z\tb\t1
+                    2024-01-01T02:00:00.000000Z\ta\t1
+                    2024-01-02T04:00:00.000000Z\tb\t1
+                    """);
+
+            execute("INSERT INTO base VALUES ('2024-01-01T00:20:00', 'a', 5), ('2024-01-03T01:00:00', 'a', 6)");
+            drainQueues();
+            final String refreshed = """
+                    bucket\tsym\tc
+                    2024-01-01T00:00:00.000000Z\ta\t2
+                    2024-01-01T00:00:00.000000Z\tb\t1
+                    2024-01-01T02:00:00.000000Z\ta\t1
+                    2024-01-02T04:00:00.000000Z\tb\t1
+                    2024-01-03T00:00:00.000000Z\ta\t1
+                    """;
+            assertGroupByTimestampFloorViews(viewCount, refreshed);
+
+            for (int i = 0; i < viewCount; i++) {
+                execute("REFRESH MATERIALIZED VIEW mv" + i + " FULL");
+            }
+            drainQueues();
+            assertGroupByTimestampFloorViews(viewCount, refreshed);
+        });
+    }
+
+    @Test
     public void testHugeSampleByInterval() throws Exception {
         assertMemoryLeak(() -> {
             Rnd rnd = TestUtils.generateRandom(LOG);
@@ -10309,6 +10364,20 @@ public class MatViewTest extends AbstractCairoTest {
                 .expectSize()
                 .noLeakCheck()
                 .returns(expected);
+    }
+
+    private void assertGroupByTimestampFloorViews(int viewCount, String expected) throws Exception {
+        assertQuery("SELECT view_name, invalidation_reason FROM materialized_views() WHERE view_status <> 'valid'")
+                .noRandomAccess()
+                .noLeakCheck()
+                .returns("view_name\tinvalidation_reason\n");
+        for (int i = 0; i < viewCount; i++) {
+            assertQuery("SELECT bucket, sym, c FROM mv" + i + " ORDER BY bucket, sym")
+                    .timestamp("bucket")
+                    .expectSize()
+                    .noLeakCheck()
+                    .returns(replaceExpectedTimestamp(expected));
+        }
     }
 
     private void assertNonDeterministicFunctionPrunedRows(String viewName) throws Exception {

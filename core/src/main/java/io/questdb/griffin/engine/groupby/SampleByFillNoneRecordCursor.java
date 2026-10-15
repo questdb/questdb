@@ -339,14 +339,14 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
                 }
                 if (value.getLong(BUCKET_SLOT) != bucketSeq) {
                     value.putLong(BUCKET_SLOT, bucketSeq);
-                    groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
+                    groupByFunctionsUpdater.updateRetained(value, baseRecord, rowId++);
                 } else {
                     groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                 }
             } else {
                 timestamp = adjustDst(timestamp, null, next);
                 if (timestamp != Long.MIN_VALUE) {
-                    nextSamplePeriod(timestamp);
+                    moveToSamplePeriod(timestamp);
                     map.getCursor();
                     isMapBuildPending = true;
                     return;
@@ -381,14 +381,14 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
                 }
                 if (value.getLong(BUCKET_SLOT) != bucketSeq) {
                     value.putLong(BUCKET_SLOT, bucketSeq);
-                    groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
+                    groupByFunctionsUpdater.updateRetained(value, baseRecord, rowId++);
                 } else {
                     groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
                 }
             } else {
                 timestamp = adjustDst(timestamp, null, next);
                 if (timestamp != Long.MIN_VALUE) {
-                    nextSamplePeriod(timestamp);
+                    moveToSamplePeriod(timestamp);
                     map.getCursor();
                     isMapBuildPending = true;
                     return;
@@ -404,7 +404,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
     // A volatile input can yield a key the scan did not see.
     private MapValue createRetainedValue(MapKey key) {
         final MapValue value = key.createValue();
-        value.putLong(BUCKET_SLOT, Numbers.LONG_NULL);
+        initKeyValue(value);
         return value;
     }
 
@@ -529,7 +529,7 @@ class SampleByFillNoneRecordCursor extends AbstractVirtualRecordSampleByCursor i
         }
         if (value.getLong(BUCKET_SLOT) != bucketSeq) {
             value.putLong(BUCKET_SLOT, bucketSeq);
-            groupByFunctionsUpdater.updateNew(value, baseRecord, rowId++);
+            groupByFunctionsUpdater.updateRetained(value, baseRecord, rowId++);
         } else {
             groupByFunctionsUpdater.updateExisting(value, baseRecord, rowId++);
         }

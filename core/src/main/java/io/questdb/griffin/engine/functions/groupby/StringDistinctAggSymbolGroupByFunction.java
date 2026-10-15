@@ -163,6 +163,18 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
     }
 
     @Override
+    public void recomputeFirst(MapValue mapValue, Record record, long rowId) {
+        final int index = mapValue.getInt(valueIndex + 1);
+        if (index < 0) {
+            computeFirst(mapValue, record, rowId);
+            return;
+        }
+        sinks.getQuick(index).clear();
+        mapValue.putLong(valueIndex, 0);
+        computeNext(mapValue, record, rowId);
+    }
+
+    @Override
     public void setAllocator(GroupByAllocator allocator) {
         set.setAllocator(allocator);
     }
@@ -170,6 +182,7 @@ class StringDistinctAggSymbolGroupByFunction extends StrFunction implements Unar
     @Override
     public void setNull(MapValue mapValue) {
         mapValue.putLong(valueIndex, 0);
+        mapValue.putInt(valueIndex + 1, -1);
     }
 
     @Override

@@ -404,7 +404,6 @@ final class AggregateBinder implements Mutable {
         final BindScope scope = ctx.scope();
         final boolean isOrderBound = !ctx.hasDeferredOrder(source);
         LogicalPlan result = project;
-        final boolean isSingleRow = aggregate.getGroupingExpressions().size() == 0;
         final int visibleCount = project.getExpressions().size();
         if (source.getSampleBy() != null && source.getOrderBy().size() == 0 && project.getChild() instanceof SortPlan sort) {
             int timestampIndex = project.getOutput().getTimestampIndex();
@@ -480,9 +479,6 @@ final class AggregateBinder implements Mutable {
                                     project.getExpressions().getQuick(k).getPosition()));
                             ordering.getOutput().addColumnAs(output, k, output.getColumnId(k), output.getColumnName(k), output.isVisible(k));
                         }
-                        if (isSingleRow) {
-                            ordering.getOutput().setTimestampIndex(project.getOutput().getTimestampIndex());
-                        }
                         scope.resetAliases(ordering.getOutput());
                     }
                     final BoundExpression expression = bindAggregateOrderValue(order, model, source, aggregate, project, visibleCount, executionContext);
@@ -496,13 +492,8 @@ final class AggregateBinder implements Mutable {
                 orderBinder.addSortKey(sort, (ordering == null ? project : ordering).getOutput(), index, source.getOrderByDirection().getQuick(i), order.position);
             }
             final ProjectPlan sortInput = ordering == null ? project : ordering;
-            if (isSingleRow && sortInput.getOutput().getTimestampIndex() >= 0) {
-                // A single row is in any order and keeps its designated timestamp.
-                result = sortInput;
-            } else {
-                sort.replaceInput(0, sortInput);
-                result = sort;
-            }
+            sort.replaceInput(0, sortInput);
+            result = sort;
             if (visibleCount < sortInput.getExpressions().size()) {
                 result = orderBinder.projectVisible(result, sortInput, sortInput);
             }
@@ -1813,10 +1804,6 @@ final class AggregateBinder implements Mutable {
         }
 
         scope.resetAliases();
-        if (source.getNestedModel() == null && aggregate instanceof AggregatePlan grouped && LogicalPlans.isTimestampEndpoint(grouped)) {
-            // A timestamp endpoint read straight from its FROM table designates its value.
-            aggregate.getOutput().setTimestampIndex(0);
-        }
         LogicalPlan aggregation = aggregate;
         if ((sampleByBucket != null || sampleBy != null) && SampleByBinder.isFillPlanned(source)) {
             final int timestampIndex = sampleBy == null ? aggregate.getGroupingExpressions().indexOf(sampleByBucket)

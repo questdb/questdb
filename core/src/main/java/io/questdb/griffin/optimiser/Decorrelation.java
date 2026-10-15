@@ -58,6 +58,7 @@ import io.questdb.griffin.plan.logical.SortPlan;
 import io.questdb.griffin.plan.logical.TreeWalk;
 import io.questdb.griffin.plan.logical.UniqueColumnNames;
 import io.questdb.griffin.plan.logical.WindowJoinPlan;
+import io.questdb.griffin.plan.logical.WindowJoinStep;
 import io.questdb.griffin.plan.logical.WindowPlan;
 import io.questdb.std.IntIntHashMap;
 import io.questdb.std.IntList;
@@ -219,6 +220,12 @@ final class Decorrelation implements OptimiserPass {
 
     private static boolean isLiftableChainNode(LogicalPlan node) {
         return node instanceof ProjectPlan || node instanceof FilterPlan || node instanceof SortPlan;
+    }
+
+    private void addUnmappedOuterId(int outerId, int lo, int hi) {
+        if (ctx.masterOuterIds.contains(outerId) && ctx.mappedColumn(outerId, lo, hi) < 0 && !domains.domainOuterIds.contains(outerId)) {
+            domains.domainOuterIds.add(outerId);
+        }
     }
 
     /**
@@ -437,7 +444,7 @@ final class Decorrelation implements OptimiserPass {
                             keys.deferMapping(input, inputBase);
                         } else {
                             keys.joinMappedInput(input, inputBase, base);
-                            if (i > 0 && input.getJoinType() == JoinKind.LEFT_OUTER) {
+                            if (i > 0 && input.getJoinType().isSlaveNulling()) {
                                 keys.deferMapping(input, inputBase);
                             }
                         }
@@ -452,7 +459,7 @@ final class Decorrelation implements OptimiserPass {
             }
             case WindowJoinPlan windowJoin -> {
                 windowJoin.replaceInput(0, decorrelateBlock(windowJoin.getMaster(), false, base));
-                ctx.realign(windowJoin);
+                decorrelateWindowJoinSteps(windowJoin, base);
                 return windowJoin;
             }
             case HorizonJoinPlan horizon -> {
@@ -554,6 +561,56 @@ final class Decorrelation implements OptimiserPass {
             compensation.uncompensatedScalars.setPos(uncompensatedBase);
             compensation.scalarAggregates.setPos(scalarAggregateBase);
         }
+    }
+
+    /**
+     * Rewrites the slaves of the window join's steps. Each step joins its slave's rows on the columns that satisfy the
+     * outer columns the slave reads: the master's, or those of a domain crossed with the master, which the step's own
+     * reads of outer columns read as well.
+     */
+    private void decorrelateWindowJoinSteps(WindowJoinPlan windowJoin, int base) throws SqlException {
+        final int slaveBase = ctx.mappedOuterIds.size();
+        for (int i = 1, n = windowJoin.inputCount(); i < n; i++) {
+            if (hasMasterOuterColumn(windowJoin.inputAt(i))) {
+                windowJoin.replaceInput(i, decorrelateBlock(windowJoin.inputAt(i), false, ctx.mappedOuterIds.size()));
+            }
+        }
+        final int domainBase = ctx.mappedOuterIds.size();
+        domains.domainOuterIds.clear();
+        for (int i = slaveBase; i < domainBase; i++) {
+            addUnmappedOuterId(ctx.mappedOuterIds.getQuick(i), base, slaveBase);
+        }
+        final int readBase = ctx.tmpColumnIds.size();
+        ctx.outerColumnReads.collect(windowJoin, ctx.tmpColumnIds);
+        for (int i = readBase, n = ctx.tmpColumnIds.size(); i < n; i++) {
+            addUnmappedOuterId(ctx.tmpColumnIds.getQuick(i), base, slaveBase);
+        }
+        ctx.tmpColumnIds.setPos(readBase);
+        final int position = windowJoin.getPosition();
+        if (domains.domainOuterIds.size() > 0) {
+            windowJoin.replaceInput(0, domains.crossDomain(windowJoin.getMaster(), domains.buildDomain(position), position));
+        }
+        ctx.realign(windowJoin);
+        final ObjList<WindowJoinStep> steps = windowJoin.getSteps();
+        for (int i = slaveBase; i < domainBase; i++) {
+            final int outerId = ctx.mappedOuterIds.getQuick(i);
+            final int slaveId = ctx.mappedColumnIds.getQuick(i);
+            final int masterId = ctx.mappedColumn(outerId, base, slaveBase) > -1 ? ctx.mappedColumn(outerId, base, slaveBase)
+                    : ctx.mappedColumn(outerId, domainBase, ctx.mappedOuterIds.size());
+            int s = 0;
+            while (steps.getQuick(s).getSlave().getOutput().getColumnIndexById(slaveId) < 0) {
+                s++;
+            }
+            final WindowJoinStep step = steps.getQuick(s);
+            final OutputSchema scope = step.getScope();
+            final BoundExpression equality = ctx.context.bindCall("=", position, ctx.column(scope, slaveId, position), ctx.column(scope, masterId, position), scope);
+            step.setFilter(step.getFilter() == null ? equality : ctx.context.getRewriter().combineConjunction(step.getFilter(), equality, position));
+        }
+        for (int i = domainBase - 1; i >= slaveBase; i--) {
+            ctx.mappedOuterIds.removeIndex(i);
+            ctx.mappedColumnIds.removeIndex(i);
+        }
+        ctx.remapMapped(windowJoin, base);
     }
 
     private void exposeLiftedColumns(ProjectPlan project, BoundExpression expression) {
