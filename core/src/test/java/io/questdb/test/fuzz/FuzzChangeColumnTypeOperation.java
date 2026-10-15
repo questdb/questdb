@@ -39,14 +39,26 @@ import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
 import io.questdb.test.tools.TestUtils;
 
+import java.util.concurrent.atomic.AtomicInteger;
+
 public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
     private static final long MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL = 60_000;
+    // CHAR stays out: random CHAR values include lone surrogates, and CONVERT TO PARQUET suspends a table
+    // whose STRING holds one, as after a change from CHAR to STRING
+    private static final int[] noSentinelColumnTypes = {
+            ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT
+    };
     private static final int[] numericConvertableColumnTypes = {
             ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
             ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.BOOLEAN,
             ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO,
             ColumnType.STRING, ColumnType.VARCHAR
     };
+    private static final int[] textColumnTypes = {
+            ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR
+    };
+    // the changes generateTextToNoSentinelChange() made
+    private static final AtomicInteger textToNoSentinelChanges = new AtomicInteger();
     private static final int[] varSizeConvertableColumnTypes = {
             ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
             ColumnType.FLOAT, ColumnType.DOUBLE, ColumnType.BOOLEAN,
@@ -93,14 +105,22 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         };
     }
 
-    public static int changeColumnTypeTo(Rnd rnd, int columnType, long estimatedTotalRowCount) {
+    /**
+     * {@code isNoSentinelToTextAllowed} lets BOOLEAN, BYTE and SHORT change to STRING, SYMBOL or VARCHAR, half
+     * of the time; without it the generator never changes a type without a NULL sentinel to one with it.
+     */
+    public static int changeColumnTypeTo(Rnd rnd, int columnType, long estimatedTotalRowCount, boolean isNoSentinelToTextAllowed) {
+        final boolean isSymbolAllowed = estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL;
+        if (isNoSentinelToTextAllowed && ColumnType.isNoNullSentinelFixedType(columnType) && rnd.nextBoolean()) {
+            return generateNextType(columnType, textColumnTypes, rnd, isSymbolAllowed, true);
+        }
         return switch (columnType) {
             case ColumnType.STRING, ColumnType.SYMBOL, ColumnType.VARCHAR ->
-                    generateNextType(columnType, varSizeConvertableColumnTypes, rnd, estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL);
+                    generateNextType(columnType, varSizeConvertableColumnTypes, rnd, isSymbolAllowed, isNoSentinelToTextAllowed);
             case ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG,
                  ColumnType.FLOAT, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.TIMESTAMP_NANO,
                  ColumnType.DOUBLE ->
-                    generateNextType(columnType, numericConvertableColumnTypes, rnd, estimatedTotalRowCount < MAX_TABLE_ROWS_TO_CONVERT_TO_SYMBOL);
+                    generateNextType(columnType, numericConvertableColumnTypes, rnd, isSymbolAllowed, isNoSentinelToTextAllowed);
             default ->
                     throw new UnsupportedOperationException("Unsupported column type to generate type change: " + columnType);
         };
@@ -112,9 +132,9 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
             int metadataVersion,
             int waitBarrierVersion,
             Rnd rnd,
-            RecordMetadata tableMetadata
+            RecordMetadata tableMetadata,
+            boolean isNoSentinelToTextAllowed
     ) {
-        FuzzTransaction transaction = new FuzzTransaction();
         int startColumnIndex = rnd.nextInt(tableMetadata.getColumnCount());
 
         // guard against converting designated timestamp
@@ -125,64 +145,46 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         for (int i = 0; i < tableMetadata.getColumnCount(); i++) {
             int columnIndex = (startColumnIndex + i) % tableMetadata.getColumnCount();
             if (columnIndex != tableMetadata.getTimestampIndex() && canGenerateColumnTypeChange(tableMetadata, columnIndex)) {
-                String columnName = tableMetadata.getColumnName(columnIndex);
                 int columnType = tableMetadata.getColumnType(columnIndex);
-                int newColType = changeColumnTypeTo(rnd, columnType, estimatedTotalRowCount);
-
-                int capacity = 1 << (5 + rnd.nextInt(3));
-                byte indexType;
-                if (ColumnType.isSymbol(newColType) && (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE)) {
-                    // Spread index choice across BITMAP and the three POSTING
-                    // encoding variants so column-type changes exercise both
-                    // index families.
-                    double pick = rnd.nextDouble();
-                    if (pick < 0.5) {
-                        indexType = IndexType.BITMAP;
-                    } else if (pick < 0.7) {
-                        indexType = IndexType.POSTING;
-                    } else if (pick < 0.85) {
-                        indexType = IndexType.POSTING_DELTA;
-                    } else {
-                        indexType = IndexType.POSTING_EF;
-                    }
-                } else {
-                    indexType = IndexType.NONE;
-                }
-                // CAPACITY is parser-rejected for POSTING but the metadata
-                // field still requires a value >= 2; reuse the BITMAP default.
-                int indexValueBlockCapacity = (columnType == ColumnType.BOOLEAN) ? 4 : 128;
-                boolean cacheSymbolMap = ColumnType.isSymbol(newColType) && rnd.nextBoolean();
-                FuzzChangeColumnTypeOperation operation = new FuzzChangeColumnTypeOperation(rnd, columnName, newColType, capacity, indexType, indexValueBlockCapacity, cacheSymbolMap);
-                transaction.operationList.add(operation);
-                transaction.structureVersion = metadataVersion;
-                transaction.waitBarrierVersion = waitBarrierVersion;
-                transactionList.add(transaction);
-
-                FuzzTestColumnMeta newMeta = new FuzzTestColumnMeta();
-                for (int c = 0, n = tableMetadata.getColumnCount(); c < n; c++) {
-                    if (c != columnIndex) {
-                        newMeta.add(tableMetadata.getColumnMetadata(c));
-                    } else {
-                        newMeta.add(new TableColumnMetadata(
-                                columnName,
-                                newColType,
-                                indexType,
-                                indexValueBlockCapacity,
-                                cacheSymbolMap,
-                                null,
-                                newMeta.getColumnCount(),
-                                false
-                        ));
-                    }
-                }
-                newMeta.setTimestampIndex(tableMetadata.getTimestampIndex());
-
-                return newMeta;
+                int newColType = changeColumnTypeTo(rnd, columnType, estimatedTotalRowCount, isNoSentinelToTextAllowed);
+                return addColumnTypeChange(transactionList, metadataVersion, waitBarrierVersion, rnd, tableMetadata, columnIndex, newColType);
             }
         }
 
         // nothing to drop, only timestamp column left
         return null;
+    }
+
+    /**
+     * Changes a STRING, SYMBOL or VARCHAR column, if the table has one, to BOOLEAN, BYTE or SHORT: a type
+     * that reads the column top as 0 or false, until a later change back to text shows whether the top
+     * was kept. {@link #getTextToNoSentinelChanges()} counts these changes.
+     */
+    public static RecordMetadata generateTextToNoSentinelChange(
+            ObjList<FuzzTransaction> transactionList,
+            int metadataVersion,
+            int waitBarrierVersion,
+            Rnd rnd,
+            RecordMetadata tableMetadata
+    ) {
+        final int startColumnIndex = rnd.nextInt(tableMetadata.getColumnCount());
+        for (int i = 0, n = tableMetadata.getColumnCount(); i < n; i++) {
+            final int columnIndex = (startColumnIndex + i) % n;
+            if (isText(tableMetadata.getColumnType(columnIndex))) {
+                final int newColumnType = noSentinelColumnTypes[rnd.nextInt(noSentinelColumnTypes.length)];
+                textToNoSentinelChanges.incrementAndGet();
+                return addColumnTypeChange(transactionList, metadataVersion, waitBarrierVersion, rnd, tableMetadata, columnIndex, newColumnType);
+            }
+        }
+        return null;
+    }
+
+    public static int getTextToNoSentinelChanges() {
+        return textToNoSentinelChanges.get();
+    }
+
+    public static void resetTextToNoSentinelChanges() {
+        textToNoSentinelChanges.set(0);
     }
 
     @Override
@@ -203,14 +205,84 @@ public class FuzzChangeColumnTypeOperation implements FuzzTransactionOperation {
         return true;
     }
 
-    private static int generateNextType(int columnType, int[] numericConvertableColumnTypes, Rnd rnd, boolean symbolsAllowed) {
+    private static RecordMetadata addColumnTypeChange(
+            ObjList<FuzzTransaction> transactionList,
+            int metadataVersion,
+            int waitBarrierVersion,
+            Rnd rnd,
+            RecordMetadata tableMetadata,
+            int columnIndex,
+            int newColType
+    ) {
+        FuzzTransaction transaction = new FuzzTransaction();
+        String columnName = tableMetadata.getColumnName(columnIndex);
+        int columnType = tableMetadata.getColumnType(columnIndex);
+        int capacity = 1 << (5 + rnd.nextInt(3));
+        byte indexType;
+        if (ColumnType.isSymbol(newColType) && (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE)) {
+            // Spread index choice across BITMAP and the three POSTING
+            // encoding variants so column-type changes exercise both
+            // index families.
+            double pick = rnd.nextDouble();
+            if (pick < 0.5) {
+                indexType = IndexType.BITMAP;
+            } else if (pick < 0.7) {
+                indexType = IndexType.POSTING;
+            } else if (pick < 0.85) {
+                indexType = IndexType.POSTING_DELTA;
+            } else {
+                indexType = IndexType.POSTING_EF;
+            }
+        } else {
+            indexType = IndexType.NONE;
+        }
+        // CAPACITY is parser-rejected for POSTING but the metadata
+        // field still requires a value >= 2; reuse the BITMAP default.
+        int indexValueBlockCapacity = (columnType == ColumnType.BOOLEAN) ? 4 : 128;
+        boolean cacheSymbolMap = ColumnType.isSymbol(newColType) && rnd.nextBoolean();
+        FuzzChangeColumnTypeOperation operation = new FuzzChangeColumnTypeOperation(rnd, columnName, newColType, capacity, indexType, indexValueBlockCapacity, cacheSymbolMap);
+        transaction.operationList.add(operation);
+        transaction.structureVersion = metadataVersion;
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transactionList.add(transaction);
+
+        FuzzTestColumnMeta newMeta = new FuzzTestColumnMeta();
+        for (int c = 0, n = tableMetadata.getColumnCount(); c < n; c++) {
+            if (c != columnIndex) {
+                newMeta.add(tableMetadata.getColumnMetadata(c));
+            } else {
+                newMeta.add(new TableColumnMetadata(
+                        columnName,
+                        newColType,
+                        indexType,
+                        indexValueBlockCapacity,
+                        cacheSymbolMap,
+                        null,
+                        newMeta.getColumnCount(),
+                        false
+                ));
+            }
+        }
+        newMeta.setTimestampIndex(tableMetadata.getTimestampIndex());
+
+        return newMeta;
+    }
+
+    private static int generateNextType(int columnType, int[] convertableColumnTypes, Rnd rnd, boolean symbolsAllowed, boolean isNoSentinelToTextAllowed) {
         int nextColType = columnType;
         // disallow noop conversion
-        // disallow conversions from non-nullable to nullable
-        while (nextColType == columnType || (isNullable(columnType) != isNullable(nextColType) || (!symbolsAllowed && ColumnType.isSymbol(nextColType)))) {
-            nextColType = numericConvertableColumnTypes[rnd.nextInt(numericConvertableColumnTypes.length)];
+        // disallow conversions from non-nullable to nullable, but for BOOLEAN, BYTE and SHORT to text when allowed
+        while (nextColType == columnType
+                || (isNullable(columnType) != isNullable(nextColType)
+                && !(isNoSentinelToTextAllowed && ColumnType.isNoNullSentinelFixedType(columnType) && isText(nextColType)))
+                || (!symbolsAllowed && ColumnType.isSymbol(nextColType))) {
+            nextColType = convertableColumnTypes[rnd.nextInt(convertableColumnTypes.length)];
         }
         return nextColType;
+    }
+
+    private static boolean isText(int columnType) {
+        return columnType == ColumnType.STRING || columnType == ColumnType.SYMBOL || columnType == ColumnType.VARCHAR;
     }
 
     private static boolean isNullable(int columnType) {

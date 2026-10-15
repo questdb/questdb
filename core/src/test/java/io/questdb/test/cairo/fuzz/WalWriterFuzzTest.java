@@ -37,6 +37,7 @@ import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.str.Path;
 import io.questdb.test.AbstractCairoTest;
+import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -228,6 +229,50 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         );
         setFuzzCounts(false, 10_000, 300, 20, 10, 1000, 2_000, 3);
         runFuzz(rnd);
+    }
+
+    @Test
+    public void testConvertPartitionTypeChangeColumnTopsFuzz() throws Exception {
+        // As testConvertPartitionColumnTopsFuzz, with frequent type changes, one of them from STRING, SYMBOL
+        // or VARCHAR to BOOLEAN, BYTE or SHORT lazily on a parquet partition, and changes back to text, see
+        // FuzzTransactionGenerator.generateSet(). The column must keep its top through CONVERT TO NATIVE and
+        // the ALTER COLUMN TYPE pre-pass, so that the change back reads the top as NULL, as the non-WAL twin.
+        Rnd rnd = generateRandom(LOG);
+        setTestParams(rnd);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 50 + rnd.nextInt(151));
+
+        setFuzzProbabilities(
+                0.01,
+                0.01,
+                0.01,
+                0.05,
+                0.2,
+                0.02,
+                0.02,
+                0.3,
+                1.0,
+                0.01,
+                0.0,
+                0.5,
+                0.5,
+                0.0,
+                0.0,
+                0.0,
+                0.0,
+                0,
+                0.0,
+                0.0,
+                0.0, // addCoveringIndexProb
+                0.0 // SET FORMAT PARQUET|NATIVE probability
+        );
+        // one WAL writer for the parallel apply too: several would commit the in-order blocks out of order
+        fuzzer.setFuzzCounts(false, 5_000, 500, 20, 10, 1000, 2_000, 5, 1, 1);
+        fuzzer.setNoSentinelTypeChangeEnabled(true);
+        FuzzChangeColumnTypeOperation.resetTextToNoSentinelChanges();
+        runFuzz(rnd);
+        // the generator makes the change after a CONVERT TO PARQUET of a partition with rows, and before
+        // any CONVERT TO NATIVE, so the WAL tables apply it lazily on that parquet partition
+        Assert.assertEquals(1, FuzzChangeColumnTypeOperation.getTextToNoSentinelChanges());
     }
 
     @Test
