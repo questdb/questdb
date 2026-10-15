@@ -1,6 +1,6 @@
 ---
 name: fix-pr
-description: Develop features and fix bugs or review findings from a list, one item at a time, with exhaustive tests enforced while developing - design the change and its test plan against CLAUDE.md "Testing" and have both challenged independently, build test-first, run the item's tests with coverage (ci/diff_coverage.py) and add tests until every changed line, branch and condition runs, have the tests reviewed independently and close the gaps; commit. When the list is done, run review-pr once as a backstop and treat what it finds the same way. Adjacent findings become GitHub issues. Use when the user runs /skill:fix-pr or asks to develop or fix items with it.
+description: Develop features and fix bugs or review findings from a list, one item at a time, with exhaustive tests enforced while developing - design the change and its test plan against CLAUDE.md "Testing" and have both challenged independently, build test-first, run the item's tests with coverage (ci/diff_coverage.py) and add tests until every changed line, branch and condition runs, have the tests reviewed independently and close the gaps; commit. When the list is done, run review-pr once as a backstop and treat what it finds the same way. Adjacent findings outside this PR's code become GitHub issues. Use when the user runs /skill:fix-pr or asks to develop or fix items with it.
 allowed-tools: bash read edit write subagent ctx_execute ctx_execute_file
 metadata:
   argument-hint: "[--include-adjacent] [--no-issues] [--review-level=N] [--max-review-rounds=N] <items: features, bugs or review findings>"
@@ -30,9 +30,10 @@ to fix, or a finding from a review.
 
 Tests are written while developing; the review at the end is the last resort,
 not the place where test cases get discovered. When the queue is empty, run
-`review-pr` once over all commits. Treat its Critical and Moderate findings as
-new items: each is a test that should have existed. File Adjacent findings as
-GitHub issues.
+`review-pr` once over all commits. Treat its Critical and Moderate findings,
+and Adjacent ones in code this PR added or changed, as new items: each is a
+test that should have existed. File the other Adjacent findings as GitHub
+issues.
 
 CLAUDE.md governs code, tests and commit messages. Its "Testing" section is the
 standard every item meets.
@@ -79,10 +80,12 @@ background helper loses the cache and pays to rebuild it.
    continue. Commits never include them.
 3. Create a state directory outside the repo: `mktemp -d /tmp/fix-pr.XXXXXX`.
 4. Parse the items. Each entry of a list of features or bugs is one item. From
-   a `review-pr` report, queue Critical and Moderate findings, list Minor ones
-   as not fixed (cosmetic) unless the user asks, and send Adjacent ones to the
-   issue list unless `--include-adjacent`. Keep each item's text verbatim and
-   give it a short ID (the user's or the review's number, or I1, I2, ...).
+   a `review-pr` report, queue Critical and Moderate findings and Adjacent
+   ones in code this PR added or changed (compare with the PR base), list
+   Minor ones as not fixed (cosmetic) unless the user asks, and send the
+   other Adjacent ones to the issue list unless `--include-adjacent`. Keep
+   each item's text verbatim and give it a short ID (the user's or the
+   review's number, or I1, I2, ...).
 5. Show the queue in a few lines and start. Don't wait for approval.
 
 ## Per item
@@ -151,12 +154,14 @@ When the queue is empty:
    files at its own commit: coverage a later item broke, lines a helper left
    open, files an item didn't measure. It grades never-run code by what it
    would break if it were wrong.
-2. Queue its Critical and Moderate findings as new items and run them through
-   the per-item steps. Each one is a test the standard should have produced:
-   its test plan names the dimension of CLAUDE.md "Testing" that missed it.
-   List Minor findings. List the never-run lines the review judged
-   low-exposure as open coverage gaps. Send Adjacent findings to the issue
-   list; invoking this skill is the user's request to file them.
+2. Queue its Critical and Moderate findings, and Adjacent ones in code this
+   PR added or changed (compare with the PR base, not START), as new items
+   and run them through the per-item steps. Each one is a test the standard
+   should have produced: its test plan names the dimension of CLAUDE.md
+   "Testing" that missed it. List Minor findings. List the never-run lines
+   the review judged low-exposure as open coverage gaps. Send the other
+   Adjacent findings to the issue list; invoking this skill is the user's
+   request to file them.
 3. If a finding concerns an item this run already built or skipped, don't loop
    on it: list it for the user with both views.
 4. Repeat until a review finds no Critical or Moderate items, or
@@ -169,7 +174,12 @@ Unless `--no-issues`, file each one:
 
 - Repository: the one that owns the affected file. Run
   `gh repo view --json nameWithOwner -q .nameWithOwner` in that file's
-  directory.
+  directory. A crash or hang that hostile input triggers (`[crash]` on a
+  helper's line) goes to `questdb/questdb-enterprise` instead, with
+  `--label crash`; never describe it anywhere public (CLAUDE.md "Failure
+  paths and misuse"). When `gh repo view questdb/questdb-enterprise` fails,
+  as it does for OSS contributors, show its issue body in the final summary
+  instead of filing it.
 - Search first:
   `gh issue list --repo <repo> --state all --search "<key words>" --limit 5`.
   If an issue already covers it, record that issue instead of filing.
@@ -207,7 +217,8 @@ Then one line each: review rounds, what they found and the range's measured
 coverage; issues filed or matched (links); items left for the user (blocked,
 security-sensitive, unfiled `ADJACENT` bugs, Minor, disagreements, open
 coverage gaps); and
-`git log --oneline <START>..HEAD`. State that nothing was pushed.
+`git log --oneline <START>..HEAD`. State that nothing was pushed. Then print
+in full each crash issue the Issue list could not file.
 
 End with the PR body bullets, per CLAUDE.md "Git & PR Conventions": the
 EFFECT of each built item that isn't `none`, and any benchmark an EFFECT line
@@ -287,7 +298,9 @@ apply: <ADD lines, or none>.]
    input, operation or fault - reaches it, else PRE-EXISTING. PR and RELATED
    bugs become items of their own in this run, so keep them out of this plan
    unless this change can't work without them. For a PRE-EXISTING one, write
-   an issue body to <state>/<ID>/issue-<slug>.md.
+   an issue body to <state>/<ID>/issue-<slug>.md. Add [security] when a bug
+   is security-sensitive and [crash] when hostile input can crash or hang the
+   server through it.
 
 Write <state>/<ID>/analysis.md, starting with the verbatim item; include the
 alternatives you rejected and why, and the test plan as a table: dimension,
@@ -299,7 +312,7 @@ EFFECT: <the PR body bullet; the JMH benchmark to report, if any> | none
 CHANGE: <one line, naming the files> | REASON: <one line, for SKIP> | QUESTIONS: <for ASK, one line each>
 WHY: <one line: why this change beats the alternatives>
 TESTS: <one line: the dimensions covered and the ones not applicable>
-OTHER: none | one line per bug: PR, RELATED or PRE-EXISTING [security], file:line, problem, issue body path (PRE-EXISTING only)
+OTHER: none | one line per bug: PR, RELATED or PRE-EXISTING [security] [crash], file:line, problem, issue body path (PRE-EXISTING only)
 ```
 
 ### Check
@@ -346,8 +359,9 @@ or its tests. Label each problem:
 - ADJACENT: a separate bug the change neither causes nor must fix to solve
   the item, including the same kind of bug in other code. Mark it PR (in
   code this PR added or changed), RELATED (pre-existing, but the item's own
-  trigger reaches it) or PRE-EXISTING, and [security] when it is
-  security-sensitive.
+  trigger reaches it) or PRE-EXISTING, [security] when it is
+  security-sensitive, and [crash] when hostile input can crash or hang the
+  server through it.
 Reply with only: OK, or at most eight lines, one per problem, each starting
 with its label, REDESIGN lines first.
 ```
