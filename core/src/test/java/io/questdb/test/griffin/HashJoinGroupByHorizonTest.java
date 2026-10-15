@@ -360,12 +360,14 @@ public class HashJoinGroupByHorizonTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("PR7618 bug: a repeated key column moves into a filter that drops preserved rows, see PR7618_BUGS_HANDOFF.md")
+    @Ignore("Known bug, fixed by PR #7674: a repeated key column moves into a filter that drops preserved rows")
     @Test
     public void testRepeatedKeyColumnKeepsPreservedRows() throws Exception {
         // SqlOptimiser.mergeContexts() folds a slave column that two keys share into an equality of
         // the two master columns. That equality filters the master before a LEFT or HORIZON JOIN,
         // and after a RIGHT JOIN, so it drops rows that the join must keep with NULLs instead.
+        // PR #7674 keeps both key pairs instead, so with it this test also reaches the fused path's
+        // shared-key code: unifyRepeatedKeyColumnEncodings() and HashJoinGroupByKeys.hasEncodingConflict().
         assertMemoryLeak(() -> {
             createTables();
             for (boolean isEnabled : new boolean[]{false, true}) {
@@ -445,7 +447,7 @@ public class HashJoinGroupByHorizonTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("PR7618 bug: a repeated key column over a projected alias fails to compile, see PR7618_BUGS_HANDOFF.md")
+    @Ignore("Known bug, fixed by PR #7674: a repeated key column over a projected alias fails to compile")
     @Test
     public void testRepeatedKeyColumnOverProjectedAlias() throws Exception {
         // The master projects sym twice. SqlOptimiser.mergeContexts() folds the shared slave column

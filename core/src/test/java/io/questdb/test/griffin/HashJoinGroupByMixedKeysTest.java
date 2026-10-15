@@ -275,7 +275,7 @@ public class HashJoinGroupByMixedKeysTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("PR7618 bug: SAMPLE BY with ORDER BY on a table-qualified column of an unaliased table throws NPE, see PR7618_BUGS_HANDOFF.md")
+    @Ignore("Known bug #7916 (item 9): SAMPLE BY with ORDER BY on a table-qualified column of an unaliased table throws NPE")
     @Test
     public void testOrderByQualifiedColumnAfterSampleByOverJoin() throws Exception {
         // SqlOptimiser.rewriteSampleBy() resolves ORDER BY columns against join models that carry

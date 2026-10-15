@@ -460,7 +460,9 @@ public class HashJoinGroupByRuntimeConstantTest extends AbstractCairoTest {
     // A sub-day SAMPLE BY with a TIME ZONE converts its FROM and TO bounds to UTC at compile time, and
     // reads a bind variable bound before it is linked. Fails with or without the fused path, and on a
     // single table too.
-    @Ignore("PR7618 bug: SAMPLE BY FROM $1 with a sub-day stride and TIME ZONE fails to compile, see PR7618_BUGS_HANDOFF.md")
+    // PR #7681 rejects these statements with a SqlException at the FROM bind variable. Once it lands,
+    // expect that error with the fused path on and off instead of rows.
+    @Ignore("Known bug #7750: SAMPLE BY FROM $1 with a sub-day stride and TIME ZONE fails to compile")
     @Test
     public void testSampleByFromBindVariableWithSubDayTimeZone() throws Exception {
         assertMemoryLeak(() -> {

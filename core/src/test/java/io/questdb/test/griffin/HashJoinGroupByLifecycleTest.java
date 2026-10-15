@@ -135,7 +135,7 @@ public class HashJoinGroupByLifecycleTest extends AbstractCairoTest {
     }
 
     // The fused probe looks p's texts up in b's dictionary, which the write grows.
-    @Ignore("PR7618 bug: open reader's SYMBOL lookup misses existing texts after a concurrent append, see PR7618_BUGS_HANDOFF.md")
+    @Ignore("Known bug #7837: an open reader's SYMBOL lookup misses existing texts after a concurrent append")
     @Test
     public void testInsertIntoBuildBetweenOpenAndFirstReadKeepsSymbolMatches() throws Exception {
         assertSymbolMatchesSurviveInsertBetweenOpenAndFirstRead(true, "INSERT INTO b VALUES (45, 'k45', 1.0, '2020-01-04')");
@@ -143,7 +143,7 @@ public class HashJoinGroupByLifecycleTest extends AbstractCairoTest {
 
     // The ordinary join translates its SYMBOL key through p's dictionary, which the write grows. The
     // fused plan passes this case, see testInsertBetweenOpenAndFirstReadKeepsTheSnapshot().
-    @Ignore("PR7618 bug: open reader's SYMBOL lookup misses existing texts after a concurrent append, see PR7618_BUGS_HANDOFF.md")
+    @Ignore("Known bug #7837: an open reader's SYMBOL lookup misses existing texts after a concurrent append")
     @Test
     public void testInsertIntoProbeBetweenOpenAndFirstReadKeepsOrdinarySymbolMatches() throws Exception {
         assertSymbolMatchesSurviveInsertBetweenOpenAndFirstRead(false, "INSERT INTO p VALUES (45, 'k45', 6, 1.5, '2020-01-04')");
