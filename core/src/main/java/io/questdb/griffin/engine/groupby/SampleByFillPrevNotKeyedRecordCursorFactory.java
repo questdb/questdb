@@ -60,7 +60,8 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
             int sampleFromFuncPos,
             Function sampleToFunc,
             int sampleToFuncPos,
-            boolean isFromToUtc
+            boolean isFromToUtc,
+            boolean isRuntimeBoundUtc
     ) {
         super(base, groupByMetadata, recordFunctions, timezoneNameFunc, offsetFunc, sampleFromFunc, sampleToFunc);
         try {
@@ -85,6 +86,7 @@ public class SampleByFillPrevNotKeyedRecordCursorFactory extends AbstractSampleB
                     sampleToFuncPos,
                     isFromToUtc
             );
+            cursor.setRuntimeBoundUtc(isRuntimeBoundUtc);
         } catch (Throwable th) {
             Misc.free(this, th);
             throw th;

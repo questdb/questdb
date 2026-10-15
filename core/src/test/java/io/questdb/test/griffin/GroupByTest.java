@@ -1502,10 +1502,10 @@ public class GroupByTest extends AbstractCairoTest {
                     },
             };
             for (String[] query : queries) {
-                assertOrderByHiddenKey(query[0], query[1], true);
+                assertOrderByHiddenKeyNoLeakCheck(query[0], query[1], true);
             }
             for (String[] query : sampleByQueries) {
-                assertOrderByHiddenKey(query[0], query[1], false);
+                assertOrderByHiddenKeyNoLeakCheck(query[0], query[1], false);
             }
 
             // a re-sort over the query drops its ORDER BY, and the groups still split by the hidden key

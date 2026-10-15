@@ -135,6 +135,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         0,
                         fixture.sampleToFunc,
                         0,
+                        false,
                         false
                 )
         );
@@ -173,6 +174,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                             0,
                             fixture.sampleToFunc,
                             0,
+                            false,
                             false
                     )
             );
@@ -247,6 +249,8 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         0,
                         fixture.sampleToFunc,
                         0,
+                        false,
+                        false,
                         false
                 )
         );
@@ -302,6 +306,7 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         0,
                         fixture.sampleToFunc,
                         0,
+                        false,
                         false
                 )
         );
@@ -371,6 +376,8 @@ public class SampleByFillFactoryConstructionFailureTest extends AbstractCairoTes
                         0,
                         fixture.sampleToFunc,
                         0,
+                        false,
+                        false,
                         false
                 )
         );

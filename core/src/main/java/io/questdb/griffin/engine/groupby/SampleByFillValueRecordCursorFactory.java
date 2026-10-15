@@ -232,7 +232,10 @@ public class SampleByFillValueRecordCursorFactory extends AbstractSampleByFillRe
 
     // The parser turns FILL(-1) into a unary minus node over the unsigned constant "1", so its
     // token is "-". This returns the signed text "-1" for that shape, which the Numbers parsers
-    // read exactly as they read any negative literal, range checks included. Any other node
+    // read exactly as they read any negative literal. Numbers.parseInt() and Numbers.parseLong()
+    // reject a value outside the int or long range, but createPlaceHolderFunction() narrows a
+    // SHORT or BYTE fill value from parseInt() with a plain (short) or (byte) cast, so those two
+    // types get only the int range check: FILL(-129) on a BYTE column fills 127. Any other node
     // keeps its own token, so FILL(-abc) still fails at the minus sign as before.
     private static CharSequence toFillValue(ExpressionNode fillNode) {
         if (fillNode.type == ExpressionNode.OPERATION

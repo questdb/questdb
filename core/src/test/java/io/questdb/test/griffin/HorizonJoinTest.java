@@ -2541,7 +2541,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     "SELECT t.sym, h.offset, avg(b.bid) a FROM trades t HORIZON JOIN bids b ON (sym) HORIZON JOIN asks k ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, h.offset",
             };
             for (String sql : queries) {
-                assertOrderByHiddenKey(sql, expected, true);
+                assertOrderByHiddenKeyNoLeakCheck(sql, expected, true);
                 assertHorizonOrderByHiddenKeyResorted(sql, "sym, offset, a", expectedResorted);
             }
 
@@ -2568,7 +2568,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
             // ORDER BY t.price * 2, t.sym leaves the order of the two offsets of each trade open, so
             // only the wrappers and the re-sort assert this query
             final String tieOnOffset = "SELECT t.sym, h.offset, avg(q.bid) a FROM trades t HORIZON JOIN quotes q ON (sym) LIST (0s, 1s) AS h ORDER BY t.price * 2, t.sym";
-            assertRowCountInWrappers(tieOnOffset, 8);
+            assertRowCountInWrappersNoLeakCheck(tieOnOffset, 8);
             assertHorizonOrderByHiddenKeyResorted(tieOnOffset, "sym, offset, a", expectedResorted);
 
             // a filter on a selected column keeps the groups split as well
@@ -2612,7 +2612,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     C\t0
                     C\t#1s
                     """.replace("#1s", oneSecond);
-            assertOrderByHiddenKey(noAggregates, expectedNoAggregates, true);
+            assertOrderByHiddenKeyNoLeakCheck(noAggregates, expectedNoAggregates, true);
             assertHorizonOrderByHiddenKeyResorted(
                     noAggregates,
                     "sym, offset",
@@ -2642,7 +2642,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     C\t0\t41.0
                     C\t#1s\t41.0
                     """.replace("#1s", oneSecond);
-            assertOrderByHiddenKey(aggregateExpression, expectedAggregateExpression, true);
+            assertOrderByHiddenKeyNoLeakCheck(aggregateExpression, expectedAggregateExpression, true);
             assertHorizonOrderByHiddenKeyResorted(
                     aggregateExpression,
                     "sym, offset, a",
@@ -2670,7 +2670,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
                     B\t60.0
                     C\t40.0
                     """;
-            assertOrderByHiddenKey(offsetExpression, expectedOffsetExpression, true);
+            assertOrderByHiddenKeyNoLeakCheck(offsetExpression, expectedOffsetExpression, true);
             assertHorizonOrderByHiddenKeyResorted(
                     offsetExpression,
                     "sym, a",
@@ -8710,7 +8710,7 @@ public class HorizonJoinTest extends AbstractCairoTest {
     }
 
     // Asserts that a re-sort, which drops the ORDER BY of a HORIZON JOIN query with a hidden ORDER BY key,
-    // still sees the query's rows, as assertRowCountInWrappers() does for count() and UNION ALL.
+    // still sees the query's rows, as assertRowCountInWrappersNoLeakCheck() does for count() and UNION ALL.
     private void assertHorizonOrderByHiddenKeyResorted(String sql, String sortKeys, String expectedResorted) throws Exception {
         assertQuery("SELECT * FROM (" + sql + ") ORDER BY " + sortKeys)
                 .noLeakCheck()

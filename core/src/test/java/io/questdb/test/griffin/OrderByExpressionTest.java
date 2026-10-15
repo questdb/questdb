@@ -154,7 +154,7 @@ public class OrderByExpressionTest extends AbstractCairoTest {
                     {"SELECT DISTINCT sym, row_number() OVER () rn FROM trades ORDER BY row_number() OVER () * 2", rowNumbers},
             };
             for (String[] query : queries) {
-                assertOrderByHiddenKey(query[0], query[1], true);
+                assertOrderByHiddenKeyNoLeakCheck(query[0], query[1], true);
             }
 
             // a re-sort over the query drops its ORDER BY

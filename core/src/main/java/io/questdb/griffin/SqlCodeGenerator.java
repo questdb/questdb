@@ -9308,8 +9308,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
 
             final boolean isFromTo = sampleFromFunc != timestampDriver.getTimestampConstantNull() || sampleToFunc != timestampDriver.getTimestampConstantNull();
+            // The conversion below replaces a bound with a constant, so code generation records first which bounds
+            // are constants. A bound that is not a constant, such as an expression over now() or current_user(),
+            // can read another value at execution than the conversion reads, see the flags below.
+            final boolean isSampleFromConstant = sampleFromFunc.isConstant();
+            final boolean isSampleToConstant = sampleToFunc.isConstant();
             boolean isSampleFromUtc = false;
             boolean isSampleToUtc = false;
+            // The unit of the stride, not its length, makes a stride sub-day: SAMPLE BY 24h is
+            // sub-day, and SAMPLE BY 1d is not, although both strides span a day.
+            final ExpressionNode unitNode = model.getSampleByUnit();
+            final ExpressionNode strideNode = model.getSampleBy();
+            final char unitChar = unitNode != null
+                    ? unitNode.token.charAt(0)
+                    : strideNode.token.charAt(strideNode.token.length() - 1);
+            final boolean isSubDayUnit = CommonUtils.isSubDayUnit(unitChar);
             // For sub-day strides with a timezone, the old SAMPLE BY cursor receives
             // FROM/TO as local time but uses them as UTC for bucket anchoring. Convert
             // FROM/TO to UTC so the cursor anchors correctly. The conversion reads the
@@ -9317,12 +9330,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // rejects a bind variable in the zone, in FROM or in TO. Without FROM and TO
             // there is nothing to convert, and the zone may be a bind variable.
             if (timezoneName != null && isFromTo) {
-                ExpressionNode unitNode = model.getSampleByUnit();
-                ExpressionNode strideNode = model.getSampleBy();
-                char unitChar = unitNode != null
-                        ? unitNode.token.charAt(0)
-                        : strideNode.token.charAt(strideNode.token.length() - 1);
-                if (CommonUtils.isSubDayUnit(unitChar)) {
+                if (isSubDayUnit) {
                     final ExpressionNode timezoneBindVariable = findBindVariable(timezoneName);
                     if (timezoneBindVariable != null) {
                         throw SqlException.$(timezoneBindVariable.position, "timezone must not contain a bind variable when SAMPLE BY has FROM or TO and a stride shorter than a day");
@@ -9602,17 +9610,25 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 }
             }
 
-            // The cursors of the not-keyed factories below add the time zone offset to every
-            // timestamp, also on top of a bound that the conversion above made UTC (#7743). Every
-            // such cursor reads FROM, but only the FILL(NULL) and FILL(value) cursor reads TO, in
-            // its end fill. AbstractNoRecordSampleByCursor.of() saves the numeric offset for a
-            // rewind before the first read, such as the one LIMIT makes, except for a cursor that
-            // reads a bound the conversion changed: that cursor rewinds to a zero offset, see of().
-            // The FILL(PREV) and FILL(NONE) factories therefore take isSampleFromUtc, and the
-            // FILL(NULL) and FILL(value) factories take isSampleFromOrToUtc. The keyed factories
-            // reject FROM and TO, and the FILL(LINEAR) and first/last index factories above do not
-            // use that cursor, so they take no flag.
+            // The cursors of the not-keyed factories below sample in UTC, as the GROUP BY path does,
+            // when the conversion above made FROM UTC, the execution reads the same time zone string
+            // as the conversion, and no bound that the cursor reads is a runtime constant that the
+            // conversion made UTC, see AbstractNoRecordSampleByCursor.of(). Otherwise, they add the
+            // time zone offset to every timestamp, also on top of a bound that the conversion made UTC
+            // (#7743). Every such cursor reads FROM, but only the FILL(NULL) and FILL(value) cursor
+            // reads TO, in its end fill. of() saves the numeric offset for a rewind before the first
+            // read, such as the one LIMIT makes, except for a cursor that reads a bound the conversion
+            // changed: that cursor rewinds to a zero offset. The FILL(PREV) and FILL(NONE) factories
+            // therefore take isSampleFromUtc and isSampleFromRuntimeUtc, and the FILL(NULL) and
+            // FILL(value) factories take isSampleFromOrToUtc and isSampleFromOrToRuntimeUtc. The keyed
+            // factories reject FROM and TO, and the FILL(LINEAR) and first/last index factories above
+            // do not use that cursor, so they take no flag. The FILL(NULL) and FILL(value) factories
+            // also take isSubDayUnit: their cursor starts the end fill from the local calendar grid
+            // only for a stride in days, weeks, months or years, see
+            // SampleByFillValueNotKeyedRecordCursor.hasNext().
             final boolean isSampleFromOrToUtc = isSampleFromUtc || isSampleToUtc;
+            final boolean isSampleFromRuntimeUtc = isSampleFromUtc && !isSampleFromConstant;
+            final boolean isSampleFromOrToRuntimeUtc = isSampleFromRuntimeUtc || (isSampleToUtc && !isSampleToConstant);
 
             if (fillCount == 1 && Chars.equalsLowerCaseAscii(sampleByFill.getQuick(0).token, "prev")) {
                 if (keyTypes.getColumnCount() == 0) {
@@ -9649,7 +9665,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             sampleFromFuncPos,
                             sampleToFunc0,
                             sampleToFuncPos,
-                            isSampleFromUtc
+                            isSampleFromUtc,
+                            isSampleFromRuntimeUtc
                     );
                 }
 
@@ -9729,7 +9746,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             sampleFromFuncPos,
                             sampleToFunc0,
                             sampleToFuncPos,
-                            isSampleFromUtc
+                            isSampleFromUtc,
+                            isSampleFromRuntimeUtc
                     );
                 }
 
@@ -9809,7 +9827,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             sampleFromFuncPos,
                             sampleToFunc0,
                             sampleToFuncPos,
-                            isSampleFromOrToUtc
+                            isSampleFromOrToUtc,
+                            isSubDayUnit,
+                            isSampleFromOrToRuntimeUtc
                     );
                 }
 
@@ -9892,7 +9912,9 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         sampleFromFuncPos,
                         sampleToFunc0,
                         sampleToFuncPos,
-                        isSampleFromOrToUtc
+                        isSampleFromOrToUtc,
+                        isSubDayUnit,
+                        isSampleFromOrToRuntimeUtc
                 );
             }
 

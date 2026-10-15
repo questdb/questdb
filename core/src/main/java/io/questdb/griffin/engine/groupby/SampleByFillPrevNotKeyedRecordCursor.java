@@ -90,12 +90,13 @@ public class SampleByFillPrevNotKeyedRecordCursor extends AbstractVirtualRecordS
         // we need to ensure we do not fill time transition
         final long expectedLocalEpoch;
         if (isFirstRun) {
-            // On the first call, nextSampleLocalEpoch holds the bucket at FROM, see initTimestamps(), and
-            // that bucket is the first one to emit, as in SampleByFillValueNotKeyedRecordCursor. Expecting
-            // the bucket after it skipped the bucket at FROM whenever the first row came after it, unlike
-            // the GROUP BY path (GitHub issue #7764). Without FROM, or with the first row at or before the
-            // bucket at FROM, nextSampleLocalEpoch is not before localEpoch, and notKeyedLoop() aggregates the
-            // bucket of the first row.
+            // On the first call, nextSampleLocalEpoch holds the first bucket, see initTimestamps(): the
+            // bucket that holds FROM or, when a positive WITH OFFSET starts a UTC grid after FROM, the
+            // bucket at that start. That bucket is the first one to emit, as in
+            // SampleByFillValueNotKeyedRecordCursor. Expecting the bucket after it skipped that bucket
+            // whenever the first row came after it, unlike the GROUP BY path (GitHub issue #7764). Without
+            // FROM, or with the first row in or before that bucket, nextSampleLocalEpoch is not before
+            // localEpoch, and notKeyedLoop() aggregates the bucket of the first row.
             expectedLocalEpoch = nextSampleLocalEpoch;
             isFirstRun = false;
         } else {

@@ -4409,7 +4409,7 @@ public class WindowJoinTest extends AbstractCairoTest {
             // only the sort over the distinct factory reports its size
             final boolean[] isSizeKnown = {false, false, true};
             for (int i = 0, n = queries.length; i < n; i++) {
-                assertOrderByHiddenKey(queries[i][0], queries[i][1], isSizeKnown[i]);
+                assertOrderByHiddenKeyNoLeakCheck(queries[i][0], queries[i][1], isSizeKnown[i]);
             }
 
             // a re-sort over the query drops its ORDER BY

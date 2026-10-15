@@ -31,9 +31,14 @@ import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.functions.GroupByFunction;
 import io.questdb.griffin.engine.functions.groupby.InterpolationGroupByFunction;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
 
 public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillRecordCursor {
+    // true when the stride is in hours, minutes, seconds or a smaller unit, also when it spans a day or more,
+    // such as 24h: the end fill then steps from nextSampleLocalEpoch, also after kludge() moved it past a DST
+    // transition, see hasNext()
+    private final boolean isSubDayUnit;
     private final SimpleMapValuePeeker peeker;
     // the group-by functions of the FILL(PREV) columns, see setPrevValuesToNull()
     private final ObjList<GroupByFunction> prevFunctions = new ObjList<>();
@@ -62,7 +67,8 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
             int sampleFromFuncPos,
             Function sampleToFunc,
             int sampleToFuncPos,
-            boolean isFromToUtc
+            boolean isFromToUtc,
+            boolean isSubDayUnit
     ) {
         super(
                 configuration,
@@ -85,6 +91,7 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         );
         this.peeker = peeker;
         this.value = value;
+        this.isSubDayUnit = isSubDayUnit;
         record.of(value);
         // A FILL(PREV) column uses its group-by function as the placeholder, unlike FILL(NULL), FILL(value)
         // and FILL(LINEAR), see SampleByFillValueRecordCursorFactory.createPlaceholderFunctions()
@@ -123,25 +130,75 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
             return true;
         }
 
+        // An execution that samples on a local grid although code generation converted a bound to UTC
+        // (isUtcBoundOnLocalGrid) skips three end fill repairs below: setActiveB() on the bucket that TO ends,
+        // the check that this bucket starts before TO, and the start of the end fill after the bucket that
+        // follows a gap. With TO converted, such an execution ends the fill at a UTC TO, which GitHub issue #7743
+        // tracks. These repairs assume one time coordinate for the grid and TO. Applied there, the repairs would
+        // turn wrong rows into other wrong rows, and with TO converted alone, some statements that return the
+        // rows of the GROUP BY path would stop doing so. The check for a TO that reads NULL, below, and the end
+        // fill of a FILL(LINEAR) column, see setActiveB(), apply to every execution.
         if (endFill) {
+            // The bucket that TO ends can follow the last bucket with rows without a gap. No gap then
+            // switched the record to the fill values, and the bucket showed the aggregates of the bucket
+            // before it. setActiveB() switches it, and with endFill still set, it peeks no bucket past the
+            // last row and starts no interpolation.
+            if (!isUtcBoundOnLocalGrid) {
+                setActiveB(expectedLocalEpoch);
+            }
             sampleLocalEpoch = expectedLocalEpoch;
             nextSampleLocalEpoch = expectedLocalEpoch;
             endFill = false;
             gapFill = false;
 
-            return localEpoch < upperBound;
+            // The bucket comes out only when it starts before TO. When TO falls inside the last bucket with
+            // rows, nextSamplePeriod() rounds TO down to the start of that bucket, and the bucket after it
+            // starts after TO.
+            return (isUtcBoundOnLocalGrid ? localEpoch : expectedLocalEpoch) < upperBound;
         }
+        final boolean hasNext;
         if (setActiveA()) {
-            return peeker.reset();
+            // The bucket after a gap, which peeker.peek() aggregated. The peek may have read the last row,
+            // and the end fill below then starts after this bucket, as it does after notKeyedLoop().
+            hasNext = peeker.reset();
+            if (isUtcBoundOnLocalGrid) {
+                return hasNext;
+            }
+        } else {
+            hasNext = notKeyedLoop(value);
         }
 
-        final boolean hasNext = notKeyedLoop(value);
-
-        if (baseRecord == null && sampleToFunc != timestampDriver.getTimestampConstantNull() && !endFill) {
-            endFill = true;
-            upperBound = timestampDriver.from(sampleToFunc.getTimestamp(null), sampleToFuncType);
-            // we must not re-initialize baseRecord after base cursor has been exhausted
-            nextSamplePeriod(upperBound);
+        if (baseRecord == null && !endFill) {
+            // A TO that reads NULL, such as TO NULL, a NULL DECLARE variable or a NULL bind variable, sets no
+            // upper bound, so the end fill does not start. nextSamplePeriod() would round a NULL bound to a bucket
+            // near the end of the timestamp range, and the gap fill would emit every bucket up to there. Any other
+            // TO sets the upper bound, see getUpperBound() for its time coordinate.
+            final long to = sampleToFunc.getTimestamp(null);
+            if (to != Numbers.LONG_NULL) {
+                endFill = true;
+                upperBound = getUpperBound(timestampDriver.from(to, sampleToFuncType));
+                // The end fill steps from nextSampleLocalEpoch, which holds the start of the last bucket with rows
+                // on the grid, unless a row of that bucket came after a DST transition. kludge() then moved the label
+                // of the bucket by the offset delta and set nextSampleLocalEpoch to the moved label. For a stride in
+                // days, weeks, months or years, the grid follows the local calendar, and the moved label falls off
+                // it. Stepping from it, the month and year samplers would round it back into the last bucket and fill
+                // that bucket again, and the day and week samplers would label the end fill off local midnight by the
+                // offset delta. The end fill of such a stride steps from the start of the last bucket on the grid
+                // instead, and the buckets after it take the offset after the transition. A stride in hours, minutes,
+                // seconds or a smaller unit (isSubDayUnit) steps from the moved label, also when it spans a day or
+                // more, such as 24h, whose sampler equals that of 1d: the GROUP BY path samples such a stride on a
+                // UTC grid, not on the local calendar, and this cursor samples it in the time zone only when code
+                // generation did not convert FROM to UTC, converted a bound that this cursor reads from a runtime
+                // constant, or converted FROM with another time zone than the execution reads, see
+                // AbstractNoRecordSampleByCursor.of(). Code generation converts a bound only for such a stride, so an
+                // execution with isUtcBoundOnLocalGrid, which skips the repairs above, steps from
+                // nextSampleLocalEpoch as well.
+                if (!isSubDayUnit) {
+                    nextSampleLocalEpoch = getGridLocalEpoch();
+                }
+                // we must not re-initialize baseRecord after base cursor has been exhausted
+                nextSamplePeriod(upperBound);
+            }
         }
         return hasNext;
     }
@@ -181,12 +238,17 @@ public class SampleByFillValueNotKeyedRecordCursor extends AbstractSampleByFillR
         return false;
     }
 
+    // Switches the record to the fill values. Between two buckets with rows, a FILL(LINEAR) column interpolates
+    // towards the bucket after the gap, which peeker.peek() aggregates. The end fill, from the last bucket with
+    // rows up to TO, has no bucket to interpolate towards, and an interpolation without one read a NULL record.
+    // A FILL(LINEAR) column of the end fill therefore starts no interpolation, and it shows the value of the
+    // last bucket with rows, which the record still reads.
     private void setActiveB(long expectedLocalEpoch) {
         if (!gapFill) {
-            record.setActiveB(sampleLocalEpoch, expectedLocalEpoch, localEpoch);
             if (endFill) {
-                record.setInterpolationTarget(null);
+                record.setActiveB();
             } else {
+                record.setActiveB(sampleLocalEpoch, expectedLocalEpoch, localEpoch);
                 record.setInterpolationTarget(peeker.peek());
             }
             gapFill = true;

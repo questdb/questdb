@@ -1074,10 +1074,11 @@ public abstract class AbstractCairoTest extends AbstractTest {
     /**
      * Asserts a query whose ORDER BY references a hidden key, such as an expression over a column
      * that the select list does not output, together with the wrappers over it: {@code SELECT *}
-     * returns the query's rows, and {@link #assertRowCountInWrappers} checks the wrappers that drop
-     * the ORDER BY. The row count comes from the lines of {@code expected}, less the header.
+     * returns the query's rows, and {@link #assertRowCountInWrappersNoLeakCheck} checks the wrappers
+     * that drop the ORDER BY. The row count comes from the lines of {@code expected}, less the header.
+     * Every assertion skips the leak check, so the caller wraps this in {@code assertMemoryLeak()}.
      */
-    protected void assertOrderByHiddenKey(String sql, String expected, boolean isSizeKnown) throws Exception {
+    protected void assertOrderByHiddenKeyNoLeakCheck(String sql, String expected, boolean isSizeKnown) throws Exception {
         assertQuery(sql)
                 .noLeakCheck()
                 .expectSize(isSizeKnown)
@@ -1086,7 +1087,7 @@ public abstract class AbstractCairoTest extends AbstractTest {
                 .noLeakCheck()
                 .expectSize(isSizeKnown)
                 .returns(expected);
-        assertRowCountInWrappers(sql, expected.chars().filter(c -> c == '\n').count() - 1);
+        assertRowCountInWrappersNoLeakCheck(sql, expected.chars().filter(c -> c == '\n').count() - 1);
     }
 
     /**
@@ -1114,8 +1115,9 @@ public abstract class AbstractCairoTest extends AbstractTest {
      * Asserts that {@code count()} over the query returns {@code rowCount}, and {@code count()} over
      * the UNION ALL of the query with itself returns twice that. Both wrappers drop the query's
      * ORDER BY, so a hidden ORDER BY key that splits the query's groups must still split them there.
+     * Both assertions skip the leak check, so the caller wraps this in {@code assertMemoryLeak()}.
      */
-    protected void assertRowCountInWrappers(String sql, long rowCount) throws Exception {
+    protected void assertRowCountInWrappersNoLeakCheck(String sql, long rowCount) throws Exception {
         assertQuery("SELECT count() FROM (" + sql + ")")
                 .noLeakCheck()
                 .noRandomAccess()
