@@ -51,17 +51,17 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Async-path coverage for parquet row groups split into several bounded sub-frames. Each row group is
- * 1000 rows (CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE) while page.frame.max.rows is 100, so every
- * row group splits into 10 sub-frames. Each sub-frame is its own task. A small reduce queue makes a task
+ * Async-path coverage for parquet row groups larger than page.frame.max.rows. Each row group is
+ * 1000 rows (CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE) while page.frame.max.rows is 100, yet every
+ * row group stays one frame and one task. A small reduce queue makes a task
  * land on the reduce queue, be work-stolen, or be reduced locally across GROUP BY (unordered), WINDOW JOIN
  * (ordered, keyed and non-keyed), async filters, and a mid-scan abandon. Results are compared row-for-row
- * against the native (pre-conversion) oracle; decode counts prove that no collector decodes a sub-frame again.
+ * against the native (pre-conversion) oracle; decode counts prove that each row group decodes once.
  */
 public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
     private static final int ROW_GROUP_COUNT = 20;
     private final AtomicLong decodeCalls = new AtomicLong();
-    // Sub-frame windows passed to decodeRowGroup, keyed "rowGroup:rowLo:rowHi".
+    // Row windows passed to decodeRowGroup, keyed "rowGroup:rowLo:rowHi".
     private final Set<String> decodedWindows = ConcurrentHashMap.newKeySet();
 
     @Before
@@ -70,7 +70,7 @@ public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
         // WINDOW JOIN reads the master with the small page-frame limits.
         setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 100);
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
-        // A small shard count and reduce queue force the sub-frame tasks through the reduce queue,
+        // A small shard count and reduce queue force the row-group tasks through the reduce queue,
         // work-stealing, and the local-task fallback rather than always dispatching to a free worker.
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_SHARD_COUNT, 1);
         setProperty(PropertyKey.CAIRO_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, 4);
@@ -79,12 +79,12 @@ public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testEarlyCloseOverSplitParquetRowGroupsNoLeak() throws Exception {
+    public void testEarlyCloseOverLargeParquetRowGroupsNoLeak() throws Exception {
         // Abandoning a scan after the first row must free the held collect-queue slot and leak no native
         // memory: assertMemoryLeak wraps the loop and the async filter runs (reducing locally) with the
         // held-task bookkeeping (beginCollectTask / finalizeHeldTask force-collect via close -> await).
         assertMemoryLeak(() -> {
-            buildSplitParquet("x");
+            buildLargeParquet("x");
             try (RecordCursorFactory factory = select("SELECT v FROM x WHERE ts in '2024-01-01' AND v % 3 = 0")) {
                 for (int i = 0; i < 16; i++) {
                     try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -98,13 +98,13 @@ public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
 
     @Test
     public void testFilterDecodesOnce() throws Exception {
-        // The collector must read the reduce output, not decode each sub-frame again.
+        // The collector must read the reduce output, not decode each row group again.
         // Covers a filter with late materialization and a count-only filter.
         assertMemoryLeak(() -> TestUtils.execute(
                 new WorkerPool(() -> 4),
                 (engine, compiler, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                    createSplitParquet(engine, sqlExecutionContext);
+                    createLargeParquet(engine, sqlExecutionContext);
                     assertDecodedOnce(compiler, sqlExecutionContext, "SELECT * FROM x WHERE v % 97 = 0");
                     assertDecodedOnce(compiler, sqlExecutionContext, "SELECT count() FROM x WHERE v % 97 = 0");
                 },
@@ -114,14 +114,14 @@ public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testGroupBySplitParquetRowGroupsMatchesNative() throws Exception {
+    public void testGroupByLargeParquetRowGroupsMatchesNative() throws Exception {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute("CREATE TABLE x (k SYMBOL, v LONG, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
-                    // 20_000 rows in 2024-01-01 => 20 parquet row groups of 1000, each split into 10 sub-frames
+                    // 20_000 rows in 2024-01-01 => 20 parquet row groups of 1000, each above page.frame.max.rows
                     engine.execute(
                             "INSERT INTO x SELECT rnd_symbol('a','b','c','d'), x, timestamp_sequence('2024-01-01', 1000) FROM long_sequence(20_000)",
                             sqlExecutionContext
@@ -129,9 +129,9 @@ public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
                     // a sentinel in a second partition keeps 2024-01-01 non-active so it can be converted
                     engine.execute("INSERT INTO x VALUES ('z', -1, '2024-01-02T00:00:00.000000Z')", sqlExecutionContext);
 
-                    // vectorized parallel group by (reads the split frames directly) and the Map-batching
+                    // vectorized parallel group by (reads the frames directly) and the Map-batching
                     // Async Group By (count_distinct is not vectorized) - the latter is the path whose 24-bit
-                    // batch row index issue #2 is about. Both must match the native oracle over split frames.
+                    // batch row index issue #2 is about. Both must match the native oracle over parquet frames.
                     final String vectorized = "SELECT k, count(), sum(v), min(v), max(v) FROM x WHERE ts in '2024-01-01' ORDER BY k";
                     final String batched = "SELECT k, count_distinct(v) cd, sum(v) sv FROM x WHERE ts in '2024-01-01' ORDER BY k";
                     assertPlanContains(compiler, sqlExecutionContext, vectorized, "GroupBy vectorized: true");
@@ -160,13 +160,13 @@ public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
 
     @Test
     public void testNegativeLimitDecodesOnce() throws Exception {
-        // The negative-limit collector reads row ids only, so it must not decode a sub-frame.
-        // The single allowed repeat is recordAt() over the sub-frame that holds the result row.
+        // The negative-limit collector reads row ids only, so it must not decode a row group.
+        // The single allowed repeat is recordAt() over the row group that holds the result row.
         assertMemoryLeak(() -> TestUtils.execute(
                 new WorkerPool(() -> 4),
                 (engine, compiler, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                    createSplitParquet(engine, sqlExecutionContext);
+                    createLargeParquet(engine, sqlExecutionContext);
                     final String sql = "SELECT * FROM x WHERE v > 19_990 LIMIT -1";
                     Assert.assertEquals(sql, 1, drain(compiler, sqlExecutionContext, sql));
                     Assert.assertTrue(sql, decodedWindows.size() > 0);
@@ -187,7 +187,7 @@ public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
                 new WorkerPool(() -> 4),
                 (engine, compiler, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
-                    createSplitParquet(engine, sqlExecutionContext);
+                    createLargeParquet(engine, sqlExecutionContext);
                     // The native slave adds no parquet decodes.
                     engine.execute("CREATE TABLE p (price DOUBLE, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
                     engine.execute(
@@ -205,14 +205,14 @@ public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testWindowJoinSplitParquetRowGroupsMatchesNative() throws Exception {
+    public void testWindowJoinLargeParquetRowGroupsMatchesNative() throws Exception {
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
                 pool,
                 (engine, compiler, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                     // master (trades) is the table read through the ordered TYPE_WINDOW_JOIN page-frame
-                    // sequence, so its parquet row groups split into sub-frames
+                    // sequence, with parquet row groups above page.frame.max.rows
                     engine.execute("CREATE TABLE trades (sym SYMBOL, price DOUBLE, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
                     engine.execute(
                             "INSERT INTO trades SELECT rnd_symbol('a','b','c'), rnd_double(), timestamp_sequence('2024-01-01', 1000) FROM long_sequence(20_000)",
@@ -267,9 +267,9 @@ public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
         TestUtils.assertContains(sink, fragment);
     }
 
-    private static void createSplitParquet(CairoEngine engine, SqlExecutionContext ctx) throws SqlException {
+    private static void createLargeParquet(CairoEngine engine, SqlExecutionContext ctx) throws SqlException {
         engine.execute("CREATE TABLE x (v LONG, d DOUBLE, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY", ctx);
-        // 20_000 rows in 2024-01-01 => ROW_GROUP_COUNT parquet row groups of 1000, each split into 10 sub-frames
+        // 20_000 rows in 2024-01-01 => ROW_GROUP_COUNT parquet row groups of 1000, each above page.frame.max.rows
         engine.execute("INSERT INTO x SELECT x, x * 0.5, timestamp_sequence('2024-01-01', 1000) FROM long_sequence(20_000)", ctx);
         // a sentinel in a second partition keeps 2024-01-01 non-active so it can be converted
         engine.execute("INSERT INTO x VALUES (-1, -1.0, '2024-01-02T00:00:00.000000Z')", ctx);
@@ -279,19 +279,19 @@ public class ParquetSubFrameAsyncTest extends AbstractCairoTest {
     private void assertDecodedOnce(SqlCompiler compiler, SqlExecutionContext ctx, String sql) throws SqlException {
         Assert.assertTrue(sql, drain(compiler, ctx, sql) > 0);
         final String message = sql + " [calls=" + decodeCalls.get() + ", windows=" + decodedWindows.size() + ']';
-        // More windows than row groups proves that the row groups split into sub-frames.
-        Assert.assertTrue(message, decodedWindows.size() > ROW_GROUP_COUNT);
-        Assert.assertEquals(message, decodedWindows.size(), decodeCalls.get());
+        // One window per row group proves that no row group splits into sub-frames.
+        Assert.assertEquals(message, ROW_GROUP_COUNT, decodedWindows.size());
+        Assert.assertEquals(message, ROW_GROUP_COUNT, decodeCalls.get());
     }
 
-    private void buildSplitParquet(String table) throws SqlException {
+    private void buildLargeParquet(String table) throws SqlException {
         execute("CREATE TABLE " + table + " (v LONG, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY");
         execute("INSERT INTO " + table + " SELECT x, timestamp_sequence('2024-01-01', 1000) FROM long_sequence(20_000)");
         execute("INSERT INTO " + table + " VALUES (-1, '2024-01-02T00:00:00.000000Z')");
         execute("ALTER TABLE " + table + " CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
     }
 
-    // Counts the decodeRowGroup() calls and the distinct sub-frame windows that they decode.
+    // Counts the decodeRowGroup() calls and the distinct row windows that they decode.
     private CairoConfiguration decodeCountingConfiguration() {
         return new CairoConfigurationWrapper(configuration) {
             @Override

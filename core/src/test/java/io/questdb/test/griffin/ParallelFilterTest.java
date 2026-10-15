@@ -340,10 +340,9 @@ public class ParallelFilterTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testParallelFilterOverSplitParquetRowGroups() throws Exception {
-        // Each parquet row group (1000 rows) exceeds page.frame.max.rows (100) and splits into 10 bounded
-        // sub-frames. The async filter reduces each sub-frame as its own task and must return exactly the
-        // rows the native scan returns.
+    public void testParallelFilterOverLargeParquetRowGroups() throws Exception {
+        // Each parquet row group (1000 rows) exceeds page.frame.max.rows (100) and stays one frame.
+        // The async filter must return exactly the rows the native scan returns.
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1000);
         WorkerPool pool = new WorkerPool(() -> 4);
         TestUtils.execute(
@@ -351,7 +350,7 @@ public class ParallelFilterTest extends AbstractCairoTest {
                 (engine, compiler, sqlExecutionContext) -> {
                     sqlExecutionContext.setJitMode(SqlJitMode.JIT_MODE_DISABLED);
                     engine.execute("CREATE TABLE x (v LONG, ts TIMESTAMP) timestamp(ts) PARTITION BY DAY", sqlExecutionContext);
-                    // 5000 rows in 2024-01-01 => 5 parquet row groups, each split into 10 sub-frames
+                    // 5000 rows in 2024-01-01 => 5 parquet row groups of 1000
                     engine.execute(
                             "INSERT INTO x SELECT x, timestamp_sequence('2024-01-01', 1000000) FROM long_sequence(5000)",
                             sqlExecutionContext
@@ -359,8 +358,8 @@ public class ParallelFilterTest extends AbstractCairoTest {
                     // a sentinel in a second partition keeps 2024-01-01 non-active so it can be converted
                     engine.execute("INSERT INTO x VALUES (-1, '2024-01-02T00:00:00.000000Z')", sqlExecutionContext);
 
-                    // Three drain paths over the same split row groups: a full forward scan, an offset scan
-                    // (skipRows across sub-frames), and a reversed scan (negative-limit async filter over the
+                    // Three drain paths over the same row groups: a full forward scan, an offset scan
+                    // (skipRows across frames), and a reversed scan (negative-limit async filter over the
                     // backward page-frame cursor).
                     final String fwdQuery = "SELECT v FROM x WHERE ts in '2024-01-01' AND v % 7 = 0";
                     final String offsetQuery = "SELECT v FROM x WHERE ts in '2024-01-01' AND v % 7 = 0 LIMIT 25, 75";

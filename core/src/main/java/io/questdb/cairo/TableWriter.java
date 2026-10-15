@@ -1113,10 +1113,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
                 final int partitionPathLen = path.size();
                 try {
-                    if (hasDelta && !installDelta(timestamp, path)) {
-                        return AttachDetachStatus.ATTACH_ERR_DELTA;
-                    }
-
                     // pin column versions
                     // the dir traversal will attempt to populate the column versions, we need to maintain the timestamp
                     // of the attached partition
@@ -8750,20 +8746,6 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
         }
         if (!isLastPartitionParquet()) {
             txWriter.initLastPartition(ts);
-        }
-    }
-
-    // Moves the attached Delta files of classes with a placement root into that root.
-    private boolean installDelta(long timestamp, Path partitionDir) {
-        try {
-            getPartitionDeltaWriter().install(this, partitionDir);
-            return true;
-        } catch (CairoException e) {
-            LOG.error().$("cannot install attached partition delta [table=").$(tableToken)
-                    .$(", partition=").$ts(timestampDriver, timestamp)
-                    .$(", error=").$safe(e.getFlyweightMessage())
-                    .I$();
-            return false;
         }
     }
 

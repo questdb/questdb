@@ -31,6 +31,7 @@ import io.questdb.cairo.ColumnVersionReader;
 import io.questdb.cairo.ParquetMetaFileReader;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.idx.IndexReader;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.sql.ColumnMapping;
 import io.questdb.cairo.sql.PageFrame;
 import io.questdb.cairo.sql.PartitionFormat;
@@ -626,9 +627,9 @@ public class FwdTableReaderPageFrameCursor implements TablePageFrameCursor {
             reenterParquetDecoder = partitionFrame.getParquetMetaDecoder();
             setReenterPartitionFrameState(partitionFrame);
             reenterPartitionFormat = PartitionFormat.PARQUET;
-            // Split only row groups larger than pageFrameMaxRows. Smaller sub-frames would each
-            // decompress the row group's shared parquet pages again.
-            reenterPageFrameRowLimit = pageFrameMaxRows;
+            // A row group stays one frame: sub-frames would each decompress its shared parquet pages
+            // again. Only a row group above the 24-bit batched GROUP BY row index splits.
+            reenterPageFrameRowLimit = Map.BATCH_ROW_INDEX_MASK + 1;
             cachedRowGroupIndex = 0;
             cachedRowGroupStartRow = 0;
             assert reenterParquetDecoder != null;

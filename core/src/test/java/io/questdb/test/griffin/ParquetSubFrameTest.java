@@ -42,8 +42,8 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
 /**
- * A parquet row group larger than cairo.sql.page.frame.max.rows must be split into several
- * bounded sub-frames, each anchored to its row group, matching the native partition path.
+ * A parquet row group stays one frame, even when it exceeds cairo.sql.page.frame.max.rows:
+ * sub-frames would each decompress the row group's shared parquet pages again.
  * <p>
  * The 25000 data rows live in a non-active partition (2024-01-01) so it can be converted to
  * parquet; a sentinel row in 2024-01-02 keeps it non-active.
@@ -81,101 +81,25 @@ public class ParquetSubFrameTest extends AbstractCairoTest {
     }
 
     @Test
-    public void testRowGroupBelowMaxRowsIsNotSplit() throws Exception {
-        // A row group within page.frame.max.rows stays one frame: sub-frames would each decompress
-        // its shared parquet pages again. 8 workers would otherwise cut it into 3125-row frames.
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 10_000);
-        assertMemoryLeak(() -> {
-            buildParquetTable();
-            try (
-                    SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 8);
-                    RecordCursorFactory factory = select("x")
-            ) {
-                ctx.changePageFrameSizes(100, 100_000);
-                try (PageFrameCursor cursor = factory.getPageFrameCursor(ctx, ORDER_ASC)) {
-                    assertWholeRowGroupFrames(cursor);
-                }
-                try (PageFrameCursor cursor = factory.getPageFrameCursor(ctx, ORDER_DESC)) {
-                    assertWholeRowGroupFrames(cursor);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testRowGroupSplitsIntoBoundedSubFramesBackward() throws Exception {
-        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 10_000);
-        assertMemoryLeak(() -> {
-            buildParquetTable();
-            try (RecordCursorFactory factory = select("x")) {
-                sqlExecutionContext.changePageFrameSizes(100, 1000);
-                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_DESC)) {
-                    int frameCount = 0;
-                    long expectedHi = 25_000;
-                    boolean inParquet = false;
-                    PageFrame frame;
-                    while ((frame = cursor.next()) != null) {
-                        if (frame.getParquetRowGroup() < 0) {
-                            if (inParquet) {
-                                break;
-                            }
-                            continue; // leading native sentinel partition
-                        }
-                        inParquet = true;
-                        final long lo = frame.getPartitionLo();
-                        final long hi = frame.getPartitionHi();
-                        Assert.assertTrue("frame exceeds max rows: " + (hi - lo), hi - lo <= 1000);
-                        Assert.assertEquals(expectedHi, hi);
-                        expectedHi = lo;
-                        frameCount++;
-                    }
-                    Assert.assertEquals(0, expectedHi);
-                    Assert.assertEquals(25, frameCount);
-                }
-            }
-        });
-    }
-
-    @Test
-    public void testRowGroupSplitsIntoBoundedSubFramesForward() throws Exception {
+    public void testRowGroupAboveMaxRowsIsNotSplit() throws Exception {
+        // 10000-row groups with page.frame.max.rows=1000 stay one frame each, in both directions.
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 10_000);
         assertMemoryLeak(() -> {
             buildParquetTable();
             try (RecordCursorFactory factory = select("x")) {
                 sqlExecutionContext.changePageFrameSizes(100, 1000);
                 try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
-                    int frameCount = 0;
-                    long expectedLo = 0;
-                    int prevRowGroup = -1;
-                    int distinctRowGroups = 0;
-                    PageFrame frame;
-                    while ((frame = cursor.next()) != null) {
-                        final int rg = frame.getParquetRowGroup();
-                        if (rg < 0) {
-                            break; // trailing native sentinel partition
-                        }
-                        final long lo = frame.getPartitionLo();
-                        final long hi = frame.getPartitionHi();
-                        Assert.assertTrue("frame exceeds max rows: " + (hi - lo), hi - lo <= 1000);
-                        Assert.assertEquals(expectedLo, lo);
-                        if (rg != prevRowGroup) {
-                            distinctRowGroups++;
-                            prevRowGroup = rg;
-                        }
-                        expectedLo = hi;
-                        frameCount++;
-                    }
-                    Assert.assertEquals(25_000, expectedLo);
-                    // 3 row groups (10000, 10000, 5000) each split into 1000-row sub-frames
-                    Assert.assertEquals(25, frameCount);
-                    Assert.assertEquals(3, distinctRowGroups);
+                    assertWholeRowGroupFrames(cursor);
+                }
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_DESC)) {
+                    assertWholeRowGroupFrames(cursor);
                 }
             }
         });
     }
 
     @Test
-    public void testSubFrameFullScanRoundTrip() throws Exception {
+    public void testRowGroupAboveMaxRowsRoundTrip() throws Exception {
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 10_000);
         assertMemoryLeak(() -> {
             execute("CREATE TABLE x (v LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -190,7 +114,7 @@ public class ParquetSubFrameTest extends AbstractCairoTest {
 
             execute("ALTER TABLE x CONVERT PARTITION TO PARQUET WHERE ts < '2024-01-02'");
 
-            // parquet sub-frame scans must reproduce the oracle row-for-row
+            // parquet scans must reproduce the oracle row-for-row
             final StringSink forwardActual = new StringSink();
             final StringSink backwardActual = new StringSink();
             dumpSplitScan(forwardActual, "SELECT v, ts FROM x WHERE ts < '2024-01-02'");
@@ -198,7 +122,7 @@ public class ParquetSubFrameTest extends AbstractCairoTest {
             TestUtils.assertEquals(forwardOracle, forwardActual);
             TestUtils.assertEquals(backwardOracle, backwardActual);
 
-            // random access (recordAt) over the split frames must be stable
+            // random access (recordAt) over the row-group frames must be stable
             try (RecordCursorFactory factory = select("SELECT v FROM x WHERE ts < '2024-01-02'")) {
                 sqlExecutionContext.changePageFrameSizes(100, 1000);
                 try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
@@ -219,6 +143,28 @@ public class ParquetSubFrameTest extends AbstractCairoTest {
                     Assert.assertEquals(1L, recordB.getLong(0));
                     cursor.recordAt(recordB, lastRowId);
                     Assert.assertEquals(25_000L, recordB.getLong(0));
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testRowGroupBelowMaxRowsIsNotSplit() throws Exception {
+        // A row group within page.frame.max.rows stays one frame: sub-frames would each decompress
+        // its shared parquet pages again. 8 workers would otherwise cut it into 3125-row frames.
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 10_000);
+        assertMemoryLeak(() -> {
+            buildParquetTable();
+            try (
+                    SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine, 8);
+                    RecordCursorFactory factory = select("x")
+            ) {
+                ctx.changePageFrameSizes(100, 100_000);
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(ctx, ORDER_ASC)) {
+                    assertWholeRowGroupFrames(cursor);
+                }
+                try (PageFrameCursor cursor = factory.getPageFrameCursor(ctx, ORDER_DESC)) {
+                    assertWholeRowGroupFrames(cursor);
                 }
             }
         });
