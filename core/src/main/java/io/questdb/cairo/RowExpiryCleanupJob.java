@@ -48,10 +48,8 @@ import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.std.BytecodeAssembler;
 import io.questdb.std.CharSequenceLongHashMap;
-import io.questdb.std.CharSequenceObjHashMap;
 import io.questdb.std.Chars;
 import io.questdb.std.LongList;
-import io.questdb.std.LongLongHashMap;
 import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTrackerWorkload;
 import io.questdb.std.Misc;
@@ -151,24 +149,17 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     // work on every global tick. A sweep that runs to completion removes the entry.
     private final CharSequenceLongHashMap failureBackoffMicros = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
     private final CharSequenceLongHashMap lastRunByTable = new CharSequenceLongHashMap(4, 0.5, NO_LAST_RUN);
-    // SKIP verdicts kept across sweeps for policies the job checks by counting rows. Past this many
-    // partitions the notebook stops accepting new ones and keeps the ones it already holds.
-    private final int maxCachedPartitions;
     private final double minExpiredFraction;
     // Per-cleanup snapshot of one object's non-active LOGICAL partitions.
     private final LongList partitionContentGenerations = new LongList();
     private final LongList partitionFloors = new LongList();
     private final LongList partitionNextFloors = new LongList();
     private final LongList partitionRowCounts = new LongList();
-    private int cachedPartitionCount;
+    // SKIP verdicts kept across sweeps for policies the job checks by counting rows.
+    private final RowExpirySkipVerdictCache skipVerdictCache;
     private long lastExpiryPolicyVersion = -1;
     private long nextDiscoveryDeadlineMicros = NO_LAST_RUN;
     private long policyDiscoveryCount;
-    // Per directory name: the predicate those SKIP verdicts were computed for, and floor -> generation.
-    // A dropped view, a changed predicate, a partition this job wipes, or a floor absent from this
-    // sweep's non-active snapshot removes its own entries. The notebook is never cleared as a whole,
-    // so a full notebook still skips the partitions it already holds.
-    private CharSequenceObjHashMap<ScalarPartitionCache> scalarPartitionCaches = new CharSequenceObjHashMap<>(4);
     private long scalarPartitionScanCount;
     private boolean isLastCleanupDeferred;
     private boolean isLastCleanupFailed;
@@ -185,11 +176,19 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
     }
 
     public RowExpiryCleanupJob(CairoEngine engine) {
+        this(engine, new RowExpirySkipVerdictCache(engine.getConfiguration().getMatViewRowExpiryCleanupMaxCachedPartitions()));
+    }
+
+    /**
+     * The job takes exclusive use of {@code skipVerdictCache}: it reads and writes the cache from
+     * {@link #runSerially()} without synchronization, so no other job may share it.
+     */
+    public RowExpiryCleanupJob(CairoEngine engine, RowExpirySkipVerdictCache skipVerdictCache) {
         this.engine = engine;
         final CairoConfiguration configuration = engine.getConfiguration();
         this.clock = configuration.getMicrosecondClock();
         this.minExpiredFraction = configuration.getMatViewRowExpiryCleanupMinExpiredFraction();
-        this.maxCachedPartitions = configuration.getMatViewRowExpiryCleanupMaxCachedPartitions();
+        this.skipVerdictCache = skipVerdictCache;
         this.sqlExecutionContext = new SqlExecutionContextImpl(engine, 1);
         this.sqlExecutionContext.with(
                 configuration.getFactoryProvider().getSecurityContextFactory().getRootContext(),
@@ -358,7 +357,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 // The reader sees no non-active partition. partitionFloors is still empty, and that
                 // empty snapshot is complete: every cached floor for this view is gone, or it is the
                 // single active partition this sweep does not clean.
-                releaseScalarPartitionsAbsentFromSnapshot(tableToken);
+                skipVerdictCache.releaseAbsent(tableToken, partitionFloors);
                 return false;
             }
             final TxReader txReader = reader.getTxFile();
@@ -439,7 +438,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         if (isScalarGenerationCacheEnabled) {
             // Drop floors TTL or another writer already removed. The slots free up before this
             // sweep stores SKIP verdicts for the partitions that remain.
-            releaseScalarPartitionsAbsentFromSnapshot(tableToken);
+            skipVerdictCache.releaseAbsent(tableToken, partitionFloors);
         }
         // A REPLACE rewrites every surviving row of a partition, so the job does one only when a large
         // enough fraction of that partition is expired. A clock threshold moves through a partition across
@@ -547,7 +546,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                         if (commitWithFence(walWriter, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
                             expectedSeqTxn++; // our accepted commit advanced the sequencer by exactly one txn
                             isWorkDone = true;
-                            forgetScalarPartition(tableToken, floorTs);
+                            skipVerdictCache.forget(tableToken, floorTs);
                             LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
                                     .$(", partitionTs=").$ts(timestampDriver, floorTs).I$();
                         } else {
@@ -564,7 +563,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                         }
                     } else if (racyOpsAllowed && boundsAction == ACTION_UNKNOWN) {
                         if (isScalarGenerationCacheEnabled
-                                && isScalarPartitionGenerationCurrent(tableToken, predicate, i)) {
+                                && skipVerdictCache.isSkipCurrent(tableToken, predicate, floorTs, partitionContentGenerations.getQuick(i))) {
                             continue;
                         }
                         final int action;
@@ -585,7 +584,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                             if (commitWithFence(walWriter, floorTs, nextFloorTs, txnTracker, expectedSeqTxn)) {
                                 expectedSeqTxn++; // our accepted commit advanced the sequencer by exactly one txn
                                 isWorkDone = true;
-                                forgetScalarPartition(tableToken, floorTs);
+                                skipVerdictCache.forget(tableToken, floorTs);
                                 LOG.info().$("reclaimed fully-expired partition [table=").$safe(tableName)
                                         .$(", partitionTs=").$ts(timestampDriver, floorTs).I$();
                             } else {
@@ -632,7 +631,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                                 break;
                             }
                         } else if (isScalarGenerationCacheEnabled) {
-                            rememberScalarPartitionGeneration(tableToken, predicate, i);
+                            skipVerdictCache.remember(tableToken, predicate, floorTs, partitionContentGenerations.getQuick(i));
                         }
                     }
                     // ACTION_SKIP, or a WAL table not caught up -> defer this partition to a later sweep.
@@ -729,7 +728,7 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 lastRunByTable.clear();
                 failureBackoffMicros.clear();
             }
-            clearScalarPartitionCaches();
+            skipVerdictCache.clear();
             nextDiscoveryDeadlineMicros = nowMicros + GLOBAL_CHECK_INTERVAL_MICROS;
             return false;
         }
@@ -763,11 +762,11 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 lastRunByTable.clear();
                 failureBackoffMicros.clear();
             }
-            clearScalarPartitionCaches();
+            skipVerdictCache.clear();
             nextDiscoveryDeadlineMicros = nowMicros + GLOBAL_CHECK_INTERVAL_MICROS;
             return false;
         }
-        pruneScalarPartitionCaches();
+        skipVerdictCache.prune(discoveredTokens, discoveredPredicates);
 
         // Bound the throttle map over a long process lifetime: a dropped/renamed view never removes its
         // entry, so if it has accumulated far more entries than there are live policied views, reset it. The
@@ -1000,60 +999,9 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         sqlExecutionContext.initNow();
     }
 
-    private boolean isScalarPartitionGenerationCurrent(TableToken tableToken, String predicate, int partitionIndex) {
-        final ScalarPartitionCache cache = scalarPartitionCache(tableToken, predicate);
-        return cache.generations.get(partitionFloors.getQuick(partitionIndex)) == partitionContentGenerations.getQuick(partitionIndex);
-    }
-
     private static long mixPartitionGeneration(long seed, long nameTxn, long rowCount) {
         long generation = seed * 31 + nameTxn;
         return generation * 31 + rowCount;
-    }
-
-    // Maps a logical partition floor to the content generation its SKIP verdict was computed for.
-    // LONG_NULL marks an empty slot, and a logical partition floor never takes that value.
-    private static LongLongHashMap newScalarPartitionGenerations(int capacity) {
-        return new LongLongHashMap(capacity, 0.5, Numbers.LONG_NULL, NO_LAST_RUN);
-    }
-
-    private void pruneScalarPartitionCaches() {
-        if (scalarPartitionCaches.size() == 0) {
-            return;
-        }
-        // Discovery contains each policied directory once. Probe the existing hash map rather
-        // than scanning the discovery snapshot separately for every cached view.
-        int retainedCacheCount = 0;
-        int retainedPartitionCount = 0;
-        for (int i = 0, n = discoveredTokens.size(); i < n; i++) {
-            final ScalarPartitionCache cache = scalarPartitionCaches.get(discoveredTokens.getQuick(i).getDirName());
-            if (cache != null) {
-                final String predicate = discoveredPredicates.getQuick(i);
-                if (!Chars.equals(cache.predicate, predicate)) {
-                    cachedPartitionCount -= cache.generations.size();
-                    cache.generations.clear();
-                    cache.predicate = predicate;
-                }
-                retainedCacheCount++;
-                retainedPartitionCount += cache.generations.size();
-            }
-        }
-        if (retainedCacheCount == scalarPartitionCaches.size()) {
-            return;
-        }
-        // removeAt also scans the map's key list. Rebuild only when a directory disappears,
-        // retaining the same cache objects, including empty ones, for every surviving policy.
-        // Leave a spare slot so the last insertion cannot trigger a rehash.
-        final CharSequenceObjHashMap<ScalarPartitionCache> retainedCaches = new CharSequenceObjHashMap<>(retainedCacheCount + 1);
-        for (int i = 0, n = discoveredTokens.size(); i < n; i++) {
-            final String dirName = discoveredTokens.getQuick(i).getDirName();
-            final ScalarPartitionCache cache = scalarPartitionCaches.get(dirName);
-            if (cache != null) {
-                retainedCaches.put(dirName, cache);
-            }
-        }
-        // Publish evictions and their accounting only after the replacement is complete.
-        scalarPartitionCaches = retainedCaches;
-        cachedPartitionCount = retainedPartitionCount;
     }
 
     /**
@@ -1068,101 +1016,6 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
                 .$safe(walWriter.getTableToken().getTableName())
                 .$(", partitionTs=").$ts(timestampDriver, floorTs).I$();
         return false;
-    }
-
-    private void rememberScalarPartitionGeneration(TableToken tableToken, String predicate, int partitionIndex) {
-        final ScalarPartitionCache cache = scalarPartitionCache(tableToken, predicate);
-        final long floorTs = partitionFloors.getQuick(partitionIndex);
-        final int index = cache.generations.keyIndex(floorTs);
-        // An existing floor is updated in place, including when the notebook is full. A new floor past
-        // the cap stays uncached and is counted again on the next sweep.
-        if (index > -1) {
-            if (cachedPartitionCount >= maxCachedPartitions) {
-                return;
-            }
-            cachedPartitionCount++;
-        }
-        cache.generations.putAt(index, floorTs, partitionContentGenerations.getQuick(partitionIndex));
-    }
-
-    private void forgetScalarPartition(TableToken tableToken, long floorTs) {
-        final ScalarPartitionCache cache = scalarPartitionCaches.get(tableToken.getDirName());
-        if (cache == null) {
-            return;
-        }
-        final int index = cache.generations.keyIndex(floorTs);
-        if (index < 0) {
-            cache.generations.removeAt(index);
-            cachedPartitionCount--;
-        }
-    }
-
-    /**
-     * Removes SKIP verdicts whose logical floor is absent from {@link #partitionFloors}.
-     * <p>
-     * The caller has finished this view's non-active snapshot. A floor missing from it was
-     * removed outside this job, TTL included, and its slot can be reused. Floors still in the
-     * snapshot stay cached. The snapshot holds each logical floor once, so if the number of
-     * snapshot floors the cache holds equals the cache's size, every cached floor is still in the
-     * snapshot and the existing map stays as it is. Otherwise the job builds a new map from the
-     * snapshot floors the cache holds. Either way it makes at most two passes over the snapshot
-     * and never removes keys one at a time.
-     */
-    private void releaseScalarPartitionsAbsentFromSnapshot(TableToken tableToken) {
-        final ScalarPartitionCache cache = scalarPartitionCaches.get(tableToken.getDirName());
-        if (cache == null || cache.generations.size() == 0) {
-            return;
-        }
-        final LongLongHashMap generations = cache.generations;
-        final int floorCount = partitionFloors.size();
-        if (floorCount == 0) {
-            cachedPartitionCount -= generations.size();
-            generations.clear();
-            return;
-        }
-        int retainedCount = 0;
-        for (int i = 0; i < floorCount; i++) {
-            if (generations.keyIndex(partitionFloors.getQuick(i)) < 0) {
-                retainedCount++;
-            }
-        }
-        if (retainedCount == generations.size()) {
-            return;
-        }
-        final LongLongHashMap retainedGenerations = newScalarPartitionGenerations(retainedCount);
-        for (int i = 0; i < floorCount; i++) {
-            final long floorTs = partitionFloors.getQuick(i);
-            final int index = generations.keyIndex(floorTs);
-            if (index < 0) {
-                retainedGenerations.put(floorTs, generations.valueAt(index));
-            }
-        }
-        cachedPartitionCount -= generations.size() - retainedGenerations.size();
-        cache.generations = retainedGenerations;
-    }
-
-    private ScalarPartitionCache scalarPartitionCache(TableToken tableToken, String predicate) {
-        final CharSequence dirName = tableToken.getDirName();
-        final int index = scalarPartitionCaches.keyIndex(dirName);
-        if (index < 0) {
-            final ScalarPartitionCache cache = scalarPartitionCaches.valueAt(index);
-            if (!Chars.equals(cache.predicate, predicate)) {
-                cachedPartitionCount -= cache.generations.size();
-                cache.generations.clear();
-                cache.predicate = predicate;
-            }
-            return cache;
-        }
-        final ScalarPartitionCache cache = new ScalarPartitionCache(predicate);
-        scalarPartitionCaches.putAt(index, Chars.toString(dirName), cache);
-        return cache;
-    }
-
-    private void clearScalarPartitionCaches() {
-        if (scalarPartitionCaches.size() > 0) {
-            scalarPartitionCaches.clear();
-            cachedPartitionCount = 0;
-        }
     }
 
     private boolean replacePartition(
@@ -1206,17 +1059,5 @@ public class RowExpiryCleanupJob extends SynchronizedJob implements Closeable {
         LOG.info().$(appended == 0 ? "reclaimed fully-expired partition [table=" : "compacted expired-rows partition [table=")
                 .$safe(tableName).$(", partitionTs=").$ts(timestampDriver, floorTs).I$();
         return true;
-    }
-
-    /**
-     * SKIP generations for one view directory, valid only for {@link #predicate}.
-     */
-    private static final class ScalarPartitionCache {
-        LongLongHashMap generations = newScalarPartitionGenerations(4);
-        String predicate;
-
-        private ScalarPartitionCache(String predicate) {
-            this.predicate = predicate;
-        }
     }
 }

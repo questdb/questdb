@@ -115,6 +115,33 @@ the limit.
   range, so a global row cap cannot hold.
 - **Pinned by:** `MatViewRefreshRecompileCompatibilityTest`.
 
+### Window functions nested in an expression are rejected
+
+CREATE checks the SELECT list of every query level it reaches through `FROM`
+nesting, `JOIN` and `UNION`, including a subquery under `SAMPLE BY`. In each such
+level that reads the base table, it rejects a window function wherever it sits in
+a column's expression: as an operand, under a cast, as a function argument or in
+a `CASE` branch. For example:
+`SELECT ts, sum(rn) FROM (SELECT ts, row_number() OVER (ORDER BY ts) + 1 rn FROM base) SAMPLE BY 1h`.
+`SqlParser.validateMatViewQuery()` walks each column's expression tree through
+its operators and function arguments, and reports the position of the window
+function. It does not check a subquery inside an expression, such as
+`IN (SELECT ...)` or a scalar subquery. A window function that forms a
+whole column was already rejected; one nested in an expression is the new case,
+and earlier versions created such views. Only CREATE runs this check, so an
+existing view keeps refreshing, with the wrong values described below.
+Re-creating one, including replaying `SHOW CREATE MATERIALIZED VIEW` output,
+requires removing the window function.
+
+- **Why accepted:** incremental refresh runs the query over each changed time
+  range, so the window sees only the rows in that range and its values differ
+  from running the query over the whole table. Such a view reported itself
+  valid while holding those wrong values.
+- **Pinned by:**
+  `CreateMatViewTest.testCreateMatViewWindowFunctionInSampleBySubquery`,
+  `CreateMatViewTest.testCreateMatViewWindowFunctionNestedInExpression`,
+  `CreateMatViewTest.testCreateMatViewWindowFunctions`.
+
 ### Dependent views
 
 CREATE of a materialized or live view that reads a view with an active policy
@@ -130,6 +157,43 @@ live view needs re-creation.
   report itself active until then.
 - **Pinned by:** `LiveViewMatViewBaseTest`,
   `MatViewExpireRowsHardeningTest.testCreateDependentDuringExpiryMetaSwapRejected`.
+
+### A window policy's subquery can lose its table
+
+A window `WHEN` predicate can read another table through a subquery, for
+example `WHEN v < max(v) OVER (PARTITION BY k) AND k IN (SELECT k FROM lookup)`.
+`SET EXPIRE` checks the predicate against `lookup` as it is then, and nothing
+records the dependency, so `DROP TABLE`, `RENAME TABLE`, `DROP COLUMN`,
+`RENAME COLUMN` and `ALTER COLUMN TYPE` on `lookup` all succeed. Every read of
+the view compiles the stored predicate again (`SqlParser.expandExpiringTable`),
+so after such a change every read fails with the raw compile error, such as
+`table does not exist [table=lookup]` or `Invalid column: k`. The error does not
+name the view or its policy, and its position is an offset into the query that
+`expandExpiringTable` builds around the stored predicate, not into the reader's
+SQL. Refresh does not read the policy, so `materialized_views()` keeps
+reporting the view as `valid` with no reason. Reads work again after
+`DROP EXPIRE`, or once the table and columns the subquery names exist again.
+
+The subquery resolves `lookup` by name on every read. A table created or
+renamed to `lookup` later is the one the policy reads, whatever it holds, and
+its rows decide which view rows expire. A type change that keeps the predicate
+legal keeps working: SYMBOL to VARCHAR under `k IN (SELECT k FROM lookup)`
+expires the same rows. One that does not, such as DOUBLE to VARCHAR under
+`v > (SELECT min(x) FROM lookup)`, fails every read with
+`cannot compare DOUBLE and VARCHAR`.
+
+- **Why accepted:** a read that cannot apply the policy fails closed. Serving
+  the rows without the policy would show rows the user configured to expire.
+  SQL views behave the same way: a read of a view whose table was dropped fails
+  with the raw error from its definition. Blocking the DDL needs a persisted
+  dependency registry that table and column DDL, WAL apply and replicas all
+  consult. Reporting the error at the view reference needs wrapping in
+  `SqlOptimiser` and `SqlCodeGenerator`, where the wrap also sees errors that
+  have nothing to do with the policy.
+- **Pinned by:** `RowExpiryWindowSubqueryDependencyTest`.
+- **Follow-up:** name the view and its policy in the error, positioned at the
+  view reference, and have `materialized_views()` report the view as invalid
+  with the reason, as `views()` does for a SQL view.
 
 ### Aggregating views accept a policy
 
@@ -428,6 +492,43 @@ replica fails until `DROP EXPIRE`.
   second run can only fail for reasons unrelated to the policy.
 - **Pinned by:**
   `MatViewReaderPoolRetryTest.testSetExpireSurvivesViewReaderPoolExhaustionDuringApply`.
+
+### A restart does not resume `REFRESH FULL` of an invalid view
+
+`REFRESH FULL` of an invalid view keeps the view invalid until the rebuild
+completes. The request lives only in memory: the refresh queue holds its task,
+and `MatViewState` holds its owner. When a shutdown or crash interrupts the
+rebuild, startup finds the view invalid, with the rows the rebuild committed
+before it stopped, and does not resume it. `materialized_views()` reports the
+view as invalid with its original reason, and it stays that way until the user
+runs `REFRESH FULL` again. Startup does not rebuild invalid views on its own,
+because most of them wait for the user after a base table drop, truncate or
+schema change, and the persisted state of an interrupted rebuild looks the same
+as theirs.
+
+On a writable node, the request survives a second refresh worker. A full
+refresh that loses the view lock leaves a handoff on the view, and the lock
+holder's release enqueues the pending owner, including one the holder deferred
+itself. A release on a read-only node claims the handoff and enqueues nothing,
+and the owner stays on the view with no task queued to run it. A demote turns
+the node read-only before its writer drain and live-view fence. When either one
+refuses the demote, the node becomes writable again, and the owner runs only if
+a later lock holder's release wakes it. When the demote completes, the request
+is lost: the promote that follows rebuilds the view states from disk and
+schedules no refresh for an invalid view. In both cases the view stays invalid
+until a refresh runs, as after a restart, and `REFRESH FULL` recovers it.
+
+- **Why accepted:** resuming the rebuild after a restart needs a durable "full
+  refresh pending" flag in the view's persisted state, which is a format change
+  to the `MAT_VIEW_INVALIDATE` WAL event and the `_mv.s` file. Persisting the
+  view as valid while the rebuild runs would avoid the format change, but after
+  a restart the view would report valid while it holds partial rows. The view
+  reports itself invalid, so the state is visible, and `REFRESH FULL` repairs
+  it.
+- **Pinned by:**
+  `MatViewFullRefreshRedeliveryTest.testFullRefreshInterruptedByShutdownStaysInvalidUntilRefreshFull`.
+- **Follow-up:** persist the pending request with the view state, so that
+  startup resumes the rebuild.
 
 ## Access control
 

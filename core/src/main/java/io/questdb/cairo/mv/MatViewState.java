@@ -100,6 +100,10 @@ public class MatViewState implements QuietCloseable {
             AtomicLongFieldUpdater.newUpdater(MatViewState.class, "refreshRetryAfterMicros");
     // Used to avoid concurrent refresh runs.
     private final AtomicBoolean latch = new AtomicBoolean(false);
+    // A full refresh task that lost the view lock left its owner's delivery to the lock holder: the
+    // holder's release claims the handoff and enqueues the pending owner, even an owner the holder
+    // itself deferred. See MatViewRefreshJob#tryLockForFullRefresh.
+    private final AtomicBoolean pendingFullRefreshHandoff = new AtomicBoolean(false);
     // An incremental refresh that lost the view lock left its run to the lock holder: the holder's
     // release claims the request and enqueues one incremental refresh. See
     // MatViewRefreshJob#tryLockForIncrementalRefresh.
@@ -168,6 +172,8 @@ public class MatViewState implements QuietCloseable {
     private volatile Runnable onBeforeUnlockForTesting;
     @TestOnly
     private volatile Runnable onClearPendingFullRefreshForTesting;
+    @TestOnly
+    private volatile Runnable onPendingFullRefreshHandoffRequestForTesting;
     @TestOnly
     private volatile Runnable onPendingFullRefreshMarkerReadForTesting;
     @TestOnly
@@ -432,6 +438,12 @@ public class MatViewState implements QuietCloseable {
         cursorFactoryExpiryPolicyVersion = expiryPolicyVersion;
         recordToRowCopier = copier;
         this.recordRowCopierMetadataVersion = recordRowCopierMetadataVersion;
+    }
+
+    boolean claimPendingFullRefreshHandoff() {
+        // Reads before clearing, so that a claim with nothing pending writes nothing. The read is volatile,
+        // so it still observes a handoff that a loser published before its final lock attempt.
+        return pendingFullRefreshHandoff.get() && pendingFullRefreshHandoff.getAndSet(false);
     }
 
     boolean claimPendingIncrementalRefresh() {
@@ -719,6 +731,11 @@ public class MatViewState implements QuietCloseable {
     // Avoid making chained calls, e.g. viewState.getViewDefinition().getRefreshType().
     public @NotNull MatViewDefinition getViewDefinition() {
         return viewDefinition;
+    }
+
+    @TestOnly
+    public boolean hasPendingFullRefreshHandoffForTesting() {
+        return pendingFullRefreshHandoff.get();
     }
 
     @TestOnly
@@ -1152,6 +1169,15 @@ public class MatViewState implements QuietCloseable {
         );
     }
 
+    void requestPendingFullRefreshHandoff() {
+        final Runnable onRequest = onPendingFullRefreshHandoffRequestForTesting;
+        if (onRequest != null) {
+            onPendingFullRefreshHandoffRequestForTesting = null;
+            onRequest.run();
+        }
+        pendingFullRefreshHandoff.set(true);
+    }
+
     void requestPendingIncrementalRefresh() {
         final Runnable onRequest = onPendingIncrementalRefreshRequestForTesting;
         if (onRequest != null) {
@@ -1204,6 +1230,16 @@ public class MatViewState implements QuietCloseable {
     @TestOnly
     public void setOnClearPendingFullRefreshForTesting(Runnable onClearPendingFullRefreshForTesting) {
         this.onClearPendingFullRefreshForTesting = onClearPendingFullRefreshForTesting;
+    }
+
+    /**
+     * Test seam: runs once at the start of {@code requestPendingFullRefreshHandoff}, after a full refresh lost
+     * its first lock attempt and before it publishes its handoff. Tests use it to release the lock in that
+     * window. One-shot: the seam clears itself before firing.
+     */
+    @TestOnly
+    public void setOnPendingFullRefreshHandoffRequestForTesting(Runnable onPendingFullRefreshHandoffRequestForTesting) {
+        this.onPendingFullRefreshHandoffRequestForTesting = onPendingFullRefreshHandoffRequestForTesting;
     }
 
     /**

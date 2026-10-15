@@ -496,6 +496,11 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
      * newer FULL request published during the hold; a mismatch is a fresh request and wakes normally.
      * An INVALIDATE holder never suppresses the owner facet (it passes {@code null}) -- an owner riding
      * its refused marker published before the refusal and still relies on that wake.
+     * <p>
+     * A full refresh task that lost the lock during the hold leaves a handoff on the view
+     * ({@link #tryLockForFullRefresh}). The release claims it before it reads the marker and then wakes the
+     * pending owner with no suppression: the dropped task may be the very re-enqueue that the holder made
+     * for its suppressed owner (a deferral or the rename branch), so the wake is that owner's only delivery.
      */
     private static void finalizeAndUnlock0(
             CairoEngine engine,
@@ -524,6 +529,10 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // throw, and clearing before publication would turn a recoverable OOM into silent stale data.
         // A read-only node keeps its markers for promote-time recovery and wakes none of them.
         //
+        // The release claims the full refresh handoff before it reads the marker. The loser publishes its owner
+        // before its handoff, so a claimed handoff guarantees that the read below observes that owner, or a
+        // newer marker state from a later publication or from a holder that finished the owner.
+        //
         // The incremental wake runs on a read-only node too. A demote that the node refuses after it has
         // turned read-only keeps the refresh queue and the view states, and no promote rebuilds them, so a
         // request left on the view would wait for some later lock holder. MatViewTimerJob waits for the
@@ -532,6 +541,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
         // finalizeAndUnlock, which increments the sequence, and its refusal is not re-enqueued, so the
         // demote's quiesce drain stays finite. After a demote completes, the store is the no-op one and
         // the wake enqueues nothing.
+        final boolean isFullRefreshHandoffClaimed = viewState.claimPendingFullRefreshHandoff();
         final Object pendingMarker = engine.isReadOnlyMode() ? null : viewState.getPendingInvalidationMarker();
         Throwable markerWakeFailure = null;
         try {
@@ -543,7 +553,7 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
                         viewState,
                         pendingMarker,
                         suppressedInvalidationMarker,
-                        suppressedFullRefreshOwner
+                        isFullRefreshHandoffClaimed ? null : suppressedFullRefreshOwner
                 );
             }
         } catch (Throwable th) {
@@ -588,6 +598,31 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
     private static boolean skipIncrementalRefresh(MatViewState viewState) {
         viewState.incrementRefreshSeq();
         return false;
+    }
+
+    /**
+     * Takes the view lock for a full refresh, or leaves the delivery of the task's owner to the lock holder.
+     * A full refresh that loses the lock publishes a handoff on the view and tries the lock once more. When
+     * the second attempt fails too, a holder still has the lock, and its release claims the handoff and
+     * enqueues the pending owner ({@link #finalizeAndUnlock0}), so the caller drops its task. The release
+     * enqueues the owner even when the holder suppressed its own wake: a full refresh that defers re-enqueues
+     * its owner while it still holds the lock, and that re-enqueued task is the one a second worker can
+     * dequeue and lose here.
+     * <p>
+     * The handoff goes out only after a lost attempt. Once the caller holds the lock, whichever attempt won,
+     * it claims every handoff on the view: its own after a second-attempt win, and any that another loser
+     * published before the claim. A loser publishes its owner before its handoff, so the winner's rebuild,
+     * which starts after the claim, covers each claimed request. While the winner's owner is still the
+     * pending owner, the winner runs that owner itself and clears it unless it defers. When a loser published
+     * a newer owner, the winner clears only its own, and on a writable node its release wakes the newer one:
+     * the release suppresses at most the winner's own owner.
+     */
+    private static boolean tryLockForFullRefresh(MatViewState viewState) {
+        if (viewState.tryLock()) {
+            return true;
+        }
+        viewState.requestPendingFullRefreshHandoff();
+        return viewState.tryLock();
     }
 
     /**
@@ -1225,10 +1260,12 @@ public class MatViewRefreshJob implements Job, QuietCloseable {
             return false;
         }
 
-        if (!viewState.tryLock()) {
-            LOG.debug().$("could not lock materialized view for full refresh, will retry [view=").$(viewToken).I$();
+        if (!tryLockForFullRefresh(viewState)) {
+            LOG.debug().$("could not lock materialized view for full refresh, the lock holder enqueues it on release [view=")
+                    .$(viewToken).I$();
             return false;
         }
+        viewState.claimPendingFullRefreshHandoff();
 
         // Capture the marker identity BEFORE the base reader snapshot is fixed. A marker observed
         // here describes base commits that predate its publication, so the rebuild below covers

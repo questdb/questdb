@@ -1557,6 +1557,62 @@ public class CreateMatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateMatViewWindowFunctionInSampleBySubquery() throws Exception {
+        assertMemoryLeak(() -> {
+            createTable(TABLE1);
+            // SAMPLE BY over a subquery that computes a window function on the base table.
+            // Incremental refresh runs the subquery over the refreshed time range only, so the
+            // window would see a subset of the rows. The error points at the window function
+            // inside the subquery, so each case names the window function's text and the expected
+            // position is where that text starts.
+            final String[][] cases = {
+                    // Window function nested in an expression.
+                    {
+                            """
+                            CREATE MATERIALIZED VIEW test AS (
+                                SELECT ts, sum(rn) AS rn_sum
+                                FROM (SELECT ts, row_number() OVER (ORDER BY ts) + 1 AS rn FROM table1)
+                                SAMPLE BY 1h
+                            ) PARTITION BY DAY
+                            """,
+                            "row_number() OVER"
+                    },
+                    // Bare window function.
+                    {
+                            """
+                            CREATE MATERIALIZED VIEW test AS (
+                                SELECT ts, sum(rn) AS rn_sum
+                                FROM (SELECT ts, row_number() OVER (ORDER BY ts) AS rn FROM table1)
+                                SAMPLE BY 1h
+                            ) PARTITION BY DAY
+                            """,
+                            "row_number() OVER"
+                    },
+                    // Window function with PARTITION BY.
+                    {
+                            """
+                            CREATE MATERIALIZED VIEW test AS (
+                                SELECT ts, k, max(v_max) AS v_max
+                                FROM (SELECT ts, k, max(v) OVER (PARTITION BY k ORDER BY ts) AS v_max FROM table1)
+                                SAMPLE BY 1h
+                            ) PARTITION BY DAY
+                            """,
+                            "max(v) OVER"
+                    }
+            };
+            for (String[] c : cases) {
+                final String sql = c[0];
+                final int windowFunctionPosition = sql.indexOf(c[1]);
+                Assert.assertTrue(c[1], windowFunctionPosition > 0 && windowFunctionPosition == sql.lastIndexOf(c[1]));
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(windowFunctionPosition, "window function on base table is not supported for materialized views: " + TABLE1);
+                assertNull(getMatViewDefinition("test"));
+            }
+        });
+    }
+
+    @Test
     public void testCreateMatViewWindowFunctionNestedInExpression() throws Exception {
         assertMemoryLeak(() -> {
             createTable(TABLE1);
