@@ -1778,6 +1778,63 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     }
 
     /**
+     * A REBASE WAL that fails before the registry swap leaves the old table live and removes the clone's directory.
+     * The clone's baseline was pinned before the move, so the failure must also release that pin and drop the
+     * clone's txn tracker: nothing else ever removes a tracker for a directory that was never registered.
+     */
+    @Test
+    public void testRebaseFailureBeforeTheSwapReleasesTheClonePin() throws Exception {
+        final AtomicReference<String> failedCloneDir = new AtomicReference<>();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                if (failedCloneDir.get() == null && Utf8s.containsAscii(from, TableUtils.REBASE_TMP_DIR)) {
+                    final String path = Utf8s.stringFromUtf8Bytes(from);
+                    failedCloneDir.set(path.substring(path.lastIndexOf(io.questdb.std.Files.SEPARATOR) + 1));
+                    return -1;
+                }
+                return super.rename(from, to);
+            }
+        };
+        setProperty(PropertyKey.CAIRO_WAL_APPLY_SUSPENDED_WRITE_DENIED, "true");
+        try {
+            assertMemoryLeak(ff, () -> {
+                setCommitMode("adaptive");
+                execute("CREATE TABLE rb (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO rb VALUES ('2024-09-01T01:00:00.000000Z', 1)");
+                drainWalQueue();
+                execute("ALTER TABLE rb SUSPEND WAL");
+                try {
+                    execute("ALTER TABLE rb REBASE WAL");
+                    Assert.fail("the move of the clone must fail");
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not move rebased table into place");
+                }
+                final String cloneDir = failedCloneDir.get();
+                Assert.assertNotNull(cloneDir);
+                Assert.assertNull("the failed clone's tracker is dropped",
+                        engine.getTableSequencerAPI().getTxnTrackerIfExists(cloneDir));
+                final TableToken cloneToken = new TableToken("rb", cloneDir, null, TableUtils.getTableIdFromTableDir(cloneDir), true, false, false);
+                try (TxnScoreboard scoreboard = engine.getTxnScoreboard(cloneToken)) {
+                    Assert.assertEquals("the failed clone's baseline pin is released",
+                            TxnScoreboard.RANGE_FREE, scoreboard.scanRangeHolders(0, Long.MAX_VALUE));
+                }
+                // The old table is live and a retry succeeds.
+                execute("ALTER TABLE rb REBASE WAL");
+                drainWalQueue();
+                assertQuery("SELECT v FROM rb")
+                        .expectSize()
+                        .returns("""
+                                v
+                                1
+                                """);
+            });
+        } finally {
+            setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
+        }
+    }
+
+    /**
      * The start that converts a table without rows to WAL creates its sequencer files. The baseline of an empty
      * table runs no partition flush and no syncfs, so its sequencer flush is the only one: without it a power loss
      * before the first commit empties {@code txn_seq/}, the next start skips the finished conversion, and every

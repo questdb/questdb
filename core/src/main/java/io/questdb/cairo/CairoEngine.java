@@ -5173,6 +5173,10 @@ public class CairoEngine implements Closeable, WriterSource {
                                 ff.rmdir(p, true);
                             }
                         }
+                        // The clone's baseline pin and its txn tracker belong to a directory that is gone and was
+                        // never registered, so nothing else would ever release them.
+                        RecoveryCoordinator.unpinEpoch(this, newToken);
+                        tableSequencerAPI.purgeTxnTracker(newToken.getDirName());
                     }
                 } catch (Throwable cleanupEx) {
                     th.addSuppressed(cleanupEx);
