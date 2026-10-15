@@ -1520,12 +1520,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     }
                 }
 
-                boolean canAppendOnly = !partitionSplit && !isTailPinned;
+                boolean canAppendOnly = !partitionSplit;
                 if (tableWriter.isCommitReplaceMode()) {
                     canAppendOnly &= (!overlaps && suffixType == O3_BLOCK_O3);
                 } else {
                     canAppendOnly &= mergeType == O3_BLOCK_NONE && (prefixType == O3_BLOCK_NONE || prefixType == O3_BLOCK_DATA);
                 }
+                // with mergeEquals = 1 a row at the pinned parent's max merges, and rows above it go to the split
+                assert !canAppendOnly || !isTailPinned : "in-place append over a pinned split parent tail";
                 if (canAppendOnly) {
                     // We do not need to create a copy of partition when we simply need to append
                     // to the existing one.

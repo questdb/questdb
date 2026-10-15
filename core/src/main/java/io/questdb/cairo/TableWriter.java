@@ -2807,21 +2807,20 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      */
     public boolean isPartitionTailPinnedByReaders(long partitionTimestamp) {
         final int partitionIndex = txWriter.getPartitionIndex(partitionTimestamp);
-        if (partitionIndex < 0 || partitionIndex + 1 >= txWriter.getPartitionCount()) {
+        assert partitionIndex > -1 : "partition does not exist [timestamp=" + partitionTimestamp + ']';
+        if (partitionIndex + 1 >= txWriter.getPartitionCount()) {
             return false;
         }
         final long nextPartitionTimestamp = txWriter.getPartitionTimestampByIndex(partitionIndex + 1);
         if (txWriter.getLogicalPartitionTimestamp(partitionTimestamp) != txWriter.getLogicalPartitionTimestamp(nextPartitionTimestamp)) {
             return false;
         }
-        final long fromTxn = Math.max(0, txWriter.getPartitionNameTxn(partitionIndex));
+        final long fromTxn = txWriter.getPartitionNameTxn(partitionIndex);
         final long toTxn = txWriter.getPartitionNameTxn(partitionIndex + 1) + 1;
-        if (toTxn > txWriter.getTxn()) {
-            // The split belongs to the commit in flight, so readers at the current txn see the
-            // pre-split row count. isRangeAvailable() would also raise the scoreboard max past the
-            // committed txn and stall new readers until this commit lands.
-            return true;
-        }
+        // O3 tasks plan before o3ConsumePartitionUpdateSink() registers this commit's splits. A split
+        // from the commit in flight would let isRangeAvailable() raise the scoreboard max past the
+        // committed txn and stall new readers until the commit lands.
+        assert toTxn <= txWriter.getTxn() : "split partition from the commit in flight [toTxn=" + toTxn + ", txn=" + txWriter.getTxn() + ']';
         return !txnScoreboard.isRangeAvailable(fromTxn, toTxn);
     }
 

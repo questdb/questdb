@@ -10316,10 +10316,8 @@ public class MatViewTest extends AbstractCairoTest {
             final AtomicReference<Throwable> hookFailure = new AtomicReference<>();
             try (MatViewRefreshJob job = new MatViewRefreshJob(engine, 1)) {
                 job.setOnBaseReaderSnapshotForTesting(() -> {
-                    if (!hasMutatedBase.compareAndSet(false, true)) {
-                        return;
-                    }
                     try {
+                        Assert.assertFalse(hasMutatedBase.getAndSet(true));
                         final long parentNameTxn;
                         try (TableReader reader = getReader("base")) {
                             parentNameTxn = reader.getTxFile().getPartitionNameTxn(0);
