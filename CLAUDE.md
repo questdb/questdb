@@ -69,8 +69,7 @@ follows the same rules.
 
 Before writing code, list the behavior the change adds or alters and go through
 the dimensions below: each one that applies needs tests, and each one you skip
-needs a one-line reason. Write the failing tests first. The PR's test plan
-names, for each dimension that applies, the tests that cover it.
+needs a one-line reason. Write the failing tests first.
 
 Expected results come from an independent source: the specification, plain
 Java or `BigDecimal` arithmetic, PostgreSQL or DuckDB behavior, documented
@@ -165,8 +164,7 @@ paste its output into the expectation.
     shapes in a generator-coverage test such as `FilterShapeCoverageTest`. A
     fuzzer finds bugs only in what it can generate. Before opening the PR, run
     it locally with a large budget (`-Dquestdb.fuzz.queries=N` for the query
-    fuzzer) and record the seeds in the PR description. CI keeps its small
-    budget.
+    fuzzer); CI keeps its small budget.
 12. **Concurrency.** Test shared state the change touches under concurrent
     use, forcing the interleaving with latches, barriers or test hooks (never
     `Thread.sleep()`), and add a concurrent fuzz test when the state is complex.
@@ -299,45 +297,46 @@ qdbr toolchain; the script prints the command when it is missing.
   merge time. Default to adding the change to the PR/branch already in flight,
   especially when the fixes share a CI lineage (one change is what makes the
   other's CI go green). When a branch carries more than one fix, give each its
-  own clearly-labeled section in the PR body instead of opening another PR. Only
-  split if the user explicitly asks, or if the changes must merge/revert
-  independently.
+  own bullet in the PR body instead of opening another PR. Only split if the
+  user explicitly asks, or if the changes must merge/revert independently.
 - **When asked to "send a change to PR #N" / update PR metadata:** push the
   commit(s) to that PR's branch (rebase onto the remote head first if it moved),
-  then update the PR title/body to cover everything the branch now contains.
+  then bring the PR title and body up to date with the branch's net effects.
   Re-running CI on that branch is the validation; do not open a new PR.
-
-## Investigating failures
-
-- **Never dismiss a failure as "pre-existing", "flaky", "unrelated", or "a
-  known issue" without actually proving it.** That label is a hypothesis,
-  not a conclusion. Treat any red test, red CI job, or surprising log line
-  as a live bug to investigate until the evidence — git log, reproduction
-  on master, a real timing constraint, an upstream report — forces a
-  different conclusion. Only after that proof can the issue be set aside,
-  and the proof itself should be reported back so it can be verified.
-- **`java-questdb-client/` is a separate git repo** (a git submodule). Always
-  `cd` into it and commit there independently. Never commit it from the parent
-  repo as a submodule pointer update without also committing inside it first.
-- PR titles must follow Conventional Commits format: `type(scope): description`
-  (e.g., `fix(sql): fix ...`, `feat(core): add ...`). The description part is
-  copied to release notes, so it must read well on its own — repeat the verb
-  (e.g., `fix(sql): fix ...` not `fix(sql): DECIMAL comparison ...`).
-- PR title descriptions must speak to the end-user about the positive impact,
-  not about internal implementation details.
-- PR descriptions must use a level-headed, analytical tone. Present both
-  positive and negative effects of the PR with equal weight — don't cherry-pick
-  good results, don't sell it, don't use superlatives or bold emphasis on
-  numbers. Point out regressions and tradeoffs as prominently as improvements.
-- PRs that fix a GitHub issue must reference it with `Fixes #NNN` at the top of
-  the PR body.
+- PR titles follow Conventional Commits: `type(scope): description`. The
+  description goes to the release notes and must read well on its own, so
+  repeat the verb (`fix(sql): fix ...`, not `fix(sql): DECIMAL comparison ...`).
+- `feat`, `fix`, `perf` and `docs` titles speak to the user: what they gain or
+  no longer suffer, in their terms (SQL, settings, symptoms), with no class
+  names or internal mechanisms.
+  - Good: `fix(sql): fix wrong results when comparing IPv4 columns in filters`
+  - Avoid: `fix(sql): use unsigned comparison for IPv4 in JIT filters`
+- `chore`, `ci`, `test`, `build`, `refactor` and `style` titles may be
+  technical, but must make the reason for the change obvious. A change users
+  can see never takes one of these types. `revert` titles follow the rules of
+  the type they revert.
+  - Good: `chore(build): speed up builds by recompiling only changed files`
+  - Avoid: `chore(build): add incremental compilation to core`
+- PR bodies are short bullets, not prose:
+  - One bullet per net effect, at most 15 words. State what users gain or no
+    longer suffer (for a technical type, developers), not what changed in the
+    code. Put `Fixes #NNN` on the bullet for that issue.
+    - Good: `IPv4 filters with < or > no longer return wrong rows. Fixes #NNN`
+    - Avoid: `Use unsigned comparison for IPv4 in the JIT backend`
+  - Measure effects against the base branch: fixing a bug the PR itself
+    introduced is not an effect.
+  - Give each regression, tradeoff and breaking change its own bullet, as
+    plainly as the gains. Don't sell: no superlatives, no bold numbers.
+  - A change made for speed, or one on a data path, adds its JMH results as a
+    table: case, before, after, with the slower cases included.
+  - Link tandem PRs on one line.
+  - Nothing else: no test plan, coverage numbers, fuzz seeds, file walkthrough
+    or design narrative. The code and its tests carry those.
 - Commit titles do NOT use Conventional Commits prefixes. Keep them short (up to
   50 chars) and descriptive in plain English.
 - When committing, always include a full long-form description in the commit
   message body (not just the title). Lines in the description can be longer than
   in the commit title: up to 72 characters.
-- In PR test plans, use plain bullet points (`-`), not check marks or
-  checkboxes.
 - Always add GitHub labels consistent with the PR title (e.g., a `perf(sql):` PR
   should get "SQL" and "Performance" labels).
 - Common PR labels: `Bug`, `CI`, `Compatibility`, `Core`, `Documentation`,
@@ -355,6 +354,19 @@ qdbr toolchain; the script prints the command when it is missing.
   - Avoid: "The factory is passed through the ring queue to the exporter"
   - Good: "The materializer converts computed SYMBOL columns to STRING"
   - Avoid: "Symbol columns that are computed are converted to STRING"
+
+## Investigating failures
+
+- **Never dismiss a failure as "pre-existing", "flaky", "unrelated", or "a
+  known issue" without actually proving it.** That label is a hypothesis,
+  not a conclusion. Treat any red test, red CI job, or surprising log line
+  as a live bug to investigate until the evidence — git log, reproduction
+  on master, a real timing constraint, an upstream report — forces a
+  different conclusion. Only after that proof can the issue be set aside,
+  and the proof itself should be reported back so it can be verified.
+- **`java-questdb-client/` is a separate git repo** (a git submodule). Always
+  `cd` into it and commit there independently. Never commit it from the parent
+  repo as a submodule pointer update without also committing inside it first.
 
 ## Build Commands
 

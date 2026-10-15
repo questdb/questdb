@@ -193,9 +193,9 @@ coverage; issues filed or matched (links); items left for the user (blocked,
 security-sensitive, Minor, disagreements, open coverage gaps); and
 `git log --oneline <START>..HEAD`. State that nothing was pushed.
 
-End with a test plan for the PR description, from the analysis files: per
-item, the dimensions that apply with the tests that cover them, the ones that
-don't apply with the reason, and the fuzz seeds of any long local run.
+End with the PR body bullets, per CLAUDE.md "Git & PR Conventions": the
+EFFECT of each built item that isn't `none`, and any benchmark an EFFECT line
+names, whose JMH results go in the body. No test plan.
 
 ## Task templates
 
@@ -253,7 +253,14 @@ objection is wrong.]
    oracle (reference query, sqllogictest file or model), the existing test
    classes that exercise the code you change, and, for a speed change, the
    deterministic performance assertion and the benchmark.
-8. Other bugs you noticed: say whether each is in code this PR added or
+8. For BUILD and FIX: write the PR body bullet, per CLAUDE.md "Git & PR
+   Conventions": the net effect against the PR base, what users gain or no
+   longer suffer, in at most 15 words, not what the code does. For a change
+   made for speed or on a data path, name the JMH benchmark whose results the
+   PR reports. The bullet is none when users see no change against the PR
+   base, such as a fix for a bug only this PR's own commits have, or a
+   missing test.
+9. Other bugs you noticed: say whether each is in code this PR added or
    changed (compare with the PR base) or pre-existing. For a pre-existing
    one, write an issue body to <state>/<ID>/issue-<slug>.md.
 
@@ -263,6 +270,7 @@ applies, tests or reason. Reply with only these lines:
 DECISION: BUILD | FIX | SKIP | ASK
 PROBLEM: <one line>
 IMPACT: <one line>
+EFFECT: <the PR body bullet; the JMH benchmark to report, if any> | none
 CHANGE: <one line, naming the files> | REASON: <one line, for SKIP> | QUESTIONS: <for ASK, one line each>
 WHY: <one line: why this change beats the alternatives>
 TESTS: <one line: the dimensions covered and the ones not applicable>
