@@ -75,6 +75,7 @@ import io.questdb.std.str.Utf8StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.cairo.CairoTestConfiguration;
 import io.questdb.test.tools.TestUtils;
+import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.BeforeClass;
 import org.junit.Test;
@@ -143,6 +144,14 @@ import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
  *   consumer cannot outlive the cursor that holds the pin, so the writer can only ever
  *   reclaim the slot the readers are not on; a break is a use-after-free, surfacing as
  *   a torn value against the same per-snapshot invariant, or as a crash.</li>
+ *   <li><b>Parked repairs across refresh workers.</b> Two or three workers, sharded as a
+ *   pool shards them, park and resume one-row-budget repairs of an anchored view under
+ *   each other, and a repair parked by a worker outside the view's shard must be finished
+ *   by that worker alone.</li>
+ *   <li><b>SYMBOL labels across recoveries.</b> Mid-drain faults make recoveries discard
+ *   leads whose symbol values the view's table never committed, and readers that hold
+ *   their tier pin must refuse the rewind of those ids; every label a reader sees must be
+ *   its base row's.</li>
  * </ul>
  * <p>
  * <b>Why the oracle stays deterministic despite the concurrency.</b> The premise of
@@ -181,6 +190,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     // Refresh passes the parallel-filter soak's driver runs per tick, matching drainJob's
     // own bound - the driver inlines that loop to sample the tier between passes.
     private static final int REFRESH_PASSES_PER_TICK = 64;
+    // Rewinds the readers of the SYMBOL soak must refuse before its driver stops the writers.
+    private static final int SYMBOL_SOAK_REFUSALS = 3;
     private static final String[] SYMBOLS = {"AA", "BB", "CC", "DD"};
     // Fault injection for testCreateRollbackFencesLateRefreshAndKeepsLifecycleBounded, armed for the duration of
     // that one test. Null (the default) makes the state-store wrapper below a pure pass-through, so
@@ -1246,6 +1257,19 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testSymbolReadersAcrossMidDrainRecoveries() throws Exception {
+        // The other tier soaks read their SYMBOL labels with no recovery under them, over four
+        // values the view commits at once. This soak reads labels while recoveries discard
+        // leads whose symbol values the view's table never committed: each recovery's tier
+        // rebuild tries to take the stranded ids back, and a reader that pins a slot listing
+        // them must refuse it, or the reader's rows name no account or another one. Readers
+        // check every row's label against the base row at its timestamp.
+        final Rnd rnd = TestUtils.generateRandom(LOG);
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault("ts", "i", "sym");
+        assertMemoryLeak(fault.facade(), () -> runSymbolRecoverySoak(rnd, fault, 4, 24_000));
+    }
+
+    @Test
     public void testMultiWalWriterInterleaving() throws Exception {
         // Four concurrent writers, then a single-threaded refresh to quiescence.
         final Rnd rnd = TestUtils.generateRandom(LOG);
@@ -1296,8 +1320,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     public void testReaderChurnSoak() throws Exception {
         // Reader threads churn cursors over an IN MEMORY view while a refresh driver
         // appends via the fast-path CAS and writers ingest - the read/publish risk.
-        // The sum() view carries a SYMBOL passthrough, so the reads route disk-only;
-        // this soak stresses the read/publish hand-off without Mode B in the loop.
+        // The sum() view carries a SYMBOL passthrough, and its reads route through the
+        // tier too, resolving each label through the tier's symbol table: every row a
+        // reader sees must carry its base row's label and value.
         final Rnd rnd = TestUtils.generateRandom(LOG);
         assertMemoryLeak(() -> runReaderChurnSoak(rnd, 4, 4, 800, false, false));
     }
@@ -1385,12 +1410,12 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
     }
 
     private static void appendRow(WalWriter walWriter, long ts, int symIdx, long iv, double xv) {
+        appendRow(walWriter, ts, symIdx < 0 ? null : SYMBOLS[symIdx], iv, xv);
+    }
+
+    private static void appendRow(WalWriter walWriter, long ts, @Nullable CharSequence sym, long iv, double xv) {
         TableWriter.Row row = walWriter.newRow(ts);
-        if (symIdx < 0) {
-            row.putSym(1, (CharSequence) null);
-        } else {
-            row.putSym(1, SYMBOLS[symIdx]);
-        }
+        row.putSym(1, sym);
         row.putLong(2, iv); // LONG_NULL stores as NULL
         row.putDouble(3, xv);
         row.append();
@@ -1413,11 +1438,12 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
 
     // For each row of a generateDataset dataset, how many rows of its key share its UTC day up
     // to and including it: the count an ANCHOR DAILY '00:00' count() gives the row once the
-    // whole dataset is in. The timestamps ascend, so the days do too.
-    private static long[] dailyKeyCounts(long[] tsv, int[] symIdx) {
+    // whole dataset is in. The timestamps ascend, so the days do too. symIdx holds keys below
+    // symbolCount, or -1 for the NULL key.
+    private static long[] dailyKeyCounts(long[] tsv, int[] symIdx, int symbolCount) {
         final long[] counts = new long[tsv.length];
-        // Indexed by key + 1, so the NULL key (-1) takes slot 0.
-        final long[] keyCounts = new long[SYMBOLS.length + 1];
+        // Indexed by key + 1, so the NULL key takes slot 0.
+        final long[] keyCounts = new long[symbolCount + 1];
         long day = Long.MIN_VALUE;
         for (int k = 0; k < tsv.length; k++) {
             final long rowDay = Math.floorDiv(tsv[k], Micros.DAY_MICROS);
@@ -1672,6 +1698,109 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         }, "lv-paced-writer-" + writerId);
     }
 
+    // The late half of a stream-and-late pair (see newPacedStreamWriterThread): it commits the
+    // rows isLate marks, in ascending ts order, each once the stream has committed a row lagRows
+    // past it or has finished, one row per commit and one commit per refresh tick. Each row then
+    // lands below the stream's head, and a lag past a day jump puts it in a closed anchor day.
+    // It stops early once isStopRequested is set.
+    private Thread newPacedLateWriterThread(
+            boolean[] isLate,
+            int lagRows,
+            long[] tsv,
+            int[] symIdx,
+            ObjList<String> symbols,
+            long[] iv,
+            double[] xv,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            AtomicInteger streamedTo,
+            AtomicBoolean isStreamDone,
+            AtomicBoolean isStopRequested,
+            AtomicLong refreshTicks,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        return new Thread(() -> {
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                for (int k = 0, n = isLate.length; k < n && errors.isEmpty() && !isStopRequested.get(); k++) {
+                    if (!isLate[k]) {
+                        continue;
+                    }
+                    while (streamedTo.get() < k + lagRows && !isStreamDone.get() && errors.isEmpty()) {
+                        awaitRefreshTick(refreshTicks, errors);
+                    }
+                    final int s = symIdx[k];
+                    appendRow(walWriter, tsv[k], s < 0 ? null : symbols.getQuick(s), iv[k], xv[k]);
+                    walWriter.commit();
+                    awaitRefreshTick(refreshTicks, errors);
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+                barrier.reset();
+            } finally {
+                Path.clearThreadLocals();
+            }
+        }, "lv-paced-late-writer");
+    }
+
+    // The streaming half of a stream-and-late pair: it commits every row isLate does not mark,
+    // in ascending ts order, batch rows a commit and commitsPerTick commits per refresh tick,
+    // and raises streamedTo to each commit's last row. Its commits are all in order, so the
+    // stream drains as an un-flushed lead between flushes, and the late rows are
+    // newPacedLateWriterThread's alone. It stops early once isStopRequested is set, and raises
+    // isStreamDone on exit, failed or not, so the late writer never waits on a stream that has
+    // stopped.
+    private Thread newPacedStreamWriterThread(
+            boolean[] isLate,
+            int batch,
+            int commitsPerTick,
+            long[] tsv,
+            int[] symIdx,
+            ObjList<String> symbols,
+            long[] iv,
+            double[] xv,
+            TableToken baseToken,
+            CyclicBarrier barrier,
+            AtomicInteger streamedTo,
+            AtomicBoolean isStreamDone,
+            AtomicBoolean isStopRequested,
+            AtomicLong refreshTicks,
+            ConcurrentLinkedQueue<Throwable> errors
+    ) {
+        return new Thread(() -> {
+            try (WalWriter walWriter = engine.getWalWriter(baseToken)) {
+                barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                int sinceCommit = 0;
+                int commitsThisTick = 0;
+                for (int k = 0, n = isLate.length; k < n && errors.isEmpty() && !isStopRequested.get(); k++) {
+                    if (isLate[k]) {
+                        continue;
+                    }
+                    final int s = symIdx[k];
+                    appendRow(walWriter, tsv[k], s < 0 ? null : symbols.getQuick(s), iv[k], xv[k]);
+                    if (++sinceCommit >= batch) {
+                        walWriter.commit();
+                        streamedTo.set(k);
+                        sinceCommit = 0;
+                        if (++commitsThisTick >= commitsPerTick) {
+                            commitsThisTick = 0;
+                            awaitRefreshTick(refreshTicks, errors);
+                        }
+                    }
+                }
+                if (errors.isEmpty()) {
+                    walWriter.commit();
+                }
+            } catch (Throwable th) {
+                errors.add(th);
+                barrier.reset();
+            } finally {
+                isStreamDone.set(true);
+                Path.clearThreadLocals();
+            }
+        }, "lv-paced-stream-writer");
+    }
+
     // A refresh worker on its own thread, the way a pool worker runs its LiveViewRefreshJob:
     // it awaits the barrier, then runs the job until the soak stops it, counting the turns that
     // reported work - the soak's evidence that this worker took part rather than spinning idle
@@ -1822,24 +1951,44 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 + " passes over " + jobs.size() + " refresh workers");
     }
 
-    // Opens a fresh cursor over the anchored (ts, sym, i, s, c) view of the parked-repair soak
-    // and checks every row against the dataset the view derives from: timestamps ascend, each
-    // names a dataset row, the key and value are that row's, and the count lies between 1 and
-    // the count the whole dataset gives the row (dayCounts, see dailyKeyCounts). A view
-    // mid-flight can lack rows, or hold a count a late row raises later, but never a row the
-    // dataset lacks, a key or value off its base row, or a count past the whole dataset's: a
-    // fold of the same rows twice shows there. Returns the rows it checked.
-    private long readAnchoredViewOnce(long[] tsv, int[] symIdx, long[] iv, long[] dayCounts) throws Exception {
+    // Opens a fresh cursor over the anchored (ts, sym, i, s, c) view of the parked-repair and
+    // symbol soaks and checks every row against the dataset the view derives from: timestamps
+    // ascend, each names a dataset row, the key and value are that row's, and the count lies
+    // between 1 and the count the whole dataset gives the row (dayCounts, see dailyKeyCounts).
+    // A view mid-flight can lack rows, or hold a count a late row raises later, but never a row
+    // the dataset lacks, a key or value off its base row, or a count past the whole dataset's:
+    // a fold of the same rows twice shows there, and so does a symbol id that resolves to
+    // another row's label. symIdx indexes symbols, or SYMBOLS when symbols is null.
+    // <p>
+    // A pauseAtRow of 0 or more sleeps pauseMillis before that row, holding the cursor's tier
+    // pin across whatever the refresh worker does meanwhile. A read that routed through the tier
+    // counts into routedReads, when given. Returns the rows it checked.
+    private long readAnchoredViewOnce(
+            long[] tsv,
+            int[] symIdx,
+            @Nullable ObjList<String> symbols,
+            long[] iv,
+            long[] dayCounts,
+            int pauseAtRow,
+            int pauseMillis,
+            @Nullable AtomicLong routedReads
+    ) throws Exception {
         try (
                 SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                 SqlCompiler compiler = engine.getSqlCompiler();
                 RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory();
-                RecordCursor cursor = factory.getCursor(ctx)
+                LiveViewRecordCursor cursor = (LiveViewRecordCursor) unwrapLvFactory(factory).getCursor(ctx)
         ) {
+            if (routedReads != null && cursor.isRoutingEligible()) {
+                routedReads.incrementAndGet();
+            }
             final Record record = cursor.getRecord();
             long prevTs = Long.MIN_VALUE;
             long rows = 0;
             while (cursor.hasNext()) {
+                if (rows == pauseAtRow) {
+                    Os.sleep(pauseMillis);
+                }
                 final long ts = record.getTimestamp(0);
                 if (ts <= prevTs) {
                     throw new AssertionError("ts not strictly ascending: prevTs=" + prevTs + ", ts=" + ts);
@@ -1849,7 +1998,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     throw new AssertionError("the view holds a row the dataset lacks: ts=" + ts);
                 }
                 final CharSequence sym = record.getSymA(1);
-                final String expectedSym = symIdx[k] < 0 ? null : SYMBOLS[symIdx[k]];
+                final int s = symIdx[k];
+                final String expectedSym = s < 0 ? null : symbols != null ? symbols.getQuick(s) : SYMBOLS[s];
                 if (!Chars.equalsNullable(expectedSym, sym)) {
                     throw new AssertionError("sym off its base row: ts=" + ts + ", expected=" + expectedSym + ", actual=" + sym);
                 }
@@ -1868,25 +2018,45 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         }
     }
 
-    // Opens a fresh cursor over the live view and fully drains it, touching the
-    // fixed-width columns so the read path actually runs over the row buffers. Called
-    // in a tight loop by the reader threads while the view refreshes concurrently; it
-    // asserts nothing about the row set (the view is mid-flight) - a torn read or a
-    // corrupt tier slot surfaces as an exception or a JVM crash, not a value mismatch.
-    // The final single-threaded oracle validates contents after quiescence.
-    private void readViewOnce() throws Exception {
+    // Opens a fresh cursor over the (ts, sym, i, v) sum() view and fully drains it, checking
+    // every row against the dataset it derives from: timestamps strictly ascend, each names a
+    // dataset row, and the row's sym label and i value are that row's. Called in a tight loop by
+    // the reader threads while the view refreshes concurrently; the view is mid-flight, so the
+    // row count and the aggregate are left to the final single-threaded oracle, but no
+    // committed snapshot may hold a row the dataset lacks or a label or value off its base row.
+    // A torn read or a corrupt tier slot surfaces as one of those, as an exception, or as a JVM
+    // crash. Returns whether the read routed through the in-mem tier.
+    private boolean readViewOnce(long[] tsv, int[] symIdx, long[] iv) throws Exception {
         try (
                 SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
                 SqlCompiler compiler = engine.getSqlCompiler();
                 RecordCursorFactory factory = compiler.compile("SELECT * FROM lv", ctx).getRecordCursorFactory();
-                RecordCursor cursor = factory.getCursor(ctx)
+                LiveViewRecordCursor cursor = (LiveViewRecordCursor) unwrapLvFactory(factory).getCursor(ctx)
         ) {
             final Record record = cursor.getRecord();
+            long prevTs = Long.MIN_VALUE;
             while (cursor.hasNext()) {
-                record.getLong(0); // ts
-                record.getLong(2); // i
-                record.getLong(3); // v (sum aggregate)
+                final long ts = record.getTimestamp(0);
+                if (ts <= prevTs) {
+                    throw new AssertionError("ts not strictly ascending: prevTs=" + prevTs + ", ts=" + ts);
+                }
+                final int k = Arrays.binarySearch(tsv, ts);
+                if (k < 0) {
+                    throw new AssertionError("the view holds a row the dataset lacks: ts=" + ts);
+                }
+                final CharSequence sym = record.getSymA(1);
+                final String expectedSym = symIdx[k] < 0 ? null : SYMBOLS[symIdx[k]];
+                if (!Chars.equalsNullable(expectedSym, sym)) {
+                    throw new AssertionError("sym off its base row: ts=" + ts + ", expected=" + expectedSym + ", actual=" + sym);
+                }
+                final long i = record.getLong(2);
+                if (i != iv[k]) {
+                    throw new AssertionError("i off its base row: ts=" + ts + ", expected=" + iv[k] + ", actual=" + i);
+                }
+                record.getLong(3); // v, the sum aggregate
+                prevTs = ts;
             }
+            return cursor.isRoutingEligible();
         }
     }
 
@@ -3053,7 +3223,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         final long[] iv = new long[rowCount];
         final double[] xv = new double[rowCount];
         generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
-        final long[] dayCounts = dailyKeyCounts(tsv, symIdx);
+        final long[] dayCounts = dailyKeyCounts(tsv, symIdx, SYMBOLS.length);
 
         execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms " + (isInMemory ? "IN MEMORY 60s " : "") + "START FROM NOW AS " + viewSql);
 
@@ -3114,7 +3284,7 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     try {
                         barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
                         while (isRunning.get() && errors.isEmpty()) {
-                            checkedRows.addAndGet(readAnchoredViewOnce(tsv, symIdx, iv, dayCounts));
+                            checkedRows.addAndGet(readAnchoredViewOnce(tsv, symIdx, null, iv, dayCounts, -1, 0, null));
                         }
                     } catch (Throwable th) {
                         errors.add(th);
@@ -3439,8 +3609,9 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
         // modeB: a SYMBOL-free row_number() view, so the read path routes through
         // the in-mem tier (Mode B seam routing) and the readers can assert the
         // gapless-rn invariant per snapshot. Otherwise: a sum() view with a SYMBOL
-        // passthrough, which routes disk-only but still exercises the publish hand-off
-        // (the readers open cursors over the view while the driver swaps under them).
+        // passthrough, whose reads route through the tier as well and resolve their
+        // labels through its symbol table; the readers check every row's label and value
+        // against the dataset (see readViewOnce) while the driver swaps under them.
         final String viewSql = modeB
                 ? "SELECT ts, i, count(*) OVER (PARTITION BY 0 ORDER BY ts ROWS BETWEEN 1000000 PRECEDING AND CURRENT ROW) AS rn FROM base"
                 : "SELECT " + projection(0, n) + " FROM base";
@@ -3522,12 +3693,8 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                 readers[r] = new Thread(() -> {
                     try {
                         while (running.get()) {
-                            if (modeB) {
-                                if (readRowNumberViewOnce()) {
-                                    routedReads.incrementAndGet();
-                                }
-                            } else {
-                                readViewOnce();
+                            if (modeB ? readRowNumberViewOnce() : readViewOnce(tsv, symIdx, iv)) {
+                                routedReads.incrementAndGet();
                             }
                         }
                     } catch (Throwable th) {
@@ -3573,12 +3740,10 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
                     "the refresh worker must have published into the tier under the churning readers",
                     swapsObserved.get() + inPlacePublishesObserved.get() > 0
             );
-            if (modeB) {
-                Assert.assertTrue(
-                        "the readers must have routed through the tier mid-soak, not just after it",
-                        routedReads.get() > 0
-                );
-            }
+            Assert.assertTrue(
+                    "the readers must have routed through the tier mid-soak, not just after it",
+                    routedReads.get() > 0
+            );
         } finally {
             Misc.free(job);
         }
@@ -3609,6 +3774,232 @@ public class LiveViewConcurrencyTest extends AbstractLiveViewTest {
             // readers; this pins it deterministically post-quiescence.)
             assertModeALeadEngaged(viewSql, tsv[rowCount - 1]);
         }
+
+        execute("DROP LIVE VIEW lv");
+        execute("DROP TABLE base");
+    }
+
+    // The SYMBOL soak (see testSymbolReadersAcrossMidDrainRecoveries). An IN MEMORY anchored
+    // PARTITION BY sym view over two paced writers, an in-order stream and a late writer that
+    // commits one row in forty behind it, whose rows keep bringing symbol values new to the
+    // view, so most un-flushed leads intern ids the view's table has not committed. The
+    // stream's in-order commits are what a mid-drain recovery needs after a fault: an
+    // out-of-order repair commits the lead's values again instead of stranding them. The
+    // refresh driver advances the clock a fraction of FLUSH EVERY per tick, so leads stay
+    // resident across ticks, and every few ticks it arms a fault for that tick's turns: the
+    // turn fails part-way, the recovery restores the runtime from the timeline and discards
+    // the lead, and its tier rebuild tries to take the stranded ids back. A reader that pins
+    // the slot listing those ids refuses the rewind. Readers check the label of every row
+    // against the base row at its timestamp, and one read in four holds its cursor - and so
+    // its tier pin - for a few milliseconds part-way through. Every thread starts on one
+    // barrier.
+    // <p>
+    // The driver stops the writers once SYMBOL_SOAK_REFUSALS rewinds were refused, or the
+    // dataset runs out, so a run lasts as long as the race takes. The soak's evidence, from the
+    // concurrent phase alone: faults fired, rewinds attempted and refused, reads routed through
+    // the tier. The quiesced view must equal the recompute, with no refresh fault the soak did
+    // not inject.
+    private void runSymbolRecoverySoak(Rnd rnd, LiveViewMidDrainFault fault, int numReaders, int rowCount) throws Exception {
+        setCurrentMicros(MicrosTimestampDriver.floor(CLOCK_START));
+        // A root every few rows, so every mid-drain recovery finds one to restore from.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1 + rnd.nextInt(4));
+        // Above every symbol value the run brings, for the base and for the view's table.
+        setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_CAPACITY, 4096);
+
+        final String viewSql = """
+                SELECT ts, sym, i, sum(i) OVER w AS s, count() OVER w AS c FROM base
+                WINDOW w AS (PARTITION BY sym ORDER BY ts ANCHOR DAILY '00:00')""";
+        final String oracleSql = """
+                SELECT ts, sym, i,
+                    sum(i) OVER (PARTITION BY sym, timestamp_floor('1d', ts) ORDER BY ts) AS s,
+                    count() OVER (PARTITION BY sym, timestamp_floor('1d', ts) ORDER BY ts) AS c
+                FROM base""";
+
+        execute("DROP LIVE VIEW IF EXISTS lv");
+        execute("DROP TABLE IF EXISTS base");
+        execute("CREATE TABLE base (ts TIMESTAMP, sym SYMBOL, i LONG, x DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        fault.of(engine.verifyTableName("base").getDirName());
+
+        final long[] tsv = new long[rowCount];
+        final int[] symIdx = new int[rowCount];
+        final long[] iv = new long[rowCount];
+        final double[] xv = new double[rowCount];
+        generateDataset(rnd, rowCount, tsv, symIdx, iv, xv);
+        // Row k draws its key from the first 1 + k / 8 values, so a value new to the view turns
+        // up every few rows, all the way through, and older values keep coming back. The values
+        // stay below the tables' initial symbol capacity, set above: a capacity growth rewrites
+        // the symbol column, and a reader that spins through such a rewrite can run out of plan
+        // recompile attempts, which is not what this soak is about.
+        final int symbolCount = 1 + rowCount / 8;
+        final ObjList<String> symbols = new ObjList<>();
+        for (int k = 0; k < rowCount; k++) {
+            if (symIdx[k] > -1) {
+                symIdx[k] = rnd.nextInt(1 + (symbolCount - 1) * k / rowCount);
+            }
+        }
+        for (int s = 0; s < symbolCount; s++) {
+            symbols.add("sym-" + s);
+        }
+        final long[] dayCounts = dailyKeyCounts(tsv, symIdx, symbols.size());
+        // The late writer's rows, and how far behind the stream it commits each of them. A day
+        // jump every 20 rows on average puts most of them in a closed anchor day.
+        final boolean[] isLate = new boolean[rowCount];
+        for (int k = 1; k < rowCount; k++) {
+            isLate[k] = rnd.nextInt(40) == 0;
+        }
+        final int lagRows = 10 + rnd.nextInt(60);
+
+        execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms IN MEMORY 60s START FROM NOW AS " + viewSql);
+        LOG.info().$("LV concurrency symbol recovery soak: readers=").$(numReaders)
+                .$(", rows=").$(rowCount).$(", symbols=").$(symbols.size()).$(", lagRows=").$(lagRows).$();
+
+        final TableToken baseToken = engine.verifyTableName("base");
+        final LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+        Assert.assertNotNull(instance);
+        final ConcurrentLinkedQueue<Throwable> errors = new ConcurrentLinkedQueue<>();
+        final LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1);
+        final AtomicBoolean isRunning = new AtomicBoolean(true);
+        final AtomicLong refreshTicks = new AtomicLong();
+        final AtomicLong firedFaults = new AtomicLong();
+        final AtomicLong checkedRows = new AtomicLong();
+        final AtomicLong routedReads = new AtomicLong();
+        final long driverSeed = rnd.nextLong();
+        try {
+            final CyclicBarrier barrier = new CyclicBarrier(2 + 1 + numReaders);
+            final ObjList<Thread> threads = new ObjList<>();
+            final AtomicInteger streamedTo = new AtomicInteger(-1);
+            final AtomicBoolean isStreamDone = new AtomicBoolean();
+            // The driver stops the writers once readers have refused enough rewinds, so a run
+            // lasts as long as the race takes to happen, up to the whole dataset.
+            final AtomicBoolean isStopRequested = new AtomicBoolean();
+            // Two or three commits a tick: the first drains on a turn of its own, and the task
+            // queued behind it drains the rest together, which is a turn that feeds a commit
+            // before it reads the next one.
+            threads.add(newPacedStreamWriterThread(
+                    isLate, 2 + rnd.nextInt(7), 2 + rnd.nextInt(2), tsv, symIdx, symbols, iv, xv, baseToken, barrier,
+                    streamedTo, isStreamDone, isStopRequested, refreshTicks, errors
+            ));
+            threads.add(newPacedLateWriterThread(
+                    isLate, lagRows, tsv, symIdx, symbols, iv, xv, baseToken, barrier, streamedTo, isStreamDone,
+                    isStopRequested, refreshTicks, errors
+            ));
+            final int writerThreadCount = threads.size();
+            threads.add(new Thread(() -> {
+                final Rnd driverRnd = new Rnd(driverSeed, driverSeed >>> 1);
+                try {
+                    barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                    while (isRunning.get() && errors.isEmpty()) {
+                        // A fraction of FLUSH EVERY per tick, so a flush lands every few ticks
+                        // and the ticks between leave the lead resident for the fault to discard.
+                        setCurrentMicros(currentMicros + CLOCK_ADVANCE_MICROS / 6);
+                        drainWalQueue();
+                        // Armed for these turns alone: the base's own apply and the final oracle
+                        // read the same files, and must never meet the fault. Either fault
+                        // discards the lead the earlier ticks drained, with the interned values
+                        // no flush committed, once the failing turn has fed rows of its own. The
+                        // WAL read fault fails a later WAL read of the drain, after it fed the
+                        // commits before it. The applied scan fault fails the out-of-order
+                        // repair's read of the applied base, after the hand-off dropped the lead.
+                        // Each recovery restores the runtime from the timeline, which commits
+                        // nothing, and its tier rebuild tries the rewind.
+                        final boolean isArmed = driverRnd.nextInt(3) == 0;
+                        if (isArmed) {
+                            if (driverRnd.nextInt(4) != 0) {
+                                fault.arm(1 + driverRnd.nextInt(3));
+                            } else {
+                                fault.armAppliedScan();
+                            }
+                        }
+                        drainJob(job);
+                        if (isArmed) {
+                            if (fault.hasFired() || fault.hasAppliedScanFired()) {
+                                firedFaults.incrementAndGet();
+                            }
+                            fault.disarmAll();
+                        }
+                        drainWalQueue();
+                        // The driver is the job's own thread, so it reads the job's stats.
+                        if (job.getStatsForTest().get(LiveViewRefreshStats.SYMBOL_REWIND_REFUSAL_COUNT) >= SYMBOL_SOAK_REFUSALS) {
+                            isStopRequested.set(true);
+                        }
+                        refreshTicks.incrementAndGet();
+                    }
+                } catch (Throwable th) {
+                    errors.add(th);
+                    barrier.reset();
+                } finally {
+                    fault.disarm();
+                    Path.clearThreadLocals();
+                }
+            }, "lv-refresh-driver"));
+            for (int r = 0; r < numReaders; r++) {
+                final long readerSeed = rnd.nextLong();
+                threads.add(new Thread(() -> {
+                    final Rnd readerRnd = new Rnd(readerSeed, readerSeed >>> 1);
+                    try {
+                        barrier.await(REFRESH_TICK_WAIT_NANOS, TimeUnit.NANOSECONDS);
+                        while (isRunning.get() && errors.isEmpty()) {
+                            // One read in four holds its pin part-way through, across the turns
+                            // the driver runs meanwhile; the rest pin and release the tier as
+                            // fast as they read.
+                            final int pauseAtRow = readerRnd.nextInt(4) == 0 ? readerRnd.nextInt(64) : -1;
+                            checkedRows.addAndGet(readAnchoredViewOnce(
+                                    tsv, symIdx, symbols, iv, dayCounts, pauseAtRow, 1 + readerRnd.nextInt(3), routedReads
+                            ));
+                        }
+                    } catch (Throwable th) {
+                        errors.add(th);
+                        barrier.reset();
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "lv-symbol-reader-" + r));
+            }
+
+            for (int i = 0, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).start();
+            }
+            for (int i = 0; i < writerThreadCount; i++) {
+                threads.getQuick(i).join();
+            }
+            isRunning.set(false);
+            for (int i = writerThreadCount, n = threads.size(); i < n; i++) {
+                threads.getQuick(i).join();
+            }
+            fault.disarmAll();
+            if (!errors.isEmpty()) {
+                throw new RuntimeException("worker thread failed", errors.peek());
+            }
+
+            // The soak's own evidence, from the concurrent phase alone. The job's stats are
+            // written by the driver thread only, which has joined.
+            final long rewindAttempts = job.getStatsForTest().get(LiveViewRefreshStats.SYMBOL_REWIND_ATTEMPT_COUNT);
+            final long rewindRefusals = job.getStatsForTest().get(LiveViewRefreshStats.SYMBOL_REWIND_REFUSAL_COUNT);
+            LOG.info().$("LV concurrency symbol recovery soak done: refreshTicks=").$(refreshTicks.get())
+                    .$(", firedFaults=").$(firedFaults.get()).$(", refreshFaults=").$(instance.getRefreshFaultCount())
+                    .$(", rewindAttempts=").$(rewindAttempts).$(", rewindRefusals=").$(rewindRefusals)
+                    .$(", routedReads=").$(routedReads.get()).$(", checkedRows=").$(checkedRows.get()).$();
+            Assert.assertTrue("mid-drain faults must have fired", firedFaults.get() > 0);
+            Assert.assertTrue("recoveries must have tried to take stranded symbol ids back", rewindAttempts > 0);
+            Assert.assertTrue("a reader's pin must have refused a symbol id rewind", rewindRefusals > 0);
+            Assert.assertTrue("the readers must have routed through the tier mid-soak", routedReads.get() > 0);
+            Assert.assertTrue("the readers must have checked rows mid-soak", checkedRows.get() > 0);
+
+            drainWalQueue();
+            driveRefreshToQuiescence(job);
+        } finally {
+            Misc.free(job);
+        }
+
+        Assert.assertFalse("the view must survive its recoveries: " + instance.getInvalidationReason(), instance.isInvalid());
+        // A fault can also land in a read whose caller swallows it, so not every one fails a
+        // turn; but no turn may fail on anything the soak did not inject.
+        Assert.assertTrue(
+                "every refresh fault must be one the soak injected [refreshFaults=" + instance.getRefreshFaultCount()
+                        + ", firedFaults=" + firedFaults.get() + ']',
+                instance.getRefreshFaultCount() <= firedFaults.get()
+        );
+        TestUtils.assertSqlCursors(engine, sqlExecutionContext, "(" + oracleSql + ") ORDER BY 1, 2", "(lv) ORDER BY 1, 2", LOG, true);
 
         execute("DROP LIVE VIEW lv");
         execute("DROP TABLE base");

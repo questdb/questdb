@@ -14620,10 +14620,13 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (lvReader.getSeqTxn() < committedSeqTxn) {
                 return false;
             }
+            hooks.beforeSymbolRewind();
+            stats.inc(SYMBOL_REWIND_ATTEMPT_COUNT);
             if (instance.getInMemoryTier().tryRewindSymbolCache(counts)) {
                 LOG.info().$("live view rewound symbol ids no flush committed [view=").$(viewName).I$();
                 return false;
             }
+            stats.inc(SYMBOL_REWIND_REFUSAL_COUNT);
             // Debug, not info: a drain that starts with an empty lead retries every turn
             // until no reader pins a slot whose horizon reaches the stranded ids.
             LOG.debug().$("live view symbol id rewind deferred, a reader pins the in-mem tier [view=")

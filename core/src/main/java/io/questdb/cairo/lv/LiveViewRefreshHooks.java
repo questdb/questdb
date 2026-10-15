@@ -95,6 +95,16 @@ public interface LiveViewRefreshHooks {
     }
 
     /**
+     * Called by the symbol-id rewind once it has found stranded ids and a reader of the view's
+     * table that holds every committed block, immediately before it asks the tier to take the
+     * ids back ({@link LiveViewInMemoryTier#tryRewindSymbolCache}), with the refresh latch held,
+     * inside the try whose catch logs and swallows. A tier rebuild reaches it after it restaged
+     * the published slot, and so does a lead drain that starts with an empty lead.
+     */
+    default void beforeSymbolRewind() {
+    }
+
+    /**
      * Called by the fallback scan's ahead guard between its read of the view watermark and
      * its two reads of the base head, with no latch held.
      */

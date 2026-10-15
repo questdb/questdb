@@ -53,6 +53,10 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.cairo.wal.seq.SeqTxnTracker;
+import io.questdb.griffin.SqlCompiler;
+import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
+import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
@@ -69,6 +73,8 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -1485,6 +1491,146 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                     + "2026-01-02T10:00:00.000000Z\tacct-7\t256.0\t1\n"
                     + "2026-01-02T10:10:00.000000Z\tacct-8\t512.0\t1\n");
             assertAccountCountsMatchTheBase(sixAccounts + "acct-7\t1\nacct-8\t1\n");
+            assertAccountRowsMatchTheBase("acct-3", "2026-01-02T09:20:00.000000Z\tacct-3\n");
+        });
+    }
+
+    @Test
+    public void testAReaderThatPinsTheTierAtTheSymbolRewindLetsTheRewindGoAhead() throws Exception {
+        // The race between a read's two steps. The reader opens its disk cursor while the
+        // published slot holds a lead with an account the view's table never committed, and
+        // pins the tier only at the symbol-id rewind of the restore that discards that lead -
+        // after the restore restaged the published slot from the view's table. The restage
+        // stops that slot's symbol horizon at the committed counts, so the reader's pin there
+        // must not refuse the rewind, which takes the discarded accounts' ids back with the
+        // reader still open. The reader's disk snapshot is no older than the slot it pins, so it
+        // reads through the tier, and every row it reads names its own account.
+        // testAReaderPinnedAcrossAMidDrainRestoreDefersTheSymbolRewind pins the lead's slot
+        // before the restore instead, which does refuse the rewind.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("");
+            createView();
+            fault.of(engine.verifyTableName("tx").getDirName());
+            insertAndRefresh(FOUR_ROWS);
+            final String pinnedRows = """
+                    created_at\taccount_id
+                    2026-01-01T09:00:00.000000Z\tacct-1
+                    2026-01-01T09:10:00.000000Z\tacct-2
+                    2026-01-02T09:00:00.000000Z\tacct-1
+                    2026-01-02T09:10:00.000000Z\tacct-1
+                    """;
+            final CountDownLatch diskCursorOpened = new CountDownLatch(1);
+            final CountDownLatch pinTier = new CountDownLatch(1);
+            final CountDownLatch tierPinned = new CountDownLatch(1);
+            final CountDownLatch readRows = new CountDownLatch(1);
+            final AtomicReference<Throwable> readerError = new AtomicReference<>();
+            final AtomicBoolean isReaderRouted = new AtomicBoolean();
+            final StringSink readerSink = new StringSink();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // acct-3 drains on a turn of its own into the un-flushed lead, at the first id past
+                // the two committed accounts. The clock stays on the last flush, so nothing
+                // flushes until the restore's retry.
+                setCurrentMicros(instance("lv").getLastFlushTimeUs());
+                execute("INSERT INTO tx VALUES ('2026-01-02T09:20:00.000000Z', 'acct-3', 16.0)");
+                drainWalQueue();
+                drainJob(job);
+                Assert.assertEquals(1, instance("lv").getLeadRowCount());
+
+                // The reader stops right after it opens its disk cursor, and again right after it
+                // pins the tier, holding the pin until the end.
+                LiveViewRecordCursorFactory.setOnDiskCursorOpenedHook(() -> {
+                    diskCursorOpened.countDown();
+                    awaitLatch(pinTier);
+                });
+                LiveViewRecordCursorFactory.setOnSlotPinnedHook(() -> {
+                    tierPinned.countDown();
+                    awaitLatch(readRows);
+                });
+                final Thread reader = new Thread(() -> {
+                    try (
+                            SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine);
+                            SqlCompiler compiler = engine.getSqlCompiler();
+                            RecordCursorFactory factory = compiler.compile("SELECT created_at, account_id FROM lv", ctx).getRecordCursorFactory();
+                            LiveViewRecordCursor cursor = (LiveViewRecordCursor) liveViewFactoryOf(factory).getCursor(ctx)
+                    ) {
+                        isReaderRouted.set(cursor.isRoutingEligible());
+                        println(factory.getMetadata(), cursor, readerSink);
+                    } catch (Throwable t) {
+                        readerError.set(t);
+                    } finally {
+                        Path.clearThreadLocals();
+                    }
+                }, "lv-rewind-reader");
+                reader.start();
+                try {
+                    awaitLatch(diskCursorOpened);
+                    hooks(job).setSimulateSymbolRewindStart(() -> {
+                        pinTier.countDown();
+                        awaitLatch(tierPinned);
+                    });
+                    final long rewindsBefore = job.getStatsForTest().get(SYMBOL_REWIND_ATTEMPT_COUNT);
+                    final long refusalsBefore = job.getStatsForTest().get(SYMBOL_REWIND_REFUSAL_COUNT);
+
+                    // As in testAReaderPinnedAcrossAMidDrainRestoreDefersTheSymbolRewind: acct-4
+                    // drains on a turn of its own, the next two coalesce behind it, and the fault
+                    // fails the read of the last one after acct-5 fed. The restore discards three
+                    // interned accounts, restages the published slot and tries the rewind.
+                    execute("INSERT INTO tx VALUES ('2026-01-02T09:30:00.000000Z', 'acct-4', 32.0)");
+                    drainWalQueue();
+                    execute("INSERT INTO tx VALUES ('2026-01-02T09:40:00.000000Z', 'acct-5', 64.0)");
+                    execute("INSERT INTO tx VALUES ('2026-01-02T09:50:00.000000Z', 'acct-6', 128.0)");
+                    drainWalQueue();
+                    fault.arm(2);
+                    drainJob(job);
+                    Assert.assertTrue("the mid-drain segment read must have been failed exactly once", fault.hasFired());
+                    Assert.assertEquals("the reader must have pinned the tier at the rewind", 0, tierPinned.getCount());
+                    Assert.assertEquals("the restore's tier rebuild must have tried the rewind", rewindsBefore + 1,
+                            job.getStatsForTest().get(SYMBOL_REWIND_ATTEMPT_COUNT));
+                    Assert.assertEquals("a pin on the restaged slot must not refuse the rewind", refusalsBefore,
+                            job.getStatsForTest().get(SYMBOL_REWIND_REFUSAL_COUNT));
+
+                    // The retry derives the four accounts again over the ids the rewind took back,
+                    // and flushes them, while the reader still holds its pin.
+                    driveRefreshToQuiescence(job);
+                } finally {
+                    pinTier.countDown();
+                    readRows.countDown();
+                    reader.join();
+                    LiveViewRecordCursorFactory.setOnDiskCursorOpenedHook(null);
+                    LiveViewRecordCursorFactory.setOnSlotPinnedHook(null);
+                }
+            }
+
+            if (readerError.get() != null) {
+                throw new AssertionError("the reader failed", readerError.get());
+            }
+            TestUtils.assertEquals(pinnedRows, readerSink);
+            Assert.assertTrue("the reader must have read through the slot it pinned", isReaderRouted.get());
+            capture.drain();
+            capture.assertLoggedRE(RESTORED + " \\[view=lv, cause=mid-drain refresh failure, ");
+            capture.assertOnlyOnce(SYMBOL_IDS_REWOUND);
+            capture.assertNotLogged(SYMBOL_IDS_OUT_OF_STEP);
+            Assert.assertEquals("the mid-drain fault is the one fault", 1, instance("lv").getRefreshFaultCount());
+            assertViewRows("""
+                    created_at\taccount_id\tcumulative_sum\tcumulative_count
+                    2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                    2026-01-01T09:10:00.000000Z\tacct-2\t2.0\t1
+                    2026-01-02T09:00:00.000000Z\tacct-1\t4.0\t1
+                    2026-01-02T09:10:00.000000Z\tacct-1\t12.0\t2
+                    2026-01-02T09:20:00.000000Z\tacct-3\t16.0\t1
+                    2026-01-02T09:30:00.000000Z\tacct-4\t32.0\t1
+                    2026-01-02T09:40:00.000000Z\tacct-5\t64.0\t1
+                    2026-01-02T09:50:00.000000Z\tacct-6\t128.0\t1
+                    """);
+            assertAccountCountsMatchTheBase("""
+                    acct-1\t3
+                    acct-2\t1
+                    acct-3\t1
+                    acct-4\t1
+                    acct-5\t1
+                    acct-6\t1
+                    """);
             assertAccountRowsMatchTheBase("acct-3", "2026-01-02T09:20:00.000000Z\tacct-3\n");
         });
     }
@@ -5837,6 +5983,17 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
      * block: a tier marked stale and a published slot without a stamp, which the fence of no
      * read passes.
      */
+    // Waits for latch to open, bounded so that a thread that never reaches it fails the test
+    // instead of hanging it.
+    private static void awaitLatch(CountDownLatch latch) {
+        try {
+            Assert.assertTrue("a latch the test waits on never opened", latch.await(30, TimeUnit.SECONDS));
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new RuntimeException(e);
+        }
+    }
+
     private static void assertTierStandsDownForAnUnappliedBlock(LiveViewInstance instance) {
         Assert.assertTrue("the publish must mark the tier stale", instance.isTierStale());
         final LiveViewInMemoryTier tier = instance.getInMemoryTier();

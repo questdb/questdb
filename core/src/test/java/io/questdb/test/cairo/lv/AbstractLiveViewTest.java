@@ -499,6 +499,18 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
     }
 
     /**
+     * The LiveViewRecordCursorFactory under any wrapper the plan put on top of it.
+     */
+    protected static RecordCursorFactory liveViewFactoryOf(RecordCursorFactory factory) {
+        RecordCursorFactory f = factory;
+        while (f != null && !(f instanceof LiveViewRecordCursorFactory)) {
+            f = f.getBaseFactory();
+        }
+        Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
+        return f;
+    }
+
+    /**
      * Parses a microsecond timestamp literal, for the tests that hand raw timestamps to a
      * WalWriter or compare against a live view's persisted START FROM boundary.
      */
@@ -535,16 +547,6 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
                 LiveViewCheckpointRecoveryPhase.routeName(expected),
                 LiveViewCheckpointRecoveryPhase.routeName(instance.getCheckpointRestoreRoute())
         );
-    }
-
-    // The LiveViewRecordCursorFactory under any wrapper the plan put on top of it.
-    private static RecordCursorFactory liveViewFactoryOf(RecordCursorFactory factory) {
-        RecordCursorFactory f = factory;
-        while (f != null && !(f instanceof LiveViewRecordCursorFactory)) {
-            f = f.getBaseFactory();
-        }
-        Assert.assertNotNull("expected a LiveViewRecordCursorFactory in the plan", f);
-        return f;
     }
 
     // A keyed WINDOW JOIN from `left` onto the base, sorted on every output column so the

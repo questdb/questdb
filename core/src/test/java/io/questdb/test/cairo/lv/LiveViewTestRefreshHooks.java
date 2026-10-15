@@ -63,6 +63,7 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
     // Repair cleanup chains to let through before the next one throws; -1 is disarmed.
     private int repairCleanupFaultCountdown = -1;
     private Runnable resumeReplayStart;
+    private Runnable symbolRewindStart;
 
     /**
      * Returns the hooks installed on {@code job}, installing new ones first if it runs others.
@@ -161,6 +162,15 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
             // No FilesFacade fault reaches this count deterministically: whether it opens a file
             // depends on what the pooled view reader and the pinned base reader hold open.
             throw CairoException.critical(0).put("simulated live view stored row count fault");
+        }
+    }
+
+    @Override
+    public void beforeSymbolRewind() {
+        final Runnable action = symbolRewindStart;
+        if (action != null) {
+            symbolRewindStart = null;
+            action.run();
         }
     }
 
@@ -395,5 +405,15 @@ public final class LiveViewTestRefreshHooks implements LiveViewRefreshHooks {
 
     public void setSimulateStrandedIdLead(boolean simulate) {
         isStrandedIdLeadPublished = simulate;
+    }
+
+    /**
+     * One-shot. The action runs on the refresh worker with the refresh latch held, right before
+     * the symbol-id rewind asks the tier to take the stranded ids back, inside the try whose
+     * catch logs and swallows: a throw there reads as a failed rewind. It must not reach DROP
+     * LIVE VIEW or a checkpoint freeze, which wait for that latch.
+     */
+    public void setSimulateSymbolRewindStart(Runnable action) {
+        symbolRewindStart = action;
     }
 }
