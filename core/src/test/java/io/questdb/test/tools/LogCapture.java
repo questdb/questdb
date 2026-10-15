@@ -57,6 +57,18 @@ public class LogCapture {
         assertNotLogged(message, sink.toString());
     }
 
+    /**
+     * How many times {@code message} appears in the captured log, read off one stable snapshot.
+     */
+    public int countOccurrences(String message) {
+        final String snapshot = sink.toString();
+        int count = 0;
+        for (int i = snapshot.indexOf(message); i >= 0; i = snapshot.indexOf(message, i + message.length())) {
+            count++;
+        }
+        return count;
+    }
+
     public void assertOnlyOnce(String regex) {
         Matcher matcher = Pattern.compile(regex).matcher(sink.toString());
         Assert.assertTrue("Message '" + regex + "' was not logged", matcher.find());

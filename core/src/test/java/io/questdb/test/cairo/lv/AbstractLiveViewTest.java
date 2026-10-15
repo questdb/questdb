@@ -239,6 +239,39 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      *
      * @param keys every label the run's rows carry, NULL aside
      */
+    /**
+     * Asserts that {@code instance}'s restart recovery restored its window state from a published
+     * timeline root, and that nothing rebuilt or reset on the way there. Static so a test that
+     * runs a real server, and so reaches the instance through that server's engine, asserts the
+     * same witness.
+     * <p>
+     * {@code isCheckpointRestoreSucceeded()} alone cannot carry this assertion. Both restart routes
+     * report it: {@code tryRestoreFromTimeline} catches every {@link Throwable} and falls through to
+     * the applied-base rebuild, which recomputes the whole window, produces correct rows, faults no
+     * refresh cycle and fails no seal. A recompute oracle, the fault count and the seal-failure
+     * count are all green over that fallback, so a test that asserts only the flag proves the view
+     * has state - not that the roots it published are the state it came back on.
+     */
+    protected static void assertRestoredFromTimeline(String viewName, LiveViewInstance instance) {
+        assertRestoreRoute(viewName, LiveViewCheckpointRecoveryPhase.ROUTE_TIMELINE_RESTORE, instance);
+        Assert.assertEquals(
+                "live view '" + viewName + "' restored, but only after rebuilding from the applied base first",
+                0L,
+                instance.getCheckpointRebuildAttempts()
+        );
+        Assert.assertEquals(
+                "live view '" + viewName + "' restored, but retired the timeline it restored from;"
+                        + " the roots the previous process published are gone",
+                0L,
+                instance.getCheckpointTimelineResets()
+        );
+        Assert.assertTrue(
+                "live view '" + viewName + "' restored without naming the root it came back on",
+                instance.getCheckpointRestoreCheckpointId() != Numbers.LONG_NULL
+                        && instance.getCheckpointRestoreGeneration() != Numbers.LONG_NULL
+        );
+    }
+
     protected static void assertSymbolLabelsConsistent(String viewName, String keyColumn, ObjList<String> keys) throws SqlException {
         final StringSink bySymbol = new StringSink();
         final StringSink byText = new StringSink();
@@ -608,34 +641,11 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
 
     /**
      * Asserts the named view's restart recovery restored its window state from a published timeline
-     * root, and that nothing rebuilt or reset on the way there.
-     * <p>
-     * {@code isCheckpointRestoreSucceeded()} alone cannot carry this assertion. Both restart routes
-     * report it: {@code tryRestoreFromTimeline} catches every {@link Throwable} and falls through to
-     * the applied-base rebuild, which recomputes the whole window, produces correct rows, faults no
-     * refresh cycle and fails no seal. A recompute oracle, the fault count and the seal-failure
-     * count are all green over that fallback, so a test that asserts only the flag proves the view
-     * has state - not that the roots it published are the state it came back on.
+     * root, and that nothing rebuilt or reset on the way there. See
+     * {@link #assertRestoredFromTimeline(String, LiveViewInstance)}.
      */
     protected void assertRestoredFromTimeline(String viewName) {
-        final LiveViewInstance instance = restoreWitnessInstance(viewName);
-        assertRestoreRoute(viewName, LiveViewCheckpointRecoveryPhase.ROUTE_TIMELINE_RESTORE, instance);
-        Assert.assertEquals(
-                "live view '" + viewName + "' restored, but only after rebuilding from the applied base first",
-                0L,
-                instance.getCheckpointRebuildAttempts()
-        );
-        Assert.assertEquals(
-                "live view '" + viewName + "' restored, but retired the timeline it restored from;"
-                        + " the roots the previous process published are gone",
-                0L,
-                instance.getCheckpointTimelineResets()
-        );
-        Assert.assertTrue(
-                "live view '" + viewName + "' restored without naming the root it came back on",
-                instance.getCheckpointRestoreCheckpointId() != Numbers.LONG_NULL
-                        && instance.getCheckpointRestoreGeneration() != Numbers.LONG_NULL
-        );
+        assertRestoredFromTimeline(viewName, restoreWitnessInstance(viewName));
     }
 
     /**
