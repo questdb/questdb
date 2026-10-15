@@ -716,9 +716,78 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
      */
     @Test
     public void testWalCommitSegmentFileSyncsPerMode() throws Exception {
+        assertWalCommitSegmentFileSyncsPerMode(new WritebackDrainFacade());
+    }
+
+    /**
+     * As {@link #testWalCommitSegmentFileSyncsPerMode()}, on a facade that reports a platform other than Linux:
+     * there the file flush does not cover the pages written through the mapping, and ADAPTIVE writes them back
+     * with MS_ASYNC before each flush.
+     */
+    @Test
+    public void testWalCommitSegmentFileSyncsPerModeOffLinux() throws Exception {
+        final WritebackDrainFacade ff = new WritebackDrainFacade();
+        ff.isSyncfsFileSystemWide = false;
+        assertWalCommitSegmentFileSyncsPerMode(ff);
+    }
+
+    /**
+     * Off Linux, each file a commit flushes after writing it through the mapping, and not msynced with MS_SYNC,
+     * is written back with an msync before its flush (MemoryMA.flushFile): WAL column and event files and the
+     * segment _meta at the commit (ADAPTIVE at W=0 and W>0), the event files of a non-data record under a group
+     * window, and the sequencer files at the group window's deferred flush.
+     */
+    @Test
+    public void testWalFlushWritesMappedPagesBackFirstOffLinux() throws Exception {
+        final MappedFlushOrderFacade ff = new MappedFlushOrderFacade();
+        assertMemoryLeak(ff, () -> {
+            final long[] windows = {0, WINDOW_US};
+            for (int c = 0; c < windows.length; c++) {
+                node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
+                node1.setProperty(PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, windows[c]);
+                setCurrentMicros(1_000_000L);
+                execute("CREATE TABLE x" + c + " (ts TIMESTAMP, v LONG, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                try (WalWriter writer = getWalWriter("x" + c)) {
+                    ff.arm();
+                    for (int i = 0; i < 3; i++) {
+                        final TableWriter.Row row = writer.newRow(i * 60_000_000L);
+                        row.putLong(1, i);
+                        // Longer than the aux vector inlines, so the value lands in s.d.
+                        row.putVarchar(2, new Utf8String("varchar value " + i));
+                        row.append();
+                        // Past the group window, so the commit runs the deferred sequencer flush.
+                        setCurrentMicros(1_000_000L + (i + 1) * (WINDOW_US + 1));
+                        writer.commit();
+                    }
+                    if (windows[c] > 0) {
+                        // A non-data record: an async sync under the window, then the event files' barrier.
+                        writer.truncateSoft();
+                    }
+                    ff.disarm();
+                }
+                final String flushed = ff.flushedFiles.toString();
+                Assert.assertEquals("window=" + windows[c] + ", flushes without a write-back first",
+                        "[]", ff.violations.toString());
+                for (String file : new String[]{"_event", "_event.i", "_meta", "ts.d", "v.d", "s.d", "s.i"}) {
+                    Assert.assertTrue("window=" + windows[c] + ", " + file + " must be flushed: " + flushed,
+                            ff.flushedFiles.contains(file));
+                }
+                if (windows[c] > 0) {
+                    Assert.assertTrue("the deferred flush must flush the sequencer header: " + flushed,
+                            ff.flushedFiles.contains(WalUtils.TXNLOG_FILE_NAME));
+                }
+                ff.flushedFiles.clear();
+            }
+        });
+    }
+
+    private void assertWalCommitSegmentFileSyncsPerMode(WritebackDrainFacade ff) throws Exception {
         final String perFile = "_event: %1$s; _event.i: %1$s;%2$s ts.d: %1$s; v.d: %1$s";
-        final String drained = "barrierFsync=1 msyncAsync=1 syncFileRange=2";
-        final String adaptiveMeta = " _meta: barrierFsync=1 msyncAsync=1;";
+        // Linux writes back pages dirtied through a mapping in the file flush; elsewhere ADAPTIVE writes them
+        // back with MS_ASYNC first.
+        final boolean isWriteBack = !ff.isSyncfsFileSystemWide();
+        final String drained = isWriteBack ? "barrierFsync=1 msyncAsync=1 syncFileRange=2" : "barrierFsync=1 syncFileRange=2";
+        final String adaptiveMeta = isWriteBack ? " _meta: barrierFsync=1 msyncAsync=1;" : " _meta: barrierFsync=1;";
         // commit mode, group window in microseconds, the sync calls of the first commit and of a later one on the
         // segment files.
         final String[][] cases = {
@@ -729,7 +798,6 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                 {"sync", "0", String.format(perFile, "msyncSync=1", " _meta: msyncSync=1;"), String.format(perFile, "msyncSync=1", "")},
                 {"adaptive", "0", String.format(perFile, drained, adaptiveMeta), String.format(perFile, drained, "")}
         };
-        final WritebackDrainFacade ff = new WritebackDrainFacade();
         assertMemoryLeak(ff, () -> {
             for (int c = 0; c < cases.length; c++) {
                 final String[] mode = cases[c];
@@ -2069,6 +2137,7 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         private final Map<Long, String> fdToFile = new HashMap<>();
         boolean drain = true;
         int failedKicks;
+        boolean isSyncfsFileSystemWide = super.isSyncfsFileSystemWide();
         int kickErrno;
         int pendingErrno;
         int probeCount, syncFileRangeCount;
@@ -2104,6 +2173,11 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
                 throw CairoException.dataSyncFailure(this, 5, "fdatasync", "injected writeback error");
             }
             super.fdatasync(fd);
+        }
+
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            return isSyncfsFileSystemWide;
         }
 
         @Override
@@ -2234,6 +2308,122 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             if (file != null && addr != -1 && addr != 0) {
                 addrToFile.put(addr, file);
             }
+        }
+    }
+
+    /**
+     * Reports a platform other than Linux, and records every flush of a file that has a live mapping: a flush with
+     * no msync of that file since its previous flush is a violation.
+     */
+    static class MappedFlushOrderFacade extends TestFilesFacadeImpl {
+        final List<String> flushedFiles = new ArrayList<>();
+        final List<String> violations = new ArrayList<>();
+        private final Map<Long, Long> addrToFd = new HashMap<>();
+        private final Map<Long, String> fdToFile = new HashMap<>();
+        private final Map<Long, Integer> fdMappings = new HashMap<>();
+        private final Map<Long, Boolean> fdWrittenBack = new HashMap<>();
+        private boolean isArmed;
+        private boolean isInBarrier;
+
+        @Override
+        public synchronized void barrierFsync(long fd) {
+            checkWrittenBack(fd, "barrierFsync");
+            // FilesFacadeImpl routes the barrier through fdatasync(); check it once.
+            isInBarrier = true;
+            try {
+                super.barrierFsync(fd);
+            } finally {
+                isInBarrier = false;
+            }
+        }
+
+        @Override
+        public synchronized boolean close(long fd) {
+            fdToFile.remove(fd);
+            fdWrittenBack.remove(fd);
+            return super.close(fd);
+        }
+
+        @Override
+        public synchronized void fdatasync(long fd) {
+            if (!isInBarrier) {
+                checkWrittenBack(fd, "fdatasync");
+            }
+            super.fdatasync(fd);
+        }
+
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            return false;
+        }
+
+        @Override
+        public synchronized long mmap(long fd, long len, long offset, int flags, int memoryTag) {
+            final long addr = super.mmap(fd, len, offset, flags, memoryTag);
+            if (addr != -1 && addr != 0) {
+                addrToFd.put(addr, fd);
+                fdMappings.merge(fd, 1, Integer::sum);
+            }
+            return addr;
+        }
+
+        @Override
+        public synchronized long mremap(long fd, long addr, long previousSize, long newSize, long offset, int mode, int memoryTag) {
+            final long newAddr = super.mremap(fd, addr, previousSize, newSize, offset, mode, memoryTag);
+            final Long mappedFd = addrToFd.remove(addr);
+            if (mappedFd != null && newAddr != -1 && newAddr != 0) {
+                addrToFd.put(newAddr, mappedFd);
+            }
+            return newAddr;
+        }
+
+        @Override
+        public synchronized void msync(long addr, long len, boolean async) {
+            final Long fd = addrToFd.get(addr);
+            if (fd != null) {
+                fdWrittenBack.put(fd, Boolean.TRUE);
+            }
+            super.msync(addr, len, async);
+        }
+
+        @Override
+        public synchronized void munmap(long address, long size, int memoryTag) {
+            final Long fd = addrToFd.remove(address);
+            if (fd != null) {
+                fdMappings.merge(fd, -1, Integer::sum);
+            }
+            super.munmap(address, size, memoryTag);
+        }
+
+        @Override
+        public synchronized long openRW(LPSZ name, int opts) {
+            final long fd = super.openRW(name, opts);
+            if (fd > -1) {
+                final String path = Utf8String.newInstance(name).toString();
+                fdToFile.put(fd, path.substring(Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\')) + 1));
+            }
+            return fd;
+        }
+
+        synchronized void arm() {
+            fdWrittenBack.clear();
+            isArmed = true;
+        }
+
+        private void checkWrittenBack(long fd, String call) {
+            final Integer mappings = fdMappings.get(fd);
+            if (isArmed && mappings != null && mappings > 0) {
+                final String file = fdToFile.get(fd);
+                if (fdWrittenBack.remove(fd) == null) {
+                    violations.add(file + ' ' + call);
+                } else if (!flushedFiles.contains(file)) {
+                    flushedFiles.add(file);
+                }
+            }
+        }
+
+        synchronized void disarm() {
+            isArmed = false;
         }
     }
 

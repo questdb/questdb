@@ -114,6 +114,23 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
         return fd;
     }
 
+    @Override
+    public void flushFile(boolean barrier) {
+        if (pageAddress != 0 && !ff.isSyncfsFileSystemWide()) {
+            // Off Linux, write the mapped page into the file before the flush (see MemoryMA.flushFile), over the
+            // range sync(true) used to msync.
+            final long len = appendOnly ? inPageWritten() : getPageSize();
+            if (len > 0) {
+                ff.msync(pageAddress, len, true);
+            }
+        }
+        if (barrier) {
+            ff.barrierFsync(fd);
+        } else {
+            ff.fdatasync(fd);
+        }
+    }
+
     public long getFd() {
         return fd;
     }

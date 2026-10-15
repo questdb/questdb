@@ -654,8 +654,13 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                     // Every later flush reaches only the open part, so the part being left would never be flushed.
                     // Its records may be pending, written under a group window or by a since-closed instance that
                     // ran in another mode, and the records after them become durable. A part past the tail holds
-                    // none.
-                    ff.fdatasync(txnPartMem.getFd());
+                    // none. Under ADAPTIVE this is the group window's deferred flush of the part, whose records
+                    // were never msynced (see sync0()); SYNC msynced them with MS_SYNC on every commit.
+                    if (configuration.getCommitMode() == CommitMode.ADAPTIVE) {
+                        txnPartMem.flushFile(false);
+                    } else {
+                        ff.fdatasync(txnPartMem.getFd());
+                    }
                 }
                 txnPartMem.close(false);
                 txnPartMem.of(ff, rootPath.$(), partSize, partSize, MemoryTag.MMAP_TX_LOG);
@@ -779,7 +784,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             // sync can leave maxTxn=N pointing at a zeroed or partial record. ASYNC promises nothing across a
             // power loss, and its MS_ASYNC orders nothing, so it syncs the header alone.
             //
-            // With a group window, ADAPTIVE msyncs the files with MS_ASYNC, which flushes nothing, and leaves the
+            // With a group window, ADAPTIVE takes an async sync, which writes nothing back, and leaves the
             // device flush to the batched flush (fdatasyncTxnLog). localDurableSeqTxn advances only after that
             // flush, so a durably acknowledged txn is on the device. Other modes keep their own grade.
             final boolean deferDeviceFlush = isDeviceFlushDeferred();
@@ -828,12 +833,13 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
     public void fdatasyncTxnLog() {
         // The batched device flush of adaptive group commit, part file before the header as in sync0(). The caller
         // holds the sequencer write lock, so no record is half-written up to this tail.
+        // flushFile(): the records are written through the mapping and, under a group window, never msynced.
         final long flushedTxn = maxTxn.get();
         if (txnPartMem.isOpen()) {
-            ff.fdatasync(txnPartMem.getFd());
+            txnPartMem.flushFile(false);
         }
         if (txnMem.isOpen()) {
-            ff.fdatasync(txnMem.getFd());
+            txnMem.flushFile(false);
             markFlushed(flushedTxn);
         }
     }

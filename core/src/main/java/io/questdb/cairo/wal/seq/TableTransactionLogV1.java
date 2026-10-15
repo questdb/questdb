@@ -242,7 +242,8 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         if (txnMem.isOpen()) {
             // The caller holds the sequencer write lock, so no record is half-written past this tail.
             final long flushedTxn = maxTxn.get();
-            ff.fdatasync(txnMem.getFd());
+            // flushFile(): the records are written through the mapping and, under a group window, never msynced.
+            txnMem.flushFile(false);
             txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, flushedTxn + 1);
         }
     }
@@ -487,7 +488,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         // Local Java commits and create keep the configured grade: the object store does not hold them on a replica.
         int commitMode = configuration.getCommitMode();
         if (commitMode != CommitMode.NOSYNC) {
-            // With a group window, ADAPTIVE msyncs the header with MS_ASYNC, which flushes nothing, and leaves
+            // With a group window, ADAPTIVE takes an async sync, which writes nothing back, and leaves
             // the device flush to the batched flush (fdatasyncTxnLog). Other modes keep their own grade.
             final boolean deferDeviceFlush = commitMode == CommitMode.ADAPTIVE
                     && configuration.getAdaptiveCommitGroupWindowUs() > 0;

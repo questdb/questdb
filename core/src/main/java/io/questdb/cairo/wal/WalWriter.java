@@ -1022,8 +1022,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         if (commitMode == CommitMode.ADAPTIVE) {
             events.sync(commitMode);
             if (isDeviceFlushDeferred()) {
-                // Under W>0 sync() is MS_ASYNC. The private event and index files still have to be on the device
-                // before any writer can flush the shared sequencer.
+                // Under W>0 sync() writes nothing back. The private event and index files still have to be on the
+                // device before any writer can flush the shared sequencer.
                 events.barrierFsync();
             }
         }
@@ -2150,8 +2150,8 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
         if (isCommittingData && commitMode == CommitMode.ADAPTIVE && isDeviceFlushDeferred()) {
             // The commit's own pre-sequencing barrier (syncIfRequired) ran on the old segment before the sequencer
             // answered NO_TXN, and the commit sequences this copy as soon as the change log is applied. Under W>0
-            // sync() above is only MS_ASYNC: without this barrier the batched sequencer flush would acknowledge the
-            // txn durable while its record is still only in the page cache.
+            // sync() above writes nothing back: without this barrier the batched sequencer flush would acknowledge
+            // the txn durable while its record is still only in the page cache.
             events.barrierFsync();
         }
     }
@@ -2500,15 +2500,17 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
 
     private void syncIfRequired0(int commitMode) {
         if (commitMode != CommitMode.NOSYNC) {
-            // ADAPTIVE uses MS_ASYNC here at every window, then fdatasyncs these writer-private files before
-            // sequencing. Only the shared sequencer flush is batched, so one writer's flush of the sequencer cannot
+            // ADAPTIVE flushes these writer-private files before sequencing, at every window, with flushFile()
+            // below. Only the shared sequencer flush is batched, so one writer's flush of the sequencer cannot
             // publish another writer's files that are not yet durable. ASYNC and SYNC keep their own grade.
             final boolean adaptive = commitMode == CommitMode.ADAPTIVE;
-            final boolean async = commitMode == CommitMode.ASYNC || adaptive;
-            for (int i = 0, n = columns.size(); i < n; i++) {
-                MemoryMA column = columns.getQuick(i);
-                if (column != null) {
-                    column.sync(async);
+            if (!adaptive) {
+                final boolean async = commitMode == CommitMode.ASYNC;
+                for (int i = 0, n = columns.size(); i < n; i++) {
+                    MemoryMA column = columns.getQuick(i);
+                    if (column != null) {
+                        column.sync(async);
+                    }
                 }
             }
             // Advisory writeback drain. Each fdatasync below writes back and forces the journal, serially; starting
@@ -2546,14 +2548,12 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                     if (column != null && !(column instanceof NullMemory) && column.getFd() != -1) {
                         // Ordering only: these must reach the medium before the sequencer record, and the commit
                         // point's full device flush makes them durable. See Files.barrierFsync.
-                        ff.barrierFsync(column.getFd());
+                        column.flushFile(true);
                     }
                 }
-            }
-            // ADAPTIVE syncs the event mappings at the ASYNC grade (MS_ASYNC) and takes the barrier itself below.
-            events.sync(adaptive ? CommitMode.ASYNC : commitMode);
-            if (adaptive) {
                 events.barrierFsync();
+            } else {
+                events.sync(commitMode);
             }
         }
     }

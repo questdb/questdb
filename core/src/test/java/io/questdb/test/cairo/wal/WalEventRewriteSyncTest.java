@@ -74,16 +74,18 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
     private final String columnType;
     private final String commitMode;
     private final long groupWindowUs;
+    private final boolean isOffLinux;
     private final boolean isRoll;
 
-    public WalEventRewriteSyncTest(String commitMode, long groupWindowUs, boolean isRoll, String columnType) {
+    public WalEventRewriteSyncTest(String commitMode, long groupWindowUs, boolean isRoll, String columnType, boolean isOffLinux) {
         this.commitMode = commitMode;
         this.groupWindowUs = groupWindowUs;
         this.isRoll = isRoll;
         this.columnType = columnType;
+        this.isOffLinux = isOffLinux;
     }
 
-    @Parameterized.Parameters(name = "mode={0}, window={1}, roll={2}, column={3}")
+    @Parameterized.Parameters(name = "mode={0}, window={1}, roll={2}, column={3}, offLinux={4}")
     public static Collection<Object[]> data() {
         final Object[][] modes = {
                 {"nosync", 0L},
@@ -96,7 +98,9 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
         for (Object[] mode : modes) {
             for (boolean isRoll : new boolean[]{true, false}) {
                 for (String columnType : new String[]{"SYMBOL", "INT"}) {
-                    params.add(new Object[]{mode[0], mode[1], isRoll, columnType});
+                    for (boolean isOffLinux : new boolean[]{false, true}) {
+                        params.add(new Object[]{mode[0], mode[1], isRoll, columnType, isOffLinux});
+                    }
                 }
             }
         }
@@ -110,6 +114,9 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
         // One msync per file, independently of the optional adaptive writeback drain.
         node1.setProperty(PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, false);
         final BarrierFacade ff = new BarrierFacade();
+        if (isOffLinux) {
+            ff.isSyncfsFileSystemWide = false;
+        }
         assertMemoryLeak(ff, () -> {
             execute("CREATE TABLE x (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL");
             final TableToken token = engine.verifyTableName("x");
@@ -122,9 +129,10 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
             ff.tracker = tracker;
             final boolean isRewritten = "SYMBOL".equals(columnType);
             final boolean isAdaptive = "adaptive".equals(commitMode);
-            // An async sync makes no msync call, so an ASYNC rewrite has no msync of its own.
-            final boolean isMsyncedRewrite = isRewritten && !"nosync".equals(commitMode) && !"async".equals(commitMode);
+            // A flushed rewrite has an msync of its own only where the file flush does not write back the mapped
+            // pages, off Linux (MemoryMA.flushFile). An async sync makes no msync call, so an ASYNC rewrite has none.
             final boolean isFlushedRewrite = isRewritten && ("sync".equals(commitMode) || isAdaptive);
+            final boolean isMsyncedRewrite = isFlushedRewrite && !ff.isSyncfsFileSystemWide();
             final long seqTxn = isRoll ? 3 : 2;
             try (WalWriter writer = getWalWriter("x")) {
                 if (isRoll) {
@@ -153,8 +161,8 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
                             ff.hasBarrierBeforeSequencing(file, recordLength, seqTxn)
                     );
                 }
-                // The NO_TXN commit: its own per-commit grade, plus MS_ASYNC per file for a rewrite in SYNC and
-                // ADAPTIVE and a barrier per file for a flushed rewrite, and nothing more.
+                // The NO_TXN commit: its own per-commit grade, plus a barrier per file for a flushed rewrite, with
+                // an MS_ASYNC before it off Linux, and nothing more.
                 assertEventBarriers(ff, segmentMarker, isMsyncedRewrite ? 1 : 0, isFlushedRewrite ? 1 : 0, isRoll);
 
                 for (int i = 2; i < 4; i++) {
@@ -194,9 +202,9 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
 
     /**
      * Exact event-file barriers of one commit: the per-commit grade of the mode, plus {@code rewriteMsyncs}
-     * MS_ASYNC and {@code rewriteBarriers} fdatasync per file. ADAPTIVE commits sync the event files with
-     * MS_ASYNC at every window; a record the roll re-created in a new segment is synced by
-     * {@code WalEventWriter.sync(ADAPTIVE)}, which is MS_SYNC at W=0.
+     * MS_ASYNC and {@code rewriteBarriers} fdatasync per file. ADAPTIVE commits flush the event files at every
+     * window, with an MS_ASYNC write-back first off Linux only (MemoryMA.flushFile); a record the roll
+     * re-created in a new segment is synced by {@code WalEventWriter.sync(ADAPTIVE)}, which is MS_SYNC at W=0.
      */
     private void assertEventBarriers(
             SyncAttributingFilesFacade ff,
@@ -206,10 +214,18 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
             boolean isRolledRecord
     ) {
         final boolean isAdaptive = "adaptive".equals(commitMode);
-        // ASYNC syncs the event files with an async sync, which makes no msync call.
-        final int commitMsyncs = "nosync".equals(commitMode) || "async".equals(commitMode) ? 0 : 1;
-        final int commitFsyncs = isAdaptive ? 1 : 0;
         final boolean isAdaptiveW0 = isAdaptive && groupWindowUs == 0;
+        // ASYNC syncs the event files with an async sync, which makes no msync call. ADAPTIVE msyncs them only
+        // to write the mapped pages back off Linux, except the MS_SYNC of a rolled record at W=0.
+        final int commitMsyncs;
+        if ("nosync".equals(commitMode) || "async".equals(commitMode)) {
+            commitMsyncs = 0;
+        } else if (isAdaptive && !(isAdaptiveW0 && isRolledRecord)) {
+            commitMsyncs = ff.isSyncfsFileSystemWide() ? 0 : 1;
+        } else {
+            commitMsyncs = 1;
+        }
+        final int commitFsyncs = isAdaptive ? 1 : 0;
         for (String file : EVENT_FILES) {
             final String path = segmentMarker + file;
             // The facade matches substrings, and "_event" is a prefix of "_event.i".
@@ -236,6 +252,7 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
         private final Map<Long, String> fdToPath = new HashMap<>();
         private Path eventFile;
         private boolean isArmed;
+        private boolean isSyncfsFileSystemWide = super.isSyncfsFileSystemWide();
         private String segmentMarker;
         private SeqTxnTracker tracker;
 
@@ -261,6 +278,11 @@ public class WalEventRewriteSyncTest extends AbstractCairoTest {
                     }
                 }
             }
+        }
+
+        @Override
+        public boolean isSyncfsFileSystemWide() {
+            return isSyncfsFileSystemWide;
         }
 
         @Override

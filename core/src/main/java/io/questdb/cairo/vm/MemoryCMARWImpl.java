@@ -200,6 +200,23 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
     }
 
     @Override
+    public void flushFile(boolean barrier) {
+        if (pageAddress != 0 && !ff.isSyncfsFileSystemWide()) {
+            // Off Linux, write the mapped pages into the file before the flush (see MemoryMA.flushFile), over the
+            // range sync(true) used to msync.
+            final long len = appendOnly ? getAppendOffset() : size;
+            if (len > 0) {
+                ff.msync(pageAddress, len, true);
+            }
+        }
+        if (barrier) {
+            ff.barrierFsync(fd);
+        } else {
+            ff.fdatasync(fd);
+        }
+    }
+
+    @Override
     public long getAppendAddress() {
         return appendAddress;
     }

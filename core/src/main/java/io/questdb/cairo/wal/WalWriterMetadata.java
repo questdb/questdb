@@ -291,8 +291,7 @@ public class WalWriterMetadata extends AbstractRecordMetadata implements TableRe
             } else {
                 // As for the event files: the ordering barrier puts the file on the medium ahead of the sequencer
                 // record, and the sequencer flush at the commit point is the full device flush.
-                metaMem.sync(true);
-                ff.barrierFsync(metaMem.getFd());
+                metaMem.flushFile(true);
             }
             hasUnflushedWrite = false;
         }

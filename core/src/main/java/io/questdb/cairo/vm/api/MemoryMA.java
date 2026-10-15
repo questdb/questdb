@@ -37,6 +37,20 @@ public interface MemoryMA extends MemoryM, MemoryA {
 
     void close(boolean truncate, byte truncateMode);
 
+    /**
+     * Saves the file to disk, including the pages written through the mapping: the call for a file written
+     * through the mapping and not msynced with {@code MS_SYNC} since. Linux needs only the file flush, which
+     * writes back pages dirtied through a mapping. Windows needs {@code FlushViewOfFile} before
+     * {@code FlushFileBuffers}, and macOS an {@code msync} before its fsync, so there it first writes the
+     * mapped pages into the file with {@code msync(MS_ASYNC)}, the call {@code sync(true)} made before an async
+     * sync became a no-op. {@link FilesFacade#isSyncfsFileSystemWide()}, true on Linux only, tells the platform
+     * apart. Leaves the {@code sync()} skip watermark alone. The caller checks the file is open.
+     *
+     * @param barrier true for the ordering barrier {@link FilesFacade#barrierFsync(long)}, false for the
+     *                durable {@link FilesFacade#fdatasync(long)}
+     */
+    void flushFile(boolean barrier);
+
     long getAppendAddress();
 
     long getAppendAddressSize();
