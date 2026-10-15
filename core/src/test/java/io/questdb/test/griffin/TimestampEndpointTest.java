@@ -170,7 +170,7 @@ public class TimestampEndpointTest extends AbstractCairoTest {
             assertQuery("SELECT last(ts) r FROM t WHERE l > 1000").noLeakCheck().expectSize()
                     .returns("""
                             r
-
+                            
                             """);
             assertQuery("SELECT t.l, x.r FROM t JOIN (SELECT max(ts) r FROM t) x ON t.ts = x.r")
                     .noLeakCheck()

@@ -691,9 +691,9 @@ public class PlanVerifierTest extends AbstractCairoTest {
             }, PlanVerifier.INPUT_RANDOM_ACCESS);
             assertAlgorithmContradicts("SELECT ts, k, x FROM (SELECT a.ts, a.k, b.x FROM ra_a a CROSS JOIN ra_b b) LATEST ON ts PARTITION BY k",
                     LatestByPlan.class, latest -> {
-                Assert.assertEquals(LatestByPlan.Algorithm.MATERIALIZED, latest.getAlgorithm());
-                latest.setAlgorithm(LatestByPlan.Algorithm.LIGHT);
-            }, PlanVerifier.INPUT_RANDOM_ACCESS);
+                        Assert.assertEquals(LatestByPlan.Algorithm.MATERIALIZED, latest.getAlgorithm());
+                        latest.setAlgorithm(LatestByPlan.Algorithm.LIGHT);
+                    }, PlanVerifier.INPUT_RANDOM_ACCESS);
         });
     }
 
