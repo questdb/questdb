@@ -26,21 +26,34 @@ package io.questdb.test.cairo.fuzz;
 
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
+import io.questdb.cairo.CursorPrinter;
 import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Record;
+import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.table.AsyncHorizonJoinProjectionRecordCursorFactory;
 import io.questdb.griffin.engine.table.HorizonJoinProjectionRecordCursorFactory;
+import io.questdb.mp.SOCountDownLatch;
 import io.questdb.mp.WorkerPool;
+import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.mp.TestWorkerPool;
 import io.questdb.test.tools.TestUtils;
+import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
+
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CyclicBarrier;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 // This is not a fuzz test in traditional sense, but it's multithreaded, and we want to run it
 // in CI frequently along with other fuzz tests.
@@ -235,6 +248,299 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                 true,
                 null
         );
+    }
+
+    @Test
+    public void testParallelHorizonJoinProjectionBindVariableReuse() throws Exception {
+        // A PGWire prepared statement runs one factory again with new bind values. Each execution
+        // has to initialize again the bind variables of the master filter, the bind memory of its
+        // JIT form and the worker clones of the right-hand filters, and must not carry over the
+        // key misses of an execution whose right-hand filter matched nothing. Each execution of
+        // the reused factory must return the rows of a fresh serial compile with the values
+        // inlined.
+        final String[] queries = {
+                // Keyed: a right-hand filter that isn't thread-safe and a JIT master filter.
+                "SELECT t.ts, t.sym, h.offset, p.bid FROM trades t"
+                        + " HORIZON JOIN (prices WHERE concat(sym, '') = $1) p ON (sym)"
+                        + " LIST (-1s, 0s, 1s) AS h WHERE t.price > $2",
+                // Unkeyed: a Java master filter that isn't thread-safe.
+                "SELECT t.ts, h.offset, p.sym, p.bid FROM trades t"
+                        + " HORIZON JOIN (prices WHERE concat(sym, '') = $1) p"
+                        + " LIST (-1s, 0s, 1s) AS h WHERE concat(t.side, '') = $3",
+                // Two right-hand tables, keyed: bind variables in a sub-query and in an ON clause.
+                "SELECT t.ts, t.sym, h.offset, p.bid, r.ask FROM trades t"
+                        + " HORIZON JOIN (prices WHERE concat(sym, '') = $1) p ON (sym)"
+                        + " HORIZON JOIN prices r ON (t.sym = r.sym AND r.ask > $4)"
+                        + " LIST (0s, 2s) AS h WHERE concat(t.side, '') = $3",
+                // Two right-hand tables, unkeyed.
+                "SELECT t.ts, h.offset, p.sym, p.bid, r.sym, r.ask FROM trades t"
+                        + " HORIZON JOIN (prices WHERE concat(sym, '') = $1) p"
+                        + " HORIZON JOIN (prices WHERE ask > $4) r"
+                        + " LIST (-2s, 0s) AS h WHERE t.price > $2",
+        };
+        // $1 and $3 are strings, $2 and $4 doubles. The right-hand filters match, then match
+        // nothing, then match again; then the master filters do the same.
+        final String[][] values = {
+                {"sym0", "20.0", "sell", "10.0"},
+                {"ZZZ", "20.0", "sell", "100.0"},
+                {"sym1", "20.0", "sell", "12.0"},
+                {"sym1", "1000.0", "none", "12.0"},
+                {"sym0", "15.0", "buy", "10.0"},
+                {"sym0", "20.0", "sell", "10.0"},
+        };
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        createTradesTable(engine, sqlExecutionContext);
+                        createPricesTable(engine, sqlExecutionContext, "prices");
+                        if (convertToParquet) {
+                            engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                            engine.execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                        }
+                        final BindVariableService bindVariableService = sqlExecutionContext.getBindVariableService();
+                        final StringSink expected = new StringSink();
+                        final StringSink actual = new StringSink();
+                        for (String query : queries) {
+                            for (boolean isParallel : new boolean[]{false, true}) {
+                                setBindVariables(bindVariableService, values[0]);
+                                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                                try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
+                                    TestUtils.assertFactoryInTree(
+                                            factory,
+                                            isParallel ? AsyncHorizonJoinProjectionRecordCursorFactory.class : HorizonJoinProjectionRecordCursorFactory.class,
+                                            query
+                                    );
+                                    for (String[] value : values) {
+                                        sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+                                        TestUtils.printSql(engine, sqlExecutionContext, inlineBindVariables(query, value), expected);
+                                        setBindVariables(bindVariableService, value);
+                                        printRows(factory, sqlExecutionContext, actual);
+                                        TestUtils.assertEquals(query + " " + String.join(", ", value), expected, actual);
+                                    }
+                                }
+                            }
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelHorizonJoinProjectionConcurrent() throws Exception {
+        // Queries share one worker pool, so the reading thread of one query reduces the tasks of
+        // another and takes a worker slot of that query's atom. Each thread runs one shape after
+        // another, and every run must return the rows of the serial factory.
+        final String[] queries = {
+                // Keyed.
+                "SELECT t.ts, t.sym, h.offset, p.bid FROM trades t HORIZON JOIN prices p ON (sym) LIST (-1s, 0s, 1s) AS h",
+                // Unkeyed.
+                "SELECT t.ts, h.offset, p.sym, p.ask FROM trades t HORIZON JOIN prices p RANGE FROM -2s TO 2s STEP 1s AS h",
+                // JIT master filter.
+                "SELECT t.ts, t.sym, h.offset, p.bid FROM trades t HORIZON JOIN prices p ON (sym) LIST (0s, 3s) AS h WHERE t.price > 25",
+                // Master and right-hand filters that aren't thread-safe.
+                "SELECT t.ts, h.offset, p.bid FROM trades t HORIZON JOIN (prices WHERE concat(sym, '') != 'sym0') p ON (sym)"
+                        + " LIST (-1s, 1s) AS h WHERE concat(t.side, '') = 'buy'",
+                // Two right-hand tables.
+                "SELECT t.ts, h.offset, p.bid, r.ask FROM trades t HORIZON JOIN prices p ON (sym) HORIZON JOIN prices r LIST (-1s, 2s) AS h",
+                // An outer GROUP BY.
+                "SELECT h_offset, sym, count() n, count(bid) nb, max(ask) a FROM ("
+                        + "SELECT h.offset h_offset, t.sym, p.bid, p.ask FROM trades t HORIZON JOIN prices p ON (sym) LIST (0s, 1s, 5s) AS h"
+                        + ") ORDER BY h_offset, sym",
+                // A LIMIT closes the cursor while tasks are still in flight.
+                "SELECT t.ts, h.offset, p.bid FROM trades t HORIZON JOIN prices p ON (sym) LIST (0s, 1s) AS h LIMIT 7",
+                // 200 offsets, above the slot cap: the serial factory matches, and the master
+                // filter runs on the workers.
+                "SELECT t.ts, h.offset, p.bid FROM trades t HORIZON JOIN prices p ON (sym) RANGE FROM 0s TO 199s STEP 1s AS h WHERE t.price > 29",
+        };
+        final int threadCount = 6;
+        final int iterationCount = 20;
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
+            TestUtils.execute(
+                    pool,
+                    (engine, _, sqlExecutionContext) -> {
+                        createTradesTable(engine, sqlExecutionContext);
+                        createPricesTable(engine, sqlExecutionContext, "prices");
+                        if (convertToParquet) {
+                            engine.execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                            engine.execute("ALTER TABLE prices CONVERT PARTITION TO PARQUET WHERE ts >= 0", sqlExecutionContext);
+                        }
+                        final ObjList<String> expected = new ObjList<>();
+                        final StringSink sink = new StringSink();
+                        sqlExecutionContext.setParallelHorizonJoinEnabled(false);
+                        for (String query : queries) {
+                            TestUtils.printSql(engine, sqlExecutionContext, query, sink);
+                            expected.add(sink.toString());
+                        }
+
+                        final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
+                        final CyclicBarrier barrier = new CyclicBarrier(threadCount);
+                        final SOCountDownLatch haltLatch = new SOCountDownLatch(threadCount);
+                        final int workerCount = sqlExecutionContext.getSharedQueryWorkerCount();
+                        for (int i = 0; i < threadCount; i++) {
+                            final int threadId = i;
+                            final Rnd threadRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
+                            new Thread(() -> {
+                                final StringSink actual = new StringSink();
+                                // Each thread compiles and runs against a context of its own.
+                                try (SqlExecutionContextImpl threadContext = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
+                                    threadContext.setParallelHorizonJoinEnabled(true);
+                                    TestUtils.await(barrier);
+                                    for (int j = 0; j < iterationCount; j++) {
+                                        final int q = threadRnd.nextInt(queries.length);
+                                        TestUtils.printSql(engine, threadContext, queries[q], actual);
+                                        TestUtils.assertEquals(queries[q], expected.getQuick(q), actual);
+                                    }
+                                } catch (Throwable th) {
+                                    errors.put(threadId, th);
+                                } finally {
+                                    Path.clearThreadLocals();
+                                    haltLatch.countDown();
+                                }
+                            }).start();
+                        }
+                        haltLatch.await();
+                        assertNoThreadErrors(errors);
+                    },
+                    configuration,
+                    LOG
+            );
+        });
+    }
+
+    @Test
+    public void testParallelHorizonJoinProjectionConcurrentWithWriter() throws Exception {
+        // One thread appends trades and quotes while others run the projection, serially and in
+        // parallel, with fresh and with reused factories. Every quote the writer appends lies a
+        // day past the last horizon timestamp, so it changes no row, and the trades arrive in
+        // timestamp order. Every result must therefore hold the first trades, each with one row
+        // per offset and the bid of the per-offset ASOF JOIN. Once the writer stops, the result
+        // must hold every trade.
+        final int initialTradeCount = 1_000;
+        final int tradeCount = 4_000;
+        final int batchSize = 100;
+        final long[] offsets = {-1_000_000, 0, 2_000_000};
+        final String query = "SELECT t.id, h.offset, q.bid FROM trades t HORIZON JOIN quotes q ON (sym) LIST (-1s, 0s, 2s) AS h";
+        final boolean isTradesWal = rnd.nextBoolean();
+        final int readerCount = 3;
+        assertMemoryLeak(() -> {
+            // Only the test's own engine can lock the table name registry, which a WAL table
+            // needs, so the pool runs on that engine.
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(rnd));
+            try (SqlExecutionContextImpl context = TestUtils.createSqlExecutionCtx(engine, pool.getWorkerCount())) {
+                TestUtils.setupWorkerPool(pool, engine);
+                pool.start(LOG);
+                try {
+                    // Trades about a second apart; E has no quotes until the writer adds some.
+                    engine.execute("""
+                            CREATE TABLE trades_src AS (
+                                SELECT x id, '2020-01-01'::TIMESTAMP + x * 1_000_000L + rnd_long(-400_000, 400_000, 0) ts,
+                                       rnd_symbol('A', 'B', 'C', 'D', 'E') sym
+                                FROM long_sequence(%d)
+                            ) TIMESTAMP(ts) PARTITION BY HOUR
+                            """.formatted(tradeCount), context);
+                    engine.execute(
+                            "CREATE TABLE trades (id LONG, ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY HOUR" + (isTradesWal ? " WAL" : " BYPASS WAL"),
+                            context
+                    );
+                    engine.execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR WAL", context);
+                    // Quotes every 300 ms until 10 seconds past the last trade.
+                    engine.execute("""
+                            INSERT INTO quotes
+                            SELECT '2020-01-01'::TIMESTAMP + x * 300_000L, rnd_symbol('A', 'B', 'C', 'D'), rnd_double()
+                            FROM long_sequence(%d)
+                            """.formatted((tradeCount + 10) * 10 / 3), context);
+                    engine.execute("INSERT INTO trades SELECT * FROM trades_src WHERE id <= " + initialTradeCount, context);
+                    drainWalQueue(engine);
+                    final double[] bids = readAsOfJoinBids(engine, context, "trades_src", offsets, tradeCount);
+
+                    final ConcurrentHashMap<Integer, Throwable> errors = new ConcurrentHashMap<>();
+                    final AtomicBoolean isWriterDone = new AtomicBoolean();
+                    final CyclicBarrier barrier = new CyclicBarrier(readerCount + 1);
+                    final SOCountDownLatch haltLatch = new SOCountDownLatch(readerCount + 1);
+                    final int workerCount = context.getSharedQueryWorkerCount();
+                    new Thread(() -> {
+                        try (SqlExecutionContextImpl writerContext = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
+                            TestUtils.await(barrier);
+                            for (int lo = initialTradeCount; lo < tradeCount; lo += batchSize) {
+                                engine.execute("INSERT INTO trades SELECT * FROM trades_src WHERE id > " + lo + " AND id <= " + (lo + batchSize), writerContext);
+                                // A day past the last trade, with quotes for E among them.
+                                engine.execute(
+                                        "INSERT INTO quotes SELECT '2020-01-02'::TIMESTAMP + (" + lo + " + x) * 1_000_000L, rnd_symbol('A', 'B', 'C', 'D', 'E'), rnd_double()"
+                                                + " FROM long_sequence(" + batchSize + ")",
+                                        writerContext
+                                );
+                                drainWalQueue(engine);
+                            }
+                        } catch (Throwable th) {
+                            errors.put(-1, th);
+                        } finally {
+                            isWriterDone.set(true);
+                            Path.clearThreadLocals();
+                            haltLatch.countDown();
+                        }
+                    }).start();
+                    for (int i = 0; i < readerCount; i++) {
+                        final int readerId = i;
+                        final Rnd readerRnd = new Rnd(rnd.nextLong(), rnd.nextLong());
+                        new Thread(() -> {
+                            try (SqlExecutionContextImpl readerContext = TestUtils.createSqlExecutionCtx(engine, workerCount)) {
+                                // The first reader runs the serial factory.
+                                readerContext.setParallelHorizonJoinEnabled(readerId > 0);
+                                TestUtils.await(barrier);
+                                try (RecordCursorFactory reusedFactory = engine.select(query, readerContext)) {
+                                    int lastTradeCount = initialTradeCount;
+                                    for (int runs = 0; !isWriterDone.get() || runs < 10; runs++) {
+                                        final int seenTradeCount;
+                                        if (readerRnd.nextBoolean()) {
+                                            try (RecordCursor cursor = reusedFactory.getCursor(readerContext)) {
+                                                seenTradeCount = assertTradePrefix(cursor, offsets, bids);
+                                            }
+                                        } else {
+                                            try (
+                                                    RecordCursorFactory factory = engine.select(query, readerContext);
+                                                    RecordCursor cursor = factory.getCursor(readerContext)
+                                            ) {
+                                                seenTradeCount = assertTradePrefix(cursor, offsets, bids);
+                                            }
+                                        }
+                                        // A later run reads a later snapshot.
+                                        Assert.assertTrue(seenTradeCount + " < " + lastTradeCount, seenTradeCount >= lastTradeCount);
+                                        lastTradeCount = seenTradeCount;
+                                    }
+                                }
+                            } catch (Throwable th) {
+                                errors.put(readerId, th);
+                            } finally {
+                                Path.clearThreadLocals();
+                                haltLatch.countDown();
+                            }
+                        }).start();
+                    }
+                    haltLatch.await();
+                    assertNoThreadErrors(errors);
+
+                    drainWalQueue(engine);
+                    // The appended quotes leave the per-offset ASOF JOIN over the final tables unchanged.
+                    Assert.assertArrayEquals(bids, readAsOfJoinBids(engine, context, "trades", offsets, tradeCount), 0.0);
+                    for (boolean isParallel : new boolean[]{false, true}) {
+                        context.setParallelHorizonJoinEnabled(isParallel);
+                        try (
+                                RecordCursorFactory factory = engine.select(query, context);
+                                RecordCursor cursor = factory.getCursor(context)
+                        ) {
+                            Assert.assertEquals(tradeCount, assertTradePrefix(cursor, offsets, bids));
+                        }
+                    }
+                } finally {
+                    pool.haltAndAssertCleanForTest(WorkerPool.DEFAULT_HALT_TIMEOUT_NANOS);
+                }
+            }
+        });
     }
 
     @Test
@@ -542,6 +848,16 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                 + (keyed ? " ON (t.sym = " + alias + ".sym)" : "");
     }
 
+    private static void assertNoThreadErrors(ConcurrentHashMap<Integer, Throwable> errors) {
+        if (!errors.isEmpty()) {
+            for (Map.Entry<Integer, Throwable> entry : errors.entrySet()) {
+                LOG.error().$("error in thread [id=").$(entry.getKey()).$("] ").$(entry.getValue()).$();
+            }
+            final Throwable first = errors.values().iterator().next();
+            throw new AssertionError("errors in " + errors.size() + " thread(s), first: " + first, first);
+        }
+    }
+
     private static void assertProjectionFactory(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String query) throws SqlException {
         try (RecordCursorFactory factory = engine.select(query, sqlExecutionContext)) {
             TestUtils.assertFactoryInTree(
@@ -566,6 +882,24 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             LOG.error().$("Reference query: ").$(referenceQuery).$();
             throw e;
         }
+    }
+
+    // Reads the rows of a projection over the first trades of the table: one row per trade and
+    // offset, the trade ids from 1 and the bids of the per-offset ASOF JOIN. Returns the number
+    // of trades.
+    private static int assertTradePrefix(RecordCursor cursor, long[] offsets, double[] bids) {
+        final Record record = cursor.getRecord();
+        int row = 0;
+        while (cursor.hasNext()) {
+            Assert.assertTrue("more rows than trades", row < bids.length);
+            final int offsetIndex = row % offsets.length;
+            Assert.assertEquals("row " + row, row / offsets.length + 1, record.getLong(0));
+            Assert.assertEquals("row " + row, offsets[offsetIndex], record.getLong(1));
+            Assert.assertEquals("row " + row, bids[row], record.getDouble(2), 0.0);
+            row++;
+        }
+        Assert.assertEquals(0, row % offsets.length);
+        return row / offsets.length;
     }
 
     private static void createPricesTable(CairoEngine engine, SqlExecutionContext sqlExecutionContext, String name) throws SqlException {
@@ -634,6 +968,20 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
                 + (on != null ? " ON (" + on + ")" : "");
     }
 
+    private static String inlineBindVariables(String query, String[] values) {
+        return query.replace("$1", "'" + values[0] + "'")
+                .replace("$2", values[1])
+                .replace("$3", "'" + values[2] + "'")
+                .replace("$4", values[3]);
+    }
+
+    private static void printRows(RecordCursorFactory factory, SqlExecutionContext sqlExecutionContext, StringSink sink) throws SqlException {
+        sink.clear();
+        try (RecordCursor cursor = factory.getCursor(sqlExecutionContext)) {
+            CursorPrinter.println(cursor, factory.getMetadata(), sink);
+        }
+    }
+
     private static String projectionReference(
             long[] offsetsMicros,
             int slaveCount,
@@ -680,6 +1028,47 @@ public class ParallelHorizonJoinFuzzTest extends AbstractCairoTest {
             offsets[i] = (fromSec + (long) i) * 1_000_000L;
         }
         return offsets;
+    }
+
+    // The bid of the ASOF JOIN at each trade of the table and offset, in trade id and offset order.
+    private static double[] readAsOfJoinBids(
+            CairoEngine engine,
+            SqlExecutionContext sqlExecutionContext,
+            String tradeTable,
+            long[] offsets,
+            int tradeCount
+    ) throws SqlException {
+        final StringSink sql = new StringSink();
+        sql.put("SELECT id, k, bid FROM (");
+        for (int k = 0; k < offsets.length; k++) {
+            if (k > 0) {
+                sql.put(" UNION ALL ");
+            }
+            sql.put("SELECT t.id, ").put(k).put(" k, q.bid FROM (SELECT * FROM (SELECT id, dateadd('u', ").put(offsets[k])
+                    .put(", ts) ts, sym FROM ").put(tradeTable).put(") TIMESTAMP(ts)) t ASOF JOIN quotes q ON (sym)");
+        }
+        sql.put(") ORDER BY id, k");
+        final double[] bids = new double[tradeCount * offsets.length];
+        try (
+                RecordCursorFactory factory = engine.select(sql, sqlExecutionContext);
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            final Record record = cursor.getRecord();
+            int row = 0;
+            while (cursor.hasNext()) {
+                Assert.assertEquals(row / offsets.length + 1, record.getLong(0));
+                bids[row++] = record.getDouble(2);
+            }
+            Assert.assertEquals(bids.length, row);
+        }
+        return bids;
+    }
+
+    private static void setBindVariables(BindVariableService bindVariableService, String[] values) throws SqlException {
+        bindVariableService.setStr(0, values[0]);
+        bindVariableService.setDouble(1, Double.parseDouble(values[1]));
+        bindVariableService.setStr(2, values[2]);
+        bindVariableService.setDouble(3, Double.parseDouble(values[3]));
     }
 
     private static String slaveTable(String table, String slaveFilter) {

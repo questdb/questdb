@@ -10183,10 +10183,11 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             return factory;
         }
 
-        // We require timestamp with asc order.
-        final int timestampIndex;
+        // The wrapper takes ownership of the factory only once it is built, so free the factory
+        // if anything on the way there throws.
         try {
-            timestampIndex = getTimestampIndex(model, factory);
+            // We require timestamp with asc order.
+            final int timestampIndex = getTimestampIndex(model, factory);
             if (executionContext.isTimestampRequired()) {
                 if (timestampIndex == -1) {
                     throw SqlException.$(model.getModelPosition(), "TIMESTAMP column is required but not provided");
@@ -10195,79 +10196,79 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                     throw SqlException.$(model.getModelPosition(), "ASC order over TIMESTAMP column is required but not provided");
                 }
             }
+
+            CharSequence timestampName = null;
+            int timestampNameDot = -1;
+            if (timestampIndex != -1) {
+                timestampName = factory.getMetadata().getColumnName(timestampIndex);
+                timestampNameDot = Chars.indexOfLastUnquoted(timestampName, '.');
+            }
+            final CharSequence firstOrderByColumn = model.getOrderBy().size() > 0 && model.getOrderBy().getQuick(0).type == LITERAL
+                    ? model.getOrderBy().getQuick(0).token
+                    : null;
+
+            final IntList columnCrossIndex = new IntList(selectColumnCount);
+            final GenericRecordMetadata queryMetadata = new GenericRecordMetadata();
+            boolean timestampSet = false;
+            for (int i = 0; i < selectColumnCount; i++) {
+                final QueryColumn queryColumn = columns.getQuick(i);
+                int index = SqlUtil.getColumnIndexQuiet(metadata, queryColumn.getAst().token);
+                assert index > -1 : "wtf? " + queryColumn.getAst().token;
+                columnCrossIndex.add(index);
+
+                if (queryColumn.getAlias() == null) {
+                    queryMetadata.add(metadata.getColumnMetadata(index));
+                } else {
+                    TableColumnMetadata aliasedColumn = new TableColumnMetadata(
+                            SqlUtil.toColumnName(queryColumn.getAlias()),
+                            metadata.getColumnType(index),
+                            metadata.getColumnIndexType(index),
+                            metadata.getIndexValueBlockCapacity(index),
+                            metadata.isSymbolTableStatic(index),
+                            metadata.getMetadata(index)
+                    );
+                    aliasedColumn.setParquetEncodingConfig(
+                            metadata.getColumnMetadata(index).getParquetEncodingConfig()
+                    );
+                    queryMetadata.add(aliasedColumn);
+                }
+
+                if (index == timestampIndex) {
+                    // Always prefer the column matching the first ORDER BY column as the designated
+                    // timestamp in case of multiple timestamp aliases, e.g. `select ts, ts as ts1, ...`.
+                    // That's to choose the optimal plan in generateOrderBy().
+                    // Otherwise, prefer columns with aliases matching the base column name, e.g.
+                    // prefer `t1.ts as ts` over `t1.ts as ts2`.
+                    if (Chars.equalsIgnoreCaseNc(queryColumn.getAlias(), firstOrderByColumn)
+                            || Chars.equalsIgnoreCase(queryColumn.getAlias(), timestampName, timestampNameDot + 1, timestampName.length())
+                            || !timestampSet) {
+                        queryMetadata.setTimestampIndex(i);
+                        timestampSet = true;
+                    }
+                }
+            }
+
+            if (!timestampSet && executionContext.isTimestampRequired()) {
+                TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
+                TableColumnMetadata implicitTs = new TableColumnMetadata(
+                        "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
+                        colMetadata.getColumnType(),
+                        colMetadata.getIndexType(),
+                        colMetadata.getIndexValueBlockCapacity(),
+                        colMetadata.isSymbolTableStatic(),
+                        metadata
+                );
+                implicitTs.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
+                queryMetadata.add(implicitTs);
+                queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
+                columnCrossIndex.add(timestampIndex);
+            }
+
+            return new SelectedRecordCursorFactory(queryMetadata, columnCrossIndex, factory);
         } catch (Throwable e) {
             Misc.free(factory);
             throw e;
         }
-
-        CharSequence timestampName = null;
-        int timestampNameDot = -1;
-        if (timestampIndex != -1) {
-            timestampName = factory.getMetadata().getColumnName(timestampIndex);
-            timestampNameDot = Chars.indexOfLastUnquoted(timestampName, '.');
-        }
-        final CharSequence firstOrderByColumn = model.getOrderBy().size() > 0 && model.getOrderBy().getQuick(0).type == LITERAL
-                ? model.getOrderBy().getQuick(0).token
-                : null;
-
-        final IntList columnCrossIndex = new IntList(selectColumnCount);
-        final GenericRecordMetadata queryMetadata = new GenericRecordMetadata();
-        boolean timestampSet = false;
-        for (int i = 0; i < selectColumnCount; i++) {
-            final QueryColumn queryColumn = columns.getQuick(i);
-            int index = SqlUtil.getColumnIndexQuiet(metadata, queryColumn.getAst().token);
-            assert index > -1 : "wtf? " + queryColumn.getAst().token;
-            columnCrossIndex.add(index);
-
-            if (queryColumn.getAlias() == null) {
-                queryMetadata.add(metadata.getColumnMetadata(index));
-            } else {
-                TableColumnMetadata aliasedColumn = new TableColumnMetadata(
-                        SqlUtil.toColumnName(queryColumn.getAlias()),
-                        metadata.getColumnType(index),
-                        metadata.getColumnIndexType(index),
-                        metadata.getIndexValueBlockCapacity(index),
-                        metadata.isSymbolTableStatic(index),
-                        metadata.getMetadata(index)
-                );
-                aliasedColumn.setParquetEncodingConfig(
-                        metadata.getColumnMetadata(index).getParquetEncodingConfig()
-                );
-                queryMetadata.add(aliasedColumn);
-            }
-
-            if (index == timestampIndex) {
-                // Always prefer the column matching the first ORDER BY column as the designated
-                // timestamp in case of multiple timestamp aliases, e.g. `select ts, ts as ts1, ...`.
-                // That's to choose the optimal plan in generateOrderBy().
-                // Otherwise, prefer columns with aliases matching the base column name, e.g.
-                // prefer `t1.ts as ts` over `t1.ts as ts2`.
-                if (Chars.equalsIgnoreCaseNc(queryColumn.getAlias(), firstOrderByColumn)
-                        || Chars.equalsIgnoreCase(queryColumn.getAlias(), timestampName, timestampNameDot + 1, timestampName.length())
-                        || !timestampSet) {
-                    queryMetadata.setTimestampIndex(i);
-                    timestampSet = true;
-                }
-            }
-        }
-
-        if (!timestampSet && executionContext.isTimestampRequired()) {
-            TableColumnMetadata colMetadata = metadata.getColumnMetadata(timestampIndex);
-            TableColumnMetadata implicitTs = new TableColumnMetadata(
-                    "", // implicitly added timestamp - should never be referenced by a user, we only need the timestamp index position
-                    colMetadata.getColumnType(),
-                    colMetadata.getIndexType(),
-                    colMetadata.getIndexValueBlockCapacity(),
-                    colMetadata.isSymbolTableStatic(),
-                    metadata
-            );
-            implicitTs.setParquetEncodingConfig(colMetadata.getParquetEncodingConfig());
-            queryMetadata.add(implicitTs);
-            queryMetadata.setTimestampIndex(queryMetadata.getColumnCount() - 1);
-            columnCrossIndex.add(timestampIndex);
-        }
-
-        return new SelectedRecordCursorFactory(queryMetadata, columnCrossIndex, factory);
     }
 
     private RecordCursorFactory generateSelectCursor(

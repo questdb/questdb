@@ -51,6 +51,7 @@ import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
 import io.questdb.std.ObjList;
 import io.questdb.std.Rnd;
+import io.questdb.std.datetime.microtime.MicrosFormatUtils;
 import io.questdb.std.datetime.millitime.MillisecondClock;
 import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
@@ -60,6 +61,7 @@ import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
+import org.junit.Ignore;
 import org.junit.Test;
 
 import java.util.List;
@@ -94,6 +96,19 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
             2026-01-01T00:00:02.000000Z\tC\t0\tnull
             2026-01-01T00:00:02.000000Z\tC\t1000000\tnull
             """;
+    // Right-hand filters that test_fault() can fail; %1$s is the left-hand table and %2$s the
+    // right-hand one.
+    private static final String[] SLAVE_FILTER_FAULT_QUERIES = {
+            // One right-hand table, keyed.
+            "SELECT t.ts, t.sym, h.offset, q.bid FROM %1$s t HORIZON JOIN (%2$s WHERE test_fault()) q ON (sym) LIST (-1s, 0s, 1s) AS h",
+            // One right-hand table, unkeyed.
+            "SELECT t.ts, h.offset, q.sym, q.bid FROM %1$s t HORIZON JOIN (%2$s WHERE test_fault()) q LIST (0s, 1s) AS h",
+            // Two right-hand tables. Only the second one has a filter, so a failed init finds the
+            // first one initialized.
+            "SELECT t.ts, t.sym, h.offset, q.bid, r.bid FROM %1$s t HORIZON JOIN %2$s q ON (sym) HORIZON JOIN (%2$s WHERE test_fault()) r ON (sym) LIST (0s, 1s) AS h",
+            // Two right-hand tables, each with a filter.
+            "SELECT t.ts, h.offset, q.bid, r.bid FROM %1$s t HORIZON JOIN (%2$s WHERE test_fault()) q ON (sym) HORIZON JOIN (%2$s WHERE test_fault()) r LIST (0s, 1s) AS h",
+    };
 
     @Override
     public void setUp() {
@@ -378,6 +393,43 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionAsInputOfOtherOperators() throws Exception {
+        // Every operator must read the projection as it reads a table that holds the same rows. A
+        // time series join reads the projection as its right-hand side, a hash JOIN builds its map
+        // from it, a CROSS JOIN rewinds it for every left-hand row, and EXCEPT, LATEST ON and the
+        // window functions read it once.
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            final String projection = "(SELECT t.ts, t.sym, h.offset, q.bid FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (-1s, 0s, 1s) AS h)";
+            execute("CREATE TABLE proj AS " + projection + " TIMESTAMP(ts) PARTITION BY DAY");
+            final String[] templates = {
+                    "SELECT x.ts, x.sym, x.ask, p.offset, p.bid FROM TaqQuote x ASOF JOIN %1$s p ON (sym)",
+                    "SELECT x.ts, x.sym, x.ask, p.offset, p.bid FROM TaqQuote x LT JOIN %1$s p ON (sym)",
+                    "SELECT x.ts, x.sym, x.ask, p.ts pts, p.offset, p.bid FROM TaqQuote x JOIN %1$s p ON (sym) ORDER BY x.ts, x.sym, pts, p.offset",
+                    "SELECT x.ts, x.sym, p.sym psym, p.offset, p.bid FROM TaqQuote x CROSS JOIN %1$s p",
+                    "SELECT * FROM %1$s EXCEPT SELECT * FROM %1$s WHERE offset = 0",
+                    "SELECT * FROM %1$s LATEST ON ts PARTITION BY sym, offset",
+                    "SELECT ts, sym, offset, bid, lag(bid) OVER (PARTITION BY sym, offset ORDER BY ts) prev, row_number() OVER () rn FROM %1$s",
+            };
+            final StringSink expected = new StringSink();
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (String template : templates) {
+                    printSql(template.formatted("proj"), expected);
+                    // Guard against a template that selects nothing: header plus at least two rows.
+                    Assert.assertTrue(template, expected.toString().split("\n").length > 2);
+                    assertQuery(template.formatted(projection))
+                            .inferRandomAccess()
+                            .inferTimestamp()
+                            .sizeMayVary()
+                            .withPlanContaining(projectionPlan(isParallel, 3))
+                            .returns(expected);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testProjectionAsMasterOfAsOfJoin() throws Exception {
         // The projection keeps the master's designated timestamp in ascending order, so a time
         // series join can use it as its left side.
@@ -407,6 +459,152 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                         2026-01-01T00:00:02.000000Z\tC\t0\tnull\tnull
                         2026-01-01T00:00:02.000000Z\tC\t2000000\tnull\tnull
                         """);
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionBareBindVariable() throws Exception {
+        // The optimiser lifts a bare bind variable to the projection above the HORIZON JOIN. It
+        // used to put it in a virtual model under the horizon model, which hid the join columns
+        // from that model: compilation failed an assertion (an ArrayIndexOutOfBoundsException
+        // with assertions disabled), and generateSelectChoose() leaked the projection factory.
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            bindVariableService.clear();
+            bindVariableService.setStr(0, "x");
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                // An aggregating HORIZON JOIN takes the same path.
+                assertQuery("SELECT $1 tag, count() c FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (0s, 1s) AS h")
+                        .noRandomAccess().expectSize().returns("tag\tc\nx\t12\n");
+                assertQuery("SELECT $1 tag, t.price, h.offset FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (0s, 1s) AS h")
+                        .noRandomAccess().expectSize().returns("""
+                                tag\tprice\toffset
+                                x\t10.0\t0
+                                x\t10.0\t1000000
+                                x\t10.0\t0
+                                x\t10.0\t1000000
+                                x\t10.0\t0
+                                x\t10.0\t1000000
+                                x\t20.0\t0
+                                x\t20.0\t1000000
+                                x\t30.0\t0
+                                x\t30.0\t1000000
+                                x\t30.0\t0
+                                x\t30.0\t1000000
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionBindVariablePositions() throws Exception {
+        // Bind variables in an output column, in LIMIT and in an interval on the designated
+        // timestamp. A prepared statement runs the same factory again with new values, and each
+        // execution must read them.
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            final String head = " FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (0s, 1s) AS h";
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                bindVariableService.clear();
+                bindVariableService.setDouble(0, 2.0);
+                try (RecordCursorFactory factory = select("SELECT t.price * $1 p, h.offset, q.bid" + head)) {
+                    assertProjectionFactory(factory, isParallel);
+                    new QueryAssertion(engine, factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns("""
+                            p\toffset\tbid
+                            20.0\t0\t10.0
+                            20.0\t1000000\t10.0
+                            20.0\t0\t10.0
+                            20.0\t1000000\t10.0
+                            20.0\t0\t10.0
+                            20.0\t1000000\t14.0
+                            40.0\t0\t20.0
+                            40.0\t1000000\t22.0
+                            60.0\t0\tnull
+                            60.0\t1000000\tnull
+                            60.0\t0\tnull
+                            60.0\t1000000\tnull
+                            """);
+                    bindVariableService.setDouble(0, -1.0);
+                    new QueryAssertion(engine, factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns("""
+                            p\toffset\tbid
+                            -10.0\t0\t10.0
+                            -10.0\t1000000\t10.0
+                            -10.0\t0\t10.0
+                            -10.0\t1000000\t10.0
+                            -10.0\t0\t10.0
+                            -10.0\t1000000\t14.0
+                            -20.0\t0\t20.0
+                            -20.0\t1000000\t22.0
+                            -30.0\t0\tnull
+                            -30.0\t1000000\tnull
+                            -30.0\t0\tnull
+                            -30.0\t1000000\tnull
+                            """);
+                }
+
+                bindVariableService.clear();
+                bindVariableService.setLong(0, 3);
+                try (RecordCursorFactory factory = select("SELECT t.sym, h.offset, q.bid" + head + " LIMIT $1")) {
+                    assertProjectionFactory(factory, isParallel);
+                    new QueryAssertion(engine, factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns("""
+                            sym\toffset\tbid
+                            A\t0\t10.0
+                            A\t1000000\t10.0
+                            A\t0\t10.0
+                            """);
+                    bindVariableService.setLong(0, 7);
+                    new QueryAssertion(engine, factory).withContext(sqlExecutionContext).noRandomAccess().expectSize().returns("""
+                            sym\toffset\tbid
+                            A\t0\t10.0
+                            A\t1000000\t10.0
+                            A\t0\t10.0
+                            A\t1000000\t10.0
+                            A\t0\t10.0
+                            A\t1000000\t14.0
+                            B\t0\t20.0
+                            """);
+                }
+
+                bindVariableService.clear();
+                bindVariableService.setTimestamp(0, MicrosFormatUtils.parseTimestamp("2026-01-01T00:00:01.000000Z"));
+                try (RecordCursorFactory factory = select("SELECT t.ts, t.sym, h.offset, q.bid" + head + " WHERE t.ts > $1")) {
+                    assertProjectionFactory(factory, isParallel);
+                    new QueryAssertion(engine, factory).withContext(sqlExecutionContext).noRandomAccess().sizeMayVary().timestamp("ts").returns("""
+                            ts\tsym\toffset\tbid
+                            2026-01-01T00:00:02.000000Z\tA\t0\t10.0
+                            2026-01-01T00:00:02.000000Z\tA\t1000000\t14.0
+                            2026-01-01T00:00:02.000000Z\tB\t0\t20.0
+                            2026-01-01T00:00:02.000000Z\tB\t1000000\t22.0
+                            2026-01-01T00:00:02.000000Z\tC\t0\tnull
+                            2026-01-01T00:00:02.000000Z\tC\t1000000\tnull
+                            2026-01-01T00:00:02.000000Z\tC\t0\tnull
+                            2026-01-01T00:00:02.000000Z\tC\t1000000\tnull
+                            """);
+                    bindVariableService.setTimestamp(0, MicrosFormatUtils.parseTimestamp("2026-01-01T00:00:02.000000Z"));
+                    new QueryAssertion(engine, factory).withContext(sqlExecutionContext).noRandomAccess().sizeMayVary().timestamp("ts")
+                            .returns("ts\tsym\toffset\tbid\n");
+                    bindVariableService.setTimestamp(0, 0);
+                    new QueryAssertion(engine, factory).withContext(sqlExecutionContext).noRandomAccess().sizeMayVary().timestamp("ts")
+                            .returns("""
+                                    ts\tsym\toffset\tbid
+                                    2026-01-01T00:00:00.000000Z\tA\t0\t10.0
+                                    2026-01-01T00:00:00.000000Z\tA\t1000000\t10.0
+                                    2026-01-01T00:00:00.000000Z\tA\t0\t10.0
+                                    2026-01-01T00:00:00.000000Z\tA\t1000000\t10.0
+                                    2026-01-01T00:00:02.000000Z\tA\t0\t10.0
+                                    2026-01-01T00:00:02.000000Z\tA\t1000000\t14.0
+                                    2026-01-01T00:00:02.000000Z\tB\t0\t20.0
+                                    2026-01-01T00:00:02.000000Z\tB\t1000000\t22.0
+                                    2026-01-01T00:00:02.000000Z\tC\t0\tnull
+                                    2026-01-01T00:00:02.000000Z\tC\t1000000\tnull
+                                    2026-01-01T00:00:02.000000Z\tC\t0\tnull
+                                    2026-01-01T00:00:02.000000Z\tC\t1000000\tnull
+                                    """);
+                }
+                bindVariableService.clear();
             }
         });
     }
@@ -898,6 +1096,49 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                     Assert.assertEquals(50_000, context.getPageFrameMaxRows());
                 } finally {
                     context.restoreToDefaultPageFrameSizes();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionFilteredCountOverParquet() throws Exception {
+        // A count over a filtered projection only counts rows: the parallel factory runs
+        // count-only tasks, and with a selective filter they decode the filter's columns of a
+        // Parquet frame first and nothing else. The counts must equal those over native
+        // partitions, the filtered trades times the offsets.
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 300);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 100);
+        setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 1_000);
+        assertMemoryLeak(() -> {
+            createRandomTradesAndQuotes(5_000, 20_000, 30);
+            final String[] filters = {
+                    // Selective JIT filter: late materialization.
+                    "t.qty > 0.95",
+                    // Half of the rows pass.
+                    "t.qty > 0.5",
+                    // Java filter.
+                    "concat(t.sym, '') IN ('s1', 's7')",
+                    // Nothing passes.
+                    "t.qty > 2",
+            };
+            final ObjList<String> expected = new ObjList<>();
+            final StringSink sink = new StringSink();
+            for (String filter : filters) {
+                printSql("SELECT count() * 3 count FROM trades t WHERE " + filter, sink);
+                expected.add(sink.toString());
+            }
+            execute("ALTER TABLE trades CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            execute("ALTER TABLE quotes CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (int i = 0; i < filters.length; i++) {
+                    assertQuery("SELECT count() FROM (SELECT t.id, h.offset, q.bid FROM trades t HORIZON JOIN quotes q ON (sym) LIST (-1s, 0s, 1s) AS h WHERE "
+                            + filters[i] + ")")
+                            .noRandomAccess()
+                            .expectSize()
+                            .withPlanContaining(projectionPlan(isParallel, 3))
+                            .returns(expected.getQuick(i));
                 }
             }
         });
@@ -1398,6 +1639,37 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
         });
     }
 
+    @Ignore("A keyed projection fails to compile with the looping key sink: HorizonJoinMatcher asserts a generated sink class, or LoopingRecordSink throws an NPE with assertions disabled. Expected to be fixed by the sink templates of #7681.")
+    @Test
+    public void testProjectionLoopingKeySinkMatchesAsOfJoin() throws Exception {
+        // debug.cairo.copier.type=3 makes the join key sinks fall back to the looping
+        // implementation, which a key too large for a generated sink also takes when
+        // cairo.sql.copier.chunked=false. A keyed projection must still match the ASOF JOIN.
+        setProperty(PropertyKey.DEBUG_CAIRO_COPIER_TYPE, 3);
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (id LONG, ts TIMESTAMP, sym SYMBOL, venue SYMBOL, i INT, v VARCHAR) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, venue SYMBOL, i INT, v VARCHAR, bid DOUBLE) TIMESTAMP(ts) PARTITION BY HOUR");
+            execute("""
+                    INSERT INTO trades
+                    SELECT x, '2026-01-01'::TIMESTAMP + x * 28_333_333L, rnd_symbol('A', 'B', 'C', 'Z'),
+                           rnd_symbol('X', 'Y'), rnd_int(0, 4, 0), rnd_varchar('A', 'B', 'C', 'Z')
+                    FROM long_sequence(300)
+                    """);
+            execute("""
+                    INSERT INTO quotes
+                    SELECT '2026-01-01'::TIMESTAMP + x * 16_666_666L, rnd_symbol('A', 'B', 'C'),
+                           rnd_symbol('X', 'Y', 'W'), rnd_int(0, 3, 0), rnd_varchar('A', 'B', 'C'), rnd_double()
+                    FROM long_sequence(600)
+                    """);
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (String on : List.of("ON (sym)", "ON (t.sym = q.sym AND t.venue = q.venue)", "ON (i)", "ON (v)")) {
+                    assertMatchesAsOfJoin("trades", "quotes", on, "t.id, q.bid, q.ts");
+                }
+            }
+        });
+    }
+
     @Test
     public void testProjectionManyOffsetsKeepFilterFrames() throws Exception {
         // Past 100 slots per master row, offsets times right-hand tables, the serial factory runs
@@ -1585,6 +1857,58 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProjectionMaterializedViewIncrementalRefresh() throws Exception {
+        // An incremental refresh recomputes the SAMPLE BY buckets that new left-hand rows touch.
+        // After each refresh the view must hold what its query returns over all rows, and a full
+        // refresh must not change it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (ts TIMESTAMP, sym SYMBOL, price DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE TABLE quotes (ts TIMESTAMP, sym SYMBOL, bid DOUBLE) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // Quotes every 7 seconds for two days; D has no quotes.
+            execute("""
+                    INSERT INTO quotes
+                    SELECT '2026-01-01'::TIMESTAMP + x * 7_000_000L, rnd_symbol('A', 'B', 'C'), rnd_double()
+                    FROM long_sequence(24_000)
+                    """);
+            execute("""
+                    INSERT INTO trades
+                    SELECT '2026-01-01'::TIMESTAMP + x * 13_000_000L, rnd_symbol('A', 'B', 'C', 'D'), rnd_double()
+                    FROM long_sequence(1_000)
+                    """);
+            final String query = """
+                    SELECT ts, count() c, count(bid) cb, min(bid) lo, max(bid) hi FROM (
+                        SELECT t.ts, t.sym, h.offset, q.bid FROM trades t
+                        HORIZON JOIN quotes q ON (sym) LIST (0s, 1s, 5s) AS h
+                    ) TIMESTAMP(ts) SAMPLE BY 10m
+                    """;
+            execute("CREATE MATERIALIZED VIEW mv WITH BASE trades AS (" + query + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+            assertViewMatchesQuery(query);
+
+            // Later trades open new buckets, and trades that arrive out of order, duplicates
+            // included, land in buckets that the view already holds.
+            execute("""
+                    INSERT INTO trades
+                    SELECT '2026-01-01T04:00:00'::TIMESTAMP + x * 11_000_000L, rnd_symbol('A', 'B', 'C', 'D'), rnd_double()
+                    FROM long_sequence(1_000)
+                    """);
+            execute("""
+                    INSERT INTO trades VALUES
+                        ('2026-01-01T00:20:00.000000Z', 'A', 1.0),
+                        ('2026-01-01T00:20:00.000000Z', 'A', 1.0),
+                        ('2026-01-01T01:05:00.000000Z', 'D', 1.0),
+                        ('2026-01-01T02:59:59.999999Z', 'C', 1.0)
+                    """);
+            drainWalAndMatViewQueues();
+            assertViewMatchesQuery(query);
+
+            execute("REFRESH MATERIALIZED VIEW mv FULL");
+            drainWalAndMatViewQueues();
+            assertViewMatchesQuery(query);
+        });
+    }
+
+    @Test
     public void testProjectionMixedTimestampTypes() throws Exception {
         assertMemoryLeak(() -> {
             createTradesAndQuotes();
@@ -1728,6 +2052,38 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
         });
     }
 
+    @Ignore("ORDER BY on a column the projection does not select fails to compile: generateSelectChoose() finds no such column in the projection's metadata.")
+    @Test
+    public void testProjectionOrderByUnselectedColumn() throws Exception {
+        // A projection keeps one row per left-hand row and offset, so, as any other SELECT, it
+        // can sort by a column it does not output.
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("""
+                        SELECT t.sym, h.offset, q.bid FROM TaqTrade t
+                        HORIZON JOIN TaqQuote q ON (sym) LIST (0s, 1s) AS h
+                        ORDER BY t.price DESC, h.offset, q.bid
+                        """).expectSize().returns("""
+                        sym\toffset\tbid
+                        C\t0\tnull
+                        C\t0\tnull
+                        C\t1000000\tnull
+                        C\t1000000\tnull
+                        B\t0\t20.0
+                        B\t1000000\t22.0
+                        A\t0\t10.0
+                        A\t0\t10.0
+                        A\t0\t10.0
+                        A\t1000000\t10.0
+                        A\t1000000\t10.0
+                        A\t1000000\t14.0
+                        """);
+            }
+        });
+    }
+
     @Test
     public void testProjectionOtherTimestampColumnsAreNotDesignated() throws Exception {
         // A timestamp column of a right-hand table, under a bare or a qualified name in any letter
@@ -1802,6 +2158,96 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                         """);
                 assertQuery("SELECT ts, q.bid FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (-1s, 0s, 1s) AS h")
                         .fails(7, "Ambiguous column [name=ts]");
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionOuterFilterStaysAboveJoin() throws Exception {
+        // An outer WHERE on a right-hand column filters the joined rows, as it does over an ASOF
+        // JOIN. The same predicate means something else inside the HORIZON JOIN: in the ON clause
+        // or in a right-hand sub-query it filters the quotes before matching, and in the HORIZON
+        // JOIN's own WHERE it fails. The optimiser must keep the outer filter above the join.
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            final String projection = "SELECT t.ts, t.sym, h.offset, q.bid FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (-1s, 0s, 1s) AS h";
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                final String projectionNode = isParallel
+                        ? "        Async Horizon Join Projection workers: 1 offsets: 3\n"
+                        : "        Horizon Join Projection offsets: 3\n";
+                final String scans = """
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: TaqTrade
+                                    PageFrame
+                                        Row forward scan
+                                        Frame forward scan on: TaqQuote
+                        """;
+                assertQuery("SELECT * FROM (" + projection + ") WHERE bid > 11")
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .withPlan("""
+                                Filter filter: 11<bid
+                                    VirtualRecord
+                                      functions: [t.ts,t.sym,h.offset,q.bid]
+                                """ + projectionNode + scans)
+                        .returns("""
+                                ts\tsym\toffset\tbid
+                                2026-01-01T00:00:02.000000Z\tA\t1000000\t14.0
+                                2026-01-01T00:00:02.000000Z\tB\t-1000000\t20.0
+                                2026-01-01T00:00:02.000000Z\tB\t0\t20.0
+                                2026-01-01T00:00:02.000000Z\tB\t1000000\t22.0
+                                """);
+                assertQuery("SELECT * FROM (" + projection + ") WHERE offset > 0")
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .withPlan("""
+                                Filter filter: 0<offset
+                                    VirtualRecord
+                                      functions: [t.ts,t.sym,h.offset,q.bid]
+                                """ + projectionNode + scans)
+                        .returns("""
+                                ts\tsym\toffset\tbid
+                                2026-01-01T00:00:00.000000Z\tA\t1000000\t10.0
+                                2026-01-01T00:00:00.000000Z\tA\t1000000\t10.0
+                                2026-01-01T00:00:02.000000Z\tA\t1000000\t14.0
+                                2026-01-01T00:00:02.000000Z\tB\t1000000\t22.0
+                                2026-01-01T00:00:02.000000Z\tC\t1000000\tnull
+                                2026-01-01T00:00:02.000000Z\tC\t1000000\tnull
+                                """);
+                // In the ON clause, the predicate filters the quotes and keeps every trade and offset.
+                assertQuery("""
+                        SELECT t.ts, t.sym, h.offset, q.bid FROM TaqTrade t
+                        HORIZON JOIN TaqQuote q ON (t.sym = q.sym AND q.bid > 11) LIST (-1s, 0s, 1s) AS h
+                        """)
+                        .noRandomAccess()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tsym\toffset\tbid
+                                2026-01-01T00:00:00.000000Z\tA\t-1000000\tnull
+                                2026-01-01T00:00:00.000000Z\tA\t0\tnull
+                                2026-01-01T00:00:00.000000Z\tA\t1000000\tnull
+                                2026-01-01T00:00:00.000000Z\tA\t-1000000\tnull
+                                2026-01-01T00:00:00.000000Z\tA\t0\tnull
+                                2026-01-01T00:00:00.000000Z\tA\t1000000\tnull
+                                2026-01-01T00:00:02.000000Z\tA\t-1000000\tnull
+                                2026-01-01T00:00:02.000000Z\tA\t0\tnull
+                                2026-01-01T00:00:02.000000Z\tA\t1000000\t14.0
+                                2026-01-01T00:00:02.000000Z\tB\t-1000000\t20.0
+                                2026-01-01T00:00:02.000000Z\tB\t0\t20.0
+                                2026-01-01T00:00:02.000000Z\tB\t1000000\t22.0
+                                2026-01-01T00:00:02.000000Z\tC\t-1000000\tnull
+                                2026-01-01T00:00:02.000000Z\tC\t0\tnull
+                                2026-01-01T00:00:02.000000Z\tC\t1000000\tnull
+                                2026-01-01T00:00:02.000000Z\tC\t-1000000\tnull
+                                2026-01-01T00:00:02.000000Z\tC\t0\tnull
+                                2026-01-01T00:00:02.000000Z\tC\t1000000\tnull
+                                """);
+                assertQuery(projection + " WHERE q.bid > 11")
+                        .noLeakCheck()
+                        .failsWith("WHERE clause of HORIZON JOIN can only reference left-hand side columns");
             }
         });
     }
@@ -1986,6 +2432,87 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
                         2026-01-01T00:00:02.000000Z\t12\t96.0
                         """);
             }
+        });
+    }
+
+    @Test
+    public void testProjectionSelectStarColumnNames() throws Exception {
+        // SELECT * lists the columns of the left-hand table, the horizon pseudo-table and the
+        // right-hand tables. The parser places the pseudo-table just before the last right-hand
+        // table, and a repeated name takes the next free numeric suffix.
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                assertQuery("SELECT * FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) LIST (0s) AS h")
+                        .noRandomAccess()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tsym\tprice\toffset\ttimestamp\tts1\tsym1\tbid\task
+                                2026-01-01T00:00:00.000000Z\tA\t10.0\t0\t2026-01-01T00:00:00.000000Z\t2026-01-01T00:00:00.000000Z\tA\t10.0\t12.0
+                                2026-01-01T00:00:00.000000Z\tA\t10.0\t0\t2026-01-01T00:00:00.000000Z\t2026-01-01T00:00:00.000000Z\tA\t10.0\t12.0
+                                2026-01-01T00:00:02.000000Z\tA\t10.0\t0\t2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:00.000000Z\tA\t10.0\t12.0
+                                2026-01-01T00:00:02.000000Z\tB\t20.0\t0\t2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0
+                                2026-01-01T00:00:02.000000Z\tC\t30.0\t0\t2026-01-01T00:00:02.000000Z\t\t\tnull\tnull
+                                2026-01-01T00:00:02.000000Z\tC\t30.0\t0\t2026-01-01T00:00:02.000000Z\t\t\tnull\tnull
+                                """);
+                // The unkeyed second right-hand table matches the last quote at or before the
+                // horizon timestamp, whatever its symbol.
+                assertQuery("SELECT * FROM TaqTrade t HORIZON JOIN TaqQuote q ON (sym) HORIZON JOIN TaqQuote r LIST (0s) AS h")
+                        .noRandomAccess()
+                        .expectSize()
+                        .timestamp("ts")
+                        .returns("""
+                                ts\tsym\tprice\tts1\tsym1\tbid\task\toffset\ttimestamp\tts2\tsym2\tbid1\task1
+                                2026-01-01T00:00:00.000000Z\tA\t10.0\t2026-01-01T00:00:00.000000Z\tA\t10.0\t12.0\t0\t2026-01-01T00:00:00.000000Z\t2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0
+                                2026-01-01T00:00:00.000000Z\tA\t10.0\t2026-01-01T00:00:00.000000Z\tA\t10.0\t12.0\t0\t2026-01-01T00:00:00.000000Z\t2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0
+                                2026-01-01T00:00:02.000000Z\tA\t10.0\t2026-01-01T00:00:00.000000Z\tA\t10.0\t12.0\t0\t2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0
+                                2026-01-01T00:00:02.000000Z\tB\t20.0\t2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0\t0\t2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0
+                                2026-01-01T00:00:02.000000Z\tC\t30.0\t\t\tnull\tnull\t0\t2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0
+                                2026-01-01T00:00:02.000000Z\tC\t30.0\t\t\tnull\tnull\t0\t2026-01-01T00:00:02.000000Z\t2026-01-01T00:00:00.000000Z\tB\t20.0\t22.0
+                                """);
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionSlaveFilterFailureRecovers() throws Exception {
+        // A right-hand filter fails as the cursor initializes it or as the matcher reads a quote,
+        // with one and with two right-hand tables. Without a pool, both factories run everything
+        // on the reading thread. Each failure must leave nothing behind, and the same factory must
+        // then read every row.
+        assertMemoryLeak(() -> {
+            createTradesAndQuotes();
+            for (boolean isParallel : MODES) {
+                sqlExecutionContext.setParallelHorizonJoinEnabled(isParallel);
+                for (String sql : SLAVE_FILTER_FAULT_QUERIES) {
+                    assertSlaveFilterFailuresRecover(engine, sqlExecutionContext, isParallel, sql.formatted("TaqTrade", "TaqQuote"), 0, 1, 2, 5);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testProjectionSlaveFilterFailureRecoversWorkerPool() throws Exception {
+        // The same failures with worker threads: the per-worker clones of the right-hand filter
+        // initialize on the reading thread, and a clone that fails on a worker reports through
+        // the task.
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MAX_ROWS, 300);
+        setProperty(PropertyKey.CAIRO_SMALL_SQL_PAGE_FRAME_MIN_ROWS, 100);
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(
+                    pool,
+                    (engine, compiler, context) -> {
+                        createRandomTradesAndQuotes(engine, context, 3_000, 12_000, 10);
+                        for (String sql : SLAVE_FILTER_FAULT_QUERIES) {
+                            assertSlaveFilterFailuresRecover(engine, context, true, sql.formatted("trades", "quotes"), 0, 1, 100, 1_000, 10_000);
+                        }
+                    },
+                    configuration,
+                    LOG
+            );
         });
     }
 
@@ -2616,6 +3143,72 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
         TestUtils.assertEquals(sql, expected, actual);
     }
 
+    // Fails the right-hand filters of the query on each init call that a cursor open makes, one
+    // after another, and then on the given evaluations. After each failure the same factory must
+    // read the rows of the query without the filters.
+    private static void assertSlaveFilterFailuresRecover(
+            CairoEngine engine,
+            SqlExecutionContext context,
+            boolean isParallel,
+            String sql,
+            int... failAfterEvaluations
+    ) throws Exception {
+        final StringSink expectedSink = new StringSink();
+        context.setParallelHorizonJoinEnabled(false);
+        TestUtils.printSql(engine, context, sql.replace(" WHERE test_fault()", ""), expectedSink);
+        final String expected = expectedSink.toString();
+        context.setParallelHorizonJoinEnabled(isParallel);
+        try (RecordCursorFactory factory = engine.select(sql, context)) {
+            assertProjectionFactory(factory, isParallel);
+            TestUtils.assertContains(explain(engine, context, sql), "slave filter: test_fault()");
+            int initFailureCount = 0;
+            while (true) {
+                TestFaultFunctionFactory.armToFailAfterInits(initFailureCount);
+                boolean isFailed = false;
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                    }
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "test_fault: injected init failure");
+                    isFailed = true;
+                } finally {
+                    TestFaultFunctionFactory.disarm();
+                }
+                // A failure that the cursor swallows would pass off missing rows as the result.
+                Assert.assertEquals(sql, TestFaultFunctionFactory.faultsTriggered() > 0, isFailed);
+                if (!isFailed) {
+                    break;
+                }
+                initFailureCount++;
+                assertReadsAllRows(engine, context, factory, expected);
+            }
+            Assert.assertTrue("expected an init failure: " + sql, initFailureCount > 0);
+
+            int evaluationFailureCount = 0;
+            for (int failAfter : failAfterEvaluations) {
+                TestFaultFunctionFactory.armToFailAfter(failAfter);
+                boolean isFailed = false;
+                try (RecordCursor cursor = factory.getCursor(context)) {
+                    //noinspection StatementWithEmptyBody
+                    while (cursor.hasNext()) {
+                    }
+                } catch (CairoException e) {
+                    TestUtils.assertContains(e.getFlyweightMessage(), "test_fault: injected failure");
+                    isFailed = true;
+                } finally {
+                    TestFaultFunctionFactory.disarm();
+                }
+                Assert.assertEquals(sql, TestFaultFunctionFactory.faultsTriggered() > 0, isFailed);
+                if (isFailed) {
+                    evaluationFailureCount++;
+                }
+                assertReadsAllRows(engine, context, factory, expected);
+            }
+            Assert.assertTrue("expected an evaluation failure: " + sql, evaluationFailureCount > 0);
+        }
+    }
+
     // Times one execution after another out and, after each, reads every row from the same
     // factory again. First the clock of the breakers trips on each reading the open makes, in
     // turn: every breaker check on the way to an open cursor fails the open once, with whatever
@@ -2948,6 +3541,14 @@ public class HorizonJoinProjectionTest extends AbstractCairoTest {
             printRows(factory, sqlExecutionContext, secondPass);
             TestUtils.assertEquals(firstPass, secondPass);
         }
+    }
+
+    private void assertViewMatchesQuery(String query) throws Exception {
+        final StringSink expected = new StringSink();
+        printSql(query, expected);
+        Assert.assertTrue(expected.toString().split("\n").length > 2);
+        // A nested leak check would clear the engine and, with it, the view's refresh state.
+        assertQuery("mv").noLeakCheck().expectSize().timestamp("ts").returns(expected);
     }
 
     private void createRandomTradesAndQuotes(int tradeRows, int quoteRows, int symbols) throws Exception {
