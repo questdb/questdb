@@ -216,6 +216,38 @@ public class RecordBlockTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAsyncFilterOffersWholeFramesInPlace() throws Exception {
+        // a frame whose every row the filter selects is offered where its rows are, consecutive (no row
+        // indexes, not gathered), unless it has column tops; the blocks still read what the rows read
+        assertMemoryLeak(() -> {
+            final WorkerPool pool = new TestWorkerPool(4, TestUtils.getWorkerPoolMode(TestUtils.generateRandom(LOG)));
+            TestUtils.execute(pool, (engine, compiler, context) -> {
+                final SqlExecutionContextImpl ctx = (SqlExecutionContextImpl) context;
+                ctx.changePageFrameSizes(1, 64);
+                createAllTypes(engine, ctx);
+                final Rnd rnd = TestUtils.generateRandom(LOG);
+                final String query = "select * from at where l > -100000000 or l is null";
+                for (int run = 0; run < 3; run++) {
+                    Assert.assertTrue(assertBlocksMatchRows(engine, ctx, query, rnd) > 0);
+                }
+                long consecutive = 0;
+                try (RecordCursorFactory factory = engine.select(query, ctx); RecordCursor cursor = factory.getCursor(ctx)) {
+                    RecordBlock block;
+                    while ((block = cursor.peekRecordBlock(1000)) != null || cursor.hasNext()) {
+                        if (block != null) {
+                            if (block.getRowIndexesAddress() == 0) {
+                                consecutive += block.getRowCount();
+                            }
+                            cursor.skipRecordBlock(block.getRowCount());
+                        }
+                    }
+                }
+                Assert.assertTrue(consecutive > 0);
+            }, configuration, LOG);
+        });
+    }
+
+    @Test
     public void testMaterializedSortOffersSortedRows() throws Exception {
         assertMemoryLeak(() -> {
             createAllTypes();
@@ -232,9 +264,12 @@ public class RecordBlockTest extends AbstractCairoTest {
                     Assert.assertTrue(query, assertBlocksMatchRows(engine, sqlExecutionContext, query, rnd) > 0);
                 }
             }
-            // a SYMBOL column: the chain holds its keys, no block
+            // a SYMBOL column: the chain holds its keys, which its blocks offer
             final String withSymbol = "select s, l from (select s, l from at union all select s, l from at where 1 = 0) order by l desc";
-            assertSupportsBlocks(false, withSymbol);
+            assertSupportsBlocks(true, withSymbol);
+            for (int k = 0; k < 3; k++) {
+                Assert.assertTrue(withSymbol, assertBlocksMatchRows(engine, sqlExecutionContext, withSymbol, rnd) > 0);
+            }
         });
     }
 

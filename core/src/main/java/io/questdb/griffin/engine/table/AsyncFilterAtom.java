@@ -28,6 +28,7 @@ import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.sql.Function;
+import io.questdb.cairo.sql.PageFrameMemory;
 import io.questdb.cairo.sql.PageFrameMemoryRecord;
 import io.questdb.cairo.sql.PartitionFormat;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -335,9 +336,23 @@ public class AsyncFilterAtom implements StatefulAtom, PerWorkerLockOwner, Planna
         if (projection != null && isProjecting) {
             task.setProjected(projection.project(workerId, owner, record, task.getFilteredRows(), task.getProjectedValues(), task.getMemoryTracker(), circuitBreaker));
         }
-        if (isGathering) {
+        if (isGathering && !selectsWholeFrame(task)) {
             task.setGathered(gather(task, record));
         }
+    }
+
+    /**
+     * Whether the filter selected every row of the task's native frame, which has no column tops nor
+     * type casts: its columns then hold the selected rows one after another, as a gather would lay
+     * them out, and the consumer reads them where they are, see AsyncFilteredRecordCursor.
+     */
+    public static boolean selectsWholeFrame(PageFrameReduceTask task) {
+        final PageFrameMemory frameMemory = task.getFrameMemory();
+        return !task.isCountOnly()
+                && frameMemory.getFrameFormat() == PartitionFormat.NATIVE
+                && !frameMemory.hasColumnTops()
+                && !frameMemory.hasColumnTypeCasts()
+                && task.getFilteredRows().size() == task.getFrameSequence().getPageFrameAddressCache().getFrameSize(task.getFrameIndex());
     }
 
     /**

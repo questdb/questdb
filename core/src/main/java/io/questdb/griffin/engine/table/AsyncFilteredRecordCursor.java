@@ -82,6 +82,8 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
     private long[] gatheredAddresses;
     private boolean isFrameGathered;
     private DirectLongList rows;
+    // the current frame's rows are all of its rows, see AsyncFilterAtom.selectsWholeFrame()
+    private boolean isWholeFrame;
     // Artificial limit on remaining rows to be returned from this cursor.
     // It is typically copied from LIMIT clause on SQL statement.
     private long rowsRemaining;
@@ -470,6 +472,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             // page frame memory that is now closed.
             record.clear();
             isFrameGathered = false;
+            isWholeFrame = false;
             if (projection != null) {
                 // the task's values may be the next frame's now
                 projection.ofFrame(0, 0);
@@ -517,6 +520,8 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
                     if (frameRowCount > 0 && frameSequence.isActive()) {
                         record.init(task.getFrameMemory());
                         isFrameGathered = rows != null && task.isGathered();
+                        // every row of the frame selected: its columns lie as the block gives them
+                        isWholeFrame = rows != null && !hasDescendingOrder && AsyncFilterAtom.selectsWholeFrame(task);
                         if (isFrameGathered) {
                             final AsyncFilterAtom atom = (AsyncFilterAtom) frameSequence.getAtom();
                             if (gatheredAddresses == null || gatheredAddresses.length < atom.getColumnCount()) {
@@ -585,6 +590,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
         ((AsyncFilterAtom) frameSequence.getAtom()).setParentUsedColumns(null);
         ((AsyncFilterAtom) frameSequence.getAtom()).setGathering(false);
         this.isFrameGathered = false;
+        this.isWholeFrame = false;
         frameMemoryPool.of(frameSequence.getPageFrameAddressCache());
         record.of(frameSequence.getSymbolTableSource());
         if (recordB != null) {
@@ -604,6 +610,10 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
             if (ColumnType.isVarSize(metadata.getColumnType(columnIndex))) {
                 return 0;
             }
+            if (isWholeFrame) {
+                final long address = record.getPageAddress(columnIndex);
+                return address != 0 ? address + (long) frameRowIndex * ColumnType.sizeOf(metadata.getColumnType(columnIndex)) : 0;
+            }
             if (isFrameGathered && gatheredAddresses[columnIndex] != 0) {
                 // the filtered rows' values, one after another, from the frame's first row on
                 return gatheredAddresses[columnIndex] + (long) frameRowIndex * ColumnType.sizeOf(metadata.getColumnType(columnIndex));
@@ -616,7 +626,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
         @Override
         public long getColumnRowIndexesAddress(int columnIndex) {
-            return isFrameGathered && gatheredAddresses[columnIndex] != 0 ? 0 : getRowIndexesAddress();
+            return isWholeFrame || (isFrameGathered && gatheredAddresses[columnIndex] != 0) ? 0 : getRowIndexesAddress();
         }
 
         @Override
@@ -635,7 +645,7 @@ class AsyncFilteredRecordCursor implements AsyncFilteredRecordCursorFactory.Reco
 
         @Override
         public long getRowIndexesAddress() {
-            return rows.getAddress() + frameRowIndex * Long.BYTES;
+            return isWholeFrame ? 0 : rows.getAddress() + frameRowIndex * Long.BYTES;
         }
 
         @Override
