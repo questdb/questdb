@@ -34,6 +34,7 @@ import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ReaderScanProfile;
 import io.questdb.cairo.RecordSink;
 import io.questdb.cairo.TableToken;
+import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapRecord;
 import io.questdb.cairo.map.MapRecordCursor;
@@ -67,6 +68,7 @@ import io.questdb.griffin.engine.PerWorkerLocks;
 import io.questdb.griffin.engine.functions.BooleanFunction;
 import io.questdb.griffin.engine.functions.FunctionFlags;
 import io.questdb.griffin.engine.functions.window.WholePartitionMinMax;
+import io.questdb.griffin.engine.groupby.FlyweightPackedMapValue;
 import io.questdb.griffin.engine.join.JoinRecord;
 import io.questdb.griffin.engine.table.AsyncFilteredRecordCursorFactory;
 import io.questdb.griffin.engine.table.SelectedRecord;
@@ -75,8 +77,8 @@ import io.questdb.std.DirectLongList;
 import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
-import io.questdb.std.MemoryTracker;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.MemoryTracker;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
@@ -85,7 +87,6 @@ import io.questdb.std.Vect;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.jetbrains.annotations.TestOnly;
-
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_ASC;
 import static io.questdb.cairo.sql.PartitionFrameCursorFactory.ORDER_DESC;
 
@@ -134,6 +135,8 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     private static final int MODE_AGGREGATE = 0;
     private static final int MODE_COLLECT = 1;
     private static final UnorderedPageFrameReducer REDUCER = AsyncWindowMinMaxFilterRecordCursorFactory::reduce;
+    // the rows of a phase-one batch probe, see aggregateFrameProbed()
+    private static final int PROBE_BATCH_ROWS = 2048;
     private static final int ROWS_PER_BREAKER_CHECK = 64 * 1024;
     private static final int ROWS_PER_OVERFLOW_CHECK = 4 * 1024;
     private final int[] argColumns;
@@ -156,6 +159,11 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
     private final int[] symbolCounts;
     // the DOUBLE and FLOAT min windows, whose value may depend on scan order
     private final int[] tieWindows;
+    // phase one over a single SYMBOL key through the map's batch probe, per slot (the owner's first):
+    // the probe's entries buffer and the flyweight over a row's value, see aggregateFrameProbed()
+    private final long[] probeBatchAddrs;
+    private final FlyweightPackedMapValue[] probeValues;
+    private final ArrayColumnTypes probeValueTypes;
     // value slots per key
     private final int valueCount;
     private final ObjList<CharSequence> windowPlans;
@@ -272,6 +280,9 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             this.ordinalSlot = -1;
         }
         this.valueCount = valueTypes.getColumnCount();
+        this.probeValueTypes = valueTypes;
+        this.probeBatchAddrs = new long[workerCount + 1];
+        this.probeValues = new FlyweightPackedMapValue[workerCount + 1];
         OrderedMap lookupMap = null;
         Atom atom = null;
         UnorderedPageFrameSequence<Atom> frameSequence = null;
@@ -569,7 +580,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             if (atom.mode == MODE_AGGREGATE && atom.factory.denseAggSlots > 0) {
                 atom.factory.aggregateFrameDense(slotId, atom.getMap(slotId), atom.getSink(slotId), record, frameRowCount);
             } else if (atom.mode == MODE_AGGREGATE) {
-                atom.factory.aggregateFrame(atom.getMap(slotId), atom.getSink(slotId), record, frameRowCount);
+                atom.factory.aggregateFrame(slotId, atom.getMap(slotId), atom.getSink(slotId), record, frameRowCount);
             } else {
                 atom.factory.collectFrame(atom, slotId, record, frameIndex, frameRowCount);
             }
@@ -800,21 +811,57 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         }
     }
 
-    private void aggregateFrame(OrderedMap map, RecordSink sink, PageFrameMemoryRecord record, long frameRowCount) {
+    private void aggregateFrame(int slotId, OrderedMap map, RecordSink sink, PageFrameMemoryRecord record, long frameRowCount) {
+        if (isAllSymbolKeys && keyColumnArray.length == 1) {
+            aggregateFrameProbed(slotId, map, sink, record, frameRowCount);
+            return;
+        }
         for (long r = 0; r < frameRowCount; r++) {
             record.setRowIndex(r);
             aggregateRow(map, sink, record);
         }
     }
 
+    // Phase one over a single SYMBOL key: the map's batch probe finds the rows' entries a batch at a time
+    // (a symbol key by value, see OrderedMap.probeBatch()), then each row updates its entry's windows.
+    private void aggregateFrameProbed(int slotId, OrderedMap map, RecordSink sink, PageFrameMemoryRecord record, long frameRowCount) {
+        final int s = slotId + 1;
+        long batchAddr = probeBatchAddrs[s];
+        if (batchAddr == 0) {
+            probeBatchAddrs[s] = batchAddr = Unsafe.malloc((long) PROBE_BATCH_ROWS * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
+        }
+        FlyweightPackedMapValue value = probeValues[s];
+        if (value == null) {
+            probeValues[s] = value = new FlyweightPackedMapValue(probeValueTypes);
+        }
+        for (long lo = 0; lo < frameRowCount; lo += PROBE_BATCH_ROWS) {
+            final long hi = Math.min(lo + PROBE_BATCH_ROWS, frameRowCount);
+            map.reserveCapacity(hi - lo);
+            final long base = map.probeBatch(record, sink, lo, hi, batchAddr);
+            for (long r = lo; r < hi; r++) {
+                final long encoded = Unsafe.getLong(batchAddr + ((r - lo) << 3));
+                value.of(base + Map.decodeBatchOffset(encoded));
+                if (Map.isNewBatchEntry(encoded)) {
+                    initValue(value);
+                }
+                record.setRowIndex(r);
+                updateWindows(value, record);
+            }
+        }
+    }
+
     private void aggregateRow(OrderedMap map, RecordSink sink, PageFrameMemoryRecord record) {
-        final int windowCount = argColumns.length;
         final MapKey key = map.withKey();
         sink.copy(record, key);
         final MapValue value = key.createValue();
         if (value.isNew()) {
             initValue(value);
         }
+        updateWindows(value, record);
+    }
+
+    private void updateWindows(MapValue value, PageFrameMemoryRecord record) {
+        final int windowCount = argColumns.length;
         for (int i = 0; i < windowCount; i++) {
             final int slot = windowSlots[i];
             switch (argKinds[i]) {
@@ -1252,6 +1299,9 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             freeDense();
         } catch (Throwable th) {
             failure = th;
+        }
+        for (int i = 0, n = probeBatchAddrs.length; i < n; i++) {
+            probeBatchAddrs[i] = Unsafe.free(probeBatchAddrs[i], (long) PROBE_BATCH_ROWS * Long.BYTES, MemoryTag.NATIVE_DEFAULT);
         }
         // the filter factory owns the snapshot, so the base, and the lookup filters
         failure = Misc.freeBestEffort(failure, filterFactory);
@@ -1731,6 +1781,8 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         private final JoinRecord joinRecord;
         private final SelectedRecord record;
         private final RemappedSymbolTableSource symbolTableSource;
+        // the record lookupRecord and joinRecord read, see getBool()
+        private Record boundRecord;
 
         private LookupFilter(
                 AsyncWindowMinMaxFilterRecordCursorFactory factory,
@@ -1769,8 +1821,12 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
             if (factory.boundActive && factory.isBeyondBound(rec)) {
                 return false;
             }
-            lookupRecord.of(rec);
-            joinRecord.of(rec, lookupRecord);
+            if (rec != boundRecord) {
+                // the filter's record is the frame's, the same object row after row: its stores once
+                lookupRecord.of(rec);
+                joinRecord.of(rec, lookupRecord);
+                boundRecord = rec;
+            }
             return inner.getBool(record);
         }
 
@@ -1778,6 +1834,7 @@ public class AsyncWindowMinMaxFilterRecordCursorFactory extends AbstractRecordCu
         public void init(SymbolTableSource symbolTableSource, SqlExecutionContext executionContext) throws SqlException {
             // phase one has frozen the lookup map by now
             lookupRecord.bind(executionContext.getMemoryTracker());
+            boundRecord = null;
             if (ownsInner) {
                 this.symbolTableSource.of(symbolTableSource);
                 inner.init(this.symbolTableSource, executionContext);
