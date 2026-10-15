@@ -379,6 +379,9 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
             // partition column that a parquet conversion freed, and close() nulls ff.
             return;
         }
+        // An async sync is a no-op: msync(MS_ASYNC) has been a no-op on Linux since 2.6.19, and the
+        // Windows msync ignores the flag and flushes synchronously. The OS writes dirty pages back
+        // on its own.
         if (appendOnly) {
             // Append-only memory: the only dirty bytes lie between the last synced append offset and the
             // current one. Narrow the msync to the written range, and skip it when nothing was appended.
@@ -391,14 +394,14 @@ public class MemoryCMARWImpl extends AbstractMemoryCR implements MemoryCMARW, Me
                 // appendOnly only on memories that never write in place below the cursor (MemoryMA.setAppendOnly).
                 return;
             }
-            if (ao > 0) {
+            if (ao > 0 && !async) {
                 // Flush only [0, appendOffset): starting at the mapping base keeps the call page-aligned, and
                 // the tail past the append offset is never written.
-                ff.msync(pageAddress, ao, async);
+                ff.msync(pageAddress, ao, false);
             }
             lastSyncedAppendOffset = ao;
-        } else {
-            ff.msync(pageAddress, size, async);
+        } else if (!async) {
+            ff.msync(pageAddress, size, false);
         }
     }
 

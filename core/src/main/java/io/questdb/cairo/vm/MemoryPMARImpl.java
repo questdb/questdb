@@ -186,7 +186,10 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
     }
 
     public void sync(boolean async) {
-        if (pageAddress != 0) {
+        // An async sync is a no-op: msync(MS_ASYNC) has been a no-op on Linux since 2.6.19, and the
+        // Windows msync ignores the flag and flushes synchronously. The OS writes dirty pages back
+        // on its own.
+        if (!async && pageAddress != 0) {
             if (appendOnly) {
                 // Flush only the bytes written into the mapped page: the active partition's partial last page
                 // is synced on every commit, and most of it is clean. The length comes from the live append
@@ -195,10 +198,10 @@ public class MemoryPMARImpl extends MemoryPARWImpl implements MemoryMAR {
                 // Linux, whose commit fdatasyncs the file).
                 final long inPageWritten = inPageWritten();
                 if (inPageWritten > 0) {
-                    ff.msync(pageAddress, inPageWritten, async);
+                    ff.msync(pageAddress, inPageWritten, false);
                 }
             } else {
-                ff.msync(pageAddress, getPageSize(), async);
+                ff.msync(pageAddress, getPageSize(), false);
             }
         }
     }

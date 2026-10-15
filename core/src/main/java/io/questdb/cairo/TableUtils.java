@@ -777,7 +777,7 @@ public final class TableUtils {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getDbRoot();
         final int mkDirMode = configuration.getMkDirMode();
-        createTable(ff, root, telemetry, mkDirMode, memory, path, structure, tableVersion, tableId, dirName);
+        createTable(ff, root, telemetry, mkDirMode, memory, path, structure, tableVersion, tableId, dirName, configuration.getCommitMode());
     }
 
     public static void createTable(
@@ -790,9 +790,10 @@ public final class TableUtils {
             TableStructure structure,
             int tableVersion,
             int tableId,
-            CharSequence dirName
+            CharSequence dirName,
+            int commitMode
     ) {
-        createTable(ff, root, telemetry, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);
+        createTable(ff, root, telemetry, mkDirMode, memory, path, dirName, structure, tableVersion, tableId, commitMode);
     }
 
     public static void createTable(
@@ -803,13 +804,14 @@ public final class TableUtils {
             TableStructure structure,
             int tableVersion,
             int tableId,
-            CharSequence dirName
+            CharSequence dirName,
+            int commitMode
     ) {
         try (
                 Path path = new Path();
                 MemoryMARW mem = Vm.getCMARWInstance()
         ) {
-            createTable(ff, root, telemetry, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
+            createTable(ff, root, telemetry, mkDirMode, mem, path, dirName, structure, tableVersion, tableId, commitMode);
         }
     }
 
@@ -823,9 +825,10 @@ public final class TableUtils {
             CharSequence tableDir,
             TableStructure structure,
             int tableVersion,
-            int tableId
+            int tableId,
+            int commitMode
     ) {
-        createTableOrViewOrMatView(ff, root, mkDirMode, telemetry, memory, null, path, tableDir, structure, tableVersion, tableId);
+        createTableOrViewOrMatView(ff, root, mkDirMode, telemetry, memory, null, path, tableDir, structure, tableVersion, tableId, commitMode);
     }
 
     public static void createTableNameFile(MemoryMAR mem, CharSequence charSequence) {
@@ -849,9 +852,10 @@ public final class TableUtils {
             CharSequence tableDir,
             TableStructure structure,
             int tableVersion,
-            int tableId
+            int tableId,
+            int commitMode
     ) {
-        createTableOrMatViewInVolume(ff, root, telemetry, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
+        createTableOrMatViewInVolume(ff, root, telemetry, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId, commitMode);
     }
 
     public static void createTableOrMatViewInVolume(
@@ -865,7 +869,8 @@ public final class TableUtils {
             CharSequence tableDir,
             TableStructure structure,
             int tableVersion,
-            int tableId
+            int tableId,
+            int commitMode
     ) {
         LOG.info().$("create table in volume [path=").$(path).I$();
         Path normalPath = Path.getThreadLocal2(root).concat(tableDir);
@@ -889,7 +894,7 @@ public final class TableUtils {
                 }
                 throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
             }
-            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId);
+            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId, commitMode);
         } finally {
             path.trimTo(rootLen);
         }
@@ -906,7 +911,8 @@ public final class TableUtils {
             CharSequence tableDir,
             TableStructure structure,
             int tableVersion,
-            int tableId
+            int tableId,
+            int commitMode
     ) {
         LOG.debug().$("create table [name=").$safe(tableDir).I$();
         path.of(root).concat(tableDir).$();
@@ -920,7 +926,7 @@ public final class TableUtils {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
             }
             dirCreated = true;
-            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId);
+            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId, commitMode);
         } catch (Throwable e) {
             if (dirCreated) {
                 ff.rmdir(path.trimTo(rootLen).slash());
@@ -941,9 +947,10 @@ public final class TableUtils {
             CharSequence tableDir,
             TableStructure structure,
             int tableVersion,
-            int tableId
+            int tableId,
+            int commitMode
     ) {
-        createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
+        createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME, commitMode);
     }
 
     public static void createTableOrViewOrMatViewFiles(
@@ -958,6 +965,23 @@ public final class TableUtils {
             int tableVersion,
             int tableId,
             CharSequence txnFileName
+    ) {
+        createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId, txnFileName, CommitMode.SYNC);
+    }
+
+    public static void createTableOrViewOrMatViewFiles(
+            FilesFacade ff,
+            MemoryMARW memory,
+            @Nullable BlockFileWriter blockFileWriter,
+            @Nullable Telemetry<TelemetryTask> telemetry,
+            Path path,
+            int rootLen,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId,
+            CharSequence txnFileName,
+            int commitMode
     ) {
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRONoCache(ff, path.trimTo(rootLen).$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
@@ -983,7 +1007,8 @@ public final class TableUtils {
                                 structure.getColumnName(i),
                                 COLUMN_NAME_TXN_NONE,
                                 structure.getSymbolCapacity(i),
-                                structure.getSymbolCacheFlag(i)
+                                structure.getSymbolCacheFlag(i),
+                                commitMode
                         );
                         symbolMapCount++;
                     }

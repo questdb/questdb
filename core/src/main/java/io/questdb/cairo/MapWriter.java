@@ -44,8 +44,14 @@ public interface MapWriter extends SymbolCountProvider {
             CharSequence columnName,
             long columnNameTxn,
             int symbolCapacity,
-            boolean symbolCacheFlag
+            boolean symbolCacheFlag,
+            int commitMode
     ) {
+        // Table-level metadata is synced once per table by the caller. Under NOSYNC, skip the
+        // per-column msyncs: a CREATE TABLE with thousands of symbol columns would otherwise
+        // pay two synchronous flushes per column.
+        final boolean sync = commitMode != CommitMode.NOSYNC;
+        final boolean async = commitMode == CommitMode.ASYNC;
         int plen = path.size();
         try {
             mem.smallFile(ff, offsetFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
@@ -53,7 +59,9 @@ public interface MapWriter extends SymbolCountProvider {
             mem.putInt(symbolCapacity);
             mem.putBool(symbolCacheFlag);
             mem.jumpTo(SymbolMapWriter.HEADER_SIZE);
-            mem.sync(false);
+            if (sync) {
+                mem.sync(async);
+            }
             mem.close();
 
             if (!ff.touch(charFileName(path.trimTo(plen), columnName, columnNameTxn))) {
@@ -62,7 +70,9 @@ public interface MapWriter extends SymbolCountProvider {
 
             mem.smallFile(ff, BitmapIndexUtils.keyFileName(path.trimTo(plen), columnName, columnNameTxn), MemoryTag.MMAP_INDEX_WRITER);
             BitmapIndexWriter.initKeyMemory(mem, TableUtils.MIN_INDEX_VALUE_BLOCK_SIZE);
-            mem.sync(false);
+            if (sync) {
+                mem.sync(async);
+            }
             ff.touch(BitmapIndexUtils.valueFileName(path.trimTo(plen), columnName, columnNameTxn));
         } finally {
             path.trimTo(plen);
