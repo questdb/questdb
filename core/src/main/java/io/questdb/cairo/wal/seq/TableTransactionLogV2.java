@@ -385,7 +385,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                 // primary is older. A promoted node must trust them, so the field a demoted primary left, with either
                 // sign, goes durably.
                 txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, 0);
-                ff.fdatasync(txnMem.getFd());
+                txnMem.flushFile(false);
             }
         } else if (unsyncedFrom != 0 && lastTxn > knownMaxTxn) {
             // A writer that does not know the field, an older binary, appended the records above the slot without a
@@ -727,7 +727,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
                     .I$();
             final long cutOffset = (tail - lastPartFirstTxn + 1) * RECORD_SIZE;
             Vect.memset(txnPartMem.addressOf(cutOffset), (long) partTransactionCount * RECORD_SIZE - cutOffset, 0);
-            ff.fdatasync(txnPartMem.getFd());
+            txnPartMem.flushFile(false);
             lowerMaxTxn(txnMem, tail);
         }
         if (isCut || flushFrom > 0) {
@@ -740,7 +740,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, tail + 1);
             Unsafe.storeFence();
             txnMem.putLong(KNOWN_MAX_TXN_OFFSET_64, tail);
-            ff.fdatasync(txnMem.getFd());
+            txnMem.flushFile(false);
         }
         return tail;
     }
@@ -823,7 +823,7 @@ public class TableTransactionLogV2 implements TableTransactionLogFile {
             final long address = txnPartMem.addressOf(offset);
             if (!isZero(address, address + partSize - offset)) {
                 Vect.memset(address, partSize - offset, 0);
-                ff.fdatasync(txnPartMem.getFd());
+                txnPartMem.flushFile(false);
             }
             pastTailZeroedPartId = partId;
         }

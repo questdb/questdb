@@ -422,7 +422,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
             final long tailOffset = HEADER_SIZE + maxTxn.get() * RECORD_SIZE;
             if (hasNonZeroBytes(tailOffset, txnMem.size())) {
                 zeroFrom(tailOffset);
-                ff.fdatasync(txnMem.getFd());
+                txnMem.flushFile(false);
             }
         }
         txnMem.putLong(structureVersion);
@@ -477,7 +477,7 @@ public class TableTransactionLogV1 implements TableTransactionLogFile {
         // A cut is flushed in every mode: a record written over it must tear over zeros. The kept records are
         // flushed only where the hint is a durability promise.
         if (isCut || (scanFrom <= publishedTxn && isDurableMode)) {
-            ff.fdatasync(txnMem.getFd());
+            txnMem.flushFile(false);
         }
         final boolean isFlushed = isDurableMode || (unsyncedFrom >= 0 && (isCut || scanFrom > publishedTxn));
         txnMem.putLong(UNSYNCED_FROM_TXN_OFFSET_64, isFlushed ? tail + 1 : -(tail + 1));
