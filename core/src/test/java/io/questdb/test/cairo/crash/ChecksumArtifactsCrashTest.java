@@ -55,7 +55,10 @@ public class ChecksumArtifactsCrashTest extends AbstractCrashConsistencyTest {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "sync");
         }
         final int ops = countOps("txnprobe");
-        Assert.assertTrue("expected a real durability-op sequence to sweep, got " + ops, ops >= 8);
+        // An async sync makes no msync call, so the sweep has no MS_ASYNC points. Those points made nothing durable
+        // in the crash model: a crash right after one left the durable state of a crash right after the op before
+        // it. An ADAPTIVE commit of this table is five ops.
+        Assert.assertTrue("expected a real durability-op sequence to sweep, got " + ops, ops >= 5);
 
         for (int crashAt = 1; crashAt <= ops; crashAt++) {
             final int point = crashAt;

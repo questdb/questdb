@@ -594,11 +594,12 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
     }
 
     /**
-     * ASYNC: a WAL commit and its apply issue {@code msync(MS_ASYNC)}, and no {@code fdatasync} or
-     * {@code syncfs}.
+     * ASYNC: a WAL commit and its apply issue no sync call at all. An async sync makes no msync call (msync with
+     * MS_ASYNC has been a no-op on Linux since 2.6.19), and ASYNC promises nothing across a power loss, so it
+     * issues no {@code fdatasync} or {@code syncfs} either.
      */
     @Test
-    public void testAsyncModeMsyncAsyncOnly() throws Exception {
+    public void testAsyncModeIssuesNoSyncCall() throws Exception {
         node1.setProperty(PropertyKey.CAIRO_COMMIT_MODE, "async");
         final SyscallCountingFacade ff = new SyscallCountingFacade();
         assertMemoryLeak(ff, () -> {
@@ -608,7 +609,8 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
             ff.reset();
             execute("insert into x values ('2024-01-01T00:01:00.000000Z', 2)");
             drainWalQueue();
-            Assert.assertTrue("ASYNC must issue msync(MS_ASYNC)", ff.msyncAsync > 0);
+            Assert.assertEquals("ASYNC must not issue msync(MS_ASYNC)", 0, ff.msyncAsync);
+            Assert.assertEquals("ASYNC must not issue msync(MS_SYNC)", 0, ff.msyncSync);
             Assert.assertEquals("ASYNC must not issue fdatasync", 0, ff.fdatasyncCount);
             Assert.assertEquals("ASYNC must not issue syncfs", 0, ff.syncfsCount);
         });
@@ -722,7 +724,8 @@ public class AdaptiveWalDurabilityTest extends AbstractCairoTest {
         final String[][] cases = {
                 {"adaptive", "50000", String.format(perFile, drained, adaptiveMeta), String.format(perFile, drained, "")},
                 {"nosync", "0", "", ""},
-                {"async", "0", String.format(perFile, "msyncAsync=1", ""), String.format(perFile, "msyncAsync=1", "")},
+                // An async sync makes no msync call, so ASYNC makes no sync call on the segment files.
+                {"async", "0", "", ""},
                 {"sync", "0", String.format(perFile, "msyncSync=1", " _meta: msyncSync=1;"), String.format(perFile, "msyncSync=1", "")},
                 {"adaptive", "0", String.format(perFile, drained, adaptiveMeta), String.format(perFile, drained, "")}
         };
