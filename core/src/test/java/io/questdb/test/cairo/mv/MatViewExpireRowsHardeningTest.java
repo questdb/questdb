@@ -429,6 +429,82 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNoRowidMarkerSpellingReadsThroughPolicy() throws Exception {
+        // The no-rowid marker prefix names the same table as the bare name, so a read spelled with it applies
+        // the policy, and a materialized or live view cannot read a policied view through it.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE base (sym SYMBOL, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO base VALUES
+                    ('A', 1.0, '2024-01-01T00:00:00.000000Z'),
+                    ('A', 3.0, '2024-01-02T00:00:00.000000Z'),
+                    ('B', 2.0, '2024-01-03T00:00:00.000000Z'),
+                    ('B', 5.0, '2024-01-04T00:00:00.000000Z'),
+                    ('C', 4.0, '2024-01-05T00:00:00.000000Z')""");
+            drainWalAndMatViewQueues();
+            execute("CREATE MATERIALIZED VIEW mv_scalar AS (SELECT * FROM base) EXPIRE ROWS WHEN v < 2");
+            execute("CREATE MATERIALIZED VIEW mv_latest AS (SELECT * FROM base) EXPIRE ROWS KEEP LATEST PARTITION BY sym");
+            execute("CREATE MATERIALIZED VIEW mv_window AS (SELECT * FROM base) EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY sym)");
+            drainWalAndMatViewQueues();
+
+            assertMarkerSpellingsReturn("mv_scalar", false, """
+                    sym\tv
+                    A\t3.0
+                    B\t2.0
+                    B\t5.0
+                    C\t4.0
+                    """);
+            final String latestRows = """
+                    sym\tv
+                    A\t3.0
+                    B\t5.0
+                    C\t4.0
+                    """;
+            assertMarkerSpellingsReturn("mv_latest", true, latestRows);
+            assertMarkerSpellingsReturn("mv_window", false, latestRows);
+
+            // A self-reference spelled with the marker reads the view without the policy, like the bare name.
+            // Only A has a raw row below 2, so the policy expires A's non-max row and keeps all of B.
+            execute("ALTER MATERIALIZED VIEW mv_window SET EXPIRE ROWS WHEN v < max(v) OVER (PARTITION BY sym) AND sym IN (SELECT sym FROM '*!*mv_window' WHERE v < 2)");
+            drainWalAndMatViewQueues();
+            assertMarkerSpellingsReturn("mv_window", false, """
+                    sym\tv
+                    A\t3.0
+                    B\t2.0
+                    B\t5.0
+                    C\t4.0
+                    """);
+
+            execute("CREATE VIEW v_marker AS (SELECT sym, v, ts FROM '*!*mv_scalar')");
+            assertQuery("SELECT sym, v FROM v_marker ORDER BY ts").noLeakCheck().returns("""
+                    sym\tv
+                    A\t3.0
+                    B\t2.0
+                    B\t5.0
+                    C\t4.0
+                    """);
+
+            final String createMatView = "CREATE MATERIALIZED VIEW mv_chained AS (SELECT * FROM '*!*mv_scalar')";
+            assertExceptionNoLeakCheck(
+                    createMatView,
+                    createMatView.indexOf("'*!*"),
+                    "cannot materialize view 'mv_chained': source materialized view 'mv_scalar' has an active EXPIRE ROWS policy"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("mv_chained"));
+
+            final String createLiveView = "CREATE LIVE VIEW lv_blocked FLUSH EVERY 1s START FROM NOW AS "
+                    + "SELECT ts, v, count(*) OVER (PARTITION BY sym ORDER BY ts "
+                    + "ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM '*!*mv_scalar'";
+            assertExceptionNoLeakCheck(
+                    createLiveView,
+                    createLiveView.indexOf("'*!*"),
+                    "cannot materialize view 'lv_blocked': source materialized view 'mv_scalar' has an active EXPIRE ROWS policy"
+            );
+            Assert.assertNull(engine.getTableTokenIfExists("lv_blocked"));
+        });
+    }
+
+    @Test
     public void testExpiryTimestampThresholdAcceptsOnlyDropOldShapes() throws Exception {
         // expiryTimestampThreshold feeds the partition-bounds fast path, which drops whole partitions
         // below T. It must return a threshold ONLY for "expire everything below T" shapes (ts < T, T > ts)
@@ -3524,6 +3600,16 @@ public class MatViewExpireRowsHardeningTest extends AbstractCairoTest {
                 assertQuery("select sym from mv order by sym").noLeakCheck().returns("sym\nNEW\nOLD1\nOLD2\n");
             }
         });
+    }
+
+    private void assertMarkerSpellingsReturn(String viewName, boolean isSizeExpected, String expected) throws Exception {
+        final String expectedCount = "count\n" + (expected.split("\n").length - 1) + "\n";
+        for (String spelling : new String[]{viewName, "'*!*" + viewName + "'", "\"*!*" + viewName + "\""}) {
+            assertQuery("SELECT count() FROM " + spelling).noRandomAccess().expectSize().noLeakCheck().returns(expectedCount);
+            assertQuery("SELECT sym, v FROM " + spelling + " ORDER BY ts").expectSize(isSizeExpected).noLeakCheck().returns(expected);
+            assertQuery("SELECT m.sym, m.v FROM base b JOIN " + spelling + " m ON b.ts = m.ts ORDER BY b.ts")
+                    .noRandomAccess().noLeakCheck().returns(expected);
+        }
     }
 
     private void assertMixedClockCleanupSkipped(String viewName, String predicate) throws Exception {

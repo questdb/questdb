@@ -339,7 +339,9 @@ MATERIALIZED VIEW ... SET EXPIRE ROWS` compiles and opens the query a read of th
 view will run once the new policy replaces the current one. That query reads the
 view without its current policy. A window WHEN predicate can hold a subquery, and
 a subquery that names the view itself reads it without any policy, in the check
-and in every later read. Opening the check's cursor runs such a
+and in every later read. A subquery that reaches the view through a SQL view is
+rejected, as `ALTER VIEW` rejects the SQL view that closes the same cycle from
+the other side. Opening the check's cursor runs such a
 subquery. When it fails, the error carries the reason, and the reason can include
 a row value. In QuestDB Enterprise, with `WHEN secret < 20` in force, a user who
 holds `SET TABLE PARAM` and SELECT on `k`, `v` and `sym`, but not on `secret`,

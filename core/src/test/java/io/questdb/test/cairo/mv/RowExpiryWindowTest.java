@@ -520,10 +520,11 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
     @Test
     public void testRawWindowWhenSelfReferenceIgnoresNameCase() throws Exception {
         // A policy subquery that names the view itself reads the view without the policy. Table names are
-        // case-insensitive, so the policy text, a SQL view body and the read may each spell the name in a
-        // different case, and every spelling must keep the same rows. A spelling the parser failed to match
-        // would apply the policy a second time inside the subquery, where it hides A's 1.0 row, empties the
-        // subquery and shows every row.
+        // case-insensitive, so the policy text and the read may each spell the name in a different case, and
+        // every spelling must keep the same rows. A spelling the parser failed to match would apply the policy
+        // a second time inside the subquery, where it hides A's 1.0 row, empties the subquery and shows every
+        // row. A subquery that reaches the view through a SQL view is a cycle, and the cycle check matches the
+        // view body's spelling regardless of case.
         assertMemoryLeak(() -> {
             createViewWith("");
             execute("alter materialized view mv set expire rows when v < max(v) over (partition by k) and k in (select k from mv where v < 2)");
@@ -535,7 +536,52 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
             assertSelfReferencePolicyKeepsRows();
 
             execute("create view vw as (select * from MV)");
-            execute("alter materialized view mv set expire rows when v < max(v) over (partition by k) and k in (select k from vw where v < 2)");
+            assertSetExpireReadingViewRejected("vw");
+            assertSelfReferencePolicyKeepsRows();
+            assertQuery("select k, v from vw order by k, ts").noLeakCheck().returns("""
+                    k\tv
+                    A\t3.0
+                    B\t5.0
+                    B\t5.0
+                    B\t4.0
+                    C\tnull
+                    C\tnull
+                    D\t7.0
+                    """);
+        });
+    }
+
+    @Test
+    public void testSetExpireRejectsPolicyReachingViewThroughSqlView() throws Exception {
+        // A read of a SQL view over mv expands mv's policy. A policy subquery that reaches mv through a SQL
+        // view would expand that SQL view again inside its own expansion, so every read of the SQL view would
+        // fail. SET EXPIRE rejects such a policy, as ALTER VIEW rejects the mirror case.
+        assertMemoryLeak(() -> {
+            createViewWith("");
+            execute("create view vw as (select * from mv)");
+            execute("create view vw2 as (select * from vw)");
+            execute("create view vw_marker as (select * from '*!*mv')");
+            // No policy exists anywhere in the engine yet.
+            assertSetExpireReadingViewRejected("vw");
+            assertSetExpireReadingViewRejected("vw2");
+            assertSetExpireReadingViewRejected("vw_marker");
+
+            // vw3 reaches mv through mv2's policy.
+            execute("create materialized view mv2 as (select * from base)");
+            drainWalAndMatViewQueues();
+            execute("alter materialized view mv2 set expire rows when v < max(v) over (partition by k) and k in (select k from mv where v < 2)");
+            drainWalAndMatViewQueues();
+            execute("create view vw3 as (select * from mv2)");
+            assertSetExpireReadingViewRejected("vw3");
+
+            for (String view : new String[]{"vw", "vw2", "vw_marker"}) {
+                assertQuery("select count() c from " + view).noRandomAccess().expectSize().noLeakCheck().returns("c\n9\n");
+            }
+            assertQuery("select count() c from vw3").noRandomAccess().expectSize().noLeakCheck().returns("c\n7\n");
+
+            // A SQL view that does not reach mv is a valid source for the policy's subquery.
+            execute("create view other as (select * from base)");
+            execute("alter materialized view mv set expire rows when v < max(v) over (partition by k) and k in (select k from other where v < 2)");
             drainWalAndMatViewQueues();
             assertSelfReferencePolicyKeepsRows();
         });
@@ -1332,6 +1378,17 @@ public class RowExpiryWindowTest extends AbstractCairoTest {
                     D\t7.0
                     """);
         }
+    }
+
+    private void assertSetExpireReadingViewRejected(String view) throws Exception {
+        final String sql = "alter materialized view mv set expire rows when v < max(v) over (partition by k) and k in (select k from "
+                + view + " where v < 2)";
+        assertExceptionNoLeakCheck(
+                sql,
+                sql.indexOf("v < max"),
+                "invalid EXPIRE ROWS policy: circular dependency detected: 'mv' cannot depend on '" + view
+                        + "' because '" + view + "' already depends on 'mv'"
+        );
     }
 
     private void assertWindowBindRejected(String sql, String bind) throws Exception {

@@ -955,6 +955,16 @@ public class SqlParser {
         return SqlException.unexpectedToken(lexer.lastTokenPosition(), token, extraMessage);
     }
 
+    // The name the row-expiry read filter resolves a table reference by: unquoted, without the no-rowid
+    // marker. The marker only turns off random access, and the optimiser and the code generator strip it
+    // before they open the table, so a reference spelled with it reads the same table as the bare name.
+    private static CharSequence expiryLookupName(CharSequence tableNameToken) {
+        final CharSequence unquotedName = unquote(tableNameToken);
+        return Chars.startsWith(unquotedName, IQueryModel.NO_ROWID_MARKER)
+                ? unquotedName.subSequence(IQueryModel.NO_ROWID_MARKER.length(), unquotedName.length())
+                : unquotedName;
+    }
+
     private static boolean isJsonUnnestSupportedType(int type) {
         int tag = ColumnType.tagOf(type);
         return tag == ColumnType.BOOLEAN
@@ -7853,16 +7863,19 @@ public class SqlParser {
         // from every read. This is the single chokepoint for plain-table resolution: both the FROM
         // branch (parseFromClause) and the JOIN branch funnel through parseSelectFrom, and the inner
         // tables of sub-queries/CTE bodies recurse back here too. The CTE *reference* case set a
-        // nested model above (tableNameExpr stays null), so it is naturally skipped.
+        // nested model above (tableNameExpr stays null), so it is naturally skipped. A reference
+        // spelled with the no-rowid marker resolves to the same table, see expiryLookupName().
         final ExpressionNode resolvedTableNameExpr = model.getTableNameExpr();
-        if (
-                resolvedTableNameExpr != null
-                        && resolvedTableNameExpr.type == ExpressionNode.LITERAL
-                        && cairoEngine.getMetadataCache().mayHaveExpiryPolicy()
-        ) {
+        if (resolvedTableNameExpr == null || resolvedTableNameExpr.type != ExpressionNode.LITERAL) {
+            return;
+        }
+        // Runs ahead of the policy checks below: the view a SET EXPIRE check reads may carry no policy
+        // yet, and no other table may carry one either.
+        rejectExpiryPolicyCycleThroughView(resolvedTableNameExpr);
+        if (cairoEngine.getMetadataCache().mayHaveExpiryPolicy()) {
             // Normalise to the unquoted name so the recursion guard matches regardless of quoting:
             // the outer reference may be "from t" while the synthetic inner is "from \"t\"".
-            final CharSequence unquotedName = unquote(resolvedTableNameExpr.token);
+            final CharSequence unquotedName = expiryLookupName(resolvedTableNameExpr.token);
             // Guard against the synthetic inner "SELECT * FROM t" re-expanding (infinite recursion).
             if (!expiringTablesBeingExpanded.contains(unquotedName)) {
                 final TableToken tt = cairoEngine.getTableTokenIfExists(unquotedName);
@@ -8665,6 +8678,28 @@ public class SqlParser {
         }
         if (isOutermost) {
             pivotSubQueryModelsInAuditedView.clear();
+        }
+    }
+
+    // ALTER MATERIALIZED VIEW ... SET EXPIRE checks a new policy by compiling a read of the view that
+    // reads the view itself without any policy, see SqlExecutionContext.getExpiryRawReadTable(). A
+    // reference to that view from inside a SQL view body means the new policy's subquery reaches the
+    // view through a SQL view. A read of that SQL view would expand the policy, and the policy would
+    // expand the SQL view again, so every read of it would fail as a circular view reference. The check
+    // rejects such a policy, the way ViewGraph.validateNoCycle rejects the SQL view that closes the
+    // same cycle from the other side.
+    private void rejectExpiryPolicyCycleThroughView(ExpressionNode tableNameExpr) throws SqlException {
+        if (viewsBeingCompiled.size() == 0 || expiryFilterExecutionContext == null) {
+            return;
+        }
+        final TableToken rawReadTable = expiryFilterExecutionContext.getExpiryRawReadTable();
+        if (rawReadTable != null && rawReadTable.equals(cairoEngine.getTableTokenIfExists(expiryLookupName(tableNameExpr.token)))) {
+            final CharSequence viewName = viewsBeingCompiled.getQuick(0);
+            throw SqlException.$(tableNameExpr.position, "circular dependency detected: '")
+                    .put(rawReadTable.getTableName())
+                    .put("' cannot depend on '").put(viewName)
+                    .put("' because '").put(viewName)
+                    .put("' already depends on '").put(rawReadTable.getTableName()).put('\'');
         }
     }
 
