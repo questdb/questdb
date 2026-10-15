@@ -114,8 +114,7 @@ final class JoinOrdering implements OptimiserPass {
             case AggregatePlan aggregate -> LogicalPlans.hasTimestampAggregate(aggregate.getAggregates())
                     || !LogicalPlans.isAggregateOrderIndependent(aggregate);
             case FilterPlan filter -> isOrderVisible || !LogicalPlans.isOrderIndependent(filter.getPredicate());
-            case ProjectPlan project ->
-                    isOrderVisible || !LogicalPlans.isOrderTransparent(project);
+            case ProjectPlan project -> isOrderVisible || !LogicalPlans.isOrderTransparent(project);
             case LimitPlan _, DistinctPlan _ -> isOrderVisible;
             case SetOperationPlan operation ->
                     isOrderVisible && (inputIndex == 0 || operation.getOperation().isUnion());
