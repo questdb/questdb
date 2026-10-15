@@ -8697,7 +8697,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             instance.setLastProcessedSeqTxn(committedSeqTxn);
             instance.setAppliedWatermark(committedSeqTxn);
-            boolean lvConsumedPersisted = false;
             try {
                 engine.advanceLiveViewConsumedSeqTxn(
                         instance.getLiveViewToken(),
@@ -8705,16 +8704,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         blockFileWriter,
                         path
                 );
-                lvConsumedPersisted = true;
             } catch (CairoException e) {
                 LOG.critical().$("could not advance live view consumed seqTxn after O3 resume replay [view=")
                         .$(viewName)
                         .$(", advanceTo=").$(committedSeqTxn)
                         .$(", error=").$safe(e.getFlyweightMessage()).I$();
+                // A failed advance leaves the consumed floor at its prior durable value, so this
+                // writes the rest of the state: the state file then records this commit as
+                // processed and applied, which is all the seal below needs from it. A write that
+                // fails too ends the turn here, ahead of the seal.
                 persistState(instance);
             }
             boolean headSealed = false;
-            if (lvConsumedPersisted && appendedRows > 0) {
+            if (appendedRows > 0) {
                 // Seal the post-replay state, appending a fresh head onto the preserved
                 // prefix (or opening a fresh history when the prefix was retired). force
                 // writes past the cadence gate, though the cleared head already puts this
@@ -8739,6 +8741,17 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // walk. Seal the frontier as a root of its own whenever it has run past the
                 // splice's newest key, and leave the seal to re-stamp the head metadata alone
                 // when the two agree.
+                //
+                // The seal does not wait on the consumed seqTxn advance above. That watermark
+                // is the base WAL purge floor, and WalPurgeJob min-combines it with this
+                // seal's base seqTxn, so one that trails holds back more WAL, never less. A
+                // restore checks the generation's normalizedBaseSeqTxn against the applied
+                // watermark, which the state file records whether or not the advance went
+                // through. Skipping the seal there would leave the splice's newest root below
+                // the frontier under a generation already standing at this commit, so a
+                // restart would fail its own row count and rebuild from the applied base; it
+                // would also leave the lifetime row counter this call advances short of the
+                // table, and the next seal would retire the timeline over the mismatch.
                 final long headSealStart = System.nanoTime();
                 headSealed = maybeWriteHeadCheckpoint(
                         instance,
@@ -10385,7 +10398,6 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 } else {
                     instance.setLastProcessedSeqTxn(effectiveSeqTxn);
                     instance.setAppliedWatermark(effectiveSeqTxn);
-                    boolean lvConsumedPersisted = false;
                     boolean headSealed = false;
                     try {
                         engine.advanceLiveViewConsumedSeqTxn(
@@ -10394,16 +10406,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 blockFileWriter,
                                 path
                         );
-                        lvConsumedPersisted = true;
                     } catch (CairoException e) {
                         LOG.critical().$("could not advance live view consumed seqTxn after O3 replay [view=")
                                 .$(viewName)
                                 .$(", advanceTo=").$(effectiveSeqTxn)
                                 .$(", error=").$safe(e.getFlyweightMessage()).I$();
+                        // A failed advance leaves the consumed floor at its prior durable value,
+                        // so this writes the rest of the state: the state file then records this
+                        // commit as processed and applied, which is all the seal below needs from
+                        // it. A write that fails too ends the turn here, ahead of the seal.
                         persistState(instance);
                     }
                     repairPublication.watermarkAdvanced();
-                    if (lvConsumedPersisted && (appendedRows > 0 || repairPublication.isKeepPrimaryRuntime())) {
+                    if (appendedRows > 0 || repairPublication.isKeepPrimaryRuntime()) {
                         // Post-replay head: retireCheckpointStateOnO3 cleared the head metadata
                         // above, so force seals a fresh boundary reflecting the post-replay state
                         // (firstCp is already true here; force keeps the intent explicit). A
@@ -10435,6 +10450,16 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         // head key - the convergence that let the repair keep the primary runtime
                         // is exactly what makes that runtime the correct state there - and leave
                         // the seal to re-stamp the head metadata alone when the two agree.
+                        //
+                        // The seal does not wait on the consumed seqTxn advance above. That
+                        // watermark is the base WAL purge floor, and WalPurgeJob min-combines it
+                        // with this seal's base seqTxn, so one that trails holds back more WAL,
+                        // never less. A restore checks the generation's normalizedBaseSeqTxn
+                        // against the applied watermark, which the state file records whether or
+                        // not the advance went through. Skipping the seal there would leave the
+                        // splice's newest root below the frontier under a generation already
+                        // standing at this commit, so a restart would fail its own row count and
+                        // rebuild from the applied base.
                         final long headMaxTs = repairPublication.isKeepPrimaryRuntime()
                                 ? instance.getLatestSeenTs()
                                 : replayMaxTs;
@@ -16725,6 +16750,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // calls recordRefreshSuccess, which zeroes the streak the budget measures.
         }
         long nowUs = engine.getConfiguration().getMicrosecondClock().getTicks();
+        // Read before the record call below, which stamps the streak start when none is running:
+        // the duration guard further down needs to know whether this fault starts the streak.
+        final boolean isRetryStreakRunning = instance.getFlushRetryStartUs() != Numbers.LONG_NULL;
         if (isWindowStateRecovered) {
             // Charged to the duration budget alone; see the mid-drain block above.
             instance.recordRecoveredRefreshFailure(nowUs);
@@ -16759,13 +16787,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         // invalidates after the duration cap. A dropped/invalidated view is short-circuited by the
         // isDropped()/isInvalid() gate in refreshInstance, so it never spins here.
         boolean tableTransient = t instanceof CairoException ce && ce.isTableDoesNotExist();
-        // The duration term needs an actual retry window to measure. On the first failure
-        // retryStartUs is unset, so elapsedUs is 0, and a configured budget of 0 would make
-        // "0 >= 0" exhaust the budget before !tableTransient is ever consulted - permanently
-        // invalidating a view on its first fault and defeating the CREATE-window carve-out
-        // documented above. For every positive budget this is behaviour-neutral: elapsedUs is 0
-        // on the first failure, which is already below the cap.
-        boolean durationExhausted = retryStartUs != Numbers.LONG_NULL && elapsedUs >= maxDurationMicros;
+        // The duration term needs an actual retry window to measure. The fault that starts the
+        // streak has none: the record call above stamped the start at nowUs, so elapsedUs is 0,
+        // and a configured budget of 0 or below would make "0 >= budget" exhaust the budget before
+        // !tableTransient is ever consulted - permanently invalidating a view on its first fault
+        // and defeating the CREATE-window carve-out documented above. For every positive budget
+        // this is behaviour-neutral: elapsedUs is 0 on the first failure, which is already below
+        // the cap.
+        boolean durationExhausted = isRetryStreakRunning && elapsedUs >= maxDurationMicros;
         // A fault whose recovery put the view back in front of the commits it stopped did not
         // add to retryCount, and must not meet the COUNT budget either: the duration budget alone
         // bounds it (see the mid-drain block above).

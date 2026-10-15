@@ -101,6 +101,15 @@ public final class LiveViewCheckpointPurgeState implements Mutable {
         }
     }
 
+    /**
+     * Returns the identity's pooled list itself, not a copy, or null when the identity has no
+     * pending retirements. Only a refresh worker that holds the view's refresh latch
+     * ({@link LiveViewInstance#tryLockForRefresh()}) may call this, and it must finish with the
+     * list before it clears or replaces this identity's retirements. The latch keeps the list
+     * out of the pool meanwhile: seal and sweep run under it, and DROP and the CREATE rollback
+     * mark the view dropped and call {@link LiveViewInstance#fenceRefresh()} before
+     * {@link #reset}. {@link #clear()} drops every list instead of pooling it.
+     */
     public synchronized @Nullable LongList getPendingRetirements(long lifecycleIdentity) {
         return pendingRetirements.getQuick(bindGeneration(lifecycleIdentity));
     }

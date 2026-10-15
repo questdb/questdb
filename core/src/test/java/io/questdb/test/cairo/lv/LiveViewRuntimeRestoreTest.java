@@ -897,14 +897,16 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         // restore runs, meets the same out-of-order commit in the replay gap and parks the repair
         // it hands off to. The recovery does not settle the fault, so the turn charges the
         // flush-retry budget for it - the duration budget, since the restore left the view in
-        // front of the commits the fault stopped - and a duration budget of zero runs out on this
-        // very turn. The fault reads as a lost base WAL segment, so the exhausted budget
-        // re-derives the view from the applied base. That re-derive rebuilds the runtime the
-        // parked repair stands in and rewrites the output its replacement stands over, so the
-        // repair must be gone before it runs, and nothing may resume it afterwards.
+        // front of the commits the fault stopped. An earlier fault, before the turn fed a row,
+        // started the streak, and the failing turn runs at that fault's retry deadline, past a
+        // duration budget of 1us, so the budget runs out on this very turn. The fault reads as a
+        // lost base WAL segment, so the exhausted budget re-derives the view from the applied
+        // base. That re-derive rebuilds the runtime the parked repair stands in and rewrites the
+        // output its replacement stands over, so the repair must be gone before it runs, and
+        // nothing may resume it afterwards.
         final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
         setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_REPAIR_REPLAY_MAX_ROWS, 1);
-        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, 0);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, 1);
         assertMemoryLeak(fault.facade(), () -> {
             createBase("DEDUP UPSERT KEYS(created_at, account_id)");
             createView();
@@ -925,9 +927,25 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 runOnePass(job);
                 assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_FIRST_ROW_OUTPUT);
 
+                // The fault that starts the streak fails the pass's first read, so the turn feeds
+                // nothing and recovers nothing. The fault that starts a streak never exhausts the
+                // duration budget, so the view stays valid and backs off.
+                fault.arm(0);
+                runOnePass(job);
+                Assert.assertTrue("the streak's first segment read must have been failed", fault.hasFired());
+                final long streakStartUs = currentMicros;
+                Assert.assertEquals("the first fault starts the streak", streakStartUs, instance.getFlushRetryStartUs());
+                Assert.assertEquals("the first fault is charged to the count", 1, instance.getFlushRetryCount());
+                Assert.assertEquals("a fault before the turn fed a row restores nothing", 0, instance.getCheckpointRuntimeRestores());
+                Assert.assertFalse("the fault that starts the streak must not exhaust the duration budget", instance.isInvalid());
+
                 fault.arm(1);
                 runOnePass(job);
                 Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                Assert.assertTrue(
+                        "the failing turn must run past the duration budget the streak started",
+                        currentMicros - streakStartUs >= engine.getConfiguration().getLiveViewFlushRetryMaxDurationMicros()
+                );
                 capture.drain();
                 capture.assertLoggedRE("live view O3 repair yielded on its turn budget \\[view=lv, turns=1,");
                 capture.assertLogged("live view re-derived from the applied base after base WAL loss [view=lv");
@@ -946,7 +964,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             Assert.assertNull(instance.getSuspendedRepair());
             Assert.assertFalse(instance.isWindowStateDirty());
             Assert.assertFalse(instance.isInvalid());
-            Assert.assertEquals("the injected mid-drain failure is the one fault", 1, instance.getRefreshFaultCount());
+            Assert.assertEquals("the streak's first fault and the mid-drain failure are the two faults", 2, instance.getRefreshFaultCount());
             assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_OUTPUT);
         });
     }
@@ -1143,6 +1161,26 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             );
             assertViewRows(CORRECTED_OUTPUT);
         });
+    }
+
+    @Test
+    public void testAHeadMissSpliceThatCannotPersistItsWatermarkStillRestartsFromTheTimeline() throws Exception {
+        assertSpliceThatCannotPersistItsWatermarkRestartsFromTheTimeline(false, false);
+    }
+
+    @Test
+    public void testAHeadMissSpliceThatCannotPersistItsWatermarkStillRestartsFromTheTimelineAfterAForwardCommit() throws Exception {
+        assertSpliceThatCannotPersistItsWatermarkRestartsFromTheTimeline(false, true);
+    }
+
+    @Test
+    public void testAResumeSpliceThatCannotPersistItsWatermarkStillRestartsFromTheTimeline() throws Exception {
+        assertSpliceThatCannotPersistItsWatermarkRestartsFromTheTimeline(true, false);
+    }
+
+    @Test
+    public void testAResumeSpliceThatCannotPersistItsWatermarkStillRestartsFromTheTimelineAfterAForwardCommit() throws Exception {
+        assertSpliceThatCannotPersistItsWatermarkRestartsFromTheTimeline(true, true);
     }
 
     @Test
@@ -7352,6 +7390,138 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     /**
+     * Lands a correction whose repair publishes a checkpoint timeline splice, and fails the
+     * repair's next write of the view's state file: the one that persists the consumed watermark
+     * once the splice is published. The repair then writes the rest of its state instead, so the
+     * file still records the repair's own commit as applied.
+     * <p>
+     * The splice moved the generation's base coordinate up to that commit, and the newest root
+     * it keeps sits below the durable frontier: the correction's own commit carries a row above
+     * it on the resume, and a head miss under the default cadence keeps the only root, the one
+     * on the first row. A restart replays the base WAL only above that coordinate, so the
+     * generation covers the frontier only through the head root the repair seals there. A
+     * repair that cleared its marker on the splice alone and skipped that seal would leave a
+     * restore that falls short of the frontier and sends the restart to the rebuild from the
+     * applied base - which the restatement guard refuses over a base that has lost rows the view
+     * keeps. Each case therefore restarts and requires the restore, the rows a recompute over
+     * the base derives, and a forward commit folded onto the restored accumulators.
+     *
+     * @param isResume                 a resume from a root inside the open day when true, which
+     *                                 needs a root per flush; a head miss below the open day
+     *                                 under the default cadence otherwise
+     * @param isForwardCommitInProcess whether the process that ran the repair drains one more
+     *                                 in-order commit before the restart, which is the next turn
+     *                                 the repair's in-memory watermark hands the drain
+     */
+    private void assertSpliceThatCannotPersistItsWatermarkRestartsFromTheTimeline(
+            boolean isResume,
+            boolean isForwardCommitInProcess
+    ) throws Exception {
+        if (isResume) {
+            setProperty(PropertyKey.CAIRO_LIVE_VIEW_CHECKPOINT_ROWS, 1);
+        }
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("");
+            createView();
+            final String correction;
+            final String correctedRows;
+            final String inProcessCommit;
+            final String inProcessRow;
+            final String restartedCommit;
+            final String restartedRow;
+            if (isResume) {
+                // A root per flush, so day two holds roots at 09:00 and 09:20 and the late row
+                // between them resumes from the first. The row at 09:30 runs the frontier past
+                // the second, which is the newest root the splice keeps.
+                insertAndRefresh(
+                        "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",
+                        "('2026-01-02T09:00:00.000000Z', 'acct-1', 2.0)",
+                        "('2026-01-02T09:20:00.000000Z', 'acct-2', 4.0)"
+                );
+                correction = """
+                        INSERT INTO tx (created_at, account_id, amount) VALUES
+                        ('2026-01-02T09:10:00.000000Z', 'acct-1', 8.0),
+                        ('2026-01-02T09:30:00.000000Z', 'acct-1', 16.0)
+                        """;
+                correctedRows = """
+                        created_at\taccount_id\tcumulative_sum\tcumulative_count
+                        2026-01-01T09:00:00.000000Z\tacct-1\t1.0\t1
+                        2026-01-02T09:00:00.000000Z\tacct-1\t2.0\t1
+                        2026-01-02T09:10:00.000000Z\tacct-1\t10.0\t2
+                        2026-01-02T09:20:00.000000Z\tacct-2\t4.0\t1
+                        2026-01-02T09:30:00.000000Z\tacct-1\t26.0\t3
+                        """;
+                inProcessCommit = "('2026-01-02T09:40:00.000000Z', 'acct-2', 32.0)";
+                inProcessRow = "2026-01-02T09:40:00.000000Z\tacct-2\t36.0\t2\n";
+                restartedCommit = "('2026-01-02T09:50:00.000000Z', 'acct-1', 64.0)";
+                restartedRow = "2026-01-02T09:50:00.000000Z\tacct-1\t90.0\t4\n";
+            } else {
+                insertAndRefresh(SIX_ROWS);
+                Assert.assertEquals("the default cadence seals the first boundary only", 1, countSealedBoundaries("lv"));
+                correction = CORRECTION_COMMIT;
+                correctedRows = CORRECTED_OUTPUT;
+                inProcessCommit = "('2026-01-03T09:20:00.000000Z', 'acct-2', 64.0)";
+                inProcessRow = "2026-01-03T09:20:00.000000Z\tacct-2\t96.0\t2\n";
+                restartedCommit = "('2026-01-03T09:30:00.000000Z', 'acct-1', 128.0)";
+                restartedRow = "2026-01-03T09:30:00.000000Z\tacct-1\t144.0\t2\n";
+            }
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute(correction);
+                drainWalQueue();
+                fault.armViewStateOpen();
+                driveRefreshToQuiescence(job);
+            }
+            Assert.assertTrue("the repair's write of the view's state file must have been failed", fault.hasViewStateOpenFired());
+            capture.drain();
+            // The failed write is the one behind the published splice, on the route under test.
+            capture.assertLoggedRE("(?s)live view checkpoint timeline repair published \\[view=lv, .*"
+                    + (isResume
+                    ? "could not advance live view consumed seqTxn after O3 resume replay \\[view=lv, "
+                    : "could not advance live view consumed seqTxn after O3 replay \\[view=lv, "));
+            final LiveViewInstance instance = instance("lv");
+            assertNoRefreshFaults("lv");
+            Assert.assertEquals(
+                    "the repair must leave the generation valid against its own commit",
+                    instance.getLastProcessedSeqTxn(),
+                    normalizedBaseSeqTxn(instance)
+            );
+            try (Path dir = checkpointsDir(instance)) {
+                Assert.assertFalse(
+                        "the published splice resolves the repair marker",
+                        LiveViewCheckpointRepairMarker.exists(engine.getConfiguration().getFilesFacade(), dir)
+                );
+            }
+            assertViewRowsMatchRecompute(correctedRows);
+            String expectedRows = correctedRows;
+            if (isForwardCommitInProcess) {
+                insertAndRefresh(inProcessCommit);
+                expectedRows += inProcessRow;
+                assertViewRowsMatchRecompute(expectedRows);
+            }
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            final LiveViewInstance restarted = instance("lv");
+            Assert.assertFalse("the view must keep refreshing", restarted.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(restarted.isInvalid());
+            assertNoRefreshFaults("lv");
+            assertViewRowsMatchRecompute(expectedRows);
+            // The restore stands on the head root the repair sealed at its frontier, so it
+            // replays only what came after the repair: nothing, unless the default cadence left
+            // the in-process commit above that root.
+            capture.drain();
+            capture.assertLoggedRE("restored live view from checkpoint timeline \\[view=lv, .*replayedRows="
+                    + (!isResume && isForwardCommitInProcess ? 1 : 0) + "]");
+
+            insertAndRefresh(restartedCommit);
+            assertViewRowsMatchRecompute(expectedRows + restartedRow);
+        });
+    }
+
+    /**
      * A turn that finds the tier marked for a rebuild publishes no lead: it flushes its rows
      * straight to the view's table, restages the slot from the table, and moves the refresh
      * cursor over the base commit it drained once both return. A turn that fails behind the
@@ -7531,6 +7701,31 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                 .timestamp("created_at")
                 .expectSize()
                 .returns(expected);
+    }
+
+    /**
+     * Asserts the view returns {@code expected}, and that {@code expected} is what the view's own
+     * query recomputes over the base: the daily anchor is the window's partition by the day each
+     * row falls in.
+     */
+    private void assertViewRowsMatchRecompute(String expected) throws Exception {
+        assertViewRows(expected);
+        TestUtils.assertSqlCursors(
+                engine,
+                sqlExecutionContext,
+                """
+                        (
+                            SELECT created_at, account_id,
+                                sum(amount) OVER w AS cumulative_sum,
+                                count(account_id) OVER w AS cumulative_count
+                            FROM (SELECT created_at, account_id, amount, timestamp_floor('1d', created_at) AS day FROM tx)
+                            WINDOW w AS (PARTITION BY account_id, day ORDER BY created_at ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW)
+                        ) ORDER BY 2, 1
+                        """,
+                "(" + VIEW_ROWS_QUERY + ") ORDER BY 2, 1",
+                LOG,
+                true
+        );
     }
 
     /**

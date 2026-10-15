@@ -9216,6 +9216,136 @@ public class LiveViewSmokeTest extends AbstractLiveViewTest {
     }
 
     @Test
+    public void testFlushRetryBudgetZeroDurationInvalidatesOnSecondFault() throws Exception {
+        // A duration budget of 0 leaves no retry window once a failure streak is running, but the
+        // fault that starts the streak has no elapsed time behind it to measure. handleRefreshFailure
+        // must therefore let the first fault retry and exhaust the budget on the second, whose
+        // elapsed time since the streak began is at least 0. The count budget is set high so that
+        // only the duration term can invalidate here.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 1_000);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, 0);
+
+        final AtomicBoolean isPersistFailing = new AtomicBoolean(false);
+        FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                if (isPersistFailing.get() && Utf8s.endsWithAscii(name, LiveViewState.LIVE_VIEW_STATE_FILE_NAME)) {
+                    return -1;
+                }
+                return super.openRW(name, opts);
+            }
+        };
+
+        assertMemoryLeak(ff, () -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000001Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertFalse("LV must be valid after happy path", instance.isInvalid());
+
+                isPersistFailing.set(true);
+                try {
+                    setCurrentMicros(200_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000002Z', 2)");
+                    drainWalQueue();
+                    drainJob(job);
+                    Assert.assertEquals("the first fault must start the streak", 1, instance.getFlushRetryCount());
+                    Assert.assertEquals("the first fault must stamp the streak start", 200_000L, instance.getFlushRetryStartUs());
+                    Assert.assertFalse("the fault that starts the streak must not exhaust a zero duration budget",
+                            instance.isInvalid());
+
+                    setCurrentMicros(400_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000003Z', 3)");
+                    drainWalQueue();
+                    drainJob(job);
+                    Assert.assertEquals("the second fault must extend the streak", 2, instance.getFlushRetryCount());
+                    Assert.assertTrue("the second fault must exhaust a zero duration budget", instance.isInvalid());
+                    Assert.assertTrue(
+                            "invalidation reason must mention flush retry [reason=" + instance.getInvalidationReason() + "]",
+                            Chars.contains(instance.getInvalidationReason(), "flush retry budget")
+                    );
+                } finally {
+                    isPersistFailing.set(false);
+                }
+            }
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
+    public void testFlushRetryBudgetZeroDurationTransientTableMissDoesNotInvalidate() throws Exception {
+        // testFlushRetryBudgetTransientTableMissDoesNotInvalidate under a duration budget of 0,
+        // limited to the fault that starts the streak. That one fault reaches the count budget of 1,
+        // which handleRefreshFailure waives for a transient "table does not exist", and the duration
+        // term has no elapsed time behind it to measure. The first transient miss of a streak must
+        // therefore leave the view valid, and the refresh after the table resolves must end the
+        // streak and catch the view up. A miss still present on a second faulting turn does exhaust
+        // the 0 budget; this test drives a single faulting turn.
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX, 1);
+        setProperty(PropertyKey.CAIRO_LIVE_VIEW_FLUSH_RETRY_MAX_DURATION_MICROS, 0);
+
+        assertMemoryLeak(() -> {
+            setCurrentMicros(0);
+            execute("CREATE TABLE base (ts TIMESTAMP, x INT, pg SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("CREATE LIVE VIEW lv FLUSH EVERY 100ms START FROM NOW AS " +
+                    "SELECT ts, x, count(*) OVER (PARTITION BY pg ORDER BY ts ROWS BETWEEN 1_000_000 PRECEDING AND CURRENT ROW) AS rn FROM base WHERE x > 0");
+
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000001Z', 1)");
+                drainWalQueue();
+                drainJob(job);
+                drainWalQueue();
+
+                LiveViewInstance instance = engine.getLiveViewRegistry().getViewInstance("lv");
+                Assert.assertNotNull(instance);
+                Assert.assertFalse("LV must be valid after happy path", instance.isInvalid());
+
+                // Locking the LV's WAL writer pool makes getWalWriter(lvToken) raise
+                // EntryLockedException, which getWalWriterUnsafe converts to
+                // CairoException.tableDoesNotExist.
+                final TableToken lvToken = instance.getLiveViewToken();
+                Assert.assertTrue("must lock LV WAL writers", engine.lockWalWriters(lvToken));
+                try {
+                    setCurrentMicros(200_000L);
+                    execute("INSERT INTO base (ts, x) VALUES ('2026-04-01T00:00:00.000002Z', 2)");
+                    drainWalQueue();
+                    drainJob(job);
+                    Assert.assertEquals("the transient must have failed exactly one refresh", 1, instance.getFlushRetryCount());
+                    Assert.assertFalse("a transient table miss must not exhaust a zero duration budget on the fault that starts the streak",
+                            instance.isInvalid());
+                } finally {
+                    engine.unlockWalWriters(lvToken);
+                }
+
+                setCurrentMicros(2_000_000L);
+                drainJob(job);
+                drainWalQueue();
+                Assert.assertFalse("view must stay valid once the table resolves", instance.isInvalid());
+                Assert.assertEquals("retry budget resets after a successful refresh",
+                        0, instance.getFlushRetryCount());
+            }
+
+            assertQuery("SELECT ts, x, rn FROM lv ORDER BY ts").noLeakCheck().timestamp("ts").expectSize().returns("""
+                    ts\tx\trn
+                    2026-04-01T00:00:00.000001Z\t1\t1
+                    2026-04-01T00:00:00.000002Z\t2\t2
+                    """);
+
+            execute("DROP LIVE VIEW lv");
+        });
+    }
+
+    @Test
     public void testSameTimestampAdditiveAcrossCommitsMatchesRecompute() throws Exception {
         // Convergence guard for the additive O3 trigger's STRICT comparison.
         // drainBaseWal treats a commit as cross-commit O3 only when its min ts
