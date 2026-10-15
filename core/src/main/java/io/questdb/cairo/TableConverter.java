@@ -141,9 +141,9 @@ public class TableConverter {
                                     txWriter = new TxWriter(ff, configuration);
                                 }
                                 txWriter.ofRW(path.trimTo(rootLen).concat(dirNameSink).concat(TXN_FILE_NAME).$());
-                                // A one-shot structural conversion, outside any table writer and any save
-                                // point: under adaptive it takes the sync grade.
-                                // Boot conversion precedes role installation and keeps the configured grade.
+                                // Nothing commits through this TxWriter: the resets below write the mapped _txn in
+                                // place, so the grade set here does not apply to them. Under ADAPTIVE the baseline
+                                // save point of a conversion to WAL flushes _txn below.
                                 txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
 
                                 // A type conversion resets the table's WAL lineage: resetLagValuesUnsafe()

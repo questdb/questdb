@@ -424,8 +424,8 @@ public class TableSnapshotRestore implements QuietCloseable {
                 txWriter = new TxWriter(configuration.getFilesFacade(), configuration);
             }
             txWriter.ofRW(tablePath.trimTo(pathTableLen).concat(TableUtils.TXN_FILE_NAME).$(), tableMetadata.getTimestampType(), tableMetadata.getPartitionBy());
-            // Structural one-shot restore, outside any table writer and outside the adaptive epoch's
-            // coverage (a restore explicitly clears the epoch anchors): take the SYNC grade under ADAPTIVE.
+            // Nothing commits through this TxWriter: the lag reset below writes the mapped _txn in place, so the
+            // grade set here does not apply to it.
             txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
             txWriter.unsafeLoadAll();
 

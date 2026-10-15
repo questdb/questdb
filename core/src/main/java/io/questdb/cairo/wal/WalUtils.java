@@ -212,9 +212,8 @@ public class WalUtils {
                 MemoryMARW metaMem = Vm.getCMARWInstance()
         ) {
             txWriter.ofRW(dstDir.concat(TableUtils.TXN_FILE_NAME).$());
-            // A one-shot structural write outside any table writer, which no adaptive epoch covers: it takes the
-            // SYNC grade under ADAPTIVE, not TxWriter's lazy apply-path grade.
-            // REBASE staging is local truth, not downloaded state: keep the configured grade.
+            // Nothing commits through this TxWriter: the resets below write the mapped _txn in place, so the grade
+            // set here does not apply to them. Under ADAPTIVE the staging tree flush below makes _txn durable.
             txWriter.setCommitMode(CommitMode.structuralCommitMode(configuration.getCommitMode()));
             txWriter.resetLagValuesUnsafe();
             TableUtils.openSmallFile(ff, dstDir.trimTo(dstLen), dstLen, metaMem, TableUtils.META_FILE_NAME, MemoryTag.MMAP_TABLE_WRITER);
