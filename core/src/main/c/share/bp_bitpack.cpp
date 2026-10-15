@@ -413,27 +413,37 @@ static void unpack_values_from(const uint8_t *src, int32_t start_index, int32_t 
 // total_count is the packed buffer's value count: an 8-byte load is safe while it stays within
 // ceil(total_count * bit_width / 8) bytes, so only the buffer's last values take the byte-wise read.
 
+// The values from start_index on whose 8-byte load at their byte offset stays within the buffer:
+// value i's does while (start + i) * bit_width < (total_bytes - 7) * 8.
+static inline int32_t unpack32_safe_count(int64_t start64, int32_t value_count, int64_t total_bytes, int32_t bit_width) {
+    if (total_bytes < 8) {
+        return 0;
+    }
+    int64_t safe = ((total_bytes - 7) * 8 - 1) / bit_width - start64 + 1;
+    if (safe < 0) {
+        safe = 0;
+    }
+    return safe < value_count ? (int32_t) safe : value_count;
+}
+
 template<typename Out>
 static inline void unpack32_from(const uint8_t *src, int32_t start_index, int32_t value_count,
                                  int32_t total_count, int32_t bit_width, Out out) {
     const uint32_t mask32 = (bit_width == 32) ? ~0u : (1u << bit_width) - 1;
     const int64_t total_bytes = ((int64_t) total_count * bit_width + 7) >> 3;
     const int64_t start64 = static_cast<int64_t>(start_index);
+    const int32_t safe = unpack32_safe_count(start64, value_count, total_bytes, bit_width);
+    int64_t bp = start64 * bit_width;
     int32_t i = 0;
-    for (; i < value_count; i++) {
-        const int64_t bp = (start64 + i) * (int64_t) bit_width;
-        const int64_t bo = bp >> 3;
-        if (bo + 8 > total_bytes) {
-            break;
-        }
+    for (; i < safe; i++, bp += bit_width) {
         uint64_t raw;
-        std::memcpy(&raw, src + bo, sizeof(raw));
+        std::memcpy(&raw, src + (bp >> 3), sizeof(raw));
         out(i, (uint32_t) (raw >> (bp & 7)) & mask32);
     }
     for (; i < value_count; i++) {
-        const int64_t bp = (start64 + i) * (int64_t) bit_width;
-        const int64_t bo = bp >> 3;
-        const int bs = (int) (bp & 7);
+        const int64_t p = (start64 + i) * (int64_t) bit_width;
+        const int64_t bo = p >> 3;
+        const int bs = (int) (p & 7);
         uint64_t raw = 0;
         for (int k = 0, n = (bs + bit_width + 7) >> 3; k < n; k++) {
             raw |= (uint64_t) src[bo + k] << (k * 8);
@@ -441,6 +451,7 @@ static inline void unpack32_from(const uint8_t *src, int32_t start_index, int32_
         out(i, (uint32_t) (raw >> bs) & mask32);
     }
 }
+
 
 // ============= JNI Exports =============
 
