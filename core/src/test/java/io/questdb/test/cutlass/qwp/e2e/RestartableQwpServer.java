@@ -61,7 +61,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * <p>
  * The server also tracks the connections whose WebSocket upgrade has completed and that its
  * worker has not closed; {@link #stop()} returns how many of them it killed, and
- * {@link #awaitStableLiveConnection(long, long)} lets a test land a stop on one deliberately.
+ * {@link #awaitStableLiveConnection(long, long)} observes one unchanged live fd over a polling window.
  */
 public final class RestartableQwpServer implements AutoCloseable {
     static final int PORT_PICK_ATTEMPTS = 5;
@@ -172,12 +172,12 @@ public final class RestartableQwpServer implements AutoCloseable {
     }
 
     /**
-     * Waits until one upgraded connection has been in the live set, unchanged, for
-     * {@code stableMillis}. "Live" means the WebSocket upgrade has completed and the worker has
-     * entered the frame-reading path on it, so the client's I/O loop is past its connect and
-     * in its send loop. The stability window lets a recycle the client had already armed before the
-     * caller paused resets fire at its next barrier and reconnect before the caller acts on
-     * the connection. Polls every millisecond; returns false once {@code timeoutMillis} passes.
+     * Polls for the same single live fd over {@code stableMillis}. The live set records
+     * connections whose WebSocket upgrade has completed and whose worker has entered the
+     * frame-reading path without processing a close. These observations do not establish
+     * client send readiness or guarantee that the connection stays live between polls or
+     * after this method returns. Polls every millisecond; returns false once
+     * {@code timeoutMillis} passes.
      */
     public boolean awaitStableLiveConnection(long timeoutMillis, long stableMillis) {
         final long deadlineNanos = System.nanoTime() + timeoutMillis * 1_000_000L;
@@ -289,6 +289,15 @@ public final class RestartableQwpServer implements AutoCloseable {
         server = null;
         workerPool = null;
         return killed;
+    }
+
+    /**
+     * Stops processing without closing the HttpServer-owned sockets. A test can send an
+     * unacknowledged frame on a live connection before completing shutdown with stop().
+     * The halted pool cannot resume; the caller must stop/start the server, even on failure.
+     */
+    void haltWorkers() {
+        workerPool.halt();
     }
 
     /**
