@@ -267,6 +267,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(64, configuration.getCairoConfiguration().getSqlAsOfJoinLookAhead());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinMapEvacuationThreshold());
         Assert.assertEquals(10_000_000, configuration.getCairoConfiguration().getSqlAsOfJoinShortCircuitCacheCapacity());
+        Assert.assertEquals(1_000_000, configuration.getCairoConfiguration().getSqlJoinSymbolTranslationCacheCapacity());
         Assert.assertEquals(16 * 1024 * 1024, configuration.getCairoConfiguration().getSqlSortValuePageSize());
         Assert.assertEquals(Long.MAX_VALUE, configuration.getCairoConfiguration().getSqlSortValueMaxBytes());
         Assert.assertEquals(10000, configuration.getCairoConfiguration().getWorkStealTimeoutNanos());
@@ -334,6 +335,7 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
         Assert.assertEquals(8192, configuration.getCairoConfiguration().getSqlJitIRMemoryPageSize());
+        Assert.assertTrue(configuration.getCairoConfiguration().isSqlLatestByJitEnabled());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitIRMemoryMaxPages());
         Assert.assertEquals(4096, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryPageSize());
         Assert.assertEquals(8, configuration.getCairoConfiguration().getSqlJitBindVarsMemoryMaxPages());
@@ -430,6 +432,13 @@ public class PropServerConfigurationTest {
         Assert.assertEquals("unknown", configuration.getCairoConfiguration().getBuildInformation().getCommitHash());
 
         Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMetricsConfiguration().isPersistEnabled());
+        Assert.assertFalse(configuration.getMetrics().isScrapeEnabled());
+        Assert.assertEquals(1_000_000, configuration.getMetricsConfiguration().getPersistIntervalMicros());
+        Assert.assertEquals(-1, configuration.getMetricsConfiguration().getPersistSyncIntervalMicros());
+        Assert.assertEquals(60_000_000, configuration.getMetricsConfiguration().getPersistVirtualIntervalMicros());
+        Assert.assertTrue(configuration.getMetricsConfiguration().isPersistParquetEnabled());
+        TestUtils.assertEquals("1 WEEK", configuration.getMetricsConfiguration().getPersistTtl());
         Assert.assertTrue(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
         Assert.assertEquals(60_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
         Assert.assertFalse(configuration.getCairoConfiguration().isQueryTracingEnabled());
@@ -1972,6 +1981,26 @@ public class PropServerConfigurationTest {
     }
 
     @Test
+    public void testQwpBrowserAllowedOrigins() throws Exception {
+        Properties properties = new Properties();
+        PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getHttpServerConfiguration().getQwpBrowserAllowedOrigins().isAllowed(
+                new Utf8String("https://app.example.com")));
+
+        properties.setProperty(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com");
+        configuration = newPropServerConfiguration(properties);
+        Assert.assertTrue(configuration.getHttpServerConfiguration().getQwpBrowserAllowedOrigins().isAllowed(
+                new Utf8String("https://app.example.com")));
+    }
+
+    @Test(expected = ServerConfigurationException.class)
+    public void testQwpBrowserAllowedOriginsRejectsInvalidEntry() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.QWP_BROWSER_ALLOWED_ORIGINS.getPropertyPath(), "https://app.example.com/*");
+        newPropServerConfiguration(properties);
+    }
+
+    @Test
     public void testQwpBrowserTlsTerminationEnabled() throws Exception {
         Properties properties = new Properties();
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
@@ -2040,6 +2069,100 @@ public class PropServerConfigurationTest {
         PropServerConfiguration configuration = newPropServerConfiguration(properties);
         Assert.assertFalse(configuration.getMemoryConfiguration().isMemoryUsageLogEnabled());
         Assert.assertEquals(5_000, configuration.getMemoryConfiguration().getMemoryUsageLogInterval());
+    }
+
+    @Test
+    public void testMetricsPersistenceConfiguration() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("metrics.persist.enabled", "true");
+        properties.setProperty("metrics.persist.exclude", "foo.*");
+        properties.setProperty("metrics.persist.interval", "2s");
+        properties.setProperty("metrics.persist.parquet.enabled", "false");
+        properties.setProperty("metrics.persist.sync.interval", "5m");
+        properties.setProperty("metrics.persist.ttl", "2 DAYS");
+        properties.setProperty("metrics.persist.virtual.interval", "3m");
+
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        Assert.assertFalse(configuration.getMetricsConfiguration().isEnabled());
+        Assert.assertTrue(configuration.getMetrics().isEnabled());
+        Assert.assertFalse(configuration.getMetrics().isScrapeEnabled());
+        Assert.assertTrue(configuration.getMetricsConfiguration().isPersistEnabled());
+        Assert.assertFalse(configuration.getMetricsConfiguration().isPersistParquetEnabled());
+        Assert.assertEquals(2_000_000, configuration.getMetricsConfiguration().getPersistIntervalMicros());
+        Assert.assertEquals(300_000_000, configuration.getMetricsConfiguration().getPersistSyncIntervalMicros());
+        Assert.assertEquals(180_000_000, configuration.getMetricsConfiguration().getPersistVirtualIntervalMicros());
+        TestUtils.assertEquals("foo.*", configuration.getMetricsConfiguration().getPersistExclude());
+        TestUtils.assertEquals("2 DAYS", configuration.getMetricsConfiguration().getPersistTtl());
+    }
+
+    @Test
+    public void testMetricsPersistenceExcludeAcceptsEmptyValue() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "");
+
+        final PropServerConfiguration configuration = newPropServerConfiguration(properties);
+        TestUtils.assertEquals("", configuration.getMetricsConfiguration().getPersistExclude());
+    }
+
+    @Test
+    public void testMetricsPersistenceExcludeRejectsInvalidEnvironmentValue() throws Exception {
+        final Map<String, String> env = new HashMap<>();
+        env.put(PropertyKey.METRICS_PERSIST_EXCLUDE.getEnvVarName(), "worker_pool_fiber_(");
+        try {
+            newPropServerConfiguration(root, new Properties(), env, new BuildInformationHolder());
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath());
+        }
+    }
+
+    @Test
+    public void testMetricsPersistenceExcludeRejectsInvalidValues() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "worker_pool_fiber_(");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_EXCLUDE);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "[");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_EXCLUDE);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_ENABLED.getPropertyPath(), "true");
+        properties.setProperty(PropertyKey.METRICS_PERSIST_EXCLUDE.getPropertyPath(), "*foo");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_EXCLUDE);
+    }
+
+    @Test
+    public void testMetricsPersistenceSyncInterval() throws Exception {
+        final Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_SYNC_INTERVAL.getPropertyPath(), "-5s");
+        Assert.assertEquals(-1, newPropServerConfiguration(properties).getMetricsConfiguration().getPersistSyncIntervalMicros());
+
+        properties.setProperty(PropertyKey.METRICS_PERSIST_SYNC_INTERVAL.getPropertyPath(), "0");
+        Assert.assertEquals(0, newPropServerConfiguration(properties).getMetricsConfiguration().getPersistSyncIntervalMicros());
+
+        properties.setProperty(PropertyKey.METRICS_PERSIST_SYNC_INTERVAL.getPropertyPath(), "5m");
+        Assert.assertEquals(300_000_000, newPropServerConfiguration(properties).getMetricsConfiguration().getPersistSyncIntervalMicros());
+    }
+
+    @Test
+    public void testMetricsPersistenceTtlRejectsInvalidEnvironmentValue() throws Exception {
+        final Map<String, String> env = new HashMap<>();
+        env.put(PropertyKey.METRICS_PERSIST_TTL.getEnvVarName(), "7 DAYZ");
+        try {
+            newPropServerConfiguration(root, new Properties(), env, new BuildInformationHolder());
+            Assert.fail("expected ServerConfigurationException");
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), PropertyKey.METRICS_PERSIST_TTL.getPropertyPath());
+        }
+    }
+
+    @Test
+    public void testMetricsPersistenceTtlRejectsInvalidValues() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(), "7 DAYZ");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_TTL);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(), "1 HOUR");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_TTL);
+        properties.setProperty(PropertyKey.METRICS_PERSIST_TTL.getPropertyPath(), "1 DAY extra");
+        assertInvalidConfiguration(properties, PropertyKey.METRICS_PERSIST_TTL);
     }
 
     @Test
@@ -2297,6 +2420,7 @@ public class PropServerConfigurationTest {
             Assert.assertEquals(1.5, configuration.getHttpServerConfiguration().getWaitProcessorConfiguration().getExponentialWaitMultiplier(), 0.00001);
 
             Assert.assertTrue(configuration.getMetricsConfiguration().isEnabled());
+            Assert.assertTrue(configuration.getMetrics().isScrapeEnabled());
 
             Assert.assertFalse(configuration.getCairoConfiguration().isMatViewEnabled());
             Assert.assertEquals(100, configuration.getCairoConfiguration().getMatViewMaxRefreshRetries());
@@ -2515,6 +2639,15 @@ public class PropServerConfigurationTest {
         properties.setProperty("cairo.sql.jit.mode", "foobar");
         configuration = newPropServerConfiguration(properties);
         Assert.assertEquals(SqlJitMode.JIT_MODE_ENABLED, configuration.getCairoConfiguration().getSqlJitMode());
+    }
+
+    @Test
+    public void testSqlLatestByJitEnabled() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty("cairo.sql.latest.by.jit.enabled", "false");
+        Assert.assertFalse(newPropServerConfiguration(properties).getCairoConfiguration().isSqlLatestByJitEnabled());
+        properties.setProperty("cairo.sql.latest.by.jit.enabled", "true");
+        Assert.assertTrue(newPropServerConfiguration(properties).getCairoConfiguration().isSqlLatestByJitEnabled());
     }
 
     @Test
@@ -2774,12 +2907,9 @@ public class PropServerConfigurationTest {
         properties.setProperty(PropertyKey.SHARED_NETWORK_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "0");
         properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_LIVE.getPropertyPath(), "0");
         properties.setProperty(PropertyKey.SHARED_QUERY_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "0");
-        properties.setProperty(PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_LIVE.getPropertyPath(), "0");
-        properties.setProperty(PropertyKey.SHARED_WRITE_WORKER_FIBER_MAX_RETAINED.getPropertyPath(), "0");
         final PropServerConfiguration configuration = newPropServerConfiguration(properties);
         assertDerivedFiberDefaults(configuration.getSharedWorkerPoolNetworkConfiguration());
         assertDerivedFiberDefaults(configuration.getSharedWorkerPoolQueryConfiguration());
-        assertDerivedFiberDefaults(configuration.getSharedWorkerPoolWriteConfiguration());
     }
 
     @Test
@@ -2808,9 +2938,6 @@ public class PropServerConfigurationTest {
         properties.setProperty("shared.query.worker.fiber.max.live", "104");
         properties.setProperty("shared.query.worker.fiber.max.retained", "14");
         properties.setProperty("shared.query.worker.fiber.mount.budget", "24");
-        properties.setProperty("shared.write.worker.fiber.max.live", "105");
-        properties.setProperty("shared.write.worker.fiber.max.retained", "15");
-        properties.setProperty("shared.write.worker.fiber.mount.budget", "25");
         properties.setProperty("mat.view.refresh.worker.fiber.max.live", "106");
         properties.setProperty("mat.view.refresh.worker.fiber.max.retained", "16");
         properties.setProperty("mat.view.refresh.worker.fiber.mount.budget", "26");
@@ -2821,7 +2948,6 @@ public class PropServerConfigurationTest {
         assertWorkerPoolFiberConfiguration(configuration.getPGWireConfiguration(), 102, 12, 22);
         assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolNetworkConfiguration(), 103, 13, 23);
         assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolQueryConfiguration(), 104, 14, 24);
-        assertWorkerPoolFiberConfiguration(configuration.getSharedWorkerPoolWriteConfiguration(), 105, 15, 25);
         assertWorkerPoolFiberConfiguration(configuration.getMatViewRefreshPoolConfiguration(), 106, 16, 26);
     }
 
@@ -2921,10 +3047,6 @@ public class PropServerConfigurationTest {
                 PropServerConfiguration::getSharedWorkerPoolQueryConfiguration
         );
         assertWorkerPoolModeProperty(
-                PropertyKey.SHARED_WRITE_WORKER_FIBER_ENABLED,
-                PropServerConfiguration::getSharedWorkerPoolWriteConfiguration
-        );
-        assertWorkerPoolModeProperty(
                 PropertyKey.MAT_VIEW_REFRESH_WORKER_FIBER_ENABLED,
                 PropServerConfiguration::getMatViewRefreshPoolConfiguration
         );
@@ -2969,22 +3091,17 @@ public class PropServerConfigurationTest {
     }
 
     @Test
-    public void testWritePoolFiberModeIsIndependentOfWalApply() throws Exception {
+    public void testWritePoolStaysLegacy() throws Exception {
         final Properties properties = new Properties();
         Assert.assertEquals(
                 WorkerPoolMode.LEGACY,
                 newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
         );
 
-        properties.setProperty(PropertyKey.WAL_APPLY_WORKER_COUNT.getPropertyPath(), "0");
+        properties.setProperty("shared.write.worker.fiber.enabled", "true");
+        Assert.assertTrue(PropertyKey.getByString("shared.write.worker.fiber.enabled").isEmpty());
         Assert.assertEquals(
                 WorkerPoolMode.LEGACY,
-                newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
-        );
-
-        properties.setProperty(PropertyKey.SHARED_WRITE_WORKER_FIBER_ENABLED.getPropertyPath(), "true");
-        Assert.assertEquals(
-                WorkerPoolMode.FIBER_HOST,
                 newPropServerConfiguration(properties).getSharedWorkerPoolWriteConfiguration().getWorkerPoolMode()
         );
     }
@@ -3265,6 +3382,7 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(42, configuration.getSqlAsOfJoinLookAhead());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinShortCircuitCacheCapacity());
         Assert.assertEquals(1000, configuration.getSqlAsOfJoinMapEvacuationThreshold());
+        Assert.assertEquals(2000, configuration.getSqlJoinSymbolTranslationCacheCapacity());
         Assert.assertEquals(4 * 1024 * 1024, configuration.getSqlSortValuePageSize());
         Assert.assertEquals(678L * 1024 * 1024, configuration.getSqlSortValueMaxBytes());
         Assert.assertEquals(1000000, configuration.getWorkStealTimeoutNanos());
@@ -3398,6 +3516,51 @@ public class PropServerConfigurationTest {
 
         Assert.assertEquals(10 * Numbers.SIZE_1MB, configuration.getWalMaxLagSize());
         Assert.assertEquals(50, configuration.getWalMaxSegmentFileDescriptorsCache());
+    }
+
+    @Test
+    public void testSubsampleMaxRowsDefaultAndOverride() throws Exception {
+        Properties properties = new Properties();
+        Assert.assertEquals(100_000_000L, newPropServerConfiguration(properties).getCairoConfiguration().getSubsampleMaxRows());
+
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "42");
+        Assert.assertEquals(42L, newPropServerConfiguration(properties).getCairoConfiguration().getSubsampleMaxRows());
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsAboveIntMax() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "2147483648");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsNegative() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "-1");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
+    }
+
+    @Test
+    public void testSubsampleMaxRowsRejectsZero() throws Exception {
+        Properties properties = new Properties();
+        properties.setProperty(PropertyKey.CAIRO_SQL_SUBSAMPLE_MAX_ROWS.getPropertyPath(), "0");
+        try {
+            newPropServerConfiguration(properties);
+            Assert.fail();
+        } catch (ServerConfigurationException e) {
+            TestUtils.assertContains(e.getMessage(), "must be between 1 and");
+        }
     }
 
     private PropServerConfiguration.ValidationResult validate(Properties properties) {

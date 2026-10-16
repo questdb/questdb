@@ -199,7 +199,7 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
                 try {
                     // Cancellation can race with a grant; only the connection probe may be throttled here.
                     if (sqlCircuitBreaker != null) {
-                        sqlCircuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                        sqlCircuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
                     } else {
                         checkCircuitBreaker(circuitBreaker, statefulCircuitBreaker);
                     }
@@ -319,7 +319,7 @@ public class PerWorkerLocks implements FiberSlotWaitQueue.SlotReleaser {
             @Nullable SqlExecutionCircuitBreaker statefulCircuitBreaker
     ) {
         if (statefulCircuitBreaker != null) {
-            statefulCircuitBreaker.statefulThrowExceptionIfTripped();
+            statefulCircuitBreaker.statefulThrowExceptionIfTrippedOrYield();
         } else if (circuitBreaker.checkIfTripped()) {
             throw CairoException.nonCritical().put("query aborted").setInterruption(true);
         }

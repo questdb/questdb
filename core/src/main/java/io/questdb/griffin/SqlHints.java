@@ -37,6 +37,7 @@ public final class SqlHints {
     public static final String ASOF_MEMOIZED_DRIVEBY_HINT = "asof_memoized_driveby";
     public static final String ASOF_MEMOIZED_HINT = "asof_memoized";
     public static final String ENABLE_PRE_TOUCH_HINT = "enable_pre_touch";
+    public static final String FORCE_USE_COVERING_HINT = "force_use_covering";
     public static final char HINTS_PARAMS_DELIMITER = ' ';
     public static final String MARKOUT_HORIZON_HINT = "markout_horizon";
     public static final String NO_COVERING_HINT = "no_covering";
@@ -91,6 +92,29 @@ public final class SqlHints {
         LowerCaseCharSequenceObjHashMap<CharSequence> hints = queryModel.getHints();
         CharSequence params = hints.get(ENABLE_PRE_TOUCH_HINT);
         return Chars.containsWordIgnoreCase(params, tableName, HINTS_PARAMS_DELIMITER);
+    }
+
+    /**
+     * Whether the query promises that the indexed column carries no column top on any partition
+     * it will read, so a covering scan can answer the NULL key too and the factory needs no
+     * backup plan.
+     * <p>
+     * Without it, any key that MIGHT be NULL -- a literal {@code null}, or a bind variable whose
+     * value is not known until it is bound -- gets a backup, and a covering factory that carries
+     * one reports no page-frame cursor, so the query loses parallel filter and vectorized GROUP
+     * BY. On a table whose indexed column has existed since its first partition there is nothing
+     * to defer to and that cost buys nothing. This hint is how a query says so.
+     * <p>
+     * Whether a column top exists is runtime state -- {@code _cv} changes without a
+     * metadata-version bump that would invalidate a cached plan -- which is why the planner
+     * cannot check the promise itself and takes the query's word for it here.
+     * <p>
+     * The promise is checked, not trusted: an open whose key does resolve to NULL over a table
+     * that does carry a column top throws rather than answer from a sidecar that holds no value
+     * for those rows. See {@code CoveringIndexRecordCursorFactory.checkHintPromise}.
+     */
+    public static boolean hasForceUseCoveringHint(@NotNull IQueryModel queryModel) {
+        return queryModel.getHints().keyIndex(FORCE_USE_COVERING_HINT) < 0;
     }
 
     public static boolean hasMarkoutHorizonHint(

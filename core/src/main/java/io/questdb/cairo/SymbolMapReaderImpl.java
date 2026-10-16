@@ -58,6 +58,9 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
     private final MemoryCMR charMem = Vm.getCMRInstance();
     private final StringSink columnNameSink = new StringSink();
     private final ConcurrentBitmapIndexFwdReader indexReader = new ConcurrentBitmapIndexFwdReader();
+    // keyOf() scans candidates through its own view: the caller may pass in the flyweight that
+    // valueOf() returned, and a hash collision would otherwise overwrite that input mid-scan
+    private final DirectString keyOfView = new DirectString();
     private final MemoryCMR offsetMem = Vm.getCMRInstance();
     private final Path path = new Path();
     private boolean cached;
@@ -146,7 +149,7 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             try (RowCursor cursor = indexReader.getCursor(hash, 0, maxOffset - Long.BYTES)) {
                 while (cursor.hasNext()) {
                     final long offsetOffset = cursor.next();
-                    if (Chars.equals(value, charMem.getStrA(offsetMem.getLong(offsetOffset)))) {
+                    if (Chars.equals(value, charMem.getStr(offsetMem.getLong(offsetOffset), keyOfView))) {
                         return SymbolMapWriter.offsetToKey(offsetOffset);
                     }
                 }
@@ -154,6 +157,17 @@ public class SymbolMapReaderImpl implements Closeable, SymbolMapReader {
             return SymbolTable.VALUE_NOT_FOUND;
         }
         return SymbolTable.VALUE_IS_NULL;
+    }
+
+    @Override
+    public int keyOf(CharSequence value, int cachedKey) {
+        if (value == null) {
+            return SymbolTable.VALUE_IS_NULL;
+        }
+        if (Chars.equalsNc(value, valueOf(cachedKey, keyOfView))) {
+            return cachedKey;
+        }
+        return keyOf(value);
     }
 
     public boolean needsReopen(long columnNameTxn) {

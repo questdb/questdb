@@ -25,10 +25,10 @@
 package io.questdb.griffin.engine;
 
 import io.questdb.cairo.CairoException;
-import io.questdb.std.CarrierLocal;
+import io.questdb.std.FiberLocal;
 
 public class LimitOverflowException extends CairoException {
-    private static final CarrierLocal<LimitOverflowException> tlException = new CarrierLocal<>(LimitOverflowException::new);
+    private static final FiberLocal<LimitOverflowException> tlException = new FiberLocal<>(LimitOverflowException::new);
 
     public static LimitOverflowException instance() {
         LimitOverflowException ex = tlException.get();

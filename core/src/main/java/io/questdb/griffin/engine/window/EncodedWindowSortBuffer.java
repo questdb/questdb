@@ -124,7 +124,7 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
             } else {
                 Vect.sortEncodedEntries(entryMem.getAddress(), count, keyType.keyLength() / Long.BYTES, parallelThreshold);
             }
-            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottle();
+            circuitBreaker.statefulThrowExceptionIfTrippedNoThrottleOrYield();
         }
         startAddr = entryMem.getAddress() + rowIdOffset;
         toTop();
@@ -204,6 +204,15 @@ final class EncodedWindowSortBuffer implements WindowSortBuffer {
     public void toTop() {
         currentAddr = startAddr;
         endAddr = startAddr + count * entrySize;
+    }
+
+    // Valid after finishPut(). Index the retained sorted entries without moving the sequential
+    // traversal cursor; the LIGHT selector needs only its selected ordinals, not a full replay.
+    long getRowIdAt(long ordinal) {
+        if (ordinal < 0 || ordinal >= count) {
+            throw CairoException.nonCritical().put("row-selecting traversal index out of bounds");
+        }
+        return Unsafe.getLong(startAddr + ordinal * entrySize);
     }
 
     private CairoException windowSortOverflow() {

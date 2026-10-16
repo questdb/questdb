@@ -105,6 +105,31 @@ public class CastToSymbolTableTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testGroupByOverABooleanCastKeepsEmptyGroupNull() throws Exception {
+        // first(), last() and mode() store VALUE_IS_NULL for a group that saw no rows and resolve
+        // it through the cast's table. BOOLEAN has no NULL, so the cast never mints that key
+        // itself, and it used to decode it as 'false'.
+        assertMemoryLeak(() -> {
+            createSourceTable();
+
+            assertQuery("""
+                    SELECT
+                        first(json_extract(text,'$.b')::boolean::symbol) f,
+                        last(json_extract(text,'$.b')::boolean::symbol) l,
+                        mode(json_extract(text,'$.b')::boolean::symbol) m
+                    FROM j
+                    WHERE id > 100
+                    """)
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("""
+                            f\tl\tm
+                            \t\t
+                            """);
+        });
+    }
+
+    @Test
     public void testGroupByOverACastSymbolSurvivesTheHandOut() throws Exception {
         // mode() answered newSymbolTable() with itself, which is the same hazard one level up: its
         // values belong to the argument, so freeing what it handed out closed the cast underneath
@@ -152,6 +177,37 @@ public class CastToSymbolTableTest extends AbstractCairoTest {
                         TestUtils.assertEquals(record.getSymA(0), table.valueOf(key));
                         TestUtils.assertEquals(record.getSymA(0), table.valueBOf(key));
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testNullKeyResolvesToNull() throws Exception {
+        // A consumer that borrows the cast's table - lag()/lead() for a missing neighbor - mints
+        // VALUE_IS_NULL on its own, even over a cast from a type that has no NULL. Both the live
+        // table and the handed-out view have to resolve that key to NULL, not to a value.
+        assertMemoryLeak(() -> {
+            createSourceTable();
+
+            for (String chain : CAST_CHAINS) {
+                final String sql = "SELECT (" + chain + ")::symbol sy FROM j ORDER BY id";
+                try (
+                        RecordCursorFactory factory = select(sql);
+                        RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+                ) {
+                    final Record record = cursor.getRecord();
+                    while (cursor.hasNext()) {
+                        record.getInt(0);
+                    }
+
+                    final SymbolTable live = cursor.getSymbolTable(0);
+                    Assert.assertNull(chain, live.valueOf(SymbolTable.VALUE_IS_NULL));
+                    Assert.assertNull(chain, live.valueBOf(SymbolTable.VALUE_IS_NULL));
+
+                    final SymbolTable view = cursor.newSymbolTable(0);
+                    Assert.assertNull(chain, view.valueOf(SymbolTable.VALUE_IS_NULL));
+                    Assert.assertNull(chain, view.valueBOf(SymbolTable.VALUE_IS_NULL));
                 }
             }
         });

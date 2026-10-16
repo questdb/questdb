@@ -38,6 +38,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.cutlass.http.HttpConnectionContext;
 import io.questdb.cutlass.http.HttpException;
 import io.questdb.cutlass.http.HttpFullFatServerConfiguration;
@@ -83,6 +84,7 @@ import io.questdb.std.QuietCloseable;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.Zstd;
+import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8Sequence;
 import org.jetbrains.annotations.TestOnly;
 
@@ -215,10 +217,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     private final CairoEngine engine;
     private final int forceRecvFragmentationChunkSize;
     private final WebSocketFrameParser frameParser = new WebSocketFrameParser();
+    private final HttpFullFatServerConfiguration httpConfiguration;
     private final int maxSqlRecompileAttempts;
     private final QwpEgressMetrics metrics;
     private final boolean qwpBrowserTlsTerminationEnabled;
     private final int recvBufferSize;
+    // builds the principal-qualified select cache key, see SelectCacheKey
+    private final StringSink scopedSelectCacheKeySink = new StringSink();
     /**
      * Per-worker cache of compiled {@link RecordCursorFactory} keyed by SQL text.
      * {@code HttpServer.bind} calls {@code factory.newInstance()} once per HTTP
@@ -236,6 +241,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             int sharedWorkerCount
     ) {
         this.engine = engine;
+        this.httpConfiguration = httpConfiguration;
         this.forceRecvFragmentationChunkSize = httpConfiguration.getHttpContextConfiguration()
                 .getForceRecvFragmentationChunkSize();
         this.metrics = engine.getMetrics().qwpEgressMetrics();
@@ -422,6 +428,18 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     }
 
     @Override
+    public boolean isBrowserCredentialAccepted(HttpConnectionContext context) {
+        final HttpRequestHeader requestHeader = context.getRequestHeader();
+        return httpConfiguration.getQwpBrowserAllowedOrigins().isAllowed(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_ORIGIN))
+                && selectBrowserWebSocketProtocol(requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL)) != null;
+    }
+
+    @Override
+    public boolean isCrossOriginBrowserUpgrade(HttpConnectionContext context) {
+        return QwpIngressHttpProcessor.isCrossOrigin(context.getRequestHeader(), isSecureConnection(context));
+    }
+
+    @Override
     public void onConnectionClosed(HttpConnectionContext context) {
         LOG.info().$("Egress WebSocket connection closed [fd=").$(context.getFd()).I$();
         QwpEgressProcessorState state = LV.get(context);
@@ -452,7 +470,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         String validationError = QwpIngressHttpProcessor.validateHandshake(
                 context.getRequestHeader(),
-                context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled
+                isSecureConnection(context),
+                httpConfiguration.getQwpBrowserAllowedOrigins()
         );
         if (validationError != null) {
             LOG.error().$("Egress WebSocket handshake validation failed [fd=").$(context.getFd())
@@ -509,9 +528,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         byte[] acceptKey = QwpIngressHttpProcessor.computeAcceptKey(wsKey);
         byte[] sessionCookieValueBytes = QwpIngressHttpProcessor.getSessionCookieValueBytes(context);
+        boolean isQwpV1WebSocketProtocolSelected = selectBrowserWebSocketProtocol(
+                requestHeader.getHeader(QwpIngressHttpProcessor.HEADER_SEC_WEBSOCKET_PROTOCOL)) != null;
         int requiredHandshakeSize = QwpIngressHttpProcessor.responseSize(
                 acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null, null,
-                sessionCookieValueBytes);
+                sessionCookieValueBytes, false, isQwpV1WebSocketProtocolSelected);
         // The server appends a SERVER_INFO WebSocket frame right after the 101
         // response bytes, in the same send buffer. Reserve an upper-bound for the
         // frame so a tiny send buffer that would fit the 101 response alone but
@@ -547,7 +568,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
 
         int bytesWritten = QwpIngressHttpProcessor.writeResponse(
                 bufferAddr, acceptKey, negotiatedVersion, contentEncodingHeaderBytes, false, null, null,
-                sessionCookieValueBytes);
+                sessionCookieValueBytes, false, isQwpV1WebSocketProtocolSelected);
         // Append an unsolicited SERVER_INFO WebSocket frame to the same send
         // buffer. The client reads it as the first frame after the upgrade
         // handshake completes, which lets it route reads to primary vs replica
@@ -737,12 +758,17 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             return;
         }
 
-        // 2. Otherwise, continue the streaming loop from the cursor's current position.
+        // 4. Otherwise, continue the streaming loop from the cursor's current position.
         try {
+            // The deferred send has drained while both the cursor timer and SQL
+            // execution owner were parked. Resume timing before admission, then
+            // mount the owner before executing another streaming segment.
+            state.resumeSqlExecutionOwner();
             streamResults(context, state);
         } catch (PeerDisconnectedException e) {
             throw e;
         } catch (PeerIsSlowToReadException e) {
+            state.parkSqlExecutionOwner();
             LOG.debug().$("Egress resumeSend re-parked [fd=").$(context.getFd())
                     .$(", requestId=").$(state.getStreamingRequestId())
                     .$(", batchSeq=").$(state.getStreamingBatchSeq())
@@ -805,6 +831,18 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
         }
         return MAX_ROWS_PER_BATCH;
+    }
+
+    /**
+     * Returns the subprotocol the 101 response names for a browser offer:
+     * questdb.qwp.v1 when offered, otherwise null. Egress does not negotiate
+     * durable ACK, so an offer of only questdb.qwp.durable-ack.v1 selects
+     * nothing. The credential gate accepts exactly the offers this selects.
+     */
+    private static Utf8Sequence selectBrowserWebSocketProtocol(Utf8Sequence offeredProtocols) {
+        return QwpIngressHttpProcessor.containsWebSocketProtocol(offeredProtocols, QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1)
+                ? QwpIngressHttpProcessor.WEBSOCKET_PROTOCOL_QWP_V1
+                : null;
     }
 
     /**
@@ -882,15 +920,21 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
     }
 
     /**
-     * Detaches the streaming factory from {@code state} and puts it into the
-     * compile cache keyed by the query's SQL text. Idempotent: safe to call
-     * even when the factory was already detached (no-op), or when the SQL
-     * text is null (drops the factory via {@link Misc#free}). Called on the
-     * successful-completion paths only -- error/cancel paths continue to free
-     * the factory via the normal {@link QwpEgressProcessorState#endStreaming}
-     * route so a cursor that threw never seeds the cache with a poisoned factory.
+     * Detaches a cacheable SELECT factory from {@code state} and puts it into
+     * the compile cache keyed by the query's SQL text. EXPLAIN and PSEUDO_SELECT
+     * factories deliberately remain owned by the state and are freed by
+     * {@link QwpEgressProcessorState#endStreaming}; a later cache hit cannot then
+     * lose their statement type by being classified as SELECT. Idempotent: safe
+     * to call when the factory was already detached (no-op), or when the SQL text
+     * is null (drops the factory via {@link Misc#free}). Called on the successful-
+     * completion paths only -- error/cancel paths continue to free the factory via
+     * the normal state cleanup, so a cursor that threw never seeds the cache with
+     * a poisoned factory.
      */
     private void cacheStreamingFactoryIfAvailable(QwpEgressProcessorState state) {
+        if (!state.isStreamingFactoryCacheable()) {
+            return;
+        }
         RecordCursorFactory factory = state.detachStreamingFactory();
         if (factory == null) {
             return;
@@ -927,6 +971,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
         }
     }
+
+    // Egress message dispatch and query execution
 
     /**
      * Step 2 of the cache-reset emission. Writes the CACHE_RESET frame using
@@ -965,8 +1011,6 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
         sendFrame(rawSocket, bufAddr, qwpStart, qwpSize);
     }
 
-    // Egress message dispatch and query execution
-
     /**
      * Runs a non-SELECT {@link CompiledQuery} synchronously and replies with an
      * {@code EXEC_DONE}. The HTTP worker blocks until the operation future
@@ -983,6 +1027,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             long requestId
     ) throws Exception {
         final short type = cq.getType();
+        // rows_affected is an unsigned varint on the wire: a statement without a
+        // row count (DDL, parse-time-executed) reports 0, never a negative sentinel.
         long rowsAffected = 0;
         switch (type) {
             case CompiledQuery.INSERT:
@@ -1034,7 +1080,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // VACUUM, CHECKPOINT, BEGIN / COMMIT / ROLLBACK, DEALLOCATE,
                 // TABLE_RESUME / SUSPEND / SET_TYPE, CREATE/ALTER USER, etc.)
                 // need no further execute -- the compiler already did the work.
-                rowsAffected = cq.getAffectedRowsCount();
+                // They carry no row count.
                 break;
             }
         }
@@ -1180,8 +1226,12 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                     .$(", remaining=").$(state.getStreamingCreditRemaining()).I$();
             state.clearStreamingCreditSuspended();
             try {
+                state.resumeSqlExecutionOwner();
                 streamResults(context, state);
-            } catch (PeerDisconnectedException | PeerIsSlowToReadException e) {
+            } catch (PeerDisconnectedException e) {
+                throw e;
+            } catch (PeerIsSlowToReadException e) {
+                state.parkSqlExecutionOwner();
                 throw e;
             } catch (Throwable t) {
                 LOG.error().$("Egress CREDIT resume failed [fd=").$(context.getFd())
@@ -1298,22 +1348,26 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             // so reset to the default, matching JsonQueryProcessor.
             circuitBreaker.resetMaxTimeToDefault();
 
-            // Bounded retry loop: a factory returned by the compile cache may have a
-            // stale TableReader reference if the table was dropped+recreated after
-            // the factory was compiled (matching by SQL text alone; tableId and
-            // metadataVersion don't survive). Detected by
-            // {@link TableReferenceOutOfDateException} on cursor open. We drop the
-            // stale factory and recompile, matching HTTP/PGWire's bounded
-            // maxSqlRecompileAttempts behavior. The retry stays before beginStreaming*,
-            // so no query bytes have reached the client yet.
+            // Bounded retry loop: a cached SELECT factory or compiled INSERT can
+            // become stale after a concurrent schema change. Cursor acquisition or
+            // insert writer validation throws TableReferenceOutOfDateException before
+            // producing query results. Recompile with HTTP/PGWire's bounded
+            // maxSqlRecompileAttempts behavior.
             //
             // Compose the select-cache key: SQL text on its own for bindless
             // queries (existing shape), or [type0,type1,...]sql when binds are
             // present so factories compiled under different bind signatures
             // occupy different cache slots. A SQL-only key can otherwise
             // return a factory whose bind signature does not match the
-            // current request. Mirrors pgwire's TypesAndSelect design.
-            final CharSequence cacheKey = decoder.buildSelectCacheKey(state.getBindVariableService());
+            // current request. Mirrors pgwire's TypesAndSelect design. The principal's
+            // select cache scope qualifies the key, see SecurityContext.getSelectCacheScope().
+            final CharSequence cacheKey = SelectCacheKey.of(
+                    sqlCtx.getSecurityContext().getSelectCacheScope(),
+                    decoder.buildSelectCacheKey(state.getBindVariableService()),
+                    scopedSelectCacheKeySink
+            );
+            short compiledQueryType = CompiledQuery.SELECT;
+            boolean queryCacheable = true;
             for (int retries = 0; ; retries++) {
                 try {
                     // Cache lookup only on first attempt. Retry always recompiles.
@@ -1324,11 +1378,23 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         try (SqlCompiler compiler = engine.getSqlCompiler()) {
                             CompiledQuery cq = compiler.compile(decoder.sql, sqlCtx);
                             short type = cq.getType();
+                            compiledQueryType = type;
+                            queryCacheable = type == CompiledQuery.SELECT && cq.isCacheable();
                             // Non-SELECT (DDL / INSERT / UPDATE / parse-time-executed) -- route to the
                             // synchronous exec path which awaits the operation and replies with an
                             // EXEC_DONE carrying the op type + rows affected. Non-SELECTs are never
                             // cached: they mutate state and can't be reused as plans.
                             if (!isStreamingType(type, cq)) {
+                                try {
+                                    // Keep the request's owner across stale-plan retries, as on the streaming path.
+                                    if (!state.isSqlExecutionOwnerStarted()) {
+                                        state.beginSqlExecutionOwner(decoder.sql, sqlCtx, type);
+                                    }
+                                } catch (RuntimeException | Error e) {
+                                    cq.freeAfterOwnerStartFailure(e);
+                                    throw e;
+                                }
+                                state.publishSqlExecutionOwner(decoder.sql, sqlCtx.containsSecret());
                                 executeNonSelect(context, state, sqlCtx, cq, requestId);
                                 // A non-SELECT never streams, so it misses the scratch shrink
                                 // beginStreaming owns. Run it here when this query reset the dict.
@@ -1340,9 +1406,11 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                             factory = cq.getRecordCursorFactory();
                         }
                     }
-                    // Acquire the cursor inside the retry loop --
-                    // TableReferenceOutOfDateException can fire only here, never from
-                    // factory or metadata access. Prefer the PageFrameCursor fast path
+                    if (!state.isSqlExecutionOwnerStarted()) {
+                        state.beginSqlExecutionOwner(decoder.sql, sqlCtx, compiledQueryType);
+                    }
+                    // Acquire the cursor inside the retry loop so a stale SELECT factory
+                    // can be recompiled. Prefer the PageFrameCursor fast path
                     // when the factory supports it: it hands us flat column addresses
                     // per frame and lets the SYMBOL fast path resolve dict keys via
                     // PageFrameMemoryRecord.getInt. Factories that don't support it
@@ -1366,8 +1434,8 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 } catch (TableReferenceOutOfDateException e) {
                     // Free any partially-acquired resources from this attempt. After
                     // beginStreaming{,PageFrame} they'd be owned by state, but the
-                    // exception fires BEFORE that (on getCursor / getPageFrameCursor),
-                    // so we still own them here.
+                    // exception fires before that, so we still own them here.
+                    // executeNonSelect closes the failed INSERT operation's resources.
                     cursor = Misc.free(cursor);
                     pageFrameCursor = Misc.free(pageFrameCursor);
                     factory = Misc.free(factory);
@@ -1380,6 +1448,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                             .$(", error=").$safe(e.getFlyweightMessage()).I$();
                 }
             }
+            state.publishSqlExecutionOwner(decoder.sql, sqlCtx.containsSecret());
             RecordMetadata metadata = factory.getMetadata();
             int columnCount = metadata.getColumnCount();
             ObjList<QwpEgressColumnDef> columnDefs = state.borrowColumnDefs(columnCount);
@@ -1399,10 +1468,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 // return so the next QWP query reuses the FdCache.
                 pageFrameCursor.setScanProfile(ReaderScanProfile.SEQUENTIAL_CACHED);
                 state.beginStreamingPageFrame(requestId, factory, pageFrameCursor,
-                        columnCount, decoder.initialCredit, cacheKey);
+                        columnCount, decoder.initialCredit, cacheKey, compiledQueryType, queryCacheable);
             } else {
                 state.beginStreaming(requestId, factory, cursor,
-                        columnCount, decoder.initialCredit, cacheKey);
+                        columnCount, decoder.initialCredit, cacheKey, compiledQueryType, queryCacheable);
             }
             streamingHandedOff = true;     // ownership of factory + cursor passed to state
             // Streaming may complete here (cursor short and fast), or throw PeerIsSlowToReadException
@@ -1417,8 +1486,13 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
             throw e;
         } catch (PeerIsSlowToReadException e) {
-            // Streaming parked. State retains the cursor for resumeSend to continue.
-            LOG.debug().$("Egress streaming parked (slow peer) [fd=").$(context.getFd())
+            // The response is committed to the HTTP send buffer. A streaming query
+            // retains its cursor and parks its owner until resumeSend drains it;
+            // a non-streaming statement reaches finally below and ends its owner.
+            if (streamingHandedOff && state.isStreamingActive()) {
+                state.parkSqlExecutionOwner();
+            }
+            LOG.debug().$("Egress query response parked (slow peer) [fd=").$(context.getFd())
                     .$(", requestId=").$(requestId)
                     .$(", batchSeq=").$(state.getStreamingBatchSeq())
                     .$(", rowsEmitted=").$(state.getStreamingRowsEmitted())
@@ -1450,6 +1524,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                 throw sendFail;
             } catch (Throwable ignored) {
                 // Best-effort error report; drop.
+            }
+        } finally {
+            if (!streamingHandedOff) {
+                state.endSqlExecutionOwner();
             }
         }
     }
@@ -1486,6 +1564,10 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
             default -> LOG.debug().$("Egress unknown opcode [fd=").$(context.getFd()).$(", opcode=").$(opcode).I$();
         }
+    }
+
+    private boolean isSecureConnection(HttpConnectionContext context) {
+        return context.getSocket().isTlsSessionStarted() || qwpBrowserTlsTerminationEnabled;
     }
 
     private byte mapErrorStatusAndMark(Throwable e) {
@@ -2005,7 +2087,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
             }
             // The page-frame path never consults the breaker inside the SQL layer; this
             // between-batch check is the only timeout/disconnect enforcement it gets.
-            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+            circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             // Credit-limited streams park when the client-advertised budget hits
             // zero. The next CREDIT frame replenishes via handleCredit and
             // re-enters streamResults to continue.
@@ -2015,6 +2097,7 @@ public class QwpEgressUpgradeProcessor implements HttpRequestProcessor, QuietClo
                         .$(", batchSeq=").$(state.getStreamingBatchSeq())
                         .I$();
                 state.markStreamingCreditSuspended();
+                state.parkSqlExecutionOwner();
                 metrics.markStreamingCreditSuspended();
                 return;
             }

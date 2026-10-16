@@ -135,10 +135,10 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     private final ObjList<MemoryCARWImpl> dataMem;
     // Per output column, true once a SYMBOL cell of this buffer was written NULL
     // (VALUE_IS_NULL). A committed disk symbol table that has never seen a NULL reports
-    // containsNullValue() == false, so the read overlay ORs this flag in to make a
-    // RAM-only lead NULL visible to the interpreted symbol comparator (see
-    // LiveViewSymbolTable.containsNullValue). A safe over-approximation: it may stay true
-    // for an evicted / flushed NULL, but such a NULL is then on disk, where
+    // containsNullValue() == false, so the read overlay ORs this flag in to preserve the
+    // StaticSymbolTable NULL-domain contract for the RAM-only lead. Keyed temporal join
+    // mappings consume that metadata before admitting a NULL key. A safe over-approximation:
+    // it may stay true for an evicted / flushed NULL, but such a NULL is then on disk, where
     // base.containsNullValue() already reports it. 0/false for non-SYMBOL columns.
     // Written by the refresh worker before publish; reset in reset().
     private final boolean[] leadSymbolHasNull;
@@ -864,8 +864,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
         for (int c = 0, n = columnTypes.size(); c < n; c++) {
             // Carry the source's lead-NULL SYMBOL flag across the publish / compaction
             // copy. A whole-buffer OR (not row-range scoped) is a safe over-approximation:
-            // it can only turn containsNullValue() true, and a stray true is harmless (the
-            // comparator still gates on the per-record key). Non-SYMBOL columns never set it.
+            // it can only expand the advertised NULL domain, while keyed mappings still
+            // match rows on their per-record keys. Non-SYMBOL columns never set it.
             if (src.leadSymbolHasNull[c]) {
                 leadSymbolHasNull[c] = true;
             }
@@ -1221,7 +1221,7 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
      * Records that a SYMBOL cell of {@code col} was written NULL. The refresh worker
      * calls this at the eager-intern site whenever {@link LiveViewSymbolCache#intern}
      * returns {@link io.questdb.cairo.sql.SymbolTable#VALUE_IS_NULL}, so the read
-     * overlay can report the RAM-only NULL through {@code containsNullValue()}. See
+     * overlay can include the RAM-only NULL in its StaticSymbolTable domain. See
      * {@link #symbolHasNull}.
      */
     public void markSymbolNull(int col) {
@@ -1383,8 +1383,8 @@ public class LiveViewInMemoryBuffer implements QuietCloseable {
     /**
      * True when a SYMBOL cell of {@code col} was written NULL into this slot (see
      * {@link #markSymbolNull}). The read overlay ORs this into {@code containsNullValue()}
-     * so a lead NULL the committed disk table cannot know about is still visible to the
-     * interpreted symbol comparator. A safe over-approximation - see the field doc.
+     * so its StaticSymbolTable NULL domain includes a lead NULL that the committed disk
+     * table cannot know about. A safe over-approximation - see the field doc.
      */
     public boolean symbolHasNull(int col) {
         return leadSymbolHasNull[col];

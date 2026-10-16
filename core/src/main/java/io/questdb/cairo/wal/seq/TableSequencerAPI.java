@@ -208,12 +208,12 @@ public class TableSequencerAPI implements QuietCloseable {
     public @NotNull TransactionLogCursor getCursor(
             final TableToken tableToken,
             long seqTxn,
-            @NotNull TableSequencerCursorPool cursorPool
+            @NotNull TableSequencerCursorHolder cursorHolder
     ) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             TransactionLogCursor cursor;
             try {
-                cursor = tableSequencer.getTransactionLogCursor(seqTxn, cursorPool);
+                cursor = tableSequencer.getTransactionLogCursor(seqTxn, cursorHolder);
             } finally {
                 tableSequencer.unlockRead();
             }
@@ -251,12 +251,12 @@ public class TableSequencerAPI implements QuietCloseable {
     public TableMetadataChangeLog getMetadataChangeLogSlow(
             final TableToken tableToken,
             long structureVersionLo,
-            @NotNull TableSequencerCursorPool cursorPool
+            @NotNull TableSequencerCursorHolder cursorHolder
     ) {
         try (TableSequencerImpl tableSequencer = openSequencerLocked(tableToken, SequencerLockType.READ)) {
             TableMetadataChangeLog metadataChangeLog;
             try {
-                metadataChangeLog = tableSequencer.getMetadataChangeLogSlow(structureVersionLo, cursorPool);
+                metadataChangeLog = tableSequencer.getMetadataChangeLogSlow(structureVersionLo, cursorHolder);
             } finally {
                 tableSequencer.unlockRead();
             }

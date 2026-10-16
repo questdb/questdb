@@ -113,6 +113,7 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     private static final int COLUMN_CHUNK_BYTE_RANGE_START_OFF = 16;
     private static final int COLUMN_CHUNK_MAX_STAT_OFF = 56;
     private static final int COLUMN_CHUNK_MIN_STAT_OFF = 48;
+    private static final int COLUMN_CHUNK_NULL_COUNT_OFF = 32;
     // Column chunk layout (64B per chunk, starting at row group block offset + 8)
     private static final int COLUMN_CHUNK_SIZE = 64;
     private static final int COLUMN_CHUNK_STAT_FLAGS_OFF = 2;
@@ -154,13 +155,15 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
     // Stat flag bits within the column chunk stat_flags byte at COLUMN_CHUNK_STAT_FLAGS_OFF.
     // Layout mirrors the Rust writer (see parquet_metadata::types::StatFlags):
     //   bit 0 MIN_PRESENT, bit 1 MIN_INLINED, bit 2 MIN_EXACT,
-    //   bit 3 MAX_PRESENT, bit 4 MAX_INLINED, bit 5 MAX_EXACT.
+    //   bit 3 MAX_PRESENT, bit 4 MAX_INLINED, bit 5 MAX_EXACT,
+    //   bit 6 DISTINCT_COUNT_PRESENT, bit 7 NULL_COUNT_PRESENT.
     // Reading the 8-byte inline stat at COLUMN_CHUNK_MIN_STAT_OFF / COLUMN_CHUNK_MAX_STAT_OFF is
     // only meaningful when both PRESENT and INLINED are set for that side.
     private static final int STAT_FLAG_MAX_INLINED = 1 << 4;
     private static final int STAT_FLAG_MAX_PRESENT = 1 << 3;
     private static final int STAT_FLAG_MIN_INLINED = 1 << 1;
     private static final int STAT_FLAG_MIN_PRESENT = 1;
+    private static final int STAT_FLAG_NULL_COUNT_PRESENT = 1 << 7;
     private final DirectUtf8String flyweightColName = new DirectUtf8String();
     private long addr;
     // CRC32 verification result for the currently bound _pm mapping. Set
@@ -368,14 +371,23 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
         return Unsafe.getLong(chunkAddr + COLUMN_CHUNK_MIN_STAT_OFF);
     }
 
-    public long getChunkTotalCompressed(int rowGroupIndex, int columnIndex) {
-        return Unsafe.getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_TOTAL_COMPRESSED_OFF);
+    public long getChunkNullCount(int rowGroupIndex, int columnIndex) {
+        assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
+        assert columnIndex >= 0 && columnIndex < columnCount;
+        long chunkAddr = columnChunkAddr(rowGroupIndex, columnIndex);
+        assert (Unsafe.getByte(chunkAddr + COLUMN_CHUNK_STAT_FLAGS_OFF) & STAT_FLAG_NULL_COUNT_PRESENT) != 0
+                : "null_count absent for row group " + rowGroupIndex + ", column " + columnIndex;
+        return Unsafe.getLong(chunkAddr + COLUMN_CHUNK_NULL_COUNT_OFF);
     }
 
     public int getChunkStatFlags(int rowGroupIndex, int columnIndex) {
         assert rowGroupIndex >= 0 && rowGroupIndex < rowGroupCount;
         assert columnIndex >= 0 && columnIndex < columnCount;
         return Unsafe.getByte(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_STAT_FLAGS_OFF) & 0xFF;
+    }
+
+    public long getChunkTotalCompressed(int rowGroupIndex, int columnIndex) {
+        return Unsafe.getLong(columnChunkAddr(rowGroupIndex, columnIndex) + COLUMN_CHUNK_TOTAL_COMPRESSED_OFF);
     }
 
     public int getColumnCount() {
@@ -632,6 +644,28 @@ public class ParquetMetaFileReader implements ParquetRowGroupSkipper {
      */
     public long getUnusedBytes() {
         return Unsafe.getLong(footerAddr + FOOTER_UNUSED_BYTES_OFF);
+    }
+
+    public boolean hasChunkNullCount(int rowGroupIndex, int columnIndex) {
+        return (getChunkStatFlags(rowGroupIndex, columnIndex) & STAT_FLAG_NULL_COUNT_PRESENT) != 0;
+    }
+
+    public boolean hasChunkNulls(int columnIndex) {
+        for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+            if (hasChunkNullCount(rowGroupIndex, columnIndex) && getChunkNullCount(rowGroupIndex, columnIndex) > 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    public boolean hasNoChunkNulls(int columnIndex) {
+        for (int rowGroupIndex = 0; rowGroupIndex < rowGroupCount; rowGroupIndex++) {
+            if (!hasChunkNullCount(rowGroupIndex, columnIndex) || getChunkNullCount(rowGroupIndex, columnIndex) > 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     public boolean isOpen() {

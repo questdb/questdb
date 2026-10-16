@@ -81,7 +81,7 @@ public class GenerateSeriesLongRecordCursorFactory extends AbstractGenerateSerie
 
         @Override
         public boolean hasNext() {
-            circuitBreaker.statefulThrowExceptionIfTripped();
+            circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
             if (rowIndex >= size) {
                 return false;
             }

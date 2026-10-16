@@ -2024,6 +2024,39 @@ public final class TestUtils {
         return rnd.nextInt(100) < 80;
     }
 
+    /**
+     * Loads a second copy of {@link SqlException} with assertions disabled for it, so that
+     * {@code position()} returns the carrier-local flyweight instead of the fresh instance its
+     * {@code assert} allocates under {@code -ea}. Only that class is defined here; everything it
+     * refers to still comes from the parent loader.
+     */
+    public static Class<?> loadSqlExceptionWithAssertionsDisabled() throws Exception {
+        final String className = SqlException.class.getName();
+        final byte[] bytes;
+        try (InputStream is = SqlException.class.getResourceAsStream("SqlException.class")) {
+            Assert.assertNotNull("SqlException.class must be readable as a resource", is);
+            bytes = is.readAllBytes();
+        }
+        final ClassLoader loader = new ClassLoader(SqlException.class.getClassLoader()) {
+            @Override
+            protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
+                if (!className.equals(name)) {
+                    return super.loadClass(name, resolve);
+                }
+                Class<?> loaded = findLoadedClass(name);
+                if (loaded == null) {
+                    loaded = defineClass(name, bytes, 0, bytes.length);
+                }
+                if (resolve) {
+                    resolveClass(loaded);
+                }
+                return loaded;
+            }
+        };
+        loader.setClassAssertionStatus(className, false);
+        return loader.loadClass(className);
+    }
+
     public static int maxDayOfMonth(int month) {
         return switch (month) {
             case 1, 3, 5, 7, 8, 10, 12 -> 31;

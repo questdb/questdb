@@ -261,7 +261,7 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
         try {
             if (frameIndex == -1) {
                 fetchNextFrame();
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             }
 
             // We have rows in the current frame we still need to dispatch
@@ -287,7 +287,11 @@ class AsyncWindowJoinRecordCursor implements NoRandomAccessRecordCursor {
                     throw buildInterruptionException();
                 }
 
-                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottled();
+                circuitBreaker.statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+            }
+
+            if (!allFramesActive) {
+                throw buildInterruptionException();
             }
         } finally {
             masterFrameSequence.getAtom().setSkipAggregation(oldSkipAggregation);

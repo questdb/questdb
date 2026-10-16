@@ -209,4 +209,18 @@ public class PostAggregationCircuitBreakerTest extends AbstractCairoTest {
         Assert.assertTrue("the worker's error must reach the owner", breaker.hasError());
         TestUtils.assertContains(((CairoException) breaker.buildError()).getFlyweightMessage(), "unexpected post-aggregation error");
     }
+
+    @Test
+    public void testCheckIfTrippedOrYieldReportsErrorState() {
+        final PostAggregationCircuitBreaker breaker = new PostAggregationCircuitBreaker(engine);
+        Assert.assertFalse(breaker.checkIfTrippedOrYield());
+
+        breaker.cancel(CairoException.nonCritical().put("plain failure").setOutOfMemory(true));
+
+        Assert.assertTrue(breaker.checkIfTrippedOrYield());
+        Assert.assertTrue(breaker.hasError());
+        final CairoException error = (CairoException) breaker.buildError();
+        Assert.assertTrue(error.isOutOfMemory());
+        TestUtils.assertContains(error.getFlyweightMessage(), "plain failure");
+    }
 }

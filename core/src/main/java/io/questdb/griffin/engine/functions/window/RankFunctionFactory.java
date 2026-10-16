@@ -309,6 +309,13 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         }
 
         @Override
+        public void cursorClosed() {
+            if (partitionByRecord != null) {
+                Function.cursorClosed(partitionByRecord.getFunctions());
+            }
+        }
+
+        @Override
         public long getLong(Record rec) {
             return RANK_CONST;
         }
@@ -447,6 +454,11 @@ public class RankFunctionFactory extends AbstractWindowFunctionFactory {
         @Override
         public LiveViewCheckpointFunctionIdentity checkpointFunctionIdentity() {
             return checkpointFunctionIdentity;
+        }
+
+        @Override
+        public void cursorClosed() {
+            Function.cursorClosed(partitionByRecord.getFunctions());
         }
 
         @Override

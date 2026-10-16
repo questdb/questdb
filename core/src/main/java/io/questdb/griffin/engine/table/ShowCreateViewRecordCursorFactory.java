@@ -51,20 +51,27 @@ import org.jetbrains.annotations.NotNull;
 public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFactory {
     public static final int N_DDL_COL = 0;
     private static final RecordMetadata METADATA;
+    // the view a SHOW written in a view reads the view through, see SqlExecutionContext.isTableFunctionVisible()
+    protected final SqlExecutionContext.TableFunctionView tableFunctionView;
     protected final int tokenPosition;
     protected final TableToken viewToken;
     private ShowCreateViewCursor cursor = new ShowCreateViewCursor();
 
-    public ShowCreateViewRecordCursorFactory(TableToken viewToken, int tokenPosition) {
+    public ShowCreateViewRecordCursorFactory(
+            TableToken viewToken,
+            int tokenPosition,
+            SqlExecutionContext.TableFunctionView tableFunctionView
+    ) {
         super(METADATA);
         this.viewToken = viewToken;
         this.tokenPosition = tokenPosition;
+        this.tableFunctionView = tableFunctionView;
     }
 
     @Override
     public RecordCursor getCursor(SqlExecutionContext executionContext) throws SqlException {
-        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
-        return cursor.of(executionContext, viewToken, tokenPosition);
+        executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
+        return cursor.of(executionContext, viewToken, tokenPosition, tableFunctionView);
     }
 
     @Override
@@ -134,8 +141,14 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
         public ShowCreateViewCursor of(
                 SqlExecutionContext executionContext,
                 TableToken viewToken,
-                int tokenPosition
+                int tokenPosition,
+                SqlExecutionContext.TableFunctionView tableFunctionView
         ) throws SqlException {
+            // Compilation already hid the view from a principal who may not see it, but the
+            // factory can come from a select cache that another principal populated.
+            if (!executionContext.isTableFunctionVisible(viewToken, tableFunctionView)) {
+                throw SqlException.viewDoesNotExist(tokenPosition, viewToken.getTableName());
+            }
             this.viewToken = viewToken;
             this.executionContext = executionContext;
             // The view token is resolved from the synchronously loaded table registry
@@ -208,6 +221,12 @@ public class ShowCreateViewRecordCursorFactory extends AbstractRecordCursorFacto
             ShowCreateTableRecordCursorFactory.putTrimmed(sink, viewDefinition.getViewSql());
             sink.putAscii('\n');
             sink.putAscii(')');
+            if (viewDefinition.isAudited()) {
+                // Emitted before putAdditional(), so the statement reads
+                // `... ) WITH AUDIT <whatever Enterprise appends>;`. WITH AUDIT is an Enterprise
+                // clause, so this ordering has to match the grammar that parses it back.
+                sink.putAscii(" WITH AUDIT");
+            }
             putAdditional();
             sink.putAscii(';');
         }

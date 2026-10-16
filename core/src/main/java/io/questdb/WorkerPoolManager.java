@@ -26,6 +26,7 @@ package io.questdb;
 
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.MetricSnapshotVisitor;
 import io.questdb.metrics.Target;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
@@ -58,23 +59,26 @@ public abstract class WorkerPoolManager implements Target {
     @Nullable
     private WorkerPool lineTcpWriterPool;
     private final AtomicBoolean running = new AtomicBoolean();
+    private final ServerConfiguration serverConfiguration;
 
     public WorkerPoolManager(ServerConfiguration config) {
+        this.serverConfiguration = config;
         WorkerPool networkPool = null;
         WorkerPool queryPool = null;
         WorkerPool writePool = null;
         try {
-            networkPool = new WorkerPool(config.getSharedWorkerPoolNetworkConfiguration());
+            networkPool = config.createWorkerPool(config.getSharedWorkerPoolNetworkConfiguration());
             queryPool = config.getSharedWorkerPoolQueryConfiguration().getWorkerCount() > 0
-                    ? new WorkerPool(config.getSharedWorkerPoolQueryConfiguration())
+                    ? config.createWorkerPool(config.getSharedWorkerPoolQueryConfiguration())
                     : null;
-            writePool = new WorkerPool(config.getSharedWorkerPoolWriteConfiguration());
+            writePool = config.createWorkerPool(config.getSharedWorkerPoolWriteConfiguration());
             sharedPoolNetwork = networkPool;
             sharedPoolQuery = queryPool;
             sharedPoolWrite = writePool;
 
             configureWorkerPools(queryPool != null ? queryPool : networkPool, writePool);
-            config.getMetrics().addScrapable(this);
+            final Metrics metrics = config.getMetrics();
+            metrics.addScrapable(this, metrics.isEnabled() ? this::updateWorkerMetrics : null);
         } catch (Throwable th) {
             rollbackConstruction(networkPool, queryPool, writePool, th);
             throw th;
@@ -97,6 +101,14 @@ public abstract class WorkerPoolManager implements Target {
 
     public WorkerPool getSharedPoolNetwork() {
         return sharedPoolNetwork;
+    }
+
+    public @Nullable WorkerPool getSharedPoolQuery() {
+        return sharedPoolQuery;
+    }
+
+    public WorkerPool getSharedPoolWrite() {
+        return sharedPoolWrite;
     }
 
     public WorkerPool getSharedPoolWrite(@NotNull WorkerPoolConfiguration config, @NotNull RequesterName requesterName) {
@@ -124,7 +136,7 @@ public abstract class WorkerPoolManager implements Target {
             String poolName = config.getPoolName();
             WorkerPool dedicatedPool = dedicatedPools.get(poolName);
             if (dedicatedPool == null) {
-                dedicatedPool = new WorkerPool(config);
+                dedicatedPool = serverConfiguration.createWorkerPool(config);
                 dedicatedPools.put(poolName, dedicatedPool);
             }
             LOG.info().$("custom thread pool [name=").$(poolName)
@@ -207,15 +219,11 @@ public abstract class WorkerPoolManager implements Target {
 
     @Override
     public void scrapeIntoPrometheus(@NotNull BorrowableUtf8Sink sink) {
-        sharedPoolNetwork.updateWorkerMetrics();
-        if (sharedPoolQuery != null) {
-            sharedPoolQuery.updateWorkerMetrics();
-        }
-        sharedPoolWrite.updateWorkerMetrics();
-        ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
-        for (int i = 0, limit = poolNames.size(); i < limit; i++) {
-            dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics();
-        }
+        updateWorkerMetrics();
+    }
+
+    @Override
+    public void snapshot(MetricSnapshotVisitor visitor) {
     }
 
     public void start(Log sharedPoolLog) {
@@ -364,6 +372,18 @@ public abstract class WorkerPoolManager implements Target {
         Misc.free(networkPool, primary);
         Misc.free(queryPool, primary);
         Misc.free(writePool, primary);
+    }
+
+    private void updateWorkerMetrics() {
+        sharedPoolNetwork.updateWorkerMetrics();
+        if (sharedPoolQuery != null) {
+            sharedPoolQuery.updateWorkerMetrics();
+        }
+        sharedPoolWrite.updateWorkerMetrics();
+        ReadOnlyObjList<CharSequence> poolNames = dedicatedPools.keys();
+        for (int i = 0, limit = poolNames.size(); i < limit; i++) {
+            dedicatedPools.get(poolNames.getQuick(i)).updateWorkerMetrics();
+        }
     }
 
     /**

@@ -51,8 +51,9 @@ public final class Unsafe {
     // `used` at offset 0, `limit` at offset 8). The block is allocated a full
     // cache line wide with the counters at offset 0 so each pooled tracker owns
     // its own line: a query's workers updating `used` cannot invalidate an
-    // unrelated concurrent query's counter (cross-query false sharing). Rust
-    // views only the 16-byte head, never the trailing padding.
+    // unrelated concurrent query's counter (cross-query false sharing). The
+    // first 16 bytes remain the stable OSS ABI; Resource Group-aware Java and
+    // Rust code may use the versioned hierarchy tail in the same cache line.
     public static final long MEMORY_TRACKER_BLOCK_SIZE = Misc.CACHE_LINE_SIZE;
     public static final long MEMORY_TRACKER_LIMIT_OFFSET = 8;
     public static final long MEMORY_TRACKER_USED_OFFSET = 0;
@@ -202,7 +203,7 @@ public final class Unsafe {
             UNSAFE.freeMemory(ptr);
             incrFreeCount();
             recordMemAlloc(-size, memoryTag);
-            recordPerQueryMemAlloc(-size, tracker.nativeAddress());
+            tracker.release(size);
         }
         return 0;
     }
@@ -406,20 +407,20 @@ public final class Unsafe {
         if (tracker == null) {
             return malloc(size, memoryTag);
         }
+        boolean reserved = false;
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
-            // Resolve the tracker's native {used, limit} block once and share it between the
-            // pre-alloc check and the post-alloc record, instead of re-reading it through
-            // getLimit()/getUsed()/nativeAddress().
-            final long trackerBase = tracker.nativeAddress();
             checkAllocLimit(size, memoryTag);
-            checkPerQueryAllocLimit(size, memoryTag, trackerBase, tracker);
+            tracker.reserve(size, memoryTag);
+            reserved = true;
             long ptr = UNSAFE.allocateMemory(size);
             recordMemAlloc(size, memoryTag);
-            recordPerQueryMemAlloc(size, trackerBase);
             incrMallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
+            if (reserved) {
+                tracker.release(size);
+            }
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.allocateMemory() OutOfMemoryError [workload=")
                     .put(tracker.getWorkload().name())
@@ -538,19 +539,26 @@ public final class Unsafe {
         if (tracker == null) {
             return realloc(address, oldSize, newSize, memoryTag);
         }
+        final long delta = newSize - oldSize;
+        boolean reserved = false;
         try {
             assert memoryTag >= MemoryTag.NATIVE_PATH;
-            final long delta = newSize - oldSize;
-            // Resolve the tracker's native {used, limit} block once; see malloc() above.
-            final long trackerBase = tracker.nativeAddress();
             checkAllocLimit(delta, memoryTag);
-            checkPerQueryAllocLimit(delta, memoryTag, trackerBase, tracker);
+            if (delta > 0) {
+                tracker.reserve(delta, memoryTag);
+                reserved = true;
+            }
             long ptr = UNSAFE.reallocateMemory(address, newSize);
             recordMemAlloc(delta, memoryTag);
-            recordPerQueryMemAlloc(delta, trackerBase);
+            if (delta < 0) {
+                tracker.release(-delta);
+            }
             incrReallocCount();
             return ptr;
         } catch (OutOfMemoryError oom) {
+            if (reserved) {
+                tracker.release(delta);
+            }
             CairoException e = CairoException.nonCritical().setOutOfMemory(true)
                     .put("sun.misc.Unsafe.reallocateMemory() OutOfMemoryError [workload=")
                     .put(tracker.getWorkload().name())
@@ -612,26 +620,6 @@ public final class Unsafe {
         }
     }
 
-    private static void checkPerQueryAllocLimit(long size, int memoryTag, long trackerBase, MemoryTracker tracker) {
-        if (size <= 0 || trackerBase == 0) {
-            return;
-        }
-        final long limit = getLongVolatile(trackerBase + MEMORY_TRACKER_LIMIT_OFFSET);
-        if (limit > 0) {
-            final long used = getLongVolatile(trackerBase + MEMORY_TRACKER_USED_OFFSET);
-            if (used + size > limit) {
-                throw CairoException.nonCritical().setOutOfMemory(true)
-                        .put("query memory limit exceeded [workload=").put(tracker.getWorkload().name())
-                        .put(", queryId=").put(tracker.getQueryId())
-                        .put(", limit=").put(limit)
-                        .put(", used=").put(used)
-                        .put(", size=").put(size)
-                        .put(", memoryTag=").put(memoryTag)
-                        .put(']');
-            }
-        }
-    }
-
     /**
      * Allocate a new native allocator object and return its pointer
      */
@@ -653,31 +641,6 @@ public final class Unsafe {
     // most significant bit
     private static int msb(int value) {
         return 31 - Integer.numberOfLeadingZeros(value);
-    }
-
-    // Updates the per-query counter on every tracked alloc/free, with no
-    // limit > 0 gate (unlike checkPerQueryAllocLimit), so query_activity
-    // reports live usage even for unlimited queries. See QueryRegistry.register().
-    private static void recordPerQueryMemAlloc(long size, long trackerBase) {
-        if (trackerBase == 0) {
-            return;
-        }
-        final long usedAddr = trackerBase + MEMORY_TRACKER_USED_OFFSET;
-        final long mem = UNSAFE.getAndAddLong(null, usedAddr, size) + size;
-        assert mem >= 0 : "unexpected per-query mem: " + mem + ", size: " + size;
-        if (mem < 0) {
-            // Release-build safety net mirroring Rust's saturating_decrement (allocator.rs):
-            // a malloc/free asymmetry must not leave the shared counter negative. Java reads
-            // `used` as a signed long, so a negative value silently defeats the per-query
-            // limit on this side, while Rust reads the same word as an unsigned usize (~2^64)
-            // and spuriously fails every later allocation for the whole workload. Clamp at 0
-            // so the asymmetry degrades to "limit ineffective" on both sides instead of
-            // inverting it. The assert above still fires loudly under -ea, so a regression is
-            // never silent in tests/CI; this only rescues release builds. The corrective add
-            // leaves the same brief window for a concurrent reader to observe the negative
-            // value as Rust's optimistic fetch_sub does.
-            UNSAFE.getAndAddLong(null, usedAddr, -mem);
-        }
     }
 
     /**

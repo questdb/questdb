@@ -163,7 +163,7 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
         try {
             final int slotId = atom.maybeAcquire(workerId, owner, circuitBreaker);
             try {
-                if (!circuitBreaker.checkIfTripped()) {
+                if (!circuitBreaker.checkIfTrippedOrYield()) {
                     final Map shard = atom.getDestShards().getQuick(shardIndex);
                     final DirectLongLongSortedList list = atom.getLongTopKList(slotId, order, limit);
                     shard.getCursor().longTopK(list, longFunc);
@@ -184,14 +184,14 @@ public class GroupByLongTopKJob extends AbstractQueueConsumerJob<GroupByLongTopK
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             try {
-                doneLatch.countDown();
+                doneLatch.detachResourceMemoryAndCountDown();
             } catch (Throwable cleanupFailure) {
                 failure = Misc.foldCleanupFailure(failure, cleanupFailure);
             }
             CairoException.rethrowCleanupFailure(failure);
             return;
         }
-        doneLatch.countDown();
+        doneLatch.detachResourceMemoryAndCountDown();
     }
 
     @Override

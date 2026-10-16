@@ -2103,7 +2103,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                             stagingBuffer.putInt(appendedRows, c, symId);
                                             if (symId == SymbolTable.VALUE_IS_NULL) {
                                                 // The committed disk table may not know this NULL yet;
-                                                // flag it so the read overlay reports containsNullValue().
+                                                // flag it so the read overlay preserves its
+                                                // StaticSymbolTable NULL-domain contract.
                                                 stagingBuffer.markSymbolNull(c);
                                             }
                                         }
@@ -2564,7 +2565,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                     stagingBuffer.putInt(appendedRows, c, symId);
                                     if (symId == SymbolTable.VALUE_IS_NULL) {
                                         // The committed disk table may not know this NULL yet;
-                                        // flag it so the read overlay reports containsNullValue().
+                                        // flag it so the read overlay preserves its
+                                        // StaticSymbolTable NULL-domain contract.
                                         stagingBuffer.markSymbolNull(c);
                                     }
                                 }
@@ -4874,7 +4876,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                                 // invalidation and engine shutdown - none of which is worth
                                 // finishing a rebuild for, and all of which otherwise wait it
                                 // out.
-                                circuitBreaker.statefulThrowExceptionIfTripped();
+                                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                                 long ts = outRecord.getTimestamp(cursorTimestampIndex);
                                 // Segmenting the replay at the logical boundaries it
                                 // crosses happens one level down, in
@@ -5944,7 +5946,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // plain failure: handleRefreshFailure skips the flush-retry budget only
                 // for a cancellation, and counting one would invalidate the view durably
                 // on the way down - the exact hazard its comment describes.
-                executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottle();
+                executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedNoThrottleOrYield();
             } catch (Throwable th) {
                 reader.close();
                 throw th;

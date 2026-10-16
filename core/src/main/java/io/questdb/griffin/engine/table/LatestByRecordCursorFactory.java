@@ -206,7 +206,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
 
             final long nextIndex = rowIndexes.get(rowIndexesPos);
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                 if (index++ == nextIndex) {
                     rowIndexesPos++;
                     return true;
@@ -267,7 +267,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
         private void buildMap() {
             final Record baseRecord = baseCursor.getRecord();
             while (baseCursor.hasNext()) {
-                circuitBreaker.statefulThrowExceptionIfTripped();
+                circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
 
                 final MapKey key = latestByMap.withKey();
                 recordSink.copy(baseRecord, key);
@@ -292,7 +292,7 @@ public class LatestByRecordCursorFactory extends AbstractRecordCursorFactory {
             try (final RecordCursor mapCursor = latestByMap.getCursor()) {
                 final MapRecord mapRecord = (MapRecord) mapCursor.getRecord();
                 while (mapCursor.hasNext()) {
-                    circuitBreaker.statefulThrowExceptionIfTripped();
+                    circuitBreaker.statefulThrowExceptionIfTrippedOrYield();
                     final MapValue value = mapRecord.getValue();
                     final long rowId = value.getLong(RECORD_INDEX_VALUE_IDX);
                     rowIndexes.add(rowId);

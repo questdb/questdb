@@ -244,11 +244,11 @@ public class TableTransactionLog implements Closeable {
         return getCursor(txnLo, null);
     }
 
-    TransactionLogCursor getCursor(long txnLo, @Nullable TableSequencerCursorPool cursorPool) {
-        final Path cursorPath = cursorPool != null
-                ? cursorPool.getPath(rootPath)
+    TransactionLogCursor getCursor(long txnLo, @Nullable TableSequencerCursorHolder cursorHolder) {
+        final Path cursorPath = cursorHolder != null
+                ? cursorHolder.getPath(rootPath)
                 : Path.getThreadLocal(rootPath);
-        return txnLogFile.getCursor(txnLo, cursorPath, cursorPool);
+        return txnLogFile.getCursor(txnLo, cursorPath, cursorHolder);
     }
 
     long getMaxMetadataVersion() {
@@ -264,17 +264,17 @@ public class TableTransactionLog implements Closeable {
     TableMetadataChangeLog getTableMetadataChangeLog(
             long structureVersionLo,
             MemorySerializer serializer,
-            @Nullable TableSequencerCursorPool cursorPool
+            @Nullable TableSequencerCursorHolder cursorHolder
     ) {
         TableMetadataChangeLogImpl cursor;
         final Path cursorPath;
-        if (cursorPool != null) {
-            cursor = (TableMetadataChangeLogImpl) cursorPool.getMetadataChangeLog();
+        if (cursorHolder != null) {
+            cursor = (TableMetadataChangeLogImpl) cursorHolder.getMetadataChangeLog();
             if (cursor == null) {
                 cursor = new TableMetadataChangeLogImpl();
-                cursorPool.setMetadataChangeLog(cursor);
+                cursorHolder.setMetadataChangeLog(cursor);
             }
-            cursorPath = cursorPool.getPath(rootPath);
+            cursorPath = cursorHolder.getPath(rootPath);
         } else {
             cursor = (TableMetadataChangeLogImpl) getTableMetadataChangeLog();
             cursorPath = Path.getThreadLocal(rootPath);

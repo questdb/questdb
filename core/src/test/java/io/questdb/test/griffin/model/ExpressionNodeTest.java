@@ -36,6 +36,46 @@ import org.junit.Test;
 public class ExpressionNodeTest {
 
     @Test
+    public void testClearResetsInheritedTimestampOrder() {
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 1);
+        final ExpressionNode node = pool.next().of(ExpressionNode.LITERAL, "ts", 0, 0);
+        Assert.assertFalse(node.isTimestampOrderInherited);
+
+        node.isTimestampOrderInherited = true;
+        node.clear();
+        Assert.assertFalse(node.isTimestampOrderInherited);
+
+        node.isTimestampOrderInherited = true;
+        node.of(ExpressionNode.LITERAL, "other_ts", 0, 0);
+        Assert.assertFalse(node.isTimestampOrderInherited);
+
+        node.isTimestampOrderInherited = true;
+        pool.clear();
+        Assert.assertSame(node, pool.next());
+        Assert.assertFalse(node.isTimestampOrderInherited);
+    }
+
+    @Test
+    public void testDeepCloneAndCopyFromCarryInheritedTimestampOrder() {
+        final ObjectPool<ExpressionNode> pool = new ObjectPool<>(ExpressionNode.FACTORY, 4);
+        final ExpressionNode node = pool.next().of(ExpressionNode.LITERAL, "ts", 0, 0);
+        node.isTimestampOrderInherited = true;
+
+        final ExpressionNode clone = ExpressionNode.deepClone(pool, node);
+        Assert.assertNotSame(node, clone);
+        Assert.assertTrue(clone.isTimestampOrderInherited);
+
+        final ExpressionNode copy = pool.next().copyFrom(node);
+        Assert.assertTrue(copy.isTimestampOrderInherited);
+
+        node.isTimestampOrderInherited = false;
+        Assert.assertTrue(clone.isTimestampOrderInherited);
+        copy.copyFrom(node);
+        Assert.assertFalse(copy.isTimestampOrderInherited);
+        Assert.assertFalse(ExpressionNode.deepClone(pool, node).isTimestampOrderInherited);
+    }
+
+    @Test
     public void testDeepCloneAndCopyFromCarryLateralDepth() {
         // LateralJoinRewriter pass 1 tags correlated refs with lateralDepth and later passes
         // branch on it (allLiteralsAreCorrelated, hasCorrelatedExprAtDepth, unqualified-ref

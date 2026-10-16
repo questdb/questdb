@@ -58,11 +58,13 @@ import io.questdb.lifecycle.LifecycleOrchestrator;
 import io.questdb.lifecycle.State;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
+import io.questdb.metrics.MetricsPersistenceJob;
 import io.questdb.metrics.QueryTracingJob;
 import io.questdb.mp.Job;
 import io.questdb.mp.SynchronizedJob;
 import io.questdb.mp.WorkerPool;
 import io.questdb.mp.WorkerPoolConfiguration;
+import io.questdb.mp.WorkerPoolMode;
 import io.questdb.mp.WorkerPoolUtils;
 import io.questdb.std.Chars;
 import io.questdb.std.Misc;
@@ -843,13 +845,26 @@ public class ServerMain implements Closeable {
                                     sharedPoolQuery
                             );
 
-                            exportWorkerPool.assign(new CopyExportRequestJob(engine));
+                            exportWorkerPool.assign(
+                                    config.getExportPoolConfiguration().getWorkerPoolMode() == WorkerPoolMode.FIBER_HOST
+                                            ? new CopyExportRequestJob(engine, exportWorkerPool.getFiberRuntime())
+                                            : new CopyExportRequestJob(engine)
+                            );
                         } else {
                             log.advisory().$("export is disabled; set ")
                                     .$(EXPORT_WORKER_COUNT.getPropertyPath())
                                     .$(" to a positive value or keep default to enable export.")
                                     .$();
                         }
+                    }
+
+                    if (!isReadOnly && config.getMetricsConfiguration().isPersistEnabled()) {
+                        final MetricsPersistenceJob metricsPersistenceJob = new MetricsPersistenceJob(
+                                engine,
+                                config.getMetricsConfiguration()
+                        );
+                        sharedPoolWrite.assign(metricsPersistenceJob);
+                        sharedPoolWrite.freeOnExit(metricsPersistenceJob);
                     }
 
                     // telemetry

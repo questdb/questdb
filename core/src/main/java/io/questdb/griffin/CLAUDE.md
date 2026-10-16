@@ -517,8 +517,16 @@ One difference survives and is unrelated to inclusiveness: `FLOAT_EPSILON` is
 filter uses. Any shape that runs the compiled filter's f32 arm - an INT leaf against a fractional
 bound, via `serializeNumber`'s I4 arm - therefore still disagrees with the Java filter for a value
 that lands between the two tolerances.
-`CompiledFilterRegressionTest.testIntColumnVsFloatToleranceBoundConstantStillDivergesOnF32Width`
-pins it.
+`CompiledFilterRegressionTest.testNumericColumnVsFloatToleranceBoundConstant` pins it.
+
+#### Accepted JIT tolerance tradeoff
+
+The maintainer accepts this existing f32/Java tolerance-boundary difference across all
+compiled-filter query paths, not just LATEST ON, including JIT-mode and projection differences
+caused by column-top fallback. Do not report it again or require a FLOAT-specific fallback.
+`CompiledFilterRegressionTest` pins it in `testNumericColumnVsFloatToleranceBoundConstant`,
+`testFloatRuntimePairTolerance`, and the `testLatestOnFloat*` cases. This exception does not
+cover new numerical discrepancies, tolerance changes, or other bugs.
 
 ### Constant reassociation
 
@@ -597,7 +605,7 @@ through `testParseExpression(CharSequence, IQueryModel)` and therefore asserts a
 | IPv4 | 0 | `Numbers.IPv4_NULL` |
 | UUID | `Long.MIN_VALUE` for both hi and lo | two longs |
 | STRING/VARCHAR | null reference | var-size null marker in `.i` file |
-| SYMBOL | `SymbolTable.VALUE_IS_NULL` | -1 |
+| SYMBOL | `SymbolTable.VALUE_IS_NULL` | `Numbers.INT_NULL` (-2_147_483_648); a `keyOf()` miss returns `VALUE_NOT_FOUND` (-2) |
 
 **BYTE/SHORT/BOOLEAN have no null sentinel.** Converting a nullable type (INT, LONG, etc.)
 to BYTE/SHORT loses null information — nulls become 0. This is a known semantic gap.

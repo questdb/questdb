@@ -194,11 +194,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "(i128 1229782938247303441 1229782938247303441L)(i128 auuid)(=)(&&_sc)" + // priority 0: auuid =
                         "(i64 1L)(i64 along)(=)(&&_sc)" + // priority 1: along =
                         "(i32 2L)(i32 anint)(=)(&&_sc)" + // priority 2: anint =
-                        "(i32 0L)(i32 asymbol)(=)(&&_sc)" + // priority 3: asymbol = (key 0 for 'ABC')
+                        "(i32 :0)(i32 asymbol)(=)(&&_sc)" + // priority 3: asymbol =
                         "(i16 3L)(i16 ashort)(=)(&&_sc)" + // priority 4: ashort =
                         "(i8 0L)(i8 abyte)(>)(&&_sc)" + // priority 5: abyte >
                         "(i16 120L)(i16 achar)(<>)(&&_sc)" + // priority 6: achar != ('x' = 120)
-                        "(i32 0L)(i32 anothersymbol)(<>)(&&_sc)" + // priority 7: anothersymbol != (key 0 for 'DEF')
+                        "(i32 :1)(i32 anothersymbol)(<>)(&&_sc)" + // priority 7: anothersymbol !=
                         "(i32 807941L)(i32 ageoint)(<>)(&&_sc)" + // priority 8: ageoint !=
                         "(i64 315532800000L)(i64 adate)(<>)(&&_sc)" + // priority 9: adate !=
                         "(i128 2459565876494606882 2459565876494606882L)(i128 auuid)(<>)(ret)" // priority 10: auuid !=
@@ -1546,13 +1546,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         // hint can catch this. See CompiledFilterRegressionTest#testInOperatorSymbolAndCharKeysAreNotWidthSensitive,
         // whose own comment records that it cannot.
         int options = serialize("asymbol IN ('ABC', 'DEF')", false, false, true);
-        // 'ABC' is symbol key 0 in asymbol; 'DEF' is not in its symbol table, so it emits as a bind
-        // variable (see testUnknownSymbolConstant). Neither key leaf carries an sx_i64.
-        assertIR("(i32 :0)(i32 asymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(ret)");
+        assertIR("(i32 :0)(i32 asymbol)(=)(i32 :1)(i32 asymbol)(=)(||)(ret)");
         assertOptionsHint("asymbol IN ('ABC', 'DEF')", options, OptionsHint.SINGLE_SIZE);
 
         options = serialize("asymbol NOT IN ('ABC', 'DEF')", false, false, true);
-        assertIR("(i32 :0)(i32 asymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(!)(ret)");
+        assertIR("(i32 :0)(i32 asymbol)(=)(i32 :1)(i32 asymbol)(=)(||)(!)(ret)");
         assertOptionsHint("asymbol NOT IN ('ABC', 'DEF')", options, OptionsHint.SINGLE_SIZE);
 
         options = serialize("achar IN ('x', 'z')", false, false, true);
@@ -1609,7 +1607,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testKnownSymbolConstant() throws Exception {
         serialize("asymbol = '" + KNOWN_SYMBOL_1 + "' or anothersymbol = '" + KNOWN_SYMBOL_2 + "'");
-        assertIR("(i32 0L)(i32 anothersymbol)(=)(i32 0L)(i32 asymbol)(=)(||)(ret)");
+        assertIR("(i32 :0)(i32 anothersymbol)(=)(i32 :1)(i32 asymbol)(=)(||)(ret)");
+
+        Assert.assertEquals(2, bindVarFunctions.size());
+        Assert.assertEquals(KNOWN_SYMBOL_2, bindVarFunctions.get(0).getStrA(null));
+        Assert.assertEquals(KNOWN_SYMBOL_1, bindVarFunctions.get(1).getStrA(null));
     }
 
     @Test
@@ -1800,20 +1802,19 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     @Test
     public void testNegativeNumericSymbolConstant() throws Exception {
         // https://github.com/questdb/questdb/issues/7548
-        // The parser splits `-5` into a unary minus over the token "5"; the key
-        // has to resolve against the signed spelling, so these emit the key of
-        // '-5' (1), not the key of '5' (which the table does not hold).
         serialize("asymbol = -5");
-        assertIR("(i32 1L)(i32 asymbol)(=)(ret)");
+        assertIR("(i32 :0)(i32 asymbol)(=)(ret)");
+        Assert.assertEquals("-5", bindVarFunctions.get(0).getStrA(null));
         serialize("asymbol <> -5");
-        assertIR("(i32 1L)(i32 asymbol)(<>)(ret)");
+        assertIR("(i32 :0)(i32 asymbol)(<>)(ret)");
+        Assert.assertEquals("-5", bindVarFunctions.get(0).getStrA(null));
         serialize("asymbol = '-5'");
-        assertIR("(i32 1L)(i32 asymbol)(=)(ret)");
+        assertIR("(i32 :0)(i32 asymbol)(=)(ret)");
+        Assert.assertEquals("-5", bindVarFunctions.get(0).getStrA(null));
 
-        // '5' is not in the symbol table, so it becomes a deferred bind variable
-        // rather than borrowing the key of '-5'.
         serialize("asymbol = 5");
         assertIR("(i32 :0)(i32 asymbol)(=)(ret)");
+        Assert.assertEquals("5", bindVarFunctions.get(0).getStrA(null));
     }
 
     @Test
@@ -2082,11 +2083,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
                 "(i128 2459565876494606882 2459565876494606882L)(i128 auuid)(<>)(||_sc)" + // priority 10: auuid !=
                         "(i64 315532800000L)(i64 adate)(<>)(||_sc)" + // priority 9: adate !=
                         "(i32 807941L)(i32 ageoint)(<>)(||_sc)" + // priority 8: ageoint !=
-                        "(i32 0L)(i32 anothersymbol)(<>)(||_sc)" + // priority 7: anothersymbol != (key 0 for 'DEF')
+                        "(i32 :0)(i32 anothersymbol)(<>)(||_sc)" + // priority 7: anothersymbol !=
                         "(i16 120L)(i16 achar)(<>)(||_sc)" + // priority 6: achar != ('x' = 120)
                         "(i8 0L)(i8 abyte)(>)(||_sc)" + // priority 5: abyte >
                         "(i16 3L)(i16 ashort)(=)(||_sc)" + // priority 4: ashort =
-                        "(i32 0L)(i32 asymbol)(=)(||_sc)" + // priority 3: asymbol = (key 0 for 'ABC')
+                        "(i32 :1)(i32 asymbol)(=)(||_sc)" + // priority 3: asymbol =
                         "(i32 2L)(i32 anint)(=)(||_sc)" + // priority 2: anint =
                         "(i64 1L)(i64 along)(=)(||_sc)" + // priority 1: along =
                         "(i128 1229782938247303441 1229782938247303441L)(i128 auuid)(=)(ret)" // priority 0: auuid =
@@ -2241,6 +2242,16 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         assertIR("(i64 1675209600000000L)(i64 atimestamp)(<)(ret)");
         serialize("atimestamp != '2023'");
         assertIR("(i64 1672531200000000L)(i64 atimestamp)(<>)(ret)");
+    }
+
+    @Test
+    public void testSymbolConstantSpelling() throws Exception {
+        serialize("asymbol = 'TRUE' or asymbol = '''x'''");
+        assertIR("(i32 :0)(i32 asymbol)(=)(i32 :1)(i32 asymbol)(=)(||)(ret)");
+
+        Assert.assertEquals(2, bindVarFunctions.size());
+        Assert.assertEquals("'x'", bindVarFunctions.get(0).getStrA(null));
+        Assert.assertEquals("TRUE", bindVarFunctions.get(1).getStrA(null));
     }
 
     @Test
@@ -4193,54 +4204,60 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
             // along!=8))" - two single-width predicates. serialize() below is the entry point that
             // skips that rewrite, which is what made the assert reachable from this harness and
             // only from it.
-            String expr = "along > anint and not (anint = 7 and along = 8)";
-            int options = serialize(expr, false, false, true);
-            assertIR(expr,
-                    "(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
-            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+            // Keep the buffer's first native allocation and close inside the leak-check scope,
+            // even when this test runs before any test that writes to the shared irMemory.
+            try (MemoryCARW ir = Vm.getCARWInstance(2_048, 1, MemoryTag.NATIVE_JIT)) {
+                String expr = "along > anint and not (anint = 7 and along = 8)";
+                int options = serialize(ir, expr, false, false, true);
+                assertIR(ir, expr,
+                        "(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
-            // The OR spelling of the same NOT, and the conjunct order reversed - the walk reads the
-            // stream, so where in it the SX_I64 falls must not matter.
-            expr = "along > anint and not (anint > 7 or along = 8)";
-            options = serialize(expr, false, false, true);
-            assertIR(expr,
-                    "(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(>)(||)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
-            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+                // The OR spelling of the same NOT, and the conjunct order reversed - the walk reads the
+                // stream, so where in it the SX_I64 falls must not matter.
+                expr = "along > anint and not (anint > 7 or along = 8)";
+                options = serialize(ir, expr, false, false, true);
+                assertIR(ir, expr,
+                        "(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(>)(||)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
-            expr = "not (anint = 7 and along = 8) and along > anint";
-            options = serialize(expr, false, false, true);
-            assertIR(expr,
-                    "(i32 anint)(sx_i64)(i64 along)(>)(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(=)(&&)(!)(&&)(ret)");
-            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+                expr = "not (anint = 7 and along = 8) and along > anint";
+                options = serialize(ir, expr, false, false, true);
+                assertIR(ir, expr,
+                        "(i32 anint)(sx_i64)(i64 along)(>)(i64 8L)(i64 along)(=)(i64 7L)(i32 anint)(=)(&&)(!)(&&)(ret)");
+                assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
-            // The narrow side as an arithmetic RESULT rather than a bare column read. `anint + 1`
-            // runs at INT width on both sides - AddIntFunction on the Java one, int32_add on the
-            // four-lane loop - and convert() sign-extends the i32 result for the comparison exactly
-            // as it would the column it came from.
-            expr = "along > anint and not (anint + 1 = 7 and along = 8)";
-            options = serialize(expr, false, false, true);
-            assertIR(expr,
-                    "(i64 8L)(i64 along)(=)(i64 7L)(i32 1L)(i32 anint)(+)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
-            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+                // The narrow side as an arithmetic RESULT rather than a bare column read. `anint + 1`
+                // runs at INT width on both sides - AddIntFunction on the Java one, int32_add on the
+                // four-lane loop - and convert() sign-extends the i32 result for the comparison exactly
+                // as it would the column it came from.
+                expr = "along > anint and not (anint + 1 = 7 and along = 8)";
+                options = serialize(ir, expr, false, false, true);
+                assertIR(ir, expr,
+                        "(i64 8L)(i64 along)(=)(i64 7L)(i32 1L)(i32 anint)(+)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
-            // Control: an out-of-INT-range bound makes the comparison a genuinely 64-bit one, and
-            // the frontend answers with an SX_I64 of its own rather than leaving the width to the
-            // backend. The shape the assert never had to report, beside the ones it used to.
-            expr = "along > anint and not (anint = 5_000_000_000 and along = 8)";
-            options = serialize(expr, false, false, true);
-            assertIR(expr,
-                    "(i64 8L)(i64 along)(=)(i64 5000000000L)(i32 anint)(sx_i64)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
-            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+                // Control: an out-of-INT-range bound makes the comparison a genuinely 64-bit one, and
+                // the frontend answers with an SX_I64 of its own rather than leaving the width to the
+                // backend. The shape the assert never had to report, beside the ones it used to.
+                expr = "along > anint and not (anint = 5_000_000_000 and along = 8)";
+                options = serialize(ir, expr, false, false, true);
+                assertIR(ir, expr,
+                        "(i64 8L)(i64 along)(=)(i64 5000000000L)(i32 anint)(sx_i64)(=)(&&)(!)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
 
-            // Control on the other side: without the NOT each conjunct is its own predicate, the
-            // local observer sees INT alone, and serializeUntypedNumber keeps the constant at I4.
-            // Same columns, same comparisons, no widened immediate - this is what every SQL
-            // spelling of the filter above actually serializes to.
-            expr = "along > anint and (anint = 7 and along = 8)";
-            options = serialize(expr, false, false, true);
-            assertIR(expr,
-                    "(i64 8L)(i64 along)(=)(i32 7L)(i32 anint)(=)(&&)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
-            assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+                // Control on the other side: without the NOT each conjunct is its own predicate, the
+                // local observer sees INT alone, and serializeUntypedNumber keeps the constant at I4.
+                // Same columns, same comparisons, no widened immediate - this is what every SQL
+                // spelling of the filter above actually serializes to.
+                expr = "along > anint and (anint = 7 and along = 8)";
+                options = serialize(ir, expr, false, false, true);
+                assertIR(ir, expr,
+                        "(i64 8L)(i64 along)(=)(i32 7L)(i32 anint)(=)(&&)(i32 anint)(sx_i64)(i64 along)(>)(&&)(ret)");
+                assertOptionsHint(expr, options, OptionsHint.WIDE_LANE);
+            } finally {
+                serializer.clear();
+            }
         });
     }
 
@@ -4335,6 +4352,10 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
     }
 
     private void assertIR(String message, String expectedIR) {
+        assertIR(irMemory, message, expectedIR);
+    }
+
+    private void assertIR(MemoryCARW irMemory, String message, String expectedIR) {
         TestIRSerializer ser = new TestIRSerializer(irMemory, metadata);
         String actualIR = ser.serialize();
         Assert.assertEquals(message, expectedIR, actualIR);
@@ -4479,7 +4500,11 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         return ir.substring(0, ir.length() - "(ret)".length());
     }
 
-    private int serialize(CharSequence seq, boolean scalar, boolean debug, boolean nullChecks) throws SqlException {
+    private int serialize(CharSequence seq, boolean isScalar, boolean isDebug, boolean hasNullChecks) throws SqlException {
+        return serialize(irMemory, seq, isScalar, isDebug, hasNullChecks);
+    }
+
+    private int serialize(MemoryCARW irMemory, CharSequence seq, boolean isScalar, boolean isDebug, boolean hasNullChecks) throws SqlException {
         irMemory.truncate();
         serializer.clear();
         bindVarFunctions.clear();
@@ -4487,7 +4512,7 @@ public class CompiledFilterIRSerializerTest extends BaseFunctionFactoryTest {
         ExpressionNode node = expr(seq);
         try (PageFrameCursor cursor = factory.getPageFrameCursor(sqlExecutionContext, ORDER_ASC)) {
             return serializer.of(irMemory, sqlExecutionContext, metadata, cursor, bindVarFunctions)
-                    .serialize(node, scalar, debug, nullChecks);
+                    .serialize(node, isScalar, isDebug, hasNullChecks);
         }
     }
 

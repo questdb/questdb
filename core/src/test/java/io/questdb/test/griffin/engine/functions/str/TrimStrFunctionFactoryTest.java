@@ -47,6 +47,30 @@ public class TrimStrFunctionFactoryTest extends AbstractFunctionFactoryTest {
     }
 
     @Test
+    public void testSingleCharResult() throws SqlException {
+        call("a").andAssert("a");
+        call(" a").andAssert("a");
+        call("a ").andAssert("a");
+        call("  a  ").andAssert("a");
+    }
+
+    @Test
+    public void testSingleCharResultSymbol() throws Exception {
+        assertQuery("SELECT trim(sym) t, ltrim(sym) l, rtrim(sym) r FROM x WHERE trim(sym) = 'a'")
+                .ddl(
+                        "CREATE TABLE x (sym SYMBOL)",
+                        "INSERT INTO x VALUES ('a'), ('  a'), ('a  '), (' a '), ('b'), ('ab')"
+                )
+                .returns("""
+                        t\tl\tr
+                        a\ta\ta
+                        a\ta\t  a
+                        a\ta  \ta
+                        a\ta \t a
+                        """);
+    }
+
+    @Test
     public void testTrimSpace() throws SqlException {
         call("    abc     ").andAssert("abc");
         call("abc     ").andAssert("abc");

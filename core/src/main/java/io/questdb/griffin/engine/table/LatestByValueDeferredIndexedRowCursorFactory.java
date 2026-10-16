@@ -25,6 +25,7 @@
 package io.questdb.griffin.engine.table;
 
 import io.questdb.cairo.EmptyRowCursor;
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.IndexReader;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.PageFrame;
@@ -60,7 +61,7 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
         if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
             try (RowCursor indexReaderCursor = pageFrame
                     .getIndexReader(columnIndex, IndexReader.DIR_BACKWARD)
-                    .getCursor(symbolKey, pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1)) {
+                    .getCursor(TableUtils.toIndexKey(symbolKey), pageFrame.getPartitionLo(), pageFrame.getPartitionHi() - 1)) {
                 if (indexReaderCursor.hasNext()) {
                     cursor.of(indexReaderCursor.next());
                     return cursor;
@@ -91,11 +92,7 @@ public class LatestByValueDeferredIndexedRowCursorFactory implements RowCursorFa
 
     @Override
     public void prepareCursor(PageFrameCursor pageFrameCursor) {
-        final CharSequence symbol = symbolFunc.getStrA(null);
-        symbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbol);
-        if (symbolKey != SymbolTable.VALUE_NOT_FOUND) {
-            symbolKey++;
-        }
+        symbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbolFunc.getStrA(null), symbolKey);
     }
 
     @Override

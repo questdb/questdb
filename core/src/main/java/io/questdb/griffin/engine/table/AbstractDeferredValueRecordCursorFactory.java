@@ -47,6 +47,7 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
     protected Function filter;
     private AbstractLatestByValueRecordCursor cursor;
     private Function symbolFunc;
+    private int symbolKey = SymbolTable.VALUE_NOT_FOUND;
 
     public AbstractDeferredValueRecordCursorFactory(
             @NotNull RecordMetadata metadata,
@@ -72,17 +73,16 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
     }
 
     private boolean lookupDeferredSymbol(PageFrameCursor pageFrameCursor) {
-        final CharSequence symbol = symbolFunc.getStrA(null);
-        final int newSymbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbol);
-        if (newSymbolKey == SymbolTable.VALUE_NOT_FOUND) {
+        symbolKey = pageFrameCursor.getSymbolTable(columnIndex).keyOf(symbolFunc.getStrA(null), symbolKey);
+        if (symbolKey == SymbolTable.VALUE_NOT_FOUND) {
             pageFrameCursor.close();
             return true;
         }
 
         if (cursor != null) {
-            cursor.setSymbolKey(newSymbolKey);
+            cursor.setSymbolKey(symbolKey);
         } else {
-            cursor = createCursorFor(newSymbolKey);
+            cursor = createCursorFor(symbolKey);
         }
 
         return false;
@@ -102,8 +102,8 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
         } catch (Throwable th) {
             failure = th;
         }
-        failure = Misc.freeBestEffort(failure, filter);
         failure = Misc.freeBestEffort(failure, cursor);
+        failure = Misc.freeBestEffort(failure, filter);
         if (symbolFunc != filter) {
             failure = Misc.freeBestEffort(failure, symbolFunc);
         }
@@ -122,13 +122,18 @@ abstract class AbstractDeferredValueRecordCursorFactory extends AbstractPageFram
         if (lookupDeferredSymbol(pageFrameCursor)) {
             // The deferred symbol is absent, so this returns a shared empty cursor that never checks the
             // breaker on its own. Consult it once at open so the query still observes cancellation.
-            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottled();
+            executionContext.getCircuitBreaker().statefulThrowExceptionIfTrippedTimeThrottledOrYield();
             if (recordCursorSupportsRandomAccess()) {
                 return EmptyTableRandomRecordCursor.INSTANCE;
             }
             return EmptyTableRecordCursor.INSTANCE;
         }
-        cursor.of(pageFrameCursor, executionContext);
-        return cursor;
+        try {
+            cursor.of(pageFrameCursor, executionContext);
+            return cursor;
+        } catch (Throwable th) {
+            Misc.free(cursor, th);
+            throw th;
+        }
     }
 }
