@@ -30,6 +30,7 @@ import io.questdb.cairo.CairoException;
 import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.DefaultCairoConfiguration;
 import io.questdb.cairo.RecoveryCoordinator;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -841,9 +842,35 @@ public class CrashVerifier {
     /**
      * Bit-check every row 0..count-1 against the deterministic CrashIngestWriter formulas. Returns the
      * consistent row count; prints SILENT_CORRUPTION and exits (2) on the first wrong value / gap.
+     * <p>
+     * The PRIMARY table's check. When the product refuses to open the table, that is a verdict,
+     * LOUD_FAILURE (exit 1), not a rig fault. SqlOptimiser hands such a refusal over as an
+     * SqlException that carries only the CairoException's text (openReaderAndEnumerateColumns
+     * wraps every reader-open CairoException except table-does-not-exist and out-of-memory), so
+     * the SqlException alone cannot tell "the product would not open the table" from "the
+     * oracle's own query is wrong". The type is recovered by opening the reader again through the
+     * same engine path. A CairoException there is the product refusing. A reader that opens means
+     * the query failed for the rig's own reason, and that must still end with no verdict.
      */
     private static long bitCheckRows(CairoEngine engine, SqlExecutionContextImpl ctx, String[] SYMBOLS) throws SqlException {
-        return bitCheckRows(engine, ctx, SYMBOLS, CrashIngestWriter.TABLE_NAME);
+        try {
+            return bitCheckRows(engine, ctx, SYMBOLS, CrashIngestWriter.TABLE_NAME);
+        } catch (SqlException e) {
+            // Copied before the reader open below, because SqlException is a per-thread flyweight.
+            final String queryError = e.getFlyweightMessage().toString();
+            try (TableReader ignored = engine.getReader(CrashIngestWriter.TABLE_NAME)) {
+                // The table opens, so the query failed for the rig's own reason: rethrown below.
+            } catch (CairoException open) {
+                // The two kinds SqlOptimiser does not wrap are left to the paths that see them unwrapped.
+                if (!open.isTableDoesNotExist() && !open.isOutOfMemory()) {
+                    System.out.println("LOUD_FAILURE: table " + CrashIngestWriter.TABLE_NAME
+                            + " cannot be opened after recovery: " + open.getMessage()
+                            + " (the oracle's query failed with: " + queryError + ")");
+                    System.exit(1);
+                }
+            }
+            throw e;
+        }
     }
 
     /**
