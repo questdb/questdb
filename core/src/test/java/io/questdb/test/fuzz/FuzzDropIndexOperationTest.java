@@ -70,6 +70,91 @@ public class FuzzDropIndexOperationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExecutePostDrainSkipsColumnCoveredByAnotherIndex() throws Exception {
+        for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+            assertMemoryLeak(() -> {
+                createCoveredTable(walMode);
+                // c2 covers v and sym2, and sym2 has a BITMAP index of its own
+                execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING INCLUDE (v, sym2)");
+                drainWalQueue();
+                assertIndex("c2", IndexType.POSTING, "[1,3,2]");
+                assertIndex("sym2", IndexType.BITMAP, "null");
+
+                // the op leaves the index of sym2, which c2 covers, as it is
+                new FuzzDropIndexOperation(3, "POSTING").executePostDrain(engine, "t");
+                drainWalQueue();
+                assertIndex("c2", IndexType.POSTING, "[1,3,2]");
+                assertIndex("sym2", IndexType.BITMAP, "null");
+                assertCoveredRowsMatchScan("[1,3,2]");
+
+                // c2 hosts the cover, no index covers c2 itself, so its index type changes
+                new FuzzDropIndexOperation(0, "BITMAP").executePostDrain(engine, "t");
+                drainWalQueue();
+                assertIndex("c2", IndexType.BITMAP, "null");
+
+                // nothing covers sym2 any more, so its index type changes too
+                new FuzzDropIndexOperation(3, "POSTING").executePostDrain(engine, "t");
+                drainWalQueue();
+                assertIndex("sym2", IndexType.POSTING, "null");
+                assertQuery("SELECT c2, sym2, ts FROM t WHERE sym2 = 'S3' AND c2 = NULL LIMIT 2")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                c2\tsym2\tts
+                                \tS3\t2022-02-26T00:21:00.000000Z
+                                \tS3\t2022-02-26T04:12:00.000000Z
+                                """);
+                execute("DROP TABLE t");
+            });
+        }
+    }
+
+    @Test
+    public void testExecutePostDrainSkipsSameTypeReAddOnCoveringHost() throws Exception {
+        for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+            assertMemoryLeak(() -> {
+                createCoveredTable(walMode);
+                execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING INCLUDE (sym2)");
+                drainWalQueue();
+                assertIndex("c2", IndexType.POSTING, "[3,2]");
+                // the reader pool keeps a reader that has seen the cover
+                assertCoveredRowsMatchScan("[3,2]");
+
+                // a POSTING index without INCLUDE in place of the covering POSTING index: the op leaves it
+                new FuzzDropIndexOperation(0, "POSTING").executePostDrain(engine, "t");
+                drainWalQueue();
+                assertIndex("c2", IndexType.POSTING, "[3,2]");
+                assertCoveredRowsMatchScan("[3,2]");
+
+                // another POSTING variant: the op drops the cover
+                new FuzzDropIndexOperation(0, "POSTING DELTA").executePostDrain(engine, "t");
+                drainWalQueue();
+                assertIndex("c2", IndexType.POSTING_DELTA, "null");
+                assertQuery("SELECT c2, sym2, ts FROM t WHERE c2 = 'k1' LIMIT 2")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                c2\tsym2\tts
+                                k1\tS1\t2022-02-26T00:07:00.000000Z
+                                k1\tS0\t2022-02-26T01:17:00.000000Z
+                                """);
+
+                // a covering host whose cover lost its column to DROP COLUMN still covers it in a
+                // tombstone slot, which matches no column: the op changes the index type of sym2
+                execute("ALTER TABLE t ALTER COLUMN c2 DROP INDEX");
+                execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING INCLUDE (v)");
+                execute("ALTER TABLE t DROP COLUMN v");
+                drainWalQueue();
+                assertIndex("c2", IndexType.POSTING, "[-1,2]");
+                new FuzzDropIndexOperation(2, "POSTING EF").executePostDrain(engine, "t");
+                drainWalQueue();
+                assertIndex("sym2", IndexType.POSTING_EF, "null");
+                execute("DROP TABLE t");
+            });
+        }
+    }
+
+    @Test
     public void testGenerateSetEmitsDropIndexOperations() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (ts TIMESTAMP, x LONG, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL");
@@ -153,6 +238,45 @@ public class FuzzDropIndexOperationTest extends AbstractCairoTest {
                 0,
                 false
         );
+    }
+
+    private void assertCoveredRowsMatchScan(String expectedCovering) throws Exception {
+        assertIndex("c2", IndexType.POSTING, expectedCovering);
+        assertQuery("SELECT c2, sym2, ts FROM t WHERE c2 = 'k1'")
+                .noLeakCheck()
+                .assertsPlanContaining("CoveringIndex on: c2");
+        assertSqlCursors(
+                "SELECT /*+ no_covering */ c2, sym2, ts FROM t WHERE c2 = 'k1'",
+                "SELECT c2, sym2, ts FROM t WHERE c2 = 'k1'"
+        );
+        assertSqlCursors(
+                "SELECT /*+ no_covering */ c2, sym2, ts FROM t WHERE c2 = NULL",
+                "SELECT c2, sym2, ts FROM t WHERE c2 = NULL"
+        );
+    }
+
+    private static void assertIndex(String columnName, byte expectedIndexType, String expectedCovering) {
+        try (TableMetadata metadata = engine.getTableMetadata(engine.verifyTableName("t"))) {
+            final int columnIndex = metadata.getColumnIndex(columnName);
+            Assert.assertEquals(expectedIndexType, metadata.getColumnIndexType(columnIndex));
+            Assert.assertEquals(expectedCovering, String.valueOf(metadata.getColumnMetadata(columnIndex).getCoveringColumnIndices()));
+        }
+    }
+
+    // c2 (NULL in every third row, k0..k4 otherwise), v, ts, sym2 (S0..S10) with a BITMAP index; the
+    // first day is a parquet partition, the second a native one
+    private static void createCoveredTable(String walMode) throws Exception {
+        execute("CREATE TABLE t (c2 SYMBOL, v VARCHAR, ts TIMESTAMP, sym2 SYMBOL INDEX TYPE BITMAP) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("""
+                INSERT INTO t SELECT
+                    CASE WHEN x % 3 = 0 THEN NULL ELSE 'k' || (x % 5) END,
+                    'v' || x,
+                    dateadd('m', x::INT * 7, '2022-02-26T00:00:00Z'::TIMESTAMP),
+                    'S' || (x % 11)
+                FROM long_sequence(400)
+                """);
+        execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2022-02-26'");
+        drainWalQueue();
     }
 
     private static void assertIndexType(byte expectedIndexType) {

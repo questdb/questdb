@@ -430,7 +430,7 @@ public class FuzzRunner {
         TableToken tableToken = engine.verifyTableName(tableName);
         applyToWal(transactions, tableName, walWriterCount, applyRnd);
         drainWalQueue(applyRnd, tableName);
-        executeIndexOps(transactions, tableName);
+        executeIndexOps(transactions, tableName, applyRnd);
         drainWalQueue(applyRnd, tableName);
         Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
     }
@@ -912,7 +912,7 @@ public class FuzzRunner {
         ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
         tablesTransactions.add(transactions);
         applyManyWalParallel(tablesTransactions, applyRnd, tableName, false, true);
-        executeIndexOps(transactions, tableName);
+        executeIndexOps(transactions, tableName, applyRnd);
         drainWalQueue(applyRnd, tableName);
     }
 
@@ -1542,13 +1542,16 @@ public class FuzzRunner {
         }
     }
 
-    private void executeIndexOps(ObjList<FuzzTransaction> transactions, String tableName) {
+    private void executeIndexOps(ObjList<FuzzTransaction> transactions, String tableName, Rnd applyRnd) {
         for (int i = 0, n = transactions.size(); i < n; i++) {
             ObjList<FuzzTransactionOperation> ops = transactions.getQuick(i).operationList;
             for (int j = 0, m = ops.size(); j < m; j++) {
                 if (ops.getQuick(j) instanceof FuzzAddCoveringIndexOperation coveringOp) {
                     coveringOp.executePostDrain(engine, tableName);
                 } else if (ops.getQuick(j) instanceof FuzzDropIndexOperation dropIndexOp) {
+                    // the drop op skips the columns that other indexes cover, so it must read the
+                    // applied metadata of the covering index ops queued before it in this batch
+                    drainWalQueue(applyRnd, tableName);
                     dropIndexOp.executePostDrain(engine, tableName);
                 }
             }

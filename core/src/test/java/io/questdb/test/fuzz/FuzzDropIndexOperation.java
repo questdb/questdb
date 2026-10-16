@@ -27,12 +27,16 @@ package io.questdb.test.fuzz;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableRecordMetadata;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContextImpl;
+import io.questdb.log.Log;
+import io.questdb.log.LogFactory;
 import io.questdb.std.Chars;
+import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Rnd;
 
@@ -42,6 +46,7 @@ import io.questdb.std.Rnd;
  * index type. Each change queues the purge of the index files of the column instance it replaces.
  */
 public class FuzzDropIndexOperation implements FuzzTransactionOperation {
+    private static final Log LOG = LogFactory.getLog(FuzzDropIndexOperation.class);
     // SQL name of the index type the column gets after DROP INDEX: "BITMAP", "POSTING", "POSTING DELTA"
     // or "POSTING EF"; null keeps the column without an index
     private final String newIndexTypeName;
@@ -65,6 +70,24 @@ public class FuzzDropIndexOperation implements FuzzTransactionOperation {
             }
             final int columnType = metadata.getColumnType(symbolColumnIndex);
             if (columnType < 0 || !ColumnType.isSymbol(columnType) || !metadata.isColumnIndexed(symbolColumnIndex)) {
+                return;
+            }
+            // DROP INDEX of a column that a POSTING index INCLUDEs gives the column a new column name
+            // txn, and the covering sidecars keep the old one, so covering queries read NULL for it.
+            // The guard goes when DROP INDEX moves the sidecars of the indexes that cover the column.
+            if (isCoveredByAnotherIndex(metadata, metadata.getWriterIndex(symbolColumnIndex))) {
+                LOG.info().$("skipping drop index of a covered column [table=").$(tableName)
+                        .$(", column=").$(metadata.getColumnName(symbolColumnIndex)).I$();
+                return;
+            }
+            // TableReaderMetadata.applyTransition() compares the index type but not the covering flag,
+            // so a reader that reloads across the DROP INDEX and the ADD INDEX of the same type keeps
+            // the old covering list, and covering queries read NULL. The fix of applyTransition()
+            // removes this guard.
+            if (isSameTypeReAddOnCoveringHost(metadata)) {
+                LOG.info().$("skipping drop index and re-add of the same type on a covering index [table=").$(tableName)
+                        .$(", column=").$(metadata.getColumnName(symbolColumnIndex))
+                        .$(", indexType=").$(newIndexTypeName).I$();
                 return;
             }
             columnName = metadata.getColumnName(symbolColumnIndex);
@@ -104,5 +127,22 @@ public class FuzzDropIndexOperation implements FuzzTransactionOperation {
 
     public int getSymbolColumnIndex() {
         return symbolColumnIndex;
+    }
+
+    private static boolean isCoveredByAnotherIndex(TableRecordMetadata metadata, int writerIndex) {
+        for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+            // a tombstone slot of a dropped covered column holds -1 and matches no writer index
+            final IntList coveringColumnIndices = metadata.getColumnMetadata(i).getCoveringColumnIndices();
+            if (coveringColumnIndices != null && coveringColumnIndices.contains(writerIndex)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private boolean isSameTypeReAddOnCoveringHost(TableRecordMetadata metadata) {
+        return newIndexTypeName != null
+                && metadata.getColumnMetadata(symbolColumnIndex).isCovering()
+                && IndexType.valueOf(newIndexTypeName) == metadata.getColumnIndexType(symbolColumnIndex);
     }
 }
