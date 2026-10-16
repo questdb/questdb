@@ -399,6 +399,25 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         assertShape(Shape.INNER_ON_RIGHT);
     }
 
+    // With a correlated sub-query as the slave of the RIGHT join, WHERE t.x = o.k lets the rewriter
+    // repair the join. A WHERE whose only other conjunct is on a column whose type only the code
+    // generator knows has no conjunct that the rewriter checks at run time, so the rewriter keeps the
+    // repair and does not leave the join to the code generator, which would reject it, as NULL != 0 is
+    // true on INT. Per outer row, outer key 1 matches refund 100 and trade 10, key 2 refund 101 and
+    // trade 11, whose ci NULL != 0 is true, and key 3 refund 102, which no trade matches, and
+    // t.x = 3 drops the NULL-extended row.
+    @Test
+    public void testRightJoinRepairNextToAComputedColumn() throws Exception {
+        assertMemoryLeak(() -> {
+            createAnyConjunctTables();
+            final String body = MIXED_TABLE + " t RIGHT JOIN (SELECT id, k FROM refunds WHERE k = {K}) r ON t.x = r.k"
+                    + " WHERE t.x = {K} AND t.ci != 0";
+            // no bind variables
+            assertSteps(body, rowsStep(bindVariableService::clear, "1\t10\t100\n2\t11\t101"));
+            Assert.assertFalse(planOf(lateralSql(body)).contains("Lateral Null Check"));
+        });
+    }
+
     @Test
     public void testRightJoinWithCorrelatedOn() throws Exception {
         assertShape(Shape.RIGHT_ON);
@@ -992,6 +1011,32 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             assertSteps(
                     body + "t.i = $1 AND t.sid != 0",
                     rowsStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "")
+            );
+            bindVariableService.clear();
+        });
+    }
+
+    // Where the rewriter removes the outer-ref join, t.ci != 0 leaves the decision to the code
+    // generator, and NULL != 0 is true on INT, so only t.i <= $1 drops the rows that the RIGHT join
+    // NULL-extends, while $1 is not NULL. The code generator builds its group from the check of
+    // t.i <= $1 that the rewriter passes it. With $1 10, trade 11 has i NULL, and NULL <= 10 is false.
+    @Test
+    public void testRuntimeNullCheckNextToAComputedColumnOnWhereKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createAnyConjunctTables();
+            final String body = MIXED_TABLE + " t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K}"
+                    + " WHERE t.x = {K} AND t.i <= $1 AND t.ci != 0";
+            assertSteps(
+                    body,
+                    rowsStep(() -> bindVariableService.setInt(0, 10), "1\t10\t100"),
+                    errorStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "$1")
+            );
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 10);
+            // the filter holds t.i <= $1 as $1 >= t.i
+            TestUtils.assertContains(
+                    planOf(lateralSql(body)),
+                    "Lateral Null Check checks: [$0::int>=__qdb_null_probe] groups: [[0]]\n"
             );
             bindVariableService.clear();
         });
