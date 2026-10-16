@@ -59,9 +59,10 @@ import io.questdb.std.ObjList;
  * true, the filter would keep those rows, and the plan would lose them, so the query fails at the
  * first check of the group. A check of several groups runs once.
  * <p>
- * A check over a scalar sub-query runs the sub-query once per execution and passes its value to
- * the filter functions over the same sub-query, its receivers, so that the filter reads the value
- * that the check has seen and the sub-query does not run twice.
+ * A function of a check that reads a scalar sub-query, at any depth of the check, runs the
+ * sub-query once per execution and passes its value to the filter functions that read the same
+ * sub-query, its receivers, so that the filter reads the value that the check has seen and the
+ * sub-query does not run twice.
  * <p>
  * The checks run when a cursor opens, and the factory then returns the base cursor itself, so rows
  * pass through without any per-row cost. The code generator places this factory at the top of the
@@ -74,14 +75,15 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
     // the result of each of checks in the current execution
     private final boolean[] checkResults;
     private final ObjList<Function> checks;
+    // functions of the checks, which own them, each of which passes its value to the receiver at
+    // the same index
+    private final ObjList<Function> donors;
     // each group its size followed by the indices in checks of its checks
     private final IntList groups;
     private final ObjList<Record> nullRecords;
     private final IntList positions;
     // names the probe column, the only column that each check reads, in the plan
     private final RecordMetadata probeMetadata;
-    // the index in checks of the check that passes its value to each of receivers
-    private final IntList receiverChecks;
     // functions of the base factory, which owns them
     private final ObjList<Function> receivers;
     private RecordCursorFactory base;
@@ -92,20 +94,20 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
             ObjList<Record> nullRecords,
             IntList positions,
             RecordMetadata probeMetadata,
+            ObjList<Function> donors,
             ObjList<Function> receivers,
-            IntList receiverChecks,
             IntList groups
     ) {
         super(base.getMetadata());
         this.base = base;
         this.checks = checks;
         this.checkResults = new boolean[checks.size()];
+        this.donors = donors;
         this.groups = groups;
         this.nullRecords = nullRecords;
         this.positions = positions;
         this.probeMetadata = probeMetadata;
         this.receivers = receivers;
-        this.receiverChecks = receiverChecks;
     }
 
     @Override
@@ -220,18 +222,16 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
         return base.usesCompiledFilter();
     }
 
-    // Runs every check once, and passes the value of each to its receivers, which the filter reads
-    // when no group fails
+    // Runs every check once, which runs the sub-queries of its donors, and passes the value of each
+    // donor to its receiver, which the filter reads when no group fails
     private void runChecks(SqlExecutionContext executionContext) throws SqlException {
         for (int i = 0, n = checks.size(); i < n; i++) {
             final Function check = checks.getQuick(i);
             check.init(SqlOptimiser.NULL_REJECTING_PROBE_SYMBOL_TABLES, executionContext);
             checkResults[i] = check.getBool(nullRecords.getQuick(i));
-            for (int j = 0, m = receivers.size(); j < m; j++) {
-                if (receiverChecks.getQuick(j) == i) {
-                    check.offerStateTo(receivers.getQuick(j));
-                }
-            }
+        }
+        for (int j = 0, m = donors.size(); j < m; j++) {
+            donors.getQuick(j).offerStateTo(receivers.getQuick(j));
         }
         for (int i = 0, n = groups.size(); i < n; ) {
             final int size = groups.getQuick(i++);
@@ -249,7 +249,7 @@ public class LateralNullCheckRecordCursorFactory extends AbstractRecordCursorFac
     @Override
     protected void _close() {
         // _close() runs at most once, so it detaches the base, attempts every close and
-        // rethrows the first failure. The base frees the receivers.
+        // rethrows the first failure. The base frees the receivers, and the checks free the donors.
         final RecordCursorFactory base = this.base;
         this.base = null;
         Throwable failure = Misc.freeBestEffort(null, base);

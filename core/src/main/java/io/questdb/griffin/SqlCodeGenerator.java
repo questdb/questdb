@@ -551,7 +551,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // the sub-query that each of scalarSubQueryConsumers reads
     private final ObjList<IQueryModel> scalarSubQueryConsumerModels = new ObjList<>();
     // the functions over a scalar sub-query that the outermost generate() call has parsed so far,
-    // which applyLateralNullChecks() links to the NULL checks of the same sub-query
+    // which applyLateralNullChecks() links to the functions of the NULL checks that read the same sub-query
     private final ObjList<Function> scalarSubQueryConsumers = new ObjList<>();
     // Cache of factories generated for shared models (models with shared refs).
     // Key: the delegate QueryModel; Value: the primary factory.
@@ -1962,24 +1962,24 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                 && directionMatchesScan(getOrderByDirectionOrDefault(model, 0), scanDirection);
     }
 
-    // the scalar sub-query that is a direct operand of the lateral NULL check, or null
-    private static IQueryModel scalarSubQueryModel(ExpressionNode check) {
-        if (check.paramCount < 3) {
-            if (check.lhs != null && check.lhs.type == ExpressionNode.QUERY) {
-                return check.lhs.queryModel;
-            }
-            if (check.rhs != null && check.rhs.type == ExpressionNode.QUERY) {
-                return check.rhs.queryModel;
-            }
-            return null;
+    // Returns whether the expression reads the scalar sub-query of the model, at any depth, without
+    // looking into the sub-queries that it reads
+    private static boolean readsScalarSubQuery(ExpressionNode node, IQueryModel subQueryModel) {
+        if (node == null) {
+            return false;
         }
-        for (int i = 0, n = check.args.size(); i < n; i++) {
-            final ExpressionNode arg = check.args.getQuick(i);
-            if (arg.type == ExpressionNode.QUERY) {
-                return arg.queryModel;
+        if (node.type == ExpressionNode.QUERY) {
+            return node.queryModel == subQueryModel;
+        }
+        if (node.paramCount < 3) {
+            return readsScalarSubQuery(node.lhs, subQueryModel) || readsScalarSubQuery(node.rhs, subQueryModel);
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (readsScalarSubQuery(node.args.getQuick(i), subQueryModel)) {
+                return true;
             }
         }
-        return null;
+        return false;
     }
 
     // Gives a nested loop LEFT join the RIGHT and FULL joins with join keys that the query writes after it and
@@ -2286,17 +2286,21 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     // when every check of a group is true, as the filter would then keep the rows that a RIGHT or
     // FULL join NULL-extends. The checks of a group are ANDed in the filter, so the filter drops
     // those rows while any of them is false.
-    // A check over a scalar sub-query owns the value of the sub-query: the filter functions over the
-    // same sub-query reuse it, so the filter never reads a value that the check has not seen. The
-    // check generates the sub-query again, after the filter, and generationState gives it the state
-    // of the sub-query model that the filter generation consumed.
+    // A function of a check that reads a scalar sub-query, at any depth of the check, owns the value
+    // of the sub-query: the filter functions that read the same sub-query, its receivers, reuse it, so
+    // the filter never reads a value that the check has not seen. The check generates the sub-query
+    // again, after the filter, and generationState gives it the state of the sub-query model that the
+    // filter generation consumed.
     // Takes ownership of the factory.
     private RecordCursorFactory applyLateralNullChecks(RecordCursorFactory factory, SqlExecutionContext executionContext) throws SqlException {
         final ObjList<Function> checks = new ObjList<>();
         final ObjList<Record> nullRecords = new ObjList<>();
         final IntList positions = new IntList();
+        // each function of a check that passes its value to the filter function at the same index
+        final ObjList<Function> donors = new ObjList<>();
         final ObjList<Function> receivers = new ObjList<>();
-        final IntList receiverChecks = new IntList();
+        // the sub-queries that the donors read, for the assertion of one donor per sub-query
+        final ObjList<IQueryModel> donorModels = new ObjList<>();
         // the checks parse after this point and report themselves, but must not receive a value
         final int consumerCount = scalarSubQueryConsumers.size();
         try {
@@ -2304,26 +2308,35 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             for (int i = 0, n = lateralNullChecks.size(); i < n; i++) {
                 final ExpressionNode node = lateralNullChecks.getQuick(i);
                 metadata = SqlOptimiser.nullProbeMetadata(lateralNullCheckTypes.getQuick(i));
+                // the check reports the functions that read its sub-queries after this point, and so
+                // does the second generation of each sub-query for the sub-queries that it reads
+                final int donorStart = scalarSubQueryConsumers.size();
                 final Function check = functionParser.parseFunction(node, metadata, executionContext);
                 checks.add(check);
                 nullRecords.add(NullRecordFactory.getInstance(metadata));
                 positions.add(node.position);
-                final IQueryModel subQueryModel = scalarSubQueryModel(node);
-                // one check per sub-query, whose value the filter reads
-                assert subQueryModel == null || indexOfLateralNullCheck(subQueryModel) == i;
-                if (subQueryModel != null) {
-                    for (int j = 0; j < consumerCount; j++) {
-                        final Function consumer = scalarSubQueryConsumers.getQuick(j);
-                        if (scalarSubQueryConsumerModels.getQuick(j) == subQueryModel && consumer.getClass() == check.getClass()) {
-                            receivers.add(consumer);
-                            receiverChecks.add(i);
+                for (int k = donorStart, m = scalarSubQueryConsumers.size(); k < m; k++) {
+                    final IQueryModel subQueryModel = scalarSubQueryConsumerModels.getQuick(k);
+                    if (readsScalarSubQuery(node, subQueryModel)) {
+                        // one donor per sub-query, whose value the filter reads
+                        assert donorModels.indexOf(subQueryModel) < 0;
+                        donorModels.add(subQueryModel);
+                        final Function donor = scalarSubQueryConsumers.getQuick(k);
+                        for (int j = 0; j < consumerCount; j++) {
+                            if (scalarSubQueryConsumerModels.getQuick(j) == subQueryModel) {
+                                final Function consumer = scalarSubQueryConsumers.getQuick(j);
+                                // the parser builds both from copies of an expression that reads no column
+                                assert consumer.getClass() == donor.getClass();
+                                donors.add(donor);
+                                receivers.add(consumer);
+                            }
                         }
                     }
                 }
             }
             final IntList groups = new IntList(lateralNullCheckGroups.size());
             groups.addAll(lateralNullCheckGroups);
-            return new LateralNullCheckRecordCursorFactory(factory, checks, nullRecords, positions, metadata, receivers, receiverChecks, groups);
+            return new LateralNullCheckRecordCursorFactory(factory, checks, nullRecords, positions, metadata, donors, receivers, groups);
         } catch (Throwable th) {
             // the frees attach any close failure to th instead of throwing it
             Misc.freeObjList(checks, th);
@@ -14494,15 +14507,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             }
         }
         return false;
-    }
-
-    // Returns the index of the first of lateralNullChecks that reads the scalar sub-query
-    private int indexOfLateralNullCheck(IQueryModel subQueryModel) {
-        for (int i = 0; ; i++) {
-            if (scalarSubQueryModel(lateralNullChecks.getQuick(i)) == subQueryModel) {
-                return i;
-            }
-        }
     }
 
     private boolean isKeyedTemporalJoin(RecordMetadata masterMetadata, RecordMetadata slaveMetadata) {

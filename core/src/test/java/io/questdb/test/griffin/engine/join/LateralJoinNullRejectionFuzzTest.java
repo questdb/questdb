@@ -100,6 +100,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // t.x = o.k lets the rewriter remove the outer-ref join
     private static final String[] CORRELATED = {"t.id > {K}", "t.id >= {K}", "t.x = {K}", "t.id != {K}"};
     private static final String[] LATERAL_JOINS = {"JOIN LATERAL", "CROSS JOIN LATERAL", "LEFT JOIN LATERAL"};
+    // the start of the CASE of nestedScalarSubQuery()
+    private static final String NESTED_SCALAR_SUB_QUERY = "CASE WHEN (SELECT count() FROM";
     private static final int QUERIES_PER_ROUND = 40;
     // bind variable values of a filter on refunds, whose ids start at 100
     private static final Object[] REFUND_BIND_VALUES = {null, 0, 101};
@@ -132,6 +134,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // filter has a runtime-checked predicate on a column of known type and whose verdict needs a
     // predicate on a computed column
     private int mixedTypeVerdictCount;
+    // queries with a CASE over a scalar sub-query, see nestedScalarSubQuery(), whose LATERAL rows were
+    // compared with the reference rows
+    private int nestedSubQueryComparedCount;
     // queries that must return rows, as their filter provably drops every NULL-extended row
     private int nullRejectingCount;
     // queries with a valid filter that the rewriter rejected
@@ -157,9 +162,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     }
 
     // = against $1, which may be NULL, and then <= or >= against a scalar sub-query, mostly the
-    // maximum of a column of a numeric or time type, which is NULL only when every trade holds NULL.
-    // A NULL $1 makes = true on the NULL-extended row, and the query must then return rows when the
-    // sub-query drops that row.
+    // maximum of a column of a numeric or time type, which is NULL only when every trade holds NULL,
+    // or against a CASE over a scalar sub-query, see nestedScalarSubQuery(). A NULL $1 makes = true
+    // on the NULL-extended row, and the query must then return rows when the sub-query drops that row.
     private static void addRuntimeCheckedPair(Rnd rnd, Bind bind, List<Predicate> predicates) {
         FuzzColumn column;
         do {
@@ -172,8 +177,12 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             column = COLUMNS[rnd.nextInt(COLUMNS.length)];
         } while (column.bindType == null || column.bindType.equals("str") || isTypeWithoutNull(column));
         final String ref = "t." + column.name;
-        final String subQuery = rnd.nextInt(4) > 0 ? "(SELECT max(" + column.name + ") FROM trades)" : randomScalarSubQuery(rnd, column);
         final String op = rnd.nextBoolean() ? "<=" : ">=";
+        if (rnd.nextInt(4) == 0) {
+            predicates.add(new Predicate(ref + ' ' + op + ' ' + nestedScalarSubQuery(rnd, column), PredicateKind.RUNTIME_CHECKED, column.name));
+            return;
+        }
+        final String subQuery = rnd.nextInt(4) > 0 ? "(SELECT max(" + column.name + ") FROM trades)" : randomScalarSubQuery(rnd, column);
         predicates.add(new Predicate(rnd.nextBoolean() ? ref + ' ' + op + ' ' + subQuery : subQuery + ' ' + op + ' ' + ref, PredicateKind.RUNTIME_CHECKED, column.name));
     }
 
@@ -228,6 +237,10 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         return false;
     }
 
+    private static boolean hasNestedScalarSubQuery(CharSequence filter) {
+        return Chars.contains(filter, NESTED_SCALAR_SUB_QUERY);
+    }
+
     private static boolean isEqualityOnlyType(FuzzColumn column) {
         return column.type.startsWith("GEOHASH") || column.type.endsWith("[]");
     }
@@ -266,6 +279,14 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             sb.append(column.name);
         }
         return sb.append(" FROM trades)").toString();
+    }
+
+    // A CASE that reads a scalar sub-query below its top and takes one value per execution: a value
+    // of the column while some trade has the key, and NULL otherwise. The check of the CASE runs the
+    // sub-query, and the filter reads its value.
+    private static String nestedScalarSubQuery(Rnd rnd, FuzzColumn column) {
+        return NESTED_SCALAR_SUB_QUERY + " trades WHERE x = " + rnd.nextInt(4) + ") > 0 THEN CAST("
+                + randomValue(rnd, column, 0) + " AS " + column.type + ") END";
     }
 
     // Decides whether the filter provably drops every row that the join NULL-extends on trades, so
@@ -542,6 +563,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             if (isMixedTypeVerdict) {
                 mixedTypeVerdictCount++;
             }
+            if (hasNestedScalarSubQuery(filter)) {
+                nestedSubQueryComparedCount++;
+            }
             final List<String> actual = rowsOf(sink);
             Collections.sort(actual);
             if (!actual.equals(expected)) {
@@ -636,6 +660,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             nullRejectingCount = 0;
             laterRuntimeVerdictCount = 0;
             mixedTypeVerdictCount = 0;
+            nestedSubQueryComparedCount = 0;
             twoRightJoinsComparedCount = 0;
             for (int round = 0; round < rounds; round++) {
                 createTables(rnd, nullRate, maxOuterRows, maxRows);
@@ -660,12 +685,14 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             final String counts = queryCount + " queries, " + validCount + " with a valid filter, " + comparedCount
                     + " compared, " + rejectedCount + " rejected, " + nullRejectingCount + " provably NULL-rejecting, "
                     + laterRuntimeVerdictCount + " by a later runtime-checked predicate, " + twoRightJoinsComparedCount
-                    + " compared with two RIGHT joins, " + mixedTypeVerdictCount + " proven by a computed column next to a runtime check";
+                    + " compared with two RIGHT joins, " + mixedTypeVerdictCount + " proven by a computed column next to a runtime check, "
+                    + nestedSubQueryComparedCount + " compared with a nested sub-query";
             LOG.info().$("lateral null rejection fuzz [queries=").$(queryCount).$(", valid=").$(validCount)
                     .$(", compared=").$(comparedCount).$(", rejected=").$(rejectedCount)
                     .$(", nullRejecting=").$(nullRejectingCount).$(", laterRuntimeVerdict=").$(laterRuntimeVerdictCount)
                     .$(", twoRightJoinsCompared=").$(twoRightJoinsComparedCount)
-                    .$(", mixedTypeVerdict=").$(mixedTypeVerdictCount).I$();
+                    .$(", mixedTypeVerdict=").$(mixedTypeVerdictCount)
+                    .$(", nestedSubQueryCompared=").$(nestedSubQueryComparedCount).I$();
             if (!failures.isEmpty()) {
                 Assert.fail(failures.size() + " of " + queryCount + " queries failed (" + counts + "):\n"
                         + String.join("\n", failures.subList(0, Math.min(20, failures.size()))));
@@ -684,6 +711,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             // A generator that never put a computed column next to a column of known type would not
             // show that the code generator decides on both together.
             Assert.assertTrue("no query proven by a computed column next to a runtime check: " + counts, mixedTypeVerdictCount > 0);
+            // A generator that never nested a sub-query in the operand of a runtime check would not
+            // show that the check shares a sub-query below the top of its operand with the filter.
+            Assert.assertTrue("no query with a nested sub-query compared: " + counts, nestedSubQueryComparedCount > 0);
         });
     }
 

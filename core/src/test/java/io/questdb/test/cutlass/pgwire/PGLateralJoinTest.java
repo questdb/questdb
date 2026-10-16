@@ -72,6 +72,48 @@ public class PGLateralJoinTest extends BasePGTest {
         });
     }
 
+    // A prepared statement whose LATERAL body holds a RIGHT join checks, at each execution, the value
+    // of a CASE over a scalar sub-query, which the filter reads too. Per outer row, refund k matches
+    // both trades, and t.id >= 10 keeps both. Refund 103 makes max(id) 103, so the CASE becomes NULL,
+    // and the next execution fails at the CASE.
+    @Test
+    public void testRuntimeNullCheckOfANestedSubQuery() throws Exception {
+        assertWithPgServer(CONN_AWARE_EXTENDED, (connection, binary, mode, port) -> {
+            try (Statement statement = connection.createStatement()) {
+                statement.execute("CREATE TABLE orders (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+                statement.execute("INSERT INTO orders VALUES (1, 1, 1::timestamp), (2, 2, 2::timestamp), (3, 3, 3::timestamp)");
+                statement.execute("CREATE TABLE refunds (id INT, k INT, ts TIMESTAMP) TIMESTAMP(ts)");
+                statement.execute("INSERT INTO refunds VALUES (100, 1, 1::timestamp), (101, 2, 2::timestamp), (102, 3, 3::timestamp)");
+                statement.execute("CREATE TABLE trades (id INT, x INT, ts TIMESTAMP) TIMESTAMP(ts)");
+                statement.execute("INSERT INTO trades VALUES (10, 1, 1::timestamp), (11, 2, 2::timestamp)");
+            }
+            final String sql = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid FROM "
+                    + "trades t RIGHT JOIN refunds r ON r.k = o.k "
+                    + "WHERE t.id >= CASE WHEN (SELECT max(id) FROM refunds) > 102 THEN NULL::int ELSE 10 END) l ORDER BY 1, 2, 3";
+            final String header = "id[INTEGER],tid[INTEGER],rid[INTEGER]\n";
+            try (PreparedStatement statement = connection.prepareStatement(sql)) {
+                for (int i = 0; i < 2; i++) {
+                    try (ResultSet rs = statement.executeQuery()) {
+                        assertResultSet(header + "1,10,100\n1,11,100\n2,10,101\n2,11,101\n3,10,102\n3,11,102\n", sink, rs);
+                    }
+                }
+                try (Statement insert = connection.createStatement()) {
+                    insert.execute("INSERT INTO refunds VALUES (103, 4, 4::timestamp)");
+                }
+                for (int i = 0; i < 2; i++) {
+                    try {
+                        statement.executeQuery();
+                        Assert.fail("expected the NULL value to fail the execution");
+                    } catch (PSQLException e) {
+                        Assert.assertNotNull(e.getServerErrorMessage());
+                        Assert.assertEquals(LateralNullCheckRecordCursorFactory.NULL_VALUE_ERROR, e.getServerErrorMessage().getMessage());
+                        Assert.assertEquals(sql.indexOf("CASE") + 1, e.getServerErrorMessage().getPosition());
+                    }
+                }
+            }
+        });
+    }
+
     // A prepared statement whose LATERAL body holds a RIGHT join checks, at each execution, the
     // values of the filter conjuncts that drop the rows the join NULL-extends only while their value
     // is not NULL. The conjuncts are ANDed, so the execution fails only when every value is NULL, at

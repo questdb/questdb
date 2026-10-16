@@ -418,6 +418,91 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         });
     }
 
+    // A scalar sub-query nested in the operand of a runtime NULL check, below a CASE, takes one value
+    // per execution, which the check passes to the filter: a filter that ran its own copy of the
+    // sub-query could read NULL where the check saw a value, and then keep the rows that the RIGHT
+    // join NULL-extends, as NULL >= NULL and NULL = NULL are true, which the decorrelated plan loses.
+    // Per outer row, refund k matches both trades, so the CASE value 0 keeps the six rows of both
+    // trades, and 10 with = the three of trade 10. The sub-queries make the CASE NULL in some
+    // executions, which fail at the CASE, and not in others, which return those rows, never other
+    // rows. The CASE reads its sub-queries through comparisons and AND, over INT and over a BOOLEAN
+    // sub-query, and through a BETWEEN over two TIMESTAMP sub-queries. Over the UNION ALL table, the
+    // code generator builds the check.
+    @Test
+    public void testRightJoinShareANestedRandomSubQueryCheck() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String random = "(SELECT rnd_int(0, 1, 0) FROM long_sequence(1))";
+            final String allRows = """
+                    id\ttid\trid
+                    1\t10\t100
+                    1\t11\t100
+                    2\t10\t101
+                    2\t11\t101
+                    3\t10\t102
+                    3\t11\t102
+                    """;
+            final String trade10Rows = """
+                    id\ttid\trid
+                    1\t10\t100
+                    2\t10\t101
+                    3\t10\t102
+                    """;
+            // the filter, the filter with the CASE value when it is not NULL, its rows, and the
+            // number of sub-queries that the check shares with the filter
+            final String[][] filters = {
+                    {"t.id >= CASE WHEN " + random + " = 0 THEN NULL::int ELSE 0 END", "t.id >= 0", allRows, "1"},
+                    {"t.id = CASE WHEN " + random + " = 0 THEN NULL::int ELSE 10 END", "t.id = 10", trade10Rows, "1"},
+                    {
+                            "t.id >= CASE WHEN (SELECT rnd_int(0, 1, 0) = 0 FROM long_sequence(1)) AND true THEN NULL::int ELSE 0 END",
+                            "t.id >= 0",
+                            allRows,
+                            "1"
+                    },
+                    {"t.id >= CASE WHEN " + random + " = 0 AND " + random + " = 0 THEN NULL::int ELSE 0 END", "t.id >= 0", allRows, "2"},
+                    // the refunds have the timestamps 1 to 3, so 1 is between the bounds while the
+                    // lower bound is 0, not 2; one function reads both sub-queries
+                    {
+                            "t.ts >= CASE WHEN 1::timestamp BETWEEN (SELECT CASE WHEN rnd_int(0, 1, 0) = 0 THEN 2::timestamp ELSE 0::timestamp END"
+                                    + " FROM long_sequence(1)) AND (SELECT max(ts) FROM refunds) THEN 1::timestamp END",
+                            "t.ts >= 1::timestamp",
+                            allRows,
+                            "1"
+                    }
+            };
+            final String[] tables = {"trades", "(SELECT id, x, ts FROM trades UNION ALL SELECT id, x, ts FROM trades WHERE id < 0)"};
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            for (String table : tables) {
+                for (String[] filter : filters) {
+                    final String body = table + " t RIGHT JOIN refunds r ON r.k = {K} WHERE " + filter[0];
+                    assertReference("", "trades t RIGHT JOIN refunds r ON r.k = {K} WHERE " + filter[1], filter[2]);
+                    final List<String> expected = sortedRows(filter[2]);
+                    final String sql = lateralSql(body);
+                    sqlExecutionContext.setRandom(rnd);
+                    int rowCount = 0;
+                    int errorCount = 0;
+                    try (RecordCursorFactory factory = select(sql)) {
+                        for (int i = 0; i < 60; i++) {
+                            final Outcome outcome = runFactory(factory, sql);
+                            if (outcome.error == null) {
+                                Assert.assertEquals(sql, expected, outcome.rows);
+                                // the check runs each sub-query, and the filter reads its value
+                                final String plan = planOf(factory);
+                                final String checks = plan.substring(0, plan.indexOf("groups: "));
+                                Assert.assertEquals(plan, Integer.parseInt(filter[3]), countOf(checks, "[state-shared]"));
+                                rowCount++;
+                            } else {
+                                Assert.assertEquals(sql, new Outcome(null, NULL_VALUE_ERROR, sql.indexOf("CASE")), outcome);
+                                errorCount++;
+                            }
+                        }
+                    }
+                    Assert.assertTrue(sql + ": " + rowCount + " executions returned rows, " + errorCount + " failed", rowCount > 0 && errorCount > 0);
+                }
+            }
+        });
+    }
+
     @Test
     public void testRightJoinWithCorrelatedOn() throws Exception {
         assertShape(Shape.RIGHT_ON);
@@ -707,6 +792,20 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                             "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor",
                             "Frame forward scan on: trades [state-shared],__qdb_null_probe [thread-safe] >= cursor",
                             "Frame backward scan on: refunds [state-shared]] groups: [[0],[1,0]]"
+                    )
+                    .expectSize()
+                    .returns(key3);
+
+            // each check passes the value of the sub-query nested in its CASE only to the filter
+            // function that reads the same sub-query
+            final String nestedSubQueries = body + "r.id >= CASE WHEN (SELECT max(id) FROM refunds) > 0 THEN 102 END"
+                    + " AND t.id >= CASE WHEN (SELECT min(id) FROM trades) > 0 THEN 10 END";
+            assertReference("", nestedSubQueries, key3);
+            assertQuery(lateralSql(nestedSubQueries)).noLeakCheck()
+                    .withPlanContaining(
+                            "Lateral Null Check checks: [__qdb_null_probe>=case(",
+                            "Frame forward scan on: trades [state-shared],10]),__qdb_null_probe>=case(",
+                            "Frame forward scan on: refunds [state-shared],102])] groups: [[0],[1,0]]"
                     )
                     .expectSize()
                     .returns(key3);
@@ -1062,6 +1161,221 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     rowsStep(() -> bindIntLong(Numbers.INT_NULL, 10), "2\t11\t101")
             );
             bindVariableService.clear();
+        });
+    }
+
+    // A scalar sub-query nested in the operand of a runtime NULL check runs once per execution, in the
+    // function of the check that reads it, which passes its value to the function of the filter that
+    // reads the same sub-query, so after an execution the plan marks the sub-query [state-shared] in
+    // the check. The CASE has no ELSE, so it is NULL when its WHEN is false, as it is on a sub-query
+    // that finds no row, and the query then fails at the CASE. Per outer row, refund k matches both
+    // trades: t.id >= 10 keeps both. Trade 10 has l 10 and trade 11 l NULL, so t.l >= 10 keeps trade 10.
+    // The trades have the timestamps 1 and 2, and the refunds 1 to 3, so t.ts >= 1 keeps both trades.
+    @Test
+    public void testRuntimeNullCheckOfANestedSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String body = "trades t RIGHT JOIN refunds r ON r.k = {K} WHERE ";
+            final String allRows = """
+                    id\ttid\trid
+                    1\t10\t100
+                    1\t11\t100
+                    2\t10\t101
+                    2\t11\t101
+                    3\t10\t102
+                    3\t11\t102
+                    """;
+            final String trade10Rows = """
+                    id\ttid\trid
+                    1\t10\t100
+                    2\t10\t101
+                    3\t10\t102
+                    """;
+            final String refundsEnd = "Frame backward scan on: refunds [state-shared],1970-01-01T00:00:00.000001Z])] groups: [[0]]\n";
+            // the filter, the filter whose sub-queries find no row, its rows, and the end of the plan
+            // of the check, after the last sub-query that the check shares
+            final String[][] cases = {
+                    {
+                            "t.id >= CASE WHEN (SELECT max(id) FROM refunds) = 102 THEN 10 END",
+                            "t.id >= CASE WHEN (SELECT max(id) FROM refunds WHERE id < 0) = 102 THEN 10 END",
+                            allRows,
+                            "Frame forward scan on: refunds [state-shared],10])] groups: [[0]]\n"
+                    },
+                    {
+                            "t.l >= CASE WHEN (SELECT max(l) FROM trades) > 0 THEN 10::long END",
+                            "t.l >= CASE WHEN (SELECT max(l) FROM trades WHERE id < 0) > 0 THEN 10::long END",
+                            trade10Rows,
+                            "Frame forward scan on: trades [state-shared],10L])] groups: [[0]]\n"
+                    },
+                    {
+                            "t.ts >= CASE WHEN (SELECT max(ts) FROM refunds) > 0::timestamp THEN 1::timestamp END",
+                            "t.ts >= CASE WHEN (SELECT max(ts) FROM refunds WHERE id < 0) > 0::timestamp THEN 1::timestamp END",
+                            allRows,
+                            refundsEnd
+                    },
+                    {
+                            "t.ts >= CASE WHEN (SELECT max(ts) FROM refunds) = 3::timestamp THEN 1::timestamp END",
+                            "t.ts >= CASE WHEN (SELECT max(ts) FROM refunds WHERE id < 0) = 3::timestamp THEN 1::timestamp END",
+                            allRows,
+                            refundsEnd
+                    },
+                    // one function reads both sub-queries
+                    {
+                            "t.ts >= CASE WHEN 2::timestamp BETWEEN (SELECT min(ts) FROM refunds) AND (SELECT max(ts) FROM refunds) THEN 1::timestamp END",
+                            "t.ts >= CASE WHEN 2::timestamp BETWEEN (SELECT min(ts) FROM refunds) AND (SELECT max(ts) FROM refunds WHERE id < 0) THEN 1::timestamp END",
+                            allRows,
+                            refundsEnd
+                    },
+                    // the check generates the sub-query again, with the sub-query of its WHERE, which
+                    // the check does not read itself
+                    {
+                            "t.id >= CASE WHEN (SELECT id FROM trades WHERE id = (SELECT max(id) FROM trades)) = 11 THEN 10 ELSE NULL::int END",
+                            "t.id >= CASE WHEN (SELECT id FROM trades WHERE id = (SELECT max(id) FROM trades WHERE id < 0)) = 11 THEN 10 ELSE NULL::int END",
+                            allRows,
+                            "Frame forward scan on: trades [state-shared],10,null])] groups: [[0]]\n"
+                    }
+            };
+            for (String[] c : cases) {
+                assertReference("", body + c[0], c[2]);
+                final String sql = lateralSql(body + c[0]);
+                assertQuery(sql).noLeakCheck()
+                        .withPlanContaining("Lateral Null Check checks: [__qdb_null_probe>=case(", c[3])
+                        .expectSize()
+                        .returns(c[2]);
+                // one check, one shared sub-query
+                final String plan = planOf(sql);
+                Assert.assertEquals(plan, 1, countOf(plan, "Lateral Null Check"));
+                final String nullSql = lateralSql(body + c[1]);
+                assertException(nullSql, nullSql.indexOf("CASE"), NULL_VALUE_SUFFIX);
+            }
+
+            // each LATERAL join, next to the check of a bind variable, whose group the check joins.
+            // t.i = NULL keeps trade 11, as NULL = NULL is true, and 10 >= NULL is false.
+            final String nested = "t.id >= CASE WHEN (SELECT max(id) FROM refunds) = 102 THEN 10 END";
+            final String nullNested = "t.id >= CASE WHEN (SELECT max(id) FROM refunds WHERE id < 0) = 102 THEN 10 END";
+            for (String lateralJoin : LATERAL_JOINS) {
+                assertSteps("", lateralJoin, body + nested, body + nested, rowsStep(bindVariableService::clear, "1\t10\t100\n1\t11\t100\n2\t10\t101\n2\t11\t101\n3\t10\t102\n3\t11\t102"));
+                assertSteps("", lateralJoin, body + nullNested, body + nullNested, errorStep(bindVariableService::clear, "CASE"));
+                final String withBind = body + "t.i = $1 AND " + nested;
+                assertSteps(
+                        "",
+                        lateralJoin,
+                        withBind,
+                        withBind,
+                        rowsStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "1\t11\t100\n2\t11\t101\n3\t11\t102"),
+                        rowsStep(() -> bindVariableService.setInt(0, 10), "1\t10\t100\n2\t10\t101\n3\t10\t102")
+                );
+                final String withBindAndNull = body + "t.i = $1 AND " + nullNested;
+                assertSteps(
+                        "",
+                        lateralJoin,
+                        withBindAndNull,
+                        withBindAndNull,
+                        errorStep(() -> bindVariableService.setInt(0, Numbers.INT_NULL), "$1"),
+                        rowsStep(() -> bindVariableService.setInt(0, 10), "")
+                );
+            }
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 10);
+            assertQuery(lateralSql(body + "t.i = $1 AND " + nested)).noLeakCheck()
+                    .withPlanContaining(
+                            "Lateral Null Check checks: [__qdb_null_probe=$0::int,__qdb_null_probe>=case(",
+                            "Frame forward scan on: refunds [state-shared],10])] groups: [[0,1]]\n"
+                    )
+                    .expectSize()
+                    .returns(trade10Rows);
+            bindVariableService.clear();
+        });
+    }
+
+    // A compiled query reads new data, in the check and in the filter alike. Refund 103 makes
+    // max(id) 103, so the CASE becomes NULL, and the query fails at the CASE. Without trades, max(id)
+    // over trades is NULL, so a CASE without ELSE is NULL, and the query fails, while the ELSE value 11
+    // drops every row, which the RIGHT join NULL-extends. Before, t.id >= 10 keeps both trades per
+    // outer row, and drops refund 103, which matches no outer key.
+    @Test
+    public void testRuntimeNullCheckOfANestedSubQueryAfterDataChange() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String allRows = """
+                    id\ttid\trid
+                    1\t10\t100
+                    1\t11\t100
+                    2\t10\t101
+                    2\t11\t101
+                    3\t10\t102
+                    3\t11\t102
+                    """;
+            final String body = "trades t RIGHT JOIN refunds r ON r.k = {K} WHERE ";
+            final String refundsBody = body + "t.id >= CASE WHEN (SELECT max(id) FROM refunds) > 102 THEN NULL::int ELSE 10 END";
+            final String tradesBody = body + "t.id >= CASE WHEN (SELECT max(id) FROM trades) > 0 THEN 10 END";
+            final String elseBody = body + "t.id >= CASE WHEN (SELECT max(id) FROM trades) > 0 THEN 10 ELSE 11 END";
+            final String refundsSql = lateralSql(refundsBody);
+            final String tradesSql = lateralSql(tradesBody);
+            final String elseSql = lateralSql(elseBody);
+            final List<String> all = sortedRows(allRows);
+            assertReference("", refundsBody, allRows);
+            assertReference("", tradesBody, allRows);
+            assertReference("", elseBody, allRows);
+            assertQuery(refundsSql).noLeakCheck()
+                    .withPlanContaining("Frame forward scan on: refunds [state-shared],null,10])] groups: [[0]]\n")
+                    .expectSize()
+                    .returns(allRows);
+            assertQuery(tradesSql).noLeakCheck()
+                    .withPlanContaining("Frame forward scan on: trades [state-shared],10])] groups: [[0]]\n")
+                    .expectSize()
+                    .returns(allRows);
+            try (
+                    RecordCursorFactory refunds = select(refundsSql);
+                    RecordCursorFactory trades = select(tradesSql);
+                    RecordCursorFactory otherwise = select(elseSql)
+            ) {
+                Assert.assertEquals(new Outcome(all, null, -1), runFactory(refunds, refundsSql));
+                Assert.assertEquals(new Outcome(all, null, -1), runFactory(trades, tradesSql));
+                Assert.assertEquals(new Outcome(all, null, -1), runFactory(otherwise, elseSql));
+
+                execute("INSERT INTO refunds (id, k, ts) VALUES (103, 4, 4::timestamp)");
+                Assert.assertEquals(new Outcome(null, NULL_VALUE_ERROR, refundsSql.indexOf("CASE")), runFactory(refunds, refundsSql));
+                assertReference("", tradesBody, allRows);
+                Assert.assertEquals(new Outcome(all, null, -1), runFactory(trades, tradesSql));
+
+                execute("TRUNCATE TABLE trades");
+                Assert.assertEquals(new Outcome(null, NULL_VALUE_ERROR, tradesSql.indexOf("CASE")), runFactory(trades, tradesSql));
+                assertReference("", elseBody, "id\ttid\trid\n");
+                Assert.assertEquals(new Outcome(List.of(), null, -1), runFactory(otherwise, elseSql));
+            }
+        });
+    }
+
+    // The check of a nested sub-query that fails fails the query with the error of the sub-query,
+    // which the filter gives on the table alone. The same compiled query runs again once the
+    // sub-query finds one trade, 10, and t.id >= 10 then keeps trade 10 per outer row.
+    @Test
+    public void testRuntimeNullCheckOfANestedSubQueryWithFailingSubQuery() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String filter = "t.id >= CASE WHEN (SELECT id FROM trades) = 10 THEN 10 END";
+            final Outcome alone = run("SELECT id FROM trades t WHERE " + filter, "alone");
+            Assert.assertEquals("scalar sub-query returned more than one row", alone.error);
+            final String body = "trades t RIGHT JOIN refunds r ON r.k = {K} WHERE " + filter;
+            final String sql = lateralSql(body);
+            final String trade10Rows = """
+                    id\ttid\trid
+                    1\t10\t100
+                    2\t10\t101
+                    3\t10\t102
+                    """;
+            try (RecordCursorFactory factory = select(sql)) {
+                Assert.assertEquals(alone.error, runFactory(factory, sql).error);
+                execute("TRUNCATE TABLE trades");
+                execute("INSERT INTO trades (id, x, ts) VALUES (10, 1, 1::timestamp)");
+                Assert.assertEquals(new Outcome(sortedRows(trade10Rows), null, -1), runFactory(factory, sql));
+                assertReference("", body, trade10Rows);
+            }
+            assertQuery(sql).noLeakCheck()
+                    .withPlanContaining("Frame forward scan on: trades [state-shared],10])] groups: [[0]]\n")
+                    .expectSize()
+                    .returns(trade10Rows);
         });
     }
 
@@ -1518,6 +1832,14 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
             }
         }
         throw new AssertionError("no column of type " + type);
+    }
+
+    private static int countOf(String text, String fragment) {
+        int count = 0;
+        for (int i = text.indexOf(fragment); i >= 0; i = text.indexOf(fragment, i + 1)) {
+            count++;
+        }
+        return count;
     }
 
     // Trade 10 holds a value in each column. Trade 11 holds NULL in the columns that the first
