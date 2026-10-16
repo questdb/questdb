@@ -17919,38 +17919,9 @@ public class JoinTest extends AbstractCairoTest {
         // desk, and trade 5 (v = 'S1') matches book (S2, 5), whose s differs from the trade's v, so neither
         // joins. The keys match NULL to NULL, so trade 3 joins its NULL book and desk.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (k INT, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE books (s SYMBOL, l LONG, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE desks (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO trades VALUES
-                    (1, 'S1', '2024-01-01T00:00:10.000000Z'),
-                    (2, 'S2', '2024-01-01T00:00:20.000000Z'),
-                    (3, NULL, '2024-01-01T00:00:30.000000Z'),
-                    (4, 'S3', '2024-01-01T00:00:40.000000Z'),
-                    (5, 'S1', '2024-01-01T00:00:50.000000Z')
-                    """);
-            execute("""
-                    INSERT INTO quotes VALUES
-                    (9.0, '2024-01-01T00:00:00.000000Z'),
-                    (9.5, '2024-01-01T00:00:09.000000Z'),
-                    (19.5, '2024-01-01T00:00:19.000000Z')
-                    """);
-            execute("""
-                    INSERT INTO books VALUES
-                    ('S1', 1, 1, '2023-12-01T00:00:00.000000Z'),
-                    ('S2', 2, 2, '2023-12-01T00:00:01.000000Z'),
-                    (NULL, 3, 3, '2023-12-01T00:00:02.000000Z'),
-                    ('S3', 4, 4, '2023-12-01T00:00:03.000000Z'),
-                    ('S2', 5, 5, '2023-12-01T00:00:04.000000Z')
-                    """);
-            execute("""
-                    INSERT INTO desks VALUES
-                    ('S1', '2023-12-01T00:00:00.000000Z'),
-                    ('S2', '2023-12-01T00:00:01.000000Z'),
-                    (NULL, '2023-12-01T00:00:02.000000Z')
-                    """);
+            createTablesForTimeSeriesJoinKeyOnFromTable();
+            execute("INSERT INTO trades VALUES (5, 'S1', '2024-01-01T00:00:50.000000Z')");
+            execute("INSERT INTO books VALUES ('S2', 5, 5, '2023-12-01T00:00:04.000000Z')");
             final String joins = """
                     FROM trades a0
                     CROSS JOIN books a1
@@ -18093,12 +18064,7 @@ public class JoinTest extends AbstractCairoTest {
         // for trade 2. The keys and the filter match NULL to NULL, so trade 3 joins its NULL book, desk
         // and route.
         assertMemoryLeak(() -> {
-            createTablesForTimeSeriesJoinKeyClash();
-            execute("INSERT INTO trades VALUES (3, '2024-01-01T00:00:30.000000Z')");
-            execute("INSERT INTO accts VALUES (3, NULL, '2023-12-01T00:00:02.000000Z')");
-            execute("INSERT INTO routes VALUES ('S2', 'S1', 2, '2023-12-01T00:00:02.000000Z'), (NULL, NULL, 3, '2023-12-01T00:00:03.000000Z')");
-            execute("INSERT INTO books VALUES (NULL, 3, '2023-12-01T00:00:03.000000Z')");
-            execute("INSERT INTO desks VALUES (NULL, '2023-12-01T00:00:02.000000Z')");
+            createTablesForTimeSeriesJoinKeyClashWithNullRows();
             final String joins = """
                     FROM trades a0
                     CROSS JOIN books a1
@@ -18195,12 +18161,7 @@ public class JoinTest extends AbstractCairoTest {
         // first. The route (S2, S1, 2) has s != v, and without the filter it would join book (S2, 2) for
         // trade 2.
         assertMemoryLeak(() -> {
-            createTablesForTimeSeriesJoinKeyClash();
-            execute("INSERT INTO trades VALUES (3, '2024-01-01T00:00:30.000000Z')");
-            execute("INSERT INTO accts VALUES (3, NULL, '2023-12-01T00:00:02.000000Z')");
-            execute("INSERT INTO routes VALUES ('S2', 'S1', 2, '2023-12-01T00:00:02.000000Z'), (NULL, NULL, 3, '2023-12-01T00:00:03.000000Z')");
-            execute("INSERT INTO books VALUES (NULL, 3, '2023-12-01T00:00:03.000000Z')");
-            execute("INSERT INTO desks VALUES (NULL, '2023-12-01T00:00:02.000000Z')");
+            createTablesForTimeSeriesJoinKeyClashWithNullRows();
             final String joins = """
                     FROM trades a0
                     CROSS JOIN routes a1
@@ -18656,12 +18617,7 @@ public class JoinTest extends AbstractCairoTest {
         // column names case-sensitively, from merging the two keys on a3.v first.
         // The keys match NULL to NULL, so trade 3 joins its NULL book, desk and route.
         assertMemoryLeak(() -> {
-            createTablesForTimeSeriesJoinKeyClash();
-            execute("INSERT INTO trades VALUES (3, '2024-01-01T00:00:30.000000Z')");
-            execute("INSERT INTO accts VALUES (3, NULL, '2023-12-01T00:00:02.000000Z')");
-            execute("INSERT INTO routes VALUES ('S2', 'S1', 2, '2023-12-01T00:00:02.000000Z'), (NULL, NULL, 3, '2023-12-01T00:00:03.000000Z')");
-            execute("INSERT INTO books VALUES (NULL, 3, '2023-12-01T00:00:03.000000Z')");
-            execute("INSERT INTO desks VALUES (NULL, '2023-12-01T00:00:02.000000Z')");
+            createTablesForTimeSeriesJoinKeyClashWithNullRows();
             final String expected = """
                     k\tts\ts\ts1\ts2\tbid
                     1\t2024-01-01T00:00:10.000000Z\tS1\tS1\tS1\t9.5
@@ -18700,36 +18656,7 @@ public class JoinTest extends AbstractCairoTest {
         // from merging the keys on a4.s first. The trade with v = 'S3' matches a book but no desk, and the
         // keys match NULL to NULL, so trade 3 joins its NULL book and desk.
         assertMemoryLeak(() -> {
-            execute("CREATE TABLE trades (k INT, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE books (s SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("CREATE TABLE desks (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
-            execute("""
-                    INSERT INTO trades VALUES
-                    (1, 'S1', '2024-01-01T00:00:10.000000Z'),
-                    (2, 'S2', '2024-01-01T00:00:20.000000Z'),
-                    (3, NULL, '2024-01-01T00:00:30.000000Z'),
-                    (4, 'S3', '2024-01-01T00:00:40.000000Z')
-                    """);
-            execute("""
-                    INSERT INTO quotes VALUES
-                    (9.0, '2024-01-01T00:00:00.000000Z'),
-                    (9.5, '2024-01-01T00:00:09.000000Z'),
-                    (19.5, '2024-01-01T00:00:19.000000Z')
-                    """);
-            execute("""
-                    INSERT INTO books VALUES
-                    ('S1', 1, '2023-12-01T00:00:00.000000Z'),
-                    ('S2', 2, '2023-12-01T00:00:01.000000Z'),
-                    (NULL, 3, '2023-12-01T00:00:02.000000Z'),
-                    ('S3', 4, '2023-12-01T00:00:03.000000Z')
-                    """);
-            execute("""
-                    INSERT INTO desks VALUES
-                    ('S1', '2023-12-01T00:00:00.000000Z'),
-                    ('S2', '2023-12-01T00:00:01.000000Z'),
-                    (NULL, '2023-12-01T00:00:02.000000Z')
-                    """);
+            createTablesForTimeSeriesJoinKeyOnFromTable();
             final String joins = """
                     FROM trades a0
                     CROSS JOIN books a1
@@ -19610,6 +19537,51 @@ public class JoinTest extends AbstractCairoTest {
                 ('S1', 2, '2023-12-01T00:00:02.000000Z')
                 """);
         execute("INSERT INTO desks VALUES ('S1', '2023-12-01T00:00:00.000000Z'), ('S2', '2023-12-01T00:00:01.000000Z')");
+    }
+
+    // createTablesForTimeSeriesJoinKeyClash() with trade 3, whose account, book, desk and route have NULL
+    // keys, and the route (S2, S1, 2), whose s differs from its v
+    private void createTablesForTimeSeriesJoinKeyClashWithNullRows() throws SqlException {
+        createTablesForTimeSeriesJoinKeyClash();
+        execute("INSERT INTO trades VALUES (3, '2024-01-01T00:00:30.000000Z')");
+        execute("INSERT INTO accts VALUES (3, NULL, '2023-12-01T00:00:02.000000Z')");
+        execute("INSERT INTO routes VALUES ('S2', 'S1', 2, '2023-12-01T00:00:02.000000Z'), (NULL, NULL, 3, '2023-12-01T00:00:03.000000Z')");
+        execute("INSERT INTO books VALUES (NULL, 3, '2023-12-01T00:00:03.000000Z')");
+        execute("INSERT INTO desks VALUES (NULL, '2023-12-01T00:00:02.000000Z')");
+    }
+
+    // a key move onto the FROM table, see testTimeSeriesJoinAfterKeyMoveSkipsDuplicateDerivedKeyOnFromTable()
+    private void createTablesForTimeSeriesJoinKeyOnFromTable() throws SqlException {
+        execute("CREATE TABLE trades (k INT, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE books (s SYMBOL, l LONG, n INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("CREATE TABLE desks (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+        execute("""
+                INSERT INTO trades VALUES
+                (1, 'S1', '2024-01-01T00:00:10.000000Z'),
+                (2, 'S2', '2024-01-01T00:00:20.000000Z'),
+                (3, NULL, '2024-01-01T00:00:30.000000Z'),
+                (4, 'S3', '2024-01-01T00:00:40.000000Z')
+                """);
+        execute("""
+                INSERT INTO quotes VALUES
+                (9.0, '2024-01-01T00:00:00.000000Z'),
+                (9.5, '2024-01-01T00:00:09.000000Z'),
+                (19.5, '2024-01-01T00:00:19.000000Z')
+                """);
+        execute("""
+                INSERT INTO books VALUES
+                ('S1', 1, 1, '2023-12-01T00:00:00.000000Z'),
+                ('S2', 2, 2, '2023-12-01T00:00:01.000000Z'),
+                (NULL, 3, 3, '2023-12-01T00:00:02.000000Z'),
+                ('S3', 4, 4, '2023-12-01T00:00:03.000000Z')
+                """);
+        execute("""
+                INSERT INTO desks VALUES
+                ('S1', '2023-12-01T00:00:00.000000Z'),
+                ('S2', '2023-12-01T00:00:01.000000Z'),
+                (NULL, '2023-12-01T00:00:02.000000Z')
+                """);
     }
 
     private void createTablesForTransitiveJoinKeys() throws SqlException {
