@@ -1926,6 +1926,11 @@ public class CairoConfigurationWrapper implements CairoConfiguration {
     }
 
     @Override
+    public PartitionDeltaWriter newPartitionDeltaWriter() {
+        return getDelegate().newPartitionDeltaWriter();
+    }
+
+    @Override
     public PartitionFrameDecoder newPartitionFrameDecoder() {
         return getDelegate().newPartitionFrameDecoder();
     }
