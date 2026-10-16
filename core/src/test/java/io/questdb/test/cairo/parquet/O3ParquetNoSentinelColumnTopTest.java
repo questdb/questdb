@@ -1347,6 +1347,22 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonDedupTieInNextRowGroupRewriteKeepsTop() throws Exception {
+        // the shape of testNonDedupTieInNextRowGroupKeepsTop, with unused-max-bytes -1 forcing a full
+        // rewrite: the rewrite copies row group 0 and merges the O3 row at 03:00 into row group 1 after
+        // row 6, so rows 1..5 keep their NULL top, as native
+        setInPlaceProperties(4);
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, -1);
+        assertMemoryLeak(() -> {
+            createShapeTables("", 5, 8, 5, 6);
+            insertO3("2024-01-01T03:00:00.000000Z");
+            final List<Row> expected = topRows(8, 5, -1, null, true);
+            expected.add(6, new Row(50, "2024-01-01T03:00:00.000000Z", Kind.O3));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
     public void testO3BetweenRowGroupsKeepsTop() throws Exception {
         // the row at 03:30 goes into a row group of its own between row groups 0 and 1
         assertShape(4, "2024-01-01T03:30:00.000000Z", true);
