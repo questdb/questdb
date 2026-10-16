@@ -753,16 +753,16 @@ public class WalTxnDetails implements QuietCloseable {
                             transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_HI_OFFSET, commitInfo.getEndRowID());
                             totalRowsLoaded += commitInfo.getEndRowID() - commitInfo.getStartRowID();
                             int flags = commitInfo.isOutOfOrder() ? FLAG_IS_OOO : 0x0;
-                            // The records are sorted by WAL ID, segment ID.
-                            // If the next record is not from the same segment it means it's the last txn from the segment.
+                            // The records are sorted by WAL ID, segment ID. The segment is finished only
+                            // when the same WAL already has a transaction in a newer segment. A segment that
+                            // merely has no newer transaction loaded yet is still live: its files stay in
+                            // the writer's segment cache so the next block does not reopen and remap them.
                             if (i + 1 < txnCount) {
                                 int nextWalId = Numbers.decodeHighInt(txnOrder.get(2L * (i + 1))) + MIN_WAL_ID;
                                 int nextSegmentId = Numbers.decodeLowInt(txnOrder.get(2L * (i + 1)));
-                                if (nextSegmentId != segmentId || nextWalId != walId) {
+                                if (nextWalId == walId && nextSegmentId != segmentId) {
                                     flags |= FLAG_IS_LAST_SEGMENT_USAGE;
                                 }
-                            } else {
-                                flags |= FLAG_IS_LAST_SEGMENT_USAGE;
                             }
                             flags |= (commitInfo.getDedupMode() << 24);
                             transactionMeta.set(txnMetaOffset + WAL_TXN_ROW_IN_ORDER_DATA_TYPE, Numbers.encodeLowHighInts(flags, walTxnType));
