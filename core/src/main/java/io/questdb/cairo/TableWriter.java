@@ -5733,9 +5733,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
     /**
      * Adds an entry to {@link #parquetIndexVersionChanges} for every indexed SYMBOL column whose index
-     * an in-place parquet O3 update moved to the column version named after the current txn. The sink
-     * flags say which partitions did, and O3PartitionJob.isParquetIndexLiveForReaders(), evaluated on
-     * the column top before the commit, says which of their columns.
+     * an in-place parquet O3 update moved to the column version that
+     * O3PartitionJob.getParquetIndexVersionNameTxn() names. The sink flags say which partitions did, and
+     * O3PartitionJob.isParquetIndexLiveForReaders(), evaluated on the column top before the commit, says
+     * which of their columns.
      */
     private void collectParquetIndexVersionChanges() {
         long blockIndex = -1;
@@ -5752,10 +5753,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         O3PartitionJob.isParquetIndexedSymbol(metadata, columnIndex)
                                 && O3PartitionJob.isParquetIndexLiveForReaders(columnVersionWriter.getColumnTop(partitionTimestamp, columnIndex), oldPartitionSize)
                 ) {
+                    final long columnNameTxn = columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex);
                     parquetIndexVersionChanges.add(
                             columnIndex,
-                            columnVersionWriter.getColumnNameTxn(partitionTimestamp, columnIndex),
-                            txWriter.txn,
+                            columnNameTxn,
+                            O3PartitionJob.getParquetIndexVersionNameTxn(columnNameTxn, txWriter.txn),
                             partitionTimestamp
                     );
                     parquetIndexVersionChanges.add(partitionNameTxn);

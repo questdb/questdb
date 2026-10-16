@@ -1793,6 +1793,16 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
+     * The column version that case C of updateParquetIndexes() builds the index into: the commit
+     * {@code txn}, or the name above the live one when ATTACH pinned a version copied from another
+     * table, named at or above the txn. Names in a partition directory then only grow, so the new
+     * version never reuses the live name or the name of a replaced version a purge may still remove.
+     */
+    static long getParquetIndexVersionNameTxn(long liveColumnNameTxn, long txn) {
+        return Math.max(txn, liveColumnNameTxn + 1);
+    }
+
+    /**
      * Whether the update in place of a parquet partition with {@code oldPartitionSize} committed rows
      * would change index files that a reader of the previous txn reads. A column with no data in the
      * committed rows (top -1: absent, or top at or past the row count) has no index a reader uses.
@@ -2465,11 +2475,11 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     // Whether the update in place moves the index of the partition's indexed SYMBOL columns that readers of the
-    // previous txn read (see isParquetIndexLiveForReaders()) to the column version named after the txn. The update
-    // zeroes every column top, because the updated file holds every column from row 0. A merge moves rows, so it
-    // versions any live index. An append keeps the row ids, and extends a live index in place, unless the column
-    // has a top: readers of the previous txn take the rows below it as implicit NULLs that the index lacks, and a
-    // reader with top 0 needs them in the index.
+    // previous txn read (see isParquetIndexLiveForReaders()) to a new column version (see
+    // getParquetIndexVersionNameTxn()). The update zeroes every column top, because the updated file holds every
+    // column from row 0. A merge moves rows, so it versions any live index. An append keeps the row ids, and extends
+    // a live index in place, unless the column has a top: readers of the previous txn take the rows below it as
+    // implicit NULLs that the index lacks, and a reader with top 0 needs them in the index.
     private static boolean hasParquetIndexMovingToNewVersion(
             TableWriter tableWriter,
             TableRecordMetadata metadata,
@@ -4325,8 +4335,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      *     rows to the live files, as a native append does under readers that bound their scans by their
      *     own row count;</li>
      *     <li>C: {@code isIndexVersioned}, rows move or a live column loses its top: build the index from
-     *     row 0 into the column version named {@code txn}. TableWriter commits that version in _cv and
-     *     purges the previous one once no reader uses it.</li>
+     *     row 0 into the column version {@link #getParquetIndexVersionNameTxn} names. TableWriter commits
+     *     that version in _cv and purges the previous one once no reader uses it.</li>
      * </ul>
      */
     private static void updateParquetIndexes(
@@ -4444,11 +4454,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         } else {
                             final long indexNameTxn;
                             if (isLiveForReaders) {
-                                // _cv references only versions that committed transactions created, named
-                                // at most txn - 1, and TableWriter.rollback() restores _cv to the committed
-                                // _txn, so a retry at the same txn never finds version txn live
-                                assert columnNameTxn < txn;
-                                indexNameTxn = txn;
+                                // TableWriter.rollback() restores _cv to the committed _txn, so a retry at
+                                // the same txn builds the same version name
+                                indexNameTxn = getParquetIndexVersionNameTxn(columnNameTxn, txn);
                             } else {
                                 indexNameTxn = columnNameTxn;
                             }
