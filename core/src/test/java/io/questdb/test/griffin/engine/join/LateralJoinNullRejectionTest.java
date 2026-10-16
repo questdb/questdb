@@ -471,6 +471,48 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         assertShape(Shape.WHERE_KEY_RIGHT);
     }
 
+    // Over a sub-query column of t, whose type only the code generator knows, both RIGHT joins defer
+    // t.id >= (SELECT ...) to the code generator, which builds a check node per join. The plan holds
+    // one check for both, which runs the sub-query once per execution and passes its value to the
+    // filter, and both joins share its group. The sub-query is NULL in some executions and 0 in others,
+    // so an execution fails at the sub-query, or returns the rows of the filter with 0, never the rows
+    // that the joins NULL-extend, which a filter computed with a value that no check saw would keep.
+    @Test
+    public void testRightJoinsDeferOneRandomSubQueryCheck() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String subQuery = "(SELECT CASE WHEN rnd_int(0, 1, 0) = 0 THEN NULL::int ELSE 0 END FROM long_sequence(1))";
+            final String body = "(SELECT id, x FROM trades UNION ALL SELECT id, x FROM trades WHERE id < 0) t"
+                    + " RIGHT JOIN refunds r ON r.k = {K} RIGHT JOIN xs x ON x.k = r.k WHERE t.id >= " + subQuery;
+            // per outer row, refund k matches both trades, and t.id >= 0 drops the rows that both
+            // joins NULL-extend
+            final List<String> expected = List.of("1\t10\t100", "1\t11\t100", "2\t10\t101", "2\t11\t101", "3\t10\t102", "3\t11\t102");
+            Assert.assertEquals(expected, run(referenceSql(body.replace(subQuery, "0")), "reference").rows);
+            final String sql = lateralSql(body);
+            sqlExecutionContext.setRandom(TestUtils.generateRandom(LOG));
+            int rowCount = 0;
+            int errorCount = 0;
+            try (RecordCursorFactory factory = select(sql)) {
+                final String plan = planOf(factory);
+                TestUtils.assertContains(plan, "Lateral Null Check checks: [__qdb_null_probe [thread-safe] >= cursor");
+                // one check
+                Assert.assertEquals(plan, -1, plan.indexOf("__qdb_null_probe", plan.indexOf("__qdb_null_probe") + 1));
+                TestUtils.assertContains(plan, "groups: [[0]]\n");
+                for (int i = 0; i < 60; i++) {
+                    final Outcome outcome = runFactory(factory, sql);
+                    if (outcome.error == null) {
+                        Assert.assertEquals(sql, expected, outcome.rows);
+                        rowCount++;
+                    } else {
+                        Assert.assertEquals(sql, new Outcome(null, NULL_VALUE_ERROR, sql.indexOf("SELECT CASE")), outcome);
+                        errorCount++;
+                    }
+                }
+            }
+            Assert.assertTrue(rowCount + " executions returned rows, " + errorCount + " failed", rowCount > 0 && errorCount > 0);
+        });
+    }
+
     // Both RIGHT joins need t.id >= (SELECT ...) to drop the rows that they NULL-extend on trades,
     // and the plan holds one check for that conjunct, which runs the sub-query once per execution and
     // passes its value to the filter. The check is the only one of the join with refunds, and one of
@@ -937,6 +979,23 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
                     rowsStep(() -> bindIntLong(Numbers.INT_NULL, 10), "")
             );
             bindVariableService.clear();
+        });
+    }
+
+    // Over a sub-query column of t, whose type only the code generator knows, the code generator
+    // builds the checks. Two sub-queries that look alike give two checks in one group. max(id) over
+    // no refund is NULL, and NULL >= NULL is true, so only t.id >= 10 drops the NULL-extended rows, and
+    // a query that kept only the check of the first sub-query would fail.
+    @Test
+    public void testRuntimeNullCheckOfLookAlikeSubQueriesOverAComputedTable() throws Exception {
+        assertMemoryLeak(() -> {
+            createAnyConjunctTables();
+            final String body = "{T} t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K}"
+                    + " WHERE t.i >= (SELECT max(id) FROM refunds WHERE id < 0) AND t.id >= (SELECT min(id) FROM trades)";
+            final String computedBody = body.replace("{T}", "(SELECT id, x, i, l FROM trades UNION ALL SELECT id, x, i, l FROM trades WHERE id < 0)");
+            assertSteps("", "JOIN LATERAL", computedBody, body.replace("{T}", "trades"), rowsStep(() -> {
+            }, "2\t11\t101"));
+            TestUtils.assertContains(planOf(lateralSql(computedBody)), "groups: [[0,1]]\n");
         });
     }
 
