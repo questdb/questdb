@@ -518,13 +518,13 @@ public class DedupSkipTest extends AbstractCairoTest {
             createParquetPartitionTable("u");
 
             // duplicates in every row group, which the dedup counts as dropped rows
-            final long dedupRowCount = getDedupRowCount();
+            final long dedupRowCount = getDedupRowCount("t");
             assertDuplicatesKeepPartitions("""
                     ('2024-01-01T01:00:00.000000Z', 'a', 1001),
                     ('2024-01-01T05:00:00.000000Z', 'b', 1005),
                     ('2024-01-01T10:00:00.000000Z', 'c', 1010)
                     """);
-            Assert.assertEquals(dedupRowCount + 3, getDedupRowCount());
+            Assert.assertEquals(dedupRowCount + 3, getDedupRowCount("t"));
 
             // duplicates in the first two row groups and a new row in the third one
             assertSameAsTwinInPlace(
@@ -1293,6 +1293,114 @@ public class DedupSkipTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testUpsertParquetIdenticalCountsDedupOnce() throws Exception {
+        // An UPSERT commit resends a stored row unchanged and adds a row after the partition. The identity check of
+        // the Parquet partition dedups the row group before the merge does: the dedup counter counts the duplicate
+        // once, as it does for the native twin "n"
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createParquetPartitionTable("t");
+            execute("CREATE TABLE n (ts TIMESTAMP, sym SYMBOL, v LONG) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP SKIP KEYS(ts, sym)");
+            execute("""
+                    INSERT INTO n
+                    SELECT '2024-01-01'::TIMESTAMP + (x - 1) * 3_600_000_000, CASE WHEN x <= 4 THEN 'a' WHEN x <= 8 THEN 'b' ELSE 'c' END, x
+                    FROM long_sequence(12)
+                    """);
+            execute("INSERT INTO n VALUES ('2024-01-02T00:00:00.000000Z', 'a', 100)");
+            for (String tableName : new String[]{"t", "n"}) {
+                execute("ALTER TABLE " + tableName + " DEDUP ENABLE UPSERT KEYS(ts, sym)");
+                // a column without NULL turns the identity check on
+                execute("ALTER TABLE " + tableName + " ADD COLUMN b BYTE");
+            }
+            drainWalQueue();
+            final long dedupRowCount = getDedupRowCount("t");
+            final long twinDedupRowCount = getDedupRowCount("n");
+            for (String tableName : new String[]{"t", "n"}) {
+                execute("INSERT INTO " + tableName + """
+                         VALUES
+                        ('2024-01-01T05:00:00.000000Z', 'b', 6, NULL),
+                        ('2024-01-01T23:00:00.000000Z', 'x', 2023, 23::BYTE)
+                        """);
+            }
+            drainWalQueue();
+            Assert.assertEquals(dedupRowCount + 1, getDedupRowCount("t"));
+            Assert.assertEquals(twinDedupRowCount + 1, getDedupRowCount("n"));
+            assertByteColumnTopReadsNull("t");
+            assertByteColumnTopReadsNull("n");
+        });
+    }
+
+    @Test
+    public void testUpsertParquetIdenticalThenAppendMatchesAppendTwin() throws Exception {
+        // An UPSERT commit resends a stored row unchanged and adds a row after the partition. Native turns such a
+        // commit into an append, so does the Parquet partition: the table "t" ends up with the partition its twin
+        // "u" writes for the new row alone, down to the name txn and the size of the Parquet file, and both keep
+        // the top of the BYTE column, which has no NULL value
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        assertMemoryLeak(() -> {
+            createParquetPartitionTable("t");
+            createParquetPartitionTable("u");
+            for (String tableName : new String[]{"t", "u"}) {
+                execute("ALTER TABLE " + tableName + " DEDUP ENABLE UPSERT KEYS(ts, sym)");
+                execute("ALTER TABLE " + tableName + " ADD COLUMN b BYTE");
+            }
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("t");
+            final TableToken twinToken = engine.verifyTableName("u");
+
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T05:00:00.000000Z', 'b', 6, NULL),
+                    ('2024-01-01T23:00:00.000000Z', 'x', 2023, 23::BYTE)
+                    """);
+            execute("INSERT INTO u VALUES ('2024-01-01T23:00:00.000000Z', 'x', 2023, 23::BYTE)");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(twinToken));
+            Assert.assertEquals(readTxnToString(twinToken, false, true, true, true), readTxnToString(tableToken, false, true, true, true));
+
+            assertByteColumnTopReadsNull("t");
+            assertByteColumnTopReadsNull("u");
+        });
+    }
+
+    @Test
+    public void testUpsertParquetRewriteFailsToOpenKeepsByteColumnTop() throws Exception {
+        // An UPSERT commit resends a stored row unchanged and adds a row after the partition. The identity check
+        // finds the row identical, then the rewrite opens its file for the new row group and fails. Once the table
+        // resumes, the retry keeps the top of the BYTE column
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        assertMemoryLeak(newParquetWriteFailureFacade(isArmed, true), () -> {
+            createParquetPartitionTable("t");
+            execute("ALTER TABLE t DEDUP ENABLE UPSERT KEYS(ts, sym)");
+            // The Parquet file lacks the new column, so a merge that writes rows rewrites the file
+            execute("ALTER TABLE t ADD COLUMN b BYTE");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("t");
+            final Set<String> partitionDirs = listPartitionDirs(tableToken);
+
+            isArmed.set(true);
+            execute("""
+                    INSERT INTO t VALUES
+                    ('2024-01-01T05:00:00.000000Z', 'b', 6, NULL),
+                    ('2024-01-01T23:00:00.000000Z', 'x', 2023, 23::BYTE)
+                    """);
+            drainWalQueue();
+            Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+            // the failed rewrite removed the directory it created
+            Assert.assertTrue(partitionDirs.containsAll(listPartitionDirs(tableToken)));
+
+            isArmed.set(false);
+            execute("ALTER TABLE t RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+
+            assertByteColumnTopReadsNull("t");
+        });
+    }
+
     private static void appendRow(WalWriter writer, long timestamp, String sym, long value) {
         TableWriter.Row row = writer.newRow(timestamp);
         row.putSym(1, sym);
@@ -1300,10 +1408,10 @@ public class DedupSkipTest extends AbstractCairoTest {
         row.append();
     }
 
-    // The number of rows that the dedup of the table "t" dropped since the start
-    private static long getDedupRowCount() throws SqlException {
+    // The number of rows that the dedup of the table dropped since the start
+    private static long getDedupRowCount(String tableName) throws SqlException {
         try (
-                RecordCursorFactory factory = select("SELECT wal_dedup_row_count_since_start FROM tables() WHERE table_name = 't'");
+                RecordCursorFactory factory = select("SELECT wal_dedup_row_count_since_start FROM tables() WHERE table_name = '" + tableName + "'");
                 RecordCursor cursor = factory.getCursor(sqlExecutionContext)
         ) {
             Assert.assertTrue(cursor.hasNext());
