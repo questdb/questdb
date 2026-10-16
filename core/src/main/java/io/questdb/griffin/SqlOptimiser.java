@@ -347,6 +347,11 @@ public class SqlOptimiser implements Mutable {
     private final IntList savedDeferredInnerKeyEdges = new IntList();
     private final ObjList<JoinContext> savedJoinContexts = new ObjList<>();
     private final IntList savedJoinTypes = new IntList();
+    // The WHERE conjuncts of a level, by index, that read one table, filter after a master-nulling join
+    // that NULL-extends the table and are stable within an execution; and the tables of the level that
+    // one of those conjuncts drops the NULL row of. See addScanFilterCopyCandidate.
+    private final IntHashSet scanFilterCopyCandidates = new IntHashSet();
+    private final IntHashSet scanFilteredTables = new IntHashSet();
     private final ArrayDeque<ExpressionNode> sqlNodeStack = new ArrayDeque<>();
     // Second stack, separate from sqlNodeStack because some operations
     // call methods that clear and reuse sqlNodeStack.
@@ -748,6 +753,20 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    private static ExpressionNode findFirstLiteral(ExpressionNode node) {
+        if (node == null || node.type == LITERAL) {
+            return node;
+        }
+        ExpressionNode literal = findFirstLiteral(node.lhs);
+        if (literal == null) {
+            literal = findFirstLiteral(node.rhs);
+        }
+        for (int i = 0, n = node.args.size(); i < n && literal == null; i++) {
+            literal = findFirstLiteral(node.args.getQuick(i));
+        }
+        return literal;
+    }
+
     // A SHOW that names an object reads it through the view the context reads table-name functions
     // through, if any, see createShowFactory().
     private static RecordCursorFactory generateShowFactory(
@@ -1010,6 +1029,21 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    private static boolean hasNodeOfType(ExpressionNode node, int type) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == type || hasNodeOfType(node.lhs, type) || hasNodeOfType(node.rhs, type)) {
+            return true;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasNodeOfType(node.args.getQuick(i), type)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * Returns true when rewriteSampleBy moved a non-NONE FILL list onto
      * baseModel.fillValues. Callers use this to detect SAMPLE BY FILL in the
@@ -1045,6 +1079,17 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return true;
+    }
+
+    // Returns true when the level holds a SPLICE join, which pairs each row with the prevailing row of the
+    // other side, so a filter on the scan of a table changes which of its rows prevails.
+    private static boolean hasSpliceJoin(ObjList<IQueryModel> joinModels) {
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            if (joinModels.getQuick(i).getJoinType() == IQueryModel.JOIN_SPLICE) {
+                return true;
+            }
+        }
+        return false;
     }
 
     // Returns true when a join of the level reads the designated timestamp of its master.
@@ -1542,6 +1587,20 @@ public class SqlOptimiser implements Mutable {
     private static void pushDownLimitAdvice(IQueryModel model, IQueryModel nestedModel, boolean rowCountChanges) {
         if ((nestedModel.getOrderBy().size() == 0 || isOrderedByDesignatedTimestamp(nestedModel)) && !rowCountChanges) {
             nestedModel.setLimitAdvice(model.getLimitLo(), model.getLimitHi());
+        }
+    }
+
+    private static void renameLiterals(ExpressionNode node, CharSequence name) {
+        if (node == null) {
+            return;
+        }
+        if (node.type == LITERAL) {
+            node.token = name;
+        }
+        renameLiterals(node.lhs, name);
+        renameLiterals(node.rhs, name);
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            renameLiterals(node.args.getQuick(i), name);
         }
     }
 
@@ -2420,6 +2479,27 @@ public class SqlOptimiser implements Mutable {
         model.setPostJoinWhereClause(concatFilters(configuration.getCairoSqlLegacyOperatorPrecedence(), expressionNodePool, model.getPostJoinWhereClause(), node));
     }
 
+    // Decides whether the WHERE conjunct at index, which reads only the table at tableIndex and filters
+    // after the master-nulling join that NULL-extends the table, may also filter the table before that
+    // join: it records the conjunct in scanFilterCopyCandidates when it is stable within an execution,
+    // and the table in scanFilteredTables when the conjunct is also false on the NULL row of the table.
+    // A SPLICE join on the level allows no copy, see hasSpliceJoin.
+    private void addScanFilterCopyCandidate(
+            IQueryModel parent,
+            int index,
+            int tableIndex,
+            ExpressionNode node,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        if (hasSpliceJoin(parent.getJoinModels()) || !isStableColumnPredicate(node, sqlExecutionContext)) {
+            return;
+        }
+        scanFilterCopyCandidates.add(index);
+        if (isNullRejectingColumnPredicate(parent.getJoinModels().getQuick(tableIndex), node, sqlExecutionContext)) {
+            scanFilteredTables.add(tableIndex);
+        }
+    }
+
     // Queues a model that has no join-context parent left to run: a deferred model, see isDeferredJoinModel,
     // goes to deferredModels and any other model to orderingStack.
     private void addRunnableModel(int index) {
@@ -2981,10 +3061,12 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
-    private void assignFilters(IQueryModel parent) throws SqlException {
+    private void assignFilters(IQueryModel parent, SqlExecutionContext sqlExecutionContext) throws SqlException {
         tablesSoFar.clear();
         postFilterRemoved.clear();
         postFilterTableRefs.clear();
+        scanFilterCopyCandidates.clear();
+        scanFilteredTables.clear();
         final IntList modelOnJoinIndexes = tempCrossIndexes;
         modelOnJoinIndexes.clear();
         // refresh the per-level anchors now that reorderTables has populated the execution order
@@ -2999,8 +3081,17 @@ public class SqlOptimiser implements Mutable {
             IntHashSet indexes = intHashSetPool.next();
             literalCollector.resetCounts();
             traversalAlgo.traverse(filterNode, literalCollector.to(indexes));
-            modelOnJoinIndexes.add(modelOnJoinIndexAfterNullingBoundary(filterNode, indexes));
+            final int modelOnJoinIndex = modelOnJoinIndexAfterNullingBoundary(filterNode, indexes);
+            modelOnJoinIndexes.add(modelOnJoinIndex);
             postFilterTableRefs.add(indexes);
+            // the conjuncts that the loop below holds above a master-nulling join, see the rs == 1 branch
+            if (modelOnJoinIndex < 0
+                    && indexes.size() == 1
+                    && !filterNode.innerPredicate
+                    && joinBarriers.excludes(parent.getJoinModels().getQuick(indexes.get(0)).getJoinType())
+                    && masterNullingJoinIndexInOrder(indexes.get(0)) >= 0) {
+                addScanFilterCopyCandidate(parent, i, indexes.get(0), filterNode, sqlExecutionContext);
+            }
         }
 
         IntList ordered = parent.getOrderedJoinModels();
@@ -3043,6 +3134,17 @@ public class SqlOptimiser implements Mutable {
                         // NULL-extends it; keep the predicate as a post-join filter so NULL-master
                         // rows are removed rather than pushing it into the sub-query
                         addPostJoinWhereClause(parent.getJoinModels().getQuick(nullingJoinIndex), node);
+                        final int tableIndex = refs.get(0);
+                        if (scanFilterCopyCandidates.contains(k) && scanFilteredTables.contains(tableIndex)) {
+                            final IQueryModel tableModel = parent.getJoinModels().getQuick(tableIndex);
+                            final ExpressionNode copy = copyConjunctBeforeNullingJoin(node);
+                            if (tableModel.getLatestBy().size() > 0) {
+                                // the post-join filter of the table filters the rows that LATEST ON picked
+                                addPostJoinWhereClause(tableModel, copy);
+                            } else {
+                                addWhereNode(tableModel, copy);
+                            }
+                        }
                     }
                     postFilterRemoved.add(k);
                 } else {
@@ -3771,6 +3873,36 @@ public class SqlOptimiser implements Mutable {
         }
     }
 
+    // The counterpart of the pre-pass in assignFilters for the WHERE conjuncts that moveWhereInsideSubQueries
+    // places on the level after its join pass, see addScanFilterCopyCandidate
+    private void collectScanFilterCopyCandidates(
+            IQueryModel model,
+            ObjList<ExpressionNode> nodes,
+            SqlExecutionContext sqlExecutionContext
+    ) throws SqlException {
+        scanFilterCopyCandidates.clear();
+        scanFilteredTables.clear();
+        for (int i = 0, n = nodes.size(); i < n; i++) {
+            final ExpressionNode node = nodes.getQuick(i);
+            if (node.innerPredicate) {
+                continue;
+            }
+            literalCollectorAIndexes.clear();
+            literalCollectorANames.clear();
+            literalCollector.withModel(model);
+            literalCollector.resetCounts();
+            traversalAlgo.traverse(node, literalCollector.lhs());
+            if (literalCollectorAIndexes.size() != 1) {
+                continue;
+            }
+            final int tableIndex = literalCollectorAIndexes.get(0);
+            if ((tableIndex == 0 || joinBarriers.excludes(model.getJoinModels().getQuick(tableIndex).getJoinType()))
+                    && masterNullingJoinIndexInOrder(tableIndex) >= 0) {
+                addScanFilterCopyCandidate(model, i, tableIndex, node, sqlExecutionContext);
+            }
+        }
+    }
+
     private boolean columnExistsInJoinTree(IQueryModel model, CharSequence columnName) {
         if (model == null) {
             return false;
@@ -4294,6 +4426,19 @@ public class SqlOptimiser implements Mutable {
                 throw SqlException.$(timestamp.position, "not a TIMESTAMP");
             }
         }
+    }
+
+    // Returns a copy of a WHERE conjunct of a table for the table to filter before the master-nulling join
+    // that NULL-extends it. The post-join filter of that join keeps the conjunct, which drops the rows that
+    // the join NULL-extends. When another conjunct of the table drops the NULL row of the table, see
+    // addScanFilterCopyCandidate, the copy changes no row: each row that it removes either leaves the result
+    // anyway or turns into a NULL-extended row, which the other conjunct drops. When the table carries
+    // LATEST ON itself, the copy has to filter the rows that LATEST ON picked: on the scan below LATEST ON,
+    // it would let LATEST ON pick an older row that passes the conjunct.
+    private ExpressionNode copyConjunctBeforeNullingJoin(ExpressionNode node) {
+        final ExpressionNode copy = ExpressionNode.deepClone(expressionNodePool, node);
+        copy.innerPredicate = true;
+        return copy;
     }
 
     private CharSequence createColumnAlias(CharSequence name, IQueryModel model, boolean nonLiteral) {
@@ -7428,6 +7573,29 @@ public class SqlOptimiser implements Mutable {
         };
     }
 
+    // Returns true when every literal of the expression names the column, and every largest part of it
+    // that reads no column folds to a constant
+    private boolean isFoldableOverColumn(ExpressionNode node, CharSequence columnName, SqlExecutionContext sqlExecutionContext) {
+        if (node == null || node.type == CONSTANT) {
+            return true;
+        }
+        if (node.type == LITERAL) {
+            return Chars.equalsIgnoreCase(node.token, columnName);
+        }
+        if (!hasNodeOfType(node, LITERAL)) {
+            return isFoldableConstantExpression(node, sqlExecutionContext);
+        }
+        if (!isFoldableOverColumn(node.lhs, columnName, sqlExecutionContext) || !isFoldableOverColumn(node.rhs, columnName, sqlExecutionContext)) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isFoldableOverColumn(node.args.getQuick(i), columnName, sqlExecutionContext)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private boolean isFoldableConstantExpression(ExpressionNode node, SqlExecutionContext sqlExecutionContext) {
         if (!isEffectivelyConstantExpression(node)) {
             return false;
@@ -7837,6 +8005,53 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    // Returns true when the node is a column of the table whose type has NULL
+    private boolean isNullableColumn(IQueryModel tableModel, ExpressionNode node) {
+        if (node.type != LITERAL) {
+            return false;
+        }
+        final int columnType = getQueryColumnType(tableModel, getModelColumn(tableModel, node.token));
+        return columnType >= 0 && !LateralJoinRewriter.isTypeWithoutNull(columnType);
+    }
+
+    // Returns true when the WHERE conjunct, which reads only columns of the table and is stable within an
+    // execution, is false on the NULL row of the table, whatever the values of its bind variables. That
+    // holds for < and > with a bare column of the table on one side, and for BETWEEN with a bare column as
+    // its value, when the column type has NULL: they are false for a NULL operand, see
+    // LateralJoinRewriter.isNullRejectingConjunct(). It also holds for a conjunct that reads one column of
+    // the table, of a known type, whose other parts fold to constants, when the conjunct evaluates to false
+    // on the NULL record of the column type.
+    private boolean isNullRejectingColumnPredicate(
+            IQueryModel tableModel,
+            ExpressionNode node,
+            SqlExecutionContext sqlExecutionContext
+    ) {
+        if (node.type == OPERATION && node.paramCount == 2 && (Chars.equals(node.token, '<') || Chars.equals(node.token, '>'))) {
+            if (isNullableColumn(tableModel, node.lhs) || isNullableColumn(tableModel, node.rhs)) {
+                return true;
+            }
+        } else if (SqlKeywords.isBetweenKeyword(node.token)) {
+            // the parser rejects BETWEEN without its value and both bounds
+            assert node.paramCount == 3;
+            if (isNullableColumn(tableModel, node.args.getLast())) {
+                return true;
+            }
+        }
+        final ExpressionNode column = findFirstLiteral(node);
+        // the callers pass a conjunct that reads a column of the table
+        assert column != null;
+        if (!isFoldableOverColumn(node, column.token, sqlExecutionContext)) {
+            return false;
+        }
+        final int columnType = getQueryColumnType(tableModel, getModelColumn(tableModel, column.token));
+        if (columnType < 0) {
+            return false;
+        }
+        final ExpressionNode probe = ExpressionNode.deepClone(expressionNodePool, node);
+        renameLiterals(probe, NULL_REJECTING_PROBE_COLUMN);
+        return isFalseOnNullRecord(functionParser, probe, columnType, sqlExecutionContext);
+    }
+
     // Returns true when the comparison of the column with the compile-time constant, in the given operand
     // order, is false for the NULL record of the column type, so it drops every row whose column is NULL.
     // The NULL record keeps the NULL semantics of the type: a BOOLEAN, BYTE or SHORT column has no NULL,
@@ -8011,6 +8226,47 @@ public class SqlOptimiser implements Mutable {
         final int index = baseModel.getModelAliasIndex(literal, 0, dot);
         return index != -1
                 && !joinModels.getQuick(index).getAliasToColumnMap().excludes(literal, dot + 1, literal.length());
+    }
+
+    // Returns true when the conjunct holds no sub-query and every largest part of it that reads no
+    // column has a value that stays the same within an execution, see Function.isStableWithinExecution():
+    // a constant, a bind variable or now(), but not rnd_int() or systimestamp(). The scan of a table and
+    // the post-join filter then evaluate a copy of the conjunct to the same value.
+    private boolean isStableColumnPredicate(ExpressionNode node, SqlExecutionContext sqlExecutionContext) {
+        if (node == null || node.type == LITERAL || node.type == CONSTANT || node.type == BIND_VARIABLE) {
+            return true;
+        }
+        if (!hasNodeOfType(node, LITERAL)) {
+            return isStableColumnFreeExpression(node, sqlExecutionContext);
+        }
+        if (!isStableColumnPredicate(node.lhs, sqlExecutionContext) || !isStableColumnPredicate(node.rhs, sqlExecutionContext)) {
+            return false;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (!isStableColumnPredicate(node.args.getQuick(i), sqlExecutionContext)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private boolean isStableColumnFreeExpression(ExpressionNode node, SqlExecutionContext sqlExecutionContext) {
+        if (hasNodeOfType(node, ExpressionNode.QUERY)) {
+            return false;
+        }
+        Function function = null;
+        try {
+            function = functionParser.parseFunction(
+                    ExpressionNode.deepClone(expressionNodePool, node),
+                    EmptyRecordMetadata.INSTANCE,
+                    sqlExecutionContext
+            );
+            return function.isConstant() || function.isStableWithinExecution();
+        } catch (CairoException | ImplicitCastException | SqlException | UnsupportedOperationException ignored) {
+            return false;
+        } finally {
+            Misc.free(function);
+        }
     }
 
     /**
@@ -8694,8 +8950,9 @@ public class SqlOptimiser implements Mutable {
             if (n > 0) {
                 // refresh the per-level anchors; this traversal is separate from optimiseJoins
                 precomputeNullingJoinAnchors(model);
+                collectScanFilterCopyCandidates(model, nodes, sqlExecutionContext);
                 for (int i = 0; i < n; i++) {
-                    final ExpressionNode node = nodes.getQuick(i);
+                    ExpressionNode node = nodes.getQuick(i);
                     // collect table references this where clause element
                     literalCollectorAIndexes.clear();
                     literalCollectorANames.clear();
@@ -8767,7 +9024,17 @@ public class SqlOptimiser implements Mutable {
                     final int nullingJoinIndex = node.innerPredicate ? -1 : masterNullingJoinIndexInOrder(tableIndex);
                     if (nullingJoinIndex >= 0) {
                         addPostJoinWhereClause(model.getJoinModels().getQuick(nullingJoinIndex), node);
-                        continue;
+                        if (!scanFilterCopyCandidates.contains(i) || !scanFilteredTables.contains(tableIndex)) {
+                            continue;
+                        }
+                        // A copy filters the table before the join, and moves into its sub-query as any
+                        // other conjunct of the table does. The table carries no LATEST ON of its own:
+                        // only the first table of a level does, assignFilters leaves no WHERE conjunct of
+                        // a NULL-extended table in the WHERE of its level, and this method moves a WHERE
+                        // conjunct into a level that carries LATEST ON only when the level joins no table,
+                        // see getLatestKeySelector().
+                        assert parent.getLatestBy().size() == 0;
+                        node = copyConjunctBeforeNullingJoin(node);
                     }
 
                     final IQueryModel nested = parent.getNestedModel();
@@ -9388,7 +9655,7 @@ public class SqlOptimiser implements Mutable {
             if (hasLinkedLoneEmittedClause) {
                 validateNonEquiNullingJoinOrder(model);
             }
-            assignFilters(model);
+            assignFilters(model, sqlExecutionContext);
             alignJoinClauses(model);
             addTransitiveFilters(model, sqlExecutionContext);
             mergeConstIntoPostJoinWhereClause(model);

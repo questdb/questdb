@@ -1461,9 +1461,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         Hash Right Outer Join Light
                                           condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
                                           filter: (ep0.ActionTypeId=13 and ep0.Message='2')
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: WorkflowEvent
+                                            Async JIT Filter workers: 1
+                                              filter: (UserId=19 and TenantId=24024 and EventTypeId=1)
+                                                PageFrame
+                                                    Row forward scan
+                                                    Interval forward scan on: WorkflowEvent
+                                                      intervals: [("2016-01-01T00:00:00.000000Z","2016-01-01T10:00:00.000000Z")]
                                             Hash
                                                 PageFrame
                                                     Row forward scan
@@ -1505,9 +1508,12 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                                         Hash Full Outer Join Light
                                           condition: ep0.WorkflowEventId=el.Id and ep0.CreateDate=el.CreateDate
                                           filter: (ep0.ActionTypeId=13 and ep0.Message='2')
-                                            PageFrame
-                                                Row forward scan
-                                                Frame forward scan on: WorkflowEvent
+                                            Async JIT Filter workers: 1
+                                              filter: (UserId=19 and TenantId=24024 and EventTypeId=1)
+                                                PageFrame
+                                                    Row forward scan
+                                                    Interval forward scan on: WorkflowEvent
+                                                      intervals: [("2016-01-01T00:00:00.000000Z","2016-01-01T10:00:00.000000Z")]
                                             Hash
                                                 PageFrame
                                                     Row forward scan
@@ -1612,16 +1618,18 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       and   el.CreateDate <= '2016-01-01T10:00:00Z'""")
                     .noLeakCheck()
                     .noRandomAccess()
-                    // RIGHT nulls the master, so the same WHERE must stay a post-join Filter: el is
-                    // fully scanned (no interval pruning) and the bounds are applied after the join.
-                    .withPlanContaining("Filter filter:", "Frame forward scan on: WorkflowEvent\n")
+                    // RIGHT nulls the master, so the same WHERE must stay a post-join Filter. Its
+                    // conjuncts are false on the NULL row of el, so copies of them also filter the
+                    // scan of el, which the bounds prune to an interval.
+                    .withPlanContaining("Filter filter:", "Interval forward scan on: WorkflowEvent\n")
                     .returns("""
                             CreateDate\tId\tTenantId\tUserId\tEventTypeId\tCreateDate1\tWorkflowEventId\tActionTypeId\tMessage
                             2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t24024\t19\t1\t2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t13\t2
                             """);
 
-            // FULL nulls the master the same way RIGHT does: the master-only WHERE stays post-join
-            // and loses interval pruning. The single matched row is the only output (no NULL rows).
+            // FULL nulls the master the same way RIGHT does: the master-only WHERE stays post-join,
+            // and its copies prune the scan of el to an interval. The single matched row is the only
+            // output (no NULL rows).
             assertQuery("""
                     SELECT  *
                     FROM    WorkflowEvent el
@@ -1639,7 +1647,7 @@ public class SqlOptimiserTest extends AbstractSqlParserTest {
                       and   el.CreateDate <= '2016-01-01T10:00:00Z'""")
                     .noLeakCheck()
                     .noRandomAccess()
-                    .withPlanContaining("Filter filter:", "Frame forward scan on: WorkflowEvent\n")
+                    .withPlanContaining("Filter filter:", "Interval forward scan on: WorkflowEvent\n")
                     .returns("""
                             CreateDate\tId\tTenantId\tUserId\tEventTypeId\tCreateDate1\tWorkflowEventId\tActionTypeId\tMessage
                             2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t24024\t19\t1\t2016-01-01T00:00:00.000000Z\t00000000-0000-0001-0000-000000000001\t13\t2
