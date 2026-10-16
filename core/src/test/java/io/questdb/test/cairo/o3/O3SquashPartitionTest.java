@@ -56,6 +56,7 @@ import org.junit.Assume;
 import org.junit.Before;
 import org.junit.Test;
 
+import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -1044,6 +1045,49 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
     @Test
     public void testSplitParentResplitBelowColumnTopKeepsPinnedReaderRows() throws Exception {
         assertPinnedSplitParentSurvivesColumnTopMerge(true);
+    }
+
+    @Test
+    public void testSplitParentResplitCyclesBelowColumnTopKeepColumnFileSize() throws Exception {
+        // Without an open reader, the column top scratch space reuses the space after the data. Placing it
+        // past the end of the file would grow the column file on every resplit and squash cycle.
+        assertMemoryLeak(() -> {
+            node1.getConfigurationOverrides().setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            executeWithRewriteTimestamp("CREATE TABLE x (i INT, ts #TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", timestampType.getTypeName());
+            execute("INSERT INTO x SELECT x::INT, '2020-02-03'::TIMESTAMP + (x - 1) * 60_000_000L FROM long_sequence(1000)");
+            // the column gets a column top of 1000 rows in 2020-02-03
+            execute("ALTER TABLE x ADD COLUMN l LONG");
+            execute(
+                    """
+                            INSERT INTO x (i, ts, l)
+                            SELECT (1000 + x)::INT, '2020-02-03T20'::TIMESTAMP + (x - 1) * 1_000_000L, x
+                            FROM long_sequence(100)
+                            """
+            );
+            // a row in the next day keeps 2020-02-03 a mid partition
+            execute("INSERT INTO x (i, ts, l) VALUES (2_000_000, '2020-02-04', 1)");
+
+            final long[] columnFileSizes = new long[5];
+            for (int cycle = 0; cycle < columnFileSizes.length; cycle++) {
+                // a late row just below the column top, close enough to the end that the partition resplits
+                execute("INSERT INTO x (i, ts) VALUES (" + (3_000_000 + cycle) + ", '2020-02-03'::TIMESTAMP + " + (990 - cycle) + " * 60_000_000L + 30_000_000L)");
+                columnFileSizes[cycle] = columnFileSize("x", "2020-02-03", "l");
+            }
+            // allocation granularity differs between platforms, so the check bounds the growth instead of exact sizes
+            final long growth = columnFileSizes[columnFileSizes.length - 1] - columnFileSizes[0];
+            Assert.assertTrue("column file grows with every cycle: " + Arrays.toString(columnFileSizes), growth < columnFileSizes[0]);
+
+            assertQuery("SELECT count() FROM x")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1106\n");
+            assertQuery("SELECT count() FROM x WHERE l IS NOT NULL")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n101\n");
+        });
     }
 
     @Test
@@ -2129,6 +2173,20 @@ public class O3SquashPartitionTest extends AbstractCairoTest {
                     .noRandomAccess()
                     .returns("count\n" + (at16 + at17 + at18 + 3) + "\n");
         });
+    }
+
+    private long columnFileSize(String tableName, String partition, String columnName) throws NumericException {
+        try (TableReader reader = getReader(tableName)) {
+            final long partitionTimestamp = ColumnType.getTimestampDriver(reader.getMetadata().getTimestampType()).parseFloorLiteral(partition);
+            final int partitionIndex = reader.getTxFile().getPartitionIndex(partitionTimestamp);
+            final int columnIndex = reader.getMetadata().getColumnIndex(columnName);
+            final long columnNameTxn = reader.getColumnVersionReader().getColumnNameTxn(partitionTimestamp, reader.getMetadata().getWriterIndex(columnIndex));
+            try (Path path = new Path()) {
+                path.of(configuration.getDbRoot()).concat(reader.getTableToken());
+                TableUtils.setPathForNativePartition(path, reader.getMetadata().getTimestampType(), PartitionBy.DAY, partitionTimestamp, reader.getTxFile().getPartitionNameTxn(partitionIndex));
+                return Files.length(TableUtils.dFile(path, columnName, columnNameTxn));
+            }
+        }
     }
 
     private void testSquashPartitionsOnEmptyTable(String wal) throws Exception {

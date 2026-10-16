@@ -907,7 +907,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     columnCounter,
                     o3Basket,
                     partitionUpdateSinkAddr,
-                    dedupColSinkAddr
+                    dedupColSinkAddr,
+                    false
             );
         } else {
             long srcTimestampAddr = 0;
@@ -924,6 +925,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long suffixLo;
             long suffixHi;
             final int openColumnMode;
+            final boolean isTailPinned;
             long newMinPartitionTimestamp;
 
             try {
@@ -990,7 +992,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // A reader locked before a split still reads the moved rows from the parent's files,
                 // so the parent's tail must not be appended in place. Merging the rows at o3TimestampLo
                 // lets the split below move just those rows instead of copying the whole partition.
-                final boolean isTailPinned = tableWriter.isPartitionTailPinnedByReaders(partitionTimestamp);
+                isTailPinned = tableWriter.isPartitionTailPinnedByReaders(partitionTimestamp);
                 long mergeEquals = tableWriter.isCommitDedupMode() || tableWriter.isCommitReplaceMode() || isTailPinned ? 1 : 0;
 
                 if (o3TimestampLo >= dataTimestampLo) {
@@ -1602,7 +1604,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     columnCounter,
                     o3Basket,
                     partitionUpdateSinkAddr,
-                    dedupColSinkAddr
+                    dedupColSinkAddr,
+                    isTailPinned
             );
         }
     }
@@ -2868,7 +2871,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            boolean isTailPinned
     ) {
         while (cursor == -2) {
             Os.pause();
@@ -2922,7 +2926,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexWriter,
                     partitionUpdateSinkAddr,
                     columnIndex,
-                    columnNameTxn
+                    columnNameTxn,
+                    isTailPinned
             );
         } else {
             O3OpenColumnJob.openColumn(
@@ -2970,7 +2975,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     indexWriter,
                     partitionUpdateSinkAddr,
                     columnIndex,
-                    columnNameTxn
+                    columnNameTxn,
+                    isTailPinned
             );
         }
     }
@@ -3021,7 +3027,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            boolean isTailPinned
     ) {
         final O3OpenColumnTask openColumnTask = tableWriter.getO3OpenColumnQueue().get(cursor);
         openColumnTask.of(
@@ -3069,7 +3076,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 indexWriter,
                 partitionUpdateSinkAddr,
                 columnIndex,
-                columnNameTxn
+                columnNameTxn,
+                isTailPinned
         );
         tableWriter.getO3OpenColumnPubSeq().done(cursor);
     }
@@ -3112,7 +3120,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             AtomicInteger columnCounter,
             O3Basket o3Basket,
             long partitionUpdateSinkAddr,
-            long dedupColSinkAddr
+            long dedupColSinkAddr,
+            boolean isTailPinned
     ) {
         // Number of rows to insert from the O3 segment into this partition.
         final long srcOooBatchRowSize = srcOooHi - srcOooLo + 1;
@@ -3225,7 +3234,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
 
                     // A split parent's files still hold the rows the split moved out. While a reader that locked
                     // a txn before the split can still read them, the writer keeps the merge instead of appending in place.
-                    if (appendOnly && tableWriter.isPartitionTailPinnedByReaders(oldPartitionTimestamp)) {
+                    if (appendOnly && isTailPinned) {
                         appendOnly = false;
                     }
 
@@ -3455,7 +3464,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 indexWriter,
                                 partitionUpdateSinkAddr,
                                 i,
-                                columnNameTxn
+                                columnNameTxn,
+                                isTailPinned
                         );
                     } else {
                         publishOpenColumnTaskContended(
@@ -3504,7 +3514,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 indexWriter,
                                 partitionUpdateSinkAddr,
                                 i,
-                                columnNameTxn
+                                columnNameTxn,
+                                isTailPinned
                         );
                     }
                 } catch (Throwable e) {

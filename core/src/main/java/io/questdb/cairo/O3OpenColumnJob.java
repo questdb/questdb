@@ -1490,7 +1490,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             IndexWriter indexWriter,
             long partitionUpdateSinkAddr,
             int columnIndex,
-            long columnNameTxn
+            long columnNameTxn,
+            boolean isTailPinned
     ) {
         final long mergeRowCount;
         if (mergeType == O3_BLOCK_MERGE) {
@@ -1618,7 +1619,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                         oldPartitionTimestamp,
                         columnIndex,
                         columnNameTxn,
-                        partitionUpdateSinkAddr
+                        partitionUpdateSinkAddr,
+                        isTailPinned
                 );
                 break;
             case OPEN_LAST_PARTITION_FOR_MERGE:
@@ -1798,7 +1800,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                 indexWriter,
                 partitionUpdateSinkAddr,
                 columnIndex,
-                columnNameTxn
+                columnNameTxn,
+                task.isTailPinned()
         );
     }
 
@@ -2866,7 +2869,8 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
             long oldPartitionTimestamp,
             int columnIndex,
             long columnNameTxn,
-            long partitionUpdateSinkAddr
+            long partitionUpdateSinkAddr,
+            boolean isTailPinned
     ) {
         final FilesFacade ff = tableWriter.getFilesFacade();
         // not set, we need to check file existence and read
@@ -2961,7 +2965,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     colTopSinkAddr,
                     columnNameTxn,
                     partitionUpdateSinkAddr,
-                    true
+                    isTailPinned
             );
         } else {
             try {
@@ -3031,7 +3035,7 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
                     colTopSinkAddr,
                     columnNameTxn,
                     partitionUpdateSinkAddr,
-                    true
+                    isTailPinned
             );
         }
     }
@@ -3322,11 +3326,10 @@ public class O3OpenColumnJob extends AbstractQueueConsumerJob<O3OpenColumnTask> 
         tableWriter.getO3CopyPubSeq().done(cursor);
     }
 
-    // Returns where the scratch space for materialized column top nulls starts in a mid partition's column file.
-    // A split parent's files still hold the rows the split moved out, and a reader that locked a txn before
-    // the split still reads them, so the scratch space starts past the end of the file, not past dataSize.
-    // The last partition is never a split parent, and its files run into the writer's preallocated pages,
-    // so its scratch space keeps starting at dataSize.
+    // Returns where the scratch space for materialized column top nulls starts in a split parent's column file
+    // while a reader that locked a txn before the split can still read the moved rows past dataSize.
+    // Without such a reader, callers start the scratch space at dataSize and reuse that space instead
+    // of growing the file on every merge.
     private static long scratchOffset(FilesFacade ff, long fd, long dataSize) {
         final long fileSize = ff.length(fd);
         if (fileSize < 0) {
