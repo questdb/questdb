@@ -44,6 +44,7 @@ import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
+import io.questdb.std.Unsafe;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
@@ -67,6 +68,7 @@ import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Pattern;
 
@@ -1061,6 +1063,61 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 assertPurgeLogRows(purgeJob, 3, 3);
                 for (int i = 0; i < 3; i++) {
                     Assert.assertEquals(listings[i], listFiles(partitionDir("t", i)));
+                }
+            }
+            assertRowsOfRetryTable();
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesEntryAfterShortReadOfMeta() throws Exception {
+        // _meta of t opens, but the read of the table id returns fewer bytes than an int has, once. The
+        // job retries the first entry of the purge rather than drop it as a purge of another table, and
+        // purges the other two partitions in the same run; the next run purges the first one.
+        final AtomicBoolean isMetaShortReadArmed = new AtomicBoolean();
+        final AtomicLong metaFd = new AtomicLong(-1);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                final long fd = super.openRO(name);
+                if (isMetaShortReadArmed.get() && isMetaFileOfT(name)) {
+                    metaFd.set(fd);
+                }
+                return fd;
+            }
+
+            @Override
+            public long read(long fd, long buf, long len, long offset) {
+                if (fd == metaFd.get() && offset == TableUtils.META_OFFSET_TABLE_ID && isMetaShortReadArmed.compareAndSet(true, false)) {
+                    metaFd.set(-1);
+                    // the bytes past the short read hold what the buffer held before, not the table id
+                    Unsafe.getUnsafe().setMemory(buf, len, (byte) 0xFF);
+                    return super.read(fd, buf, len - 1, offset);
+                }
+                return super.read(fd, buf, len, offset);
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                final String[] oldFiles = dropIndexOfRetryTableWithReader(purgeJob, "BYPASS WAL");
+                final String[] listings = listRetryTablePartitions(oldFiles);
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 10L * iteration++);
+                isMetaShortReadArmed.set(true);
+                purgeJob.run();
+                Assert.assertFalse(isMetaShortReadArmed.get());
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 0);
+                Assert.assertEquals(listings[0], listFiles(partitionDir("t", 0)));
+                for (int i = 1; i < 3; i++) {
+                    Assert.assertEquals(withoutFiles(listings[i], oldFiles[i]), listFiles(partitionDir("t", i)));
+                }
+
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 3);
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(withoutFiles(listings[i], oldFiles[i]), listFiles(partitionDir("t", i)));
                 }
             }
             assertRowsOfRetryTable();
