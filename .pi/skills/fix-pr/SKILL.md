@@ -1,6 +1,6 @@
 ---
 name: fix-pr
-description: Develop features and fix bugs or review findings from a list, one item at a time, with exhaustive tests enforced while developing - design the change and its test plan against CLAUDE.md "Testing" and have both challenged independently, build test-first, run the item's tests with coverage (ci/diff_coverage.py) and add tests until every changed line, branch and condition runs, have the tests reviewed independently and close the gaps; commit. When the queue is empty, run review-pr at level 3 over the whole PR, as before approval, and treat what it finds the same way until a review comes back clean. Adjacent findings outside this PR's code become GitHub issues. Use when the user runs /skill:fix-pr or asks to develop or fix items with it.
+description: Develop features and fix bugs or review findings from a list, one item at a time, with exhaustive tests enforced while developing - design the change and its test plan against CLAUDE.md "Testing" and have both challenged independently, build test-first, run the item's tests with coverage (ci/diff_coverage.py) and add tests until every changed line, branch and condition runs, have the tests reviewed independently and close the gaps; commit. When the queue is empty, run review-pr at level 3 over the whole PR, as before approval, and treat what it finds the same way until a review comes back clean. Bugs found on the way that the PR base already has become GitHub issues, not work for the run. Use when the user runs /skill:fix-pr or asks to develop or fix items with it.
 allowed-tools: bash read edit write subagent ctx_execute ctx_execute_file
 metadata:
   argument-hint: "[--include-adjacent] [--no-issues] [--review-level=N] [--max-review-rounds=N] <items: features, bugs or review findings>"
@@ -15,10 +15,12 @@ to fix, or a finding from a review.
    feature. State the problem or goal and the user impact in one line each.
 2. Skip it if it is false, already done, or its impact is negligible. Ask the
    user when a feature's behavior is ambiguous.
-3. Design the best root-cause change - alternatives weighed; no regressions,
-   slowdowns, races or reinvented code - and the test plan that proves it,
-   dimension by dimension, per CLAUDE.md "Testing". An independent agent tries
-   to break both before any code changes. Only a flaw in the design sends the
+3. Design the best root-cause change - argued correct for every input it
+   reaches, alternatives weighed; no regressions, slowdowns, races or
+   reinvented code - and the test plan that proves it, dimension by
+   dimension, per CLAUDE.md "Testing". When no change can be argued correct,
+   the item is blocked, not guessed at. An independent agent tries to break
+   both before any code changes. Only a flaw in the design sends the
    plan back; the tests it finds missing join the plan, and other bugs it
    finds become separate items or are reported.
 4. Write the failing tests first and build the change. Run the item's tests
@@ -32,10 +34,20 @@ Tests are written while developing; the review at the end is the last resort,
 not the place where test cases get discovered. When the queue is empty, a
 helper runs `review-pr` at level 3 over the whole PR - the review the user
 runs before approving it. Its Critical and Moderate findings, and Adjacent
-ones in code this PR added or changed, become new items: each is a test that
-should have existed. The other Adjacent findings become GitHub issues. The
-review runs again after those items, until it finds nothing to fix or
+ones this PR introduced, become new items: each is a test that should have
+existed. The other Adjacent findings become GitHub issues. The review runs
+again after those items, until it finds nothing to fix or
 `--max-review-rounds` is reached.
+
+The run's scope is what the PR sets out to do plus what it breaks, as in
+review-pr's "Keep the blast radius of the PR small": the items given, the
+review's findings, and bugs this PR caused, this run's commits included;
+`--include-adjacent` adds the review's Adjacent findings. Any other bug the
+PR base already has becomes an issue, even when an item's trigger reaches
+it: each fix in old code turns up more old bugs, so a run that chases them
+doesn't end. CLAUDE.md's "Bundle related fixes into one PR" says where a fix
+goes, not which bugs to fix. A bug in this run's own commits sends the item
+that made it back to design.
 
 CLAUDE.md governs code, tests and commit messages. Its "Testing" section is the
 standard every item meets.
@@ -45,7 +57,8 @@ standard every item meets.
 `$ARGUMENTS` is the text after `/skill:fix-pr`. If it contains no items, ask
 for them.
 
-- `--include-adjacent`: fix Adjacent review findings instead of filing them.
+- `--include-adjacent`: fix Adjacent review findings instead of filing them;
+  file one that ends blocked.
 - `--no-issues`: list Adjacent items instead of filing them.
 - `--review-level=N`: `review-pr` level of each backstop review; default `3`,
   the level of the review before approval.
@@ -92,7 +105,7 @@ follow it with the helper's arguments.
 3. Create a state directory outside the repo: `mktemp -d /tmp/fix-pr.XXXXXX`.
 4. Parse the items. Each entry of a list of features or bugs is one item. From
    a `review-pr` report, queue Critical and Moderate findings and Adjacent
-   ones in code this PR added or changed (compare with the PR base), list
+   ones this PR introduced (their Origin, or compare with the PR base), list
    Minor ones as not fixed (cosmetic) unless the user asks, and send the
    other Adjacent ones to the issue list unless `--include-adjacent`. Keep
    each item's text verbatim and give it a short ID (the user's or the
@@ -109,11 +122,13 @@ difference. Record `ITEM_START=$(git rev-parse HEAD)` before the build.
 1. **Analyze.** Launch the analysis helper. Show the user its PROBLEM and
    IMPACT lines, and for a change its CHANGE, WHY and TESTS lines.
    - `SKIP`: record the reason and go to the next item.
+   - `BLOCK`: no change within the item can be argued correct. Mark the item
+     blocked with the REASON and go to the next item.
    - `ASK`: show the QUESTIONS, wait for the user's answers, and run the
      analysis again with them.
-   - `OTHER` lines: `PR` and `RELATED` bugs become new items at the end of
-     the queue, since CLAUDE.md bundles related fixes into one PR;
-     `PRE-EXISTING` ones go to the issue list. Skip a bug already queued or
+   - `OTHER` lines: a `PR` bug becomes a new item at the end of the queue,
+     unless it names an item of this run, which it reopens (step 6); a
+     `PRE-EXISTING` one goes to the issue list. Skip a bug already queued or
      listed.
 2. **Check.** Launch the check helper. It didn't write the plan and can't edit
    anything; its only job is to find what the change would break, a better
@@ -122,7 +137,9 @@ difference. Record `ITEM_START=$(git rev-parse HEAD)` before the build.
    `ADJACENT` (a separate bug, including the same kind of bug in other code).
    Only `REDESIGN` sends the plan back. A `REDESIGN` line that only asks for
    more tests or a citation counts as `ADD`; one about a separate defect
-   elsewhere, even of the same kind, counts as `ADJACENT`.
+   elsewhere, even of the same kind, counts as `ADJACENT`. An `ADJACENT` line
+   that names the item under check counts as `REDESIGN`: its own commits
+   are part of its design.
    - `ADJACENT` lines, whatever else the reply says: handle them like OTHER
      lines in step 1, but list a `PRE-EXISTING` one for the user instead of
      filing it; the check can't write an issue body.
@@ -136,7 +153,7 @@ difference. Record `ITEM_START=$(git rev-parse HEAD)` before the build.
 3. **Build.** Launch the build helper.
    - `BUILT <sha>`: check with `git show --stat <sha>` that it changed only the
      files named on the CHANGE line, plus tests. Record its COVERAGE and
-     EXISTING lines.
+     EXISTING lines, and handle OTHER lines as in step 1.
    - `STOPPED`: if the plan was wrong, treat it as a rejected proposal and go
      back to step 1 with the reason. If the cause is outside the plan (for
      example, a file with the user's uncommitted changes), mark the item
@@ -153,6 +170,16 @@ difference. Record `ITEM_START=$(git rev-parse HEAD)` before the build.
    lines either helper left go to the final summary as open. Handle OTHER
    lines as in step 1. Don't review the tests again for this item; the
    backstop review covers the rest.
+6. **Reopen.** A `PR` bug on a helper's OTHER or ADJACENT line that names an
+   item of this run - its commits caused the bug or contain it - reopens
+   that item instead of becoming a new one: the item's design missed
+   something, and a patch on top would repeat the miss. Move the item to the
+   front of the queue and run it again from step 1 as a revision, with the
+   bug as what sent the design back; its build commits on top of the earlier
+   ones. An item is reopened once: if the reopened proposal is sent back, or
+   a bug is tied to the item after it is rebuilt, mark it blocked. A
+   reopened item that ends blocked lists reverting its commits as one option
+   for the user.
 
 ## Backstop review
 
@@ -213,10 +240,10 @@ Unless `--no-issues`, file each one:
 
 ## Rules
 
-- One local commit per item for the change and its tests, plus one if the
-  test-gaps step added tests. Never push, amend, rebase, reset, stash, clean,
-  switch branches or create worktrees; the one exception is the scratch
-  worktree review-pr creates and removes in the backstop review.
+- One local commit per build of an item for the change and its tests, plus
+  one if the test-gaps step added tests. Never push, amend, rebase, reset,
+  stash, clean, switch branches or create worktrees; the one exception is
+  the scratch worktree review-pr creates and removes in the backstop review.
 - Stage only the files a helper changed; never `git add -A` or `git commit -a`.
 - Never weaken an existing test to make a change pass (CLAUDE.md "Test
   integrity"); a changed expectation needs its reason in the commit message.
@@ -234,8 +261,9 @@ Unless `--no-issues`, file each one:
 
 Outcome is `built <sha>` (plus `tests <sha>` when the test-gaps step added
 tests), `skipped: <reason>` or `blocked: <reason>`; add `not reviewed` to an
-item built after the last review round. Coverage is the final changed lines
-and branches covered, e.g. `42/42 L, 18/18 B`.
+item built after the last review round. A reopened item shows each run, as
+in `built <sha>; reopened: blocked: <reason>`. Coverage is the final changed
+lines and branches covered, e.g. `42/42 L, 18/18 B`.
 
 Then one line each: review rounds, each with its verdict, what it found and
 the PR's measured coverage, and the path of the last round's report, which
@@ -264,14 +292,17 @@ Don't change existing files or commit. For probes, create new files; when
 done, copy those that reproduce the problem to <state>/<ID>/probes/ for the
 build, and delete them from the repo.
 
-Item <ID> (<feature | bug | review finding>): <verbatim item>
-PR base: <sha>. Earlier items in this run: <ID: one line each, or none>.
+Item <ID> (<feature | bug | review finding | bug found in this run>): <verbatim item>
+PR base: <sha>. Items of this run so far: <one line per item: ID, commits,
+summary; or none>.
 [Revision only: your previous proposal is in <state>/<ID>/analysis.md, with
 test-plan amendments in <state>/<ID>/amendments.md if that file exists. Its
-design was sent back: <REDESIGN lines, or the build's STOPPED reason>.
-Change the design, or show with file:line why an objection is wrong. Fold
-these test-plan gaps and the amendments into the new plan where they still
-apply: <ADD lines, or none>.]
+design was sent back: <REDESIGN lines, the build's STOPPED reason, or the bug
+that reopened the item>. Find the assumption in its argument that this
+breaks, correct it, and derive the design again from there; a change that
+only answers the example is not a revision. Or show with file:line why an
+objection is wrong. Fold these test-plan gaps and the amendments into the
+new plan where they still apply: <ADD lines, or none>.]
 [Answers from the user: <answers>]
 
 1. Understand the item.
@@ -284,9 +315,11 @@ apply: <ADD lines, or none>.]
 2. Problem or goal: one plain line.
 3. Impact on users: one line - who, how badly, how often.
 4. Decide: BUILD a feature, FIX a bug or finding, SKIP (false, already done,
-   or negligible impact), or ASK when the feature needs a decision. A finding
+   or negligible impact), ASK when the feature needs a decision, or BLOCK
+   when no change within the item can be argued correct (step 6). A finding
    that a test is missing or ineffective for behavior this PR adds or changes
-   is a FIX.
+   is a FIX. A bug found in this run that the PR base already has is a SKIP;
+   report it on OTHER as PRE-EXISTING (step 9).
 5. For FIX: find the root cause - the first place the code goes wrong, not
    where the symptom shows - and the assumption that fails there. Use
    `git log` and `git blame` to learn why the code is written that way; the
@@ -294,6 +327,7 @@ apply: <ADD lines, or none>.]
    the symptom unless that layer owns the check.
 6. For BUILD and FIX: find the best change, not the first one that works.
    Weigh the real alternatives, such as another layer, and choose the one that:
+   - is correct for every input it reaches, by the argument below;
    - closes every path to the item's problem, not just the one the item
      names; the same kind of bug in other code is a separate bug (step 9);
    - keeps every user of the changed code working: list the callers,
@@ -305,6 +339,18 @@ apply: <ADD lines, or none>.]
    - reuses what exists: search for a helper, an established pattern or an
      earlier fix of the same kind of bug, and build on it.
    Between equally good changes, choose the smaller.
+   Argue the change correct before you prototype it; a few sentences do for
+   a small change. State what the changed code must guarantee for the result
+   to be right, and show that every input the change newly lets through, and
+   every path it adds or skips, keeps each guarantee. A guard protects all
+   the code after it, not only the case it was written for: before relaxing
+   one, find what each later step assumes about the inputs it kept out.
+   Before adding an early return, list what the code it skips ensured.
+   Where the change can't tell which way an input goes, as with an unknown
+   type, it takes the safe side. Probes and prototypes test the argument;
+   they don't replace it, and a variant chosen because it fails fewer probes
+   has no argument. If no change within the item can be argued correct,
+   decide BLOCK and say what a sound fix would take.
 7. For BUILD and FIX: write the test plan. Go through the 14 dimensions of
    CLAUDE.md "What exhaustive means". For each that applies, list the tests:
    name, input -> expected result, and where the expected result comes from
@@ -320,27 +366,35 @@ apply: <ADD lines, or none>.]
    PR reports. The bullet is none when users see no change against the PR
    base, such as a fix for a bug only this PR's own commits have, or a
    missing test.
-9. Other bugs you noticed, including the same kind of bug in other code. Mark
-   each PR if it is in code this PR added or changed (compare with the PR
-   base), RELATED if it is pre-existing but the item's own trigger - the same
-   input, operation or fault - reaches it, else PRE-EXISTING. PR and RELATED
-   bugs become items of their own in this run, so keep them out of this plan
-   unless this change can't work without them. For a PRE-EXISTING one, write
-   an issue body to <state>/<ID>/issue-<slug>.md. Add [security] when a bug
-   is security-sensitive and [crash] when hostile input can crash or hang the
-   server through it.
+9. Other bugs your work ran into, such as the same kind of bug in other
+   code; don't go looking for more. Mark each one PR if this PR caused it,
+   this run's commits included: some trigger gets a worse result than on
+   the PR base, or the bug is in behavior this PR adds. Add the ID of the
+   item of this run whose commits caused it or contain it, if any; a bug in
+   the commits of the item you analyze belongs in this plan, not here. Mark
+   it PRE-EXISTING when the PR base gives the same result - run the trigger
+   there unless the base code settles it - even when this item's trigger
+   reaches it. PR bugs become items of this run or reopen the item named,
+   so keep them out of this plan unless the item can't be done without
+   them. PRE-EXISTING bugs become issues, not work for this run: fix one in
+   this plan only when the item can't be done without it; otherwise leave
+   its input out of this plan's tests, with a comment naming the bug, and
+   write an issue body to <state>/<ID>/issue-<slug>.md. Add [security] when
+   a bug is security-sensitive and [crash] when hostile input can crash or
+   hang the server through it.
 
 Write <state>/<ID>/analysis.md, starting with the verbatim item; include the
-alternatives you rejected and why, and the test plan as a table: dimension,
-applies, tests or reason. Reply with only these lines:
-DECISION: BUILD | FIX | SKIP | ASK
+argument that the change is correct, the alternatives you rejected and why,
+and the test plan as a table: dimension, applies, tests or reason. Reply with
+only these lines:
+DECISION: BUILD | FIX | SKIP | ASK | BLOCK
 PROBLEM: <one line>
 IMPACT: <one line>
 EFFECT: <the PR body bullet; the JMH benchmark to report, if any> | none
-CHANGE: <one line, naming the files> | REASON: <one line, for SKIP> | QUESTIONS: <for ASK, one line each>
+CHANGE: <one line, naming the files> | REASON: <one line, for SKIP or BLOCK> | QUESTIONS: <for ASK, one line each>
 WHY: <one line: why this change beats the alternatives>
 TESTS: <one line: the dimensions covered and the ones not applicable>
-OTHER: none | one line per bug: PR, RELATED or PRE-EXISTING [security] [crash], file:line, problem, issue body path (PRE-EXISTING only)
+OTHER: none | one line per bug: PR, PR <item ID> or PRE-EXISTING [security] [crash], file:line, problem, issue body path (PRE-EXISTING only)
 ```
 
 ### Check
@@ -349,9 +403,14 @@ OTHER: none | one line per bug: PR, RELATED or PRE-EXISTING [security] [crash], 
 Independent check of a proposed change and its test plan in <repo>. You
 didn't write them. Don't edit anything.
 
-Read <state>/<ID>/analysis.md: the item, the proposed change, the rejected
-alternatives, what else uses the code it changes, and the test plan. Then read
-the code and try to break the proposal:
+Read <state>/<ID>/analysis.md: the item, the proposed change and the
+argument that it is correct, the rejected alternatives, what else uses the
+code it changes, and the test plan. Items of this run so far: <one line per
+item: ID, commits, summary; or none>. Then read the code and try to break
+the proposal:
+- Does the argument hold? Find an input the change newly lets through, or
+  a path it adds or skips, that breaks a guarantee the result depends on,
+  whether or not the argument names it.
 - What works today that the change would break? Consider other callers and
   inputs, NULL, empty and boundary values, error paths, cleanup, object
   reuse (toTop, clear, pools), and large data.
@@ -363,14 +422,17 @@ the code and try to break the proposal:
   after close?
 - Does it reimplement something the codebase already has?
 - Is a rejected or overlooked alternative better?
+- Does it change more than the item needs, such as fixing a separate
+  pre-existing bug the item can do without?
 Then hold the test plan to CLAUDE.md "Testing":
 - a dimension that applies but is marked not applicable or covered thinly;
 - an expected result that comes from running the code under test;
 - a fuzz harness that covers the area but is not extended, or a missing
   oracle where one exists.
-[Second proposal only: the first was sent back for: <REDESIGN lines, or the
-build's STOPPED reason>. Repeat as a REDESIGN line any of it this proposal
-leaves unresolved.]
+[Revision only: the previous proposal was sent back for: <REDESIGN lines,
+the build's STOPPED reason, or the bug that reopened the item>. Repeat as a
+REDESIGN line any of it this proposal leaves unresolved, including the same
+flaw reached through another input or clause.]
 
 Report only problems you can show in the code or the plan, with file:line or
 the dimension and the missing case. Style preferences don't count; neither
@@ -379,17 +441,19 @@ or its tests. Label each problem:
 - REDESIGN: built as planned, the change would be wrong for this item: it
   breaks what works today, leaves the item's problem reachable, patches the
   symptom, adds avoidable hot-path cost or a race, reimplements existing
-  code, or is clearly worse than an alternative. Show how.
+  code, changes more than the item needs, or is clearly worse than an
+  alternative. Show how.
 - ADD: a gap in the test plan: a missing test, a dimension skipped for a
   wrong reason, or an expected result without an independent source. Name
   the dimension, the case, input -> expected, and its source. A problem that
   more tests or a citation would solve is ADD, never REDESIGN.
 - ADJACENT: a separate bug the change neither causes nor must fix to solve
-  the item, including the same kind of bug in other code. Mark it PR (in
-  code this PR added or changed), RELATED (pre-existing, but the item's own
-  trigger reaches it) or PRE-EXISTING, [security] when it is
-  security-sensitive, and [crash] when hostile input can crash or hang the
-  server through it.
+  the item, including the same kind of bug in other code. Mark it PR when
+  this PR caused it, this run's commits included (some trigger gets a worse
+  result than on the PR base, or it is in behavior this PR adds), with the
+  ID of the item of this run whose commits caused it or contain it, if any;
+  else PRE-EXISTING. Add [security] when it is security-sensitive, and
+  [crash] when hostile input can crash or hang the server through it.
 Reply with only: OK, or at most eight lines, one per problem, each starting
 with its label, REDESIGN lines first.
 ```
@@ -401,7 +465,7 @@ Build one item in <repo>. Follow CLAUDE.md, including "Testing".
 The plan is <state>/<ID>/analysis.md plus the test-plan amendments in
 <state>/<ID>/amendments.md; an independent check approved it. Probes that
 reproduced the problem, if any, are in <state>/<ID>/probes/.
-Earlier items in this run: <ID: one line each, or none>.
+Items of this run so far: <one line per item: ID, commits, summary; or none>.
 Run `git status --porcelain` first and never edit a file it lists.
 
 1. Write the planned tests, amendments included, and run them. They must
@@ -489,7 +553,8 @@ most important first:
 Add missing tests for one item in <repo>. Follow CLAUDE.md, including
 "Testing".
 Item <ID>: commit <sha>, item start <ITEM_START>, plan <state>/<ID>/analysis.md
-and <state>/<ID>/amendments.md.
+and <state>/<ID>/amendments.md. Items of this run so far: <one line per item:
+ID, commits, summary; or none>.
 An independent review found these gaps:
 <GAPS lines>
 Run `git status --porcelain` first and never edit a file it lists.
@@ -535,8 +600,8 @@ You are the review's parent: launch its agents yourself. Write your files to
 When the review is done, write there:
 - report.md: the Step 4 report;
 - <ID>.md (C1, M1, A1, ... as numbered in the report): each Critical and
-  Moderate finding, and each Adjacent finding in code this PR added or
-  changed (compare with the PR base), verbatim;
+  Moderate finding, and each Adjacent finding this PR introduced (its
+  Origin), verbatim;
 - issue-<slug>.md: the draft of each other Adjacent finding, ready to file;
 - pr-body.md: the body with Step 2's replacements applied (with a PR only).
 Reply with only these lines:
