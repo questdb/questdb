@@ -103,6 +103,10 @@ public class Vm {
         return new MemoryCMRImpl(ff, name, size, memoryTag);
     }
 
+    public static MemoryCMARW getExactCMARWInstance() {
+        return new MemoryCMARWImpl(true);
+    }
+
     public static MemoryCMOR getMemoryCMOR(boolean bypassFdCache) {
         return new MemoryCMORImpl(bypassFdCache);
     }
