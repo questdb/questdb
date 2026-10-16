@@ -236,7 +236,6 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
     private final ObjHashSet<TableToken> tableTokenBucket = new ObjHashSet<>();
     private final ObjList<TableWriterAPI> tableWriters = new ObjList<>();
     private final VacuumColumnVersions vacuumColumnVersions;
-    private final ObjList<CharSequence> views = new ObjList<>();
     protected CharSequence sqlText;
     private boolean closed = false;
     // Helper var used to pass back count in cases it can't be done via method result.
@@ -5777,10 +5776,13 @@ public class SqlCompilerImpl implements SqlCompiler, Closeable, SqlParserCallbac
             return;
         }
 
-        views.clear();
-        SqlUtil.collectAllTableAndViewNames(queryModel, views, true);
-        for (int i = 0, n = views.size(); i < n; i++) {
-            final ViewDefinition viewDefinition = getViewDefinition(views.getQuick(i));
+        // The parser records each view it expands once, wherever the statement reads it, and hands
+        // the record to every model this failure path can hold. A view the parse expanded but the
+        // statement never reads, such as one in an unused CTE, gets a harmless extra re-check.
+        final ObjList<ViewDefinition> referencedViews = queryModel.getReferencedViews();
+        for (int i = 0, n = referencedViews.size(); i < n; i++) {
+            // resolve by name, to re-check the view now registered under it
+            final ViewDefinition viewDefinition = getViewDefinition(referencedViews.getQuick(i).getViewToken().getTableName());
             if (viewDefinition != null) {
                 engine.getViewStateStore().enqueueCompile(viewDefinition.getViewToken());
             }
