@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.CommitMode;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.PartitionBy;
@@ -96,7 +97,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0
+                    0,
+                    CommitMode.NOSYNC
             );
             Assert.fail();
         } catch (CairoException e) {
@@ -127,7 +129,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0
+                    0,
+                    CommitMode.NOSYNC
             );
             Assert.fail();
         } catch (CairoException e) {
@@ -157,7 +160,8 @@ public class TableUtilsTest extends AbstractTest {
                     tableName,
                     null,
                     0,
-                    0
+                    0,
+                    CommitMode.NOSYNC
             );
             Assert.fail();
         } catch (CairoException e) {
