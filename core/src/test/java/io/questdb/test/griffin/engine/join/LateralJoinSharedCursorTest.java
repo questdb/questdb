@@ -284,46 +284,196 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
     @Test
     public void testJoinGateBindVariableOverSharedGroupBy() throws Exception {
         // A bind variable in an INNER join ON clause gates the GROUP BY of the joined table when a RIGHT join
-        // follows it, and the LATERAL reads the same GROUP BY through a shared cursor. The gate opens the GROUP BY
-        // in every execution of one factory, also while the bind variable is false, so the shared cursor reads
-        // the state of the current execution: the first execution with false read a primary cursor that was never
-        // opened, and an execution with false after one with true read the state that the previous execution
-        // closed. The threshold makes the parallel GROUP BY shard its maps, which then left no owner map to read.
+        // follows it. The LATERAL, written after the RIGHT join, reads the same GROUP BY through a shared cursor
+        // for each row that the RIGHT join returns, also while the gate is false. The gate opens the GROUP BY in
+        // every execution of one factory, so the shared cursor reads the state of the current execution: the
+        // first execution with false read a primary cursor that was never opened, and an execution with false
+        // after one with true read the state that the previous execution closed. With first(), the parallel
+        // GROUP BY is not vectorized, and the threshold makes it shard its maps, which then left no owner map to
+        // read.
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_SQL_PARALLEL_GROUPBY_SHARDING_THRESHOLD, "1");
             createGateTables();
             execute("CREATE TABLE t64 AS (SELECT (x % 64)::INT k, x::INT v FROM long_sequence(128))");
-            final String query = """
-                    SELECT a.id, o.n, l.mv, d.id did
-                    FROM a
-                    JOIN (SELECT k, count() n FROM t64 GROUP BY k) o ON a.k = o.k AND $1
-                    CROSS JOIN LATERAL (SELECT max(u.v) mv FROM u WHERE u.k <= o.k) l
-                    RIGHT JOIN d ON d.k = a.k
-                    ORDER BY did, a.id
-                    """;
-            bindVariableService.clear();
-            bindVariableService.setBoolean(0, false);
-            try (RecordCursorFactory factory = select(query)) {
-                for (boolean flag : new boolean[]{false, true, false, true}) {
-                    bindVariableService.setBoolean(0, flag);
-                    new QueryAssertion(engine, factory)
-                            .withContext(sqlExecutionContext)
-                            .returns(flag
-                                    ? """
-                                    id\tn\tmv\tdid
-                                    1\t2\t100\t1
-                                    2\t2\t200\t2
-                                    null\tnull\tnull\t3
-                                    """
-                                    : """
-                                    id\tn\tmv\tdid
-                                    null\tnull\tnull\t1
-                                    null\tnull\tnull\t2
-                                    null\tnull\tnull\t3
-                                    """
-                            );
+            final String groupBy = enableParallelGroupBy ? "GroupBy vectorized: true workers: 1" : "GroupBy vectorized: false";
+            for (String values : new String[]{"count() n", "count() n, first(v) f"}) {
+                final String query = """
+                        SELECT a.id, o.n, d.id did, l.mv
+                        FROM a
+                        JOIN (SELECT k, %s FROM t64 GROUP BY k) o ON a.k = o.k AND $1
+                        RIGHT JOIN d ON d.k = a.k
+                        CROSS JOIN LATERAL (SELECT max(u.v) mv FROM u WHERE u.k <= o.k) l
+                        ORDER BY did
+                        """.formatted(values);
+                bindVariableService.clear();
+                bindVariableService.setBoolean(0, false);
+                if (values.equals("count() n")) {
+                    assertQuery(query)
+                            .noLeakCheck()
+                            .assertsPlan("""
+                                    Encode sort
+                                      keys: [did]
+                                        SelectedRecord
+                                            Hash Left Outer Join Light
+                                              condition: l.__qdb_outer_ref__0_k=o.k
+                                                Hash Right Outer Join Light
+                                                  condition: d.k=a.k
+                                                    Hash Join Light
+                                                      condition: o.k=a.k
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: a
+                                                        Hash
+                                                            Filter filter: $0::boolean
+                                                                %1$s
+                                                                  keys: [k]
+                                                                  values: [count(*)]
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: t64
+                                                    Hash
+                                                        PageFrame
+                                                            Row forward scan
+                                                            Frame forward scan on: d
+                                                Hash
+                                                    GroupBy vectorized: false
+                                                      keys: [__qdb_outer_ref__0_k]
+                                                      values: [max(v)]
+                                                        SelectedRecord
+                                                            Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_k>=u.k
+                                                                Cross Join
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: u
+                                                                    GroupBy vectorized: false
+                                                                      keys: [__qdb_outer_ref__0_k]
+                                                                        SelectedRecord
+                                                                            (Shared)
+                                                                                %1$s
+                                                                                  keys: [k]
+                                                                                  values: [count(*)]
+                                                                                    PageFrame
+                                                                                        Row forward scan
+                                                                                        Frame forward scan on: t64
+                                    """.formatted(groupBy));
+                }
+                try (RecordCursorFactory factory = select(query)) {
+                    for (boolean flag : new boolean[]{false, true, false, true}) {
+                        bindVariableService.setBoolean(0, flag);
+                        new QueryAssertion(engine, factory)
+                                .withContext(sqlExecutionContext)
+                                .returns(flag
+                                        ? """
+                                        id\tn\tdid\tmv
+                                        1\t2\t1\t100
+                                        2\t2\t2\t200
+                                        null\tnull\t3\tnull
+                                        """
+                                        : """
+                                        id\tn\tdid\tmv
+                                        null\tnull\t1\tnull
+                                        null\tnull\t2\tnull
+                                        null\tnull\t3\tnull
+                                        """
+                                );
+                    }
                 }
             }
+        });
+    }
+
+    @Test
+    public void testJoinGateConstantFalseOverNestedSharedGroupBy() throws Exception {
+        // The GROUP BY that the outer LATERAL reads holds a LATERAL of its own, which shares the GROUP BY g. A
+        // constant false ON conjunct frees both, and the outer LATERAL builds its own copy of the outer GROUP BY.
+        // That copy builds g again, and the inner LATERAL shares the new g rather than building a third copy.
+        assertMemoryLeak(() -> {
+            createGateTables();
+            final String groupBy = enableParallelGroupBy ? "GroupBy vectorized: true workers: 1" : "GroupBy vectorized: false";
+            assertQuery("""
+                    SELECT a.id, l.mv, d.id did
+                    FROM a
+                    JOIN (
+                        SELECT k, count() n FROM (
+                            SELECT g.k FROM (SELECT k, count() c FROM t GROUP BY k) g
+                            CROSS JOIN LATERAL (SELECT max(u.v) mv FROM u WHERE u.k <= g.k) l2
+                        ) GROUP BY k
+                    ) o ON a.k = o.k AND 1 = 0
+                    CROSS JOIN LATERAL (SELECT max(u.v) mv FROM u WHERE u.k <= o.k) l
+                    RIGHT JOIN d ON d.k = a.k
+                    ORDER BY did
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [did]
+                                SelectedRecord
+                                    Hash Right Outer Join Light
+                                      condition: d.k=a.k
+                                        Hash Left Outer Join Light
+                                          condition: l.__qdb_outer_ref__1_k=o.k
+                                            Hash Join Light
+                                              condition: o.k=a.k
+                                                PageFrame
+                                                    Row forward scan
+                                                    Frame forward scan on: a
+                                                Hash
+                                                    Empty table
+                                            Hash
+                                                GroupBy vectorized: false
+                                                  keys: [__qdb_outer_ref__1_k]
+                                                  values: [max(v)]
+                                                    SelectedRecord
+                                                        Filter filter: __qdb_outer_ref__1.__qdb_outer_ref__1_k>=u.k
+                                                            Cross Join
+                                                                PageFrame
+                                                                    Row forward scan
+                                                                    Frame forward scan on: u
+                                                                GroupBy vectorized: false
+                                                                  keys: [__qdb_outer_ref__1_k]
+                                                                    SelectedRecord
+                                                                        GroupBy vectorized: false
+                                                                          keys: [k]
+                                                                          values: [count(*)]
+                                                                            SelectedRecord
+                                                                                Hash Left Outer Join Light
+                                                                                  condition: l2.__qdb_outer_ref__0_k=g.k
+                                                                                    %1$s
+                                                                                      keys: [k]
+                                                                                      values: [count(*)]
+                                                                                        PageFrame
+                                                                                            Row forward scan
+                                                                                            Frame forward scan on: t
+                                                                                    Hash
+                                                                                        GroupBy vectorized: false
+                                                                                          keys: [__qdb_outer_ref__0_k]
+                                                                                            SelectedRecord
+                                                                                                Filter filter: __qdb_outer_ref__0.__qdb_outer_ref__0_k>=u.k
+                                                                                                    Cross Join
+                                                                                                        PageFrame
+                                                                                                            Row forward scan
+                                                                                                            Frame forward scan on: u
+                                                                                                        GroupBy vectorized: false
+                                                                                                          keys: [__qdb_outer_ref__0_k]
+                                                                                                            SelectedRecord
+                                                                                                                (Shared)
+                                                                                                                    %1$s
+                                                                                                                      keys: [k]
+                                                                                                                      values: [count(*)]
+                                                                                                                        PageFrame
+                                                                                                                            Row forward scan
+                                                                                                                            Frame forward scan on: t
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: d
+                            """.formatted(groupBy))
+                    .returns("""
+                            id\tmv\tdid
+                            null\tnull\t1
+                            null\tnull\t2
+                            null\tnull\t3
+                            """);
         });
     }
 
@@ -639,6 +789,22 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                             2\t1\t300\t2
                             null\tnull\tnull\t3
                             """);
+            // a LATERAL written after the RIGHT join reads the GROUP BY for each row of d while the gate is false
+            assertQuery("""
+                    SELECT a.id, o.n, d.id did, l.mv
+                    FROM a
+                    JOIN (SELECT k, count() n FROM t GROUP BY k) o ON a.k = o.k AND now() < '2000-01-01'
+                    RIGHT JOIN d ON d.k = a.k
+                    CROSS JOIN LATERAL (SELECT max(u.v) mv FROM u WHERE u.k <= o.k) l
+                    ORDER BY did
+                    """)
+                    .noLeakCheck()
+                    .returns("""
+                            id\tn\tdid\tmv
+                            null\tnull\t1\tnull
+                            null\tnull\t2\tnull
+                            null\tnull\t3\tnull
+                            """);
         });
     }
 
@@ -848,6 +1014,91 @@ public class LateralJoinSharedCursorTest extends AbstractCairoTest {
                             A\tapple,avocado\t0.2
                             B\tbanana\t0.1
                             """);
+        });
+    }
+
+    @Test
+    public void testLateralUnionBranchConstantFalse() throws Exception {
+        // The branches of a LATERAL UNION share the DISTINCT keys of the outer table, which the first branch
+        // builds. A constant false filter of the first branch frees its joins with the DISTINCT, and the second
+        // branch read the freed DISTINCT through a shared cursor. In parallel, the DISTINCT is a vectorized
+        // GROUP BY, and the query failed with a NullPointerException, on master too. The second branch now builds
+        // its own copy of the DISTINCT.
+        assertMemoryLeak(() -> {
+            createGateTables();
+            execute("CREATE TABLE y (k INT, v INT)");
+            execute("INSERT INTO y VALUES (1, 10), (2, 20)");
+            final String expected = """
+                    id\tv
+                    1\t10
+                    2\t10
+                    2\t20
+                    3\t10
+                    3\t20
+                    4\t10
+                    4\t20
+                    """;
+            assertQuery("""
+                    SELECT a.id, l.v
+                    FROM a
+                    CROSS JOIN LATERAL (
+                        SELECT u.v FROM u WHERE u.k <= a.k AND 1 = 0
+                        UNION ALL
+                        SELECT y.v FROM y WHERE y.k <= a.k
+                    ) l
+                    ORDER BY a.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .withPlan("""
+                            Encode sort
+                              keys: [id, v]
+                                SelectedRecord
+                                    Hash Join
+                                      condition: l.__qdb_outer_ref__0_k=a.k
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: a
+                                        Hash
+                                            Union All
+                                                SelectedRecord
+                                                    Empty table
+                                                SelectedRecord
+                                                    Filter filter: __qdb_outer_ref__1.__qdb_outer_ref__1_k>=y.k
+                                                        Cross Join
+                                                            PageFrame
+                                                                Row forward scan
+                                                                Frame forward scan on: y
+                                                            SelectedRecord
+                            """ + (enableParallelGroupBy ? """
+                                                                GroupBy vectorized: true workers: 1
+                                                                  keys: [k]
+                                                                  values: [count(*)]
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: a
+                            """ : """
+                                                                GroupBy vectorized: false
+                                                                  keys: [__qdb_outer_ref__0_k]
+                                                                    PageFrame
+                                                                        Row forward scan
+                                                                        Frame forward scan on: a
+                            """))
+                    .expectSize()
+                    .returns(expected);
+            // a constant false INNER join condition in the first branch
+            assertQuery("""
+                    SELECT a.id, l.v
+                    FROM a
+                    CROSS JOIN LATERAL (
+                        SELECT u.v FROM u JOIN d ON u.k = d.k AND 1 = 0 WHERE u.k <= a.k
+                        UNION ALL
+                        SELECT y.v FROM y WHERE y.k <= a.k
+                    ) l
+                    ORDER BY a.id, l.v
+                    """)
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns(expected);
         });
     }
 

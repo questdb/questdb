@@ -9506,6 +9506,67 @@ public class JoinTest extends AbstractCairoTest {
                                                     Frame forward scan on: c
                             """);
             assertJoinFilterEvaluationCount(query, 0, 0);
+            // the empty a empties a CROSS join, which the projection passes to the LEFT join
+            query = "SELECT j.k, b.k bk FROM (SELECT a.k FROM " + emptyA + " CROSS JOIN c) j LEFT JOIN " + filteredB + " ON j.k = b.k";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: b.k=j.k
+                                    SelectedRecord
+                                        Cross Join
+                                            Empty table
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                    Hash
+                                        Async Filter workers: 1
+                                          filter: test_latched_counter()
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                            """);
+            assertJoinFilterEvaluationCount(query, 0, 0);
+            // the size of a CROSS join whose master is empty reads no row of its slave
+            query = "SELECT count(*) FROM " + emptyA + " CROSS JOIN " + filteredB;
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            Count
+                                Cross Join
+                                    Empty table
+                                    Async Filter workers: 1
+                                      filter: test_latched_counter()
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: b
+                            """);
+            assertJoinFilterEvaluationCount(query, 1, 0);
+            // the first LEFT join filters its rows
+            query = "SELECT a.k, b.k bk FROM " + emptyA + " LEFT JOIN c ON a.k = c.y AND a.x > c.y LEFT JOIN " + filteredB + " ON a.k = b.k";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .assertsPlan("""
+                            SelectedRecord
+                                Hash Left Outer Join Light
+                                  condition: b.k=a.k
+                                    Hash Left Outer Join Light
+                                      condition: c.y=a.k
+                                      filter: c.y<a.x
+                                        Empty table
+                                        Hash
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: c
+                                    Hash
+                                        Async Filter workers: 1
+                                          filter: test_latched_counter()
+                                            PageFrame
+                                                Row forward scan
+                                                Frame forward scan on: b
+                            """);
+            assertJoinFilterEvaluationCount(query, 0, 0);
             // the master computes a column of, or filters, an INNER join that the empty a empties
             assertJoinFilterEvaluationCount("SELECT m.k, b.k bk FROM (SELECT a.k + 1 k FROM " + emptyA + " JOIN c ON a.k = c.y) m LEFT JOIN " + filteredB + " ON m.k = b.k", 0, 0);
             assertJoinFilterEvaluationCount("SELECT m.k, b.k bk FROM (SELECT a.k FROM " + emptyA + " JOIN c ON a.k = c.y WHERE a.x > c.y) m LEFT JOIN " + filteredB + " ON m.k = b.k", 0, 0);

@@ -299,6 +299,25 @@ public class BooleanSubQueryRuntimeGateTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFalsePredicateGateCloseFreesOpenBase() throws Exception {
+        // The empty cursor of a gate that opens its base holds the base cursor. When the consumer does not close
+        // that cursor, closing the gate does, and the base cursor releases its table reader.
+        assertMemoryLeak(() -> {
+            createTables();
+            OpenCountingRecordCursorFactory base = new OpenCountingRecordCursorFactory(select("select * from t"));
+            RuntimeConstGateRecordCursorFactory gate = new RuntimeConstGateRecordCursorFactory(base, new ConstBoolFilter(false), null, true);
+            try {
+                final RecordCursor cursor = gate.getCursor(sqlExecutionContext);
+                Assert.assertFalse(cursor.hasNext());
+                Assert.assertEquals("the open base cursor holds the table reader", 1, engine.getBusyReaderCount());
+            } finally {
+                gate.close();
+            }
+            Assert.assertEquals("closing the gate must close the base cursor", 0, engine.getBusyReaderCount());
+        });
+    }
+
+    @Test
     public void testFalsePredicateOpensBaseThatHoldsSharedPrimary() throws Exception {
         // A base that holds a shared primary opens in every execution, also while the predicate is false, so that
         // a shared cursor outside the base reads the state of the current execution. The gate reads no row of the
