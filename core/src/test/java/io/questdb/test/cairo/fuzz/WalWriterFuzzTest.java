@@ -1339,9 +1339,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0
         );
         setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
-        // Two more bugs make covering queries read NULL, and FuzzDropIndexOperation skips their shapes:
-        // DROP INDEX of a column that a POSTING index covers, and DROP INDEX then ADD INDEX of the same
-        // type on the column that hosts a covering index.
+        // DROP INDEX of a column that a POSTING index covers makes covering queries read NULL, so
+        // FuzzDropIndexOperation skips that shape.
         fuzzer.setDropIndexProbability(0.05);
         if (rnd.nextBoolean()) {
             // The purge job of the fuzz run saves the purges in the purge log and leaves them there, as

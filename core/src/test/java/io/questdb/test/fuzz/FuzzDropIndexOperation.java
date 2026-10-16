@@ -27,7 +27,6 @@ package io.questdb.test.fuzz;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
-import io.questdb.cairo.IndexType;
 import io.questdb.cairo.TableWriterAPI;
 import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.TableRecordMetadata;
@@ -80,16 +79,6 @@ public class FuzzDropIndexOperation implements FuzzTransactionOperation {
                         .$(", column=").$(metadata.getColumnName(symbolColumnIndex)).I$();
                 return;
             }
-            // TableReaderMetadata.applyTransition() compares the index type but not the covering flag,
-            // so a reader that reloads across the DROP INDEX and the ADD INDEX of the same type keeps
-            // the old covering list, and covering queries read NULL. The fix of applyTransition()
-            // removes this guard.
-            if (isSameTypeReAddOnCoveringHost(metadata)) {
-                LOG.info().$("skipping drop index and re-add of the same type on a covering index [table=").$(tableName)
-                        .$(", column=").$(metadata.getColumnName(symbolColumnIndex))
-                        .$(", indexType=").$(newIndexTypeName).I$();
-                return;
-            }
             columnName = metadata.getColumnName(symbolColumnIndex);
         } catch (CairoException e) {
             return;
@@ -138,11 +127,5 @@ public class FuzzDropIndexOperation implements FuzzTransactionOperation {
             }
         }
         return false;
-    }
-
-    private boolean isSameTypeReAddOnCoveringHost(TableRecordMetadata metadata) {
-        return newIndexTypeName != null
-                && metadata.getColumnMetadata(symbolColumnIndex).isCovering()
-                && IndexType.valueOf(newIndexTypeName) == metadata.getColumnIndexType(symbolColumnIndex);
     }
 }
