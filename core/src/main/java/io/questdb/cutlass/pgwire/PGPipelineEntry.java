@@ -45,6 +45,7 @@ import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.sql.TableReferenceOutOfDateException;
+import io.questdb.cutlass.SelectCacheKey;
 import io.questdb.griffin.CharacterStore;
 import io.questdb.griffin.CharacterStoreEntry;
 import io.questdb.griffin.CompiledQuery;
@@ -184,6 +185,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // list of pair: column types (with format flag stored in first bit) AND additional type flag
     private final IntList pgResultSetColumnTypes;
     private final CancellationBinding queryCancellation = new CancellationBinding();
+    private final StringSink selectCacheKeySink = new StringSink();
     private final Utf8StringSink utf8StringSink = new Utf8StringSink();
     private final ObjectPool<PGNonNullVarcharArrayView> varcharArrayViewPool = new ObjectPool<>(PGNonNullVarcharArrayView::new, 1);
     private final SqlExecutionOwner sqlExecutionOwner = new SqlExecutionOwner();
@@ -216,6 +218,8 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
     // PostgresSQL wire.
     private Utf8Sequence preparedStatementNameToDeallocate;
     private MemoryTracker queryMemoryTracker;
+    // the select cache scope of the principal the statement was parsed for, see SelectCacheKey
+    private CharSequence selectCacheScope = null;
     private boolean selectIsCacheable = true;
     private long sqlAffectedRowCount = 0;
     // The count of rows sent that have been sent to the client per fetch. Client can either
@@ -291,7 +295,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
             // make sure factory is not released when the pipeline entry is closed
             factory = null;
             // we don't have to use immutable string since ConcurrentAssociativeCache does it when needed
-            tasCache.put(sqlText, tas);
+            tasCache.put(SelectCacheKey.of(selectCacheScope, sqlText, selectCacheKeySink), tas);
             tas = null;
         } else if (tai != null) {
             taiCache.put(sqlText, tai);
@@ -371,6 +375,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         preparedStatementNameToDeallocate = null;
         queryCancellation.clear();
         queryMemoryTracker = null;
+        selectCacheScope = null;
         sqlAffectedRowCount = 0;
         endSqlExecutionOwner();
         sqlReturnRowCount = 0;
@@ -1135,6 +1140,11 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.sqlReturnRowCountLimit = rowCountLimit;
     }
 
+    // the scope must be immutable, see SecurityContext.getSelectCacheScope()
+    public void setSelectCacheScope(CharSequence selectCacheScope) {
+        this.selectCacheScope = selectCacheScope;
+    }
+
     public void setStateBind(boolean stateBind) {
         this.stateBind = stateBind;
     }
@@ -1406,6 +1416,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
         this.operation = blueprint.operation;
         this.parentPreparedStatementPipelineEntry = blueprint.parentPreparedStatementPipelineEntry;
         this.namedStatement = blueprint.namedStatement;
+        this.selectCacheScope = blueprint.selectCacheScope;
         this.sqlTag = blueprint.sqlTag;
         this.sqlText = blueprint.sqlText;
         this.sqlType = blueprint.sqlType;
@@ -1787,14 +1798,34 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                     for (int attempt = 1; ; attempt++) {
                         final InsertOperation insertOp = tai.getInsert();
                         InsertMethod m;
+                        boolean isRetryable = true;
                         try {
                             m = insertOp.createMethod(sqlExecutionContext, writerSource);
+                            // The method borrows the writer an earlier statement of the transaction
+                            // parked, if there is one, and with it the rows that statement appended.
+                            final TableWriterAPI borrowed = m.getWriter();
+                            final boolean isParked = pendingWriters.get(borrowed.getTableToken()) == borrowed;
+                            final long parkedRowCount = isParked ? borrowed.getUncommittedRowCount() : 0;
                             try {
                                 sqlAffectedRowCount = m.execute(sqlExecutionContext);
                                 TableWriterAPI writer = m.popWriter();
                                 pendingWriters.put(writer.getTableToken(), writer);
                             } catch (Throwable th) {
                                 TableWriterAPI w = m.popWriter();
+                                if (isParked && th instanceof TableReferenceOutOfDateException) {
+                                    if (w.getUncommittedRowCount() == parkedRowCount) {
+                                        // A stale plan fails before it appends, as when a view it reads
+                                        // was redefined, so the parked rows are intact. The writer stays
+                                        // parked for the recompiled plan to append to. Releasing it would
+                                        // roll those rows back, and the transaction would commit without
+                                        // them, while every statement in it reported success.
+                                        throw th;
+                                    }
+                                    // The failed plan rolled the parked rows back, and a retry cannot
+                                    // bring them back, so the transaction has to fail rather than commit
+                                    // without them.
+                                    isRetryable = false;
+                                }
                                 if (w != null) {
                                     pendingWriters.remove(w.getTableToken());
                                 }
@@ -1804,7 +1835,7 @@ public class PGPipelineEntry implements QuietCloseable, Mutable {
                             break;
                         } catch (TableReferenceOutOfDateException e) {
                             tai = Misc.free(tai);
-                            if (attempt == maxRecompileAttempts) {
+                            if (!isRetryable || attempt == maxRecompileAttempts) {
                                 throw e;
                             }
                             compileNewSQL(sqlText, engine, sqlExecutionContext, taiPool, true);

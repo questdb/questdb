@@ -6055,7 +6055,7 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 empty\tb:empty
                 min\tb:min
                 max\tb:max
-                escape\t
+                escape\tb:escape
                 null\tb:null
                 ## copy_bind
                 status\tmessage
@@ -10002,6 +10002,9 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 setUuid\t00000000-0000-0000-0000-000000000001
                 setArray\terror: [0] bind variable at 0 is defined as VARCHAR and cannot accept ARRAY
                 """);
+        // where_key@parallel-jit: master's JIT filter selects the largest TIMESTAMP_NS value given
+        // as text ('2262-04-11T23:47:16.854775807Z'), its Java filter selects nothing; since a
+        // filtered LATEST ON runs the JIT filter in parallel (#7655), where_key differs by mode
         rec("TIMESTAMP_NS", """
                 ## filter_eq
                 props: random_access=true size=unknown timestamp=none
@@ -10230,6 +10233,11 @@ public class TypeConformanceSqlTest extends AbstractCairoTest {
                 ## where_key
                 min\t
                 max\t
+                sentinel\tb:null
+                null\tb:null
+                ## where_key@parallel-jit
+                min\t
+                max\tb:max
                 sentinel\tb:null
                 null\tb:null
                 ## copy_bind

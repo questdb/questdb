@@ -429,12 +429,18 @@ public class CairoTextWriter implements Closeable, Mutable {
                 }
                 if (overwrite) {
                     securityContext.authorizeTableDrop(tableToken);
+                    // Overwriting drops the table, so a table that cannot be dropped cannot be
+                    // overwritten either, or this would be the route around the veto.
+                    engine.checkTableDroppable(tableToken);
                     engine.dropTableOrViewOrMatView(path, tableToken);
                     tableToken = createTable(names, detectedTypes, securityContext, path);
                     tableReCreated = true;
                     writer = engine.getTableWriterAPI(tableToken, WRITER_LOCK_REASON);
                     metadata = GenericRecordMetadata.copyDense(writer.getMetadata());
                 } else {
+                    // Authorized before the text is matched against the table, whose errors (column
+                    // count, column types) would disclose the schema to a principal who may not insert.
+                    securityContext.authorizeInsert(tableToken);
                     initWriterAndOverrideImportTypes(tableToken, names, detectedTypes, typeManager);
                     designatedTimestampIndex = writer.getMetadata().getTimestampIndex();
                     designatedTimestampColumnName = getDesignatedTimestampColumnName(writer.getMetadata());
@@ -448,7 +454,6 @@ public class CairoTextWriter implements Closeable, Mutable {
                     }
                     partitionBy = tablePartitionBy;
                     tableStructureAdapter.of(names, detectedTypes);
-                    securityContext.authorizeInsert(tableToken);
                 }
                 break;
             default:

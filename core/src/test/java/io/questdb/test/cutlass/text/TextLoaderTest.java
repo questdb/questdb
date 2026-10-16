@@ -30,7 +30,9 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.SecurityContext;
 import io.questdb.cairo.TableReader;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.security.AllowAllSecurityContext;
@@ -3574,6 +3576,33 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWriteToExistingTableAuthorizesInsertBeforeMatchingColumns() throws Exception {
+        assertNoLeak(textLoader -> {
+            // The text has more columns than the table. Matching them would fail with an error that names the
+            // table's column count, so a principal who may not insert must be refused before the match.
+            final SecurityContext insertDenied = new AllowAllSecurityContext() {
+                @Override
+                public void authorizeInsert(TableToken tableToken) {
+                    throw CairoException.authorization().put("insert denied");
+                }
+
+                @Override
+                protected SecurityContext newPrincipalContext(CharSequence principal) {
+                    return this;
+                }
+            };
+            execute("create table test(a int, b int)");
+            configureLoaderDefaults(textLoader);
+            try {
+                playText0(textLoader, "1,2,3\n4,5,6\n", 1024, NOOP_TRANSFORMER, insertDenied);
+                Assert.fail();
+            } catch (CairoException e) {
+                TestUtils.assertEquals("insert denied", e.getFlyweightMessage());
+            }
+        });
+    }
+
+    @Test
     public void testWriteToExistingTableBadDateColumn() throws Exception {
         assertNoLeak(textLoader -> {
             String expected = """
@@ -3866,6 +3895,16 @@ public class TextLoaderTest extends AbstractCairoTest {
     }
 
     private static void playText0(TextLoader textLoader, String text, int firstBufSize, ByteArrayTransformer transformer) throws TextException {
+        playText0(textLoader, text, firstBufSize, transformer, AllowAllSecurityContext.INSTANCE);
+    }
+
+    private static void playText0(
+            TextLoader textLoader,
+            String text,
+            int firstBufSize,
+            ByteArrayTransformer transformer,
+            SecurityContext securityContext
+    ) throws TextException {
         byte[] bytes = text.getBytes(Files.UTF_8);
         transformer.transform(bytes);
         int len = bytes.length;
@@ -3877,15 +3916,15 @@ public class TextLoaderTest extends AbstractCairoTest {
             }
 
             if (firstBufSize < len) {
-                textLoader.parse(buf, buf + firstBufSize, AllowAllSecurityContext.INSTANCE);
+                textLoader.parse(buf, buf + firstBufSize, securityContext);
                 textLoader.setState(TextLoader.LOAD_DATA);
 
                 for (int i = firstBufSize; i < len; i++) {
                     Unsafe.putByte(smallBuf, Unsafe.getByte(buf + i));
-                    textLoader.parse(smallBuf, smallBuf + 1, AllowAllSecurityContext.INSTANCE);
+                    textLoader.parse(smallBuf, smallBuf + 1, securityContext);
                 }
             } else {
-                textLoader.parse(buf, buf + len, AllowAllSecurityContext.INSTANCE);
+                textLoader.parse(buf, buf + len, securityContext);
             }
             textLoader.wrapUp();
         } finally {

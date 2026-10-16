@@ -37,9 +37,11 @@ import java.util.Map;
  * A recording is a text block per type and kit class, split into sections, one per path: a line
  * {@code ## <path>} opens a section. A test computes one section per path and mode and asserts it
  * against the section of the same name, or, when the recording has none, the section of the path
- * whose output it equals ({@link #SAME_AS}); the expected text is the same in every mode. Lines are
- * tab-separated and start with the value row's label, so a failure names the type, the value row,
- * the path and the mode.
+ * whose output it equals ({@link #SAME_AS}); the expected text is the same in every mode. The one
+ * exception is a section {@code ## <path>@<mode>}: master's modes disagree on that path, and the
+ * section records what that mode gives, with the disagreement explained beside the recording.
+ * Lines are tab-separated and start with the value row's label, so a failure names the type, the
+ * value row, the path and the mode.
  * <p>
  * Output is escaped before it is compared ({@link #escape}): a character that does not print
  * (controls other than tab and newline, U+FFFE, U+FFFF, lone surrogates) becomes {@code \\uXXXX},
@@ -76,7 +78,10 @@ public final class TypeConformanceRecording {
             Assert.fail("type=" + type.label + " path=" + path + " mode=" + mode + ": no recording for this type");
         }
         final Map<String, String> sections = sections(recording);
-        String expected = sections.get(path);
+        String expected = sections.get(path + "@" + mode);
+        if (expected == null) {
+            expected = sections.get(path);
+        }
         if (expected == null && SAME_AS.containsKey(path)) {
             expected = sections.get(SAME_AS.get(path));
         }

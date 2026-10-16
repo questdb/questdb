@@ -98,6 +98,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private int intervalFunctionType;
     private long intervalPlanGeneration;
     private long intervalPlanGenerationCounter;
+    private boolean isMetadataProbe;
     private int jitMode;
     private boolean liveViewCompile;
     private MemoryTracker memoryTracker;
@@ -119,6 +120,7 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     private Rnd random;
     private ResourcePoolSupervisor<TableReader> readerPoolSupervisor;
     private long requestFd = -1;
+    private TableFunctionView tableFunctionView;
     private boolean useSimpleCircuitBreaker;
     private boolean validationOnly = false;
     private SecurityContext validationSecurityContext;
@@ -417,6 +419,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public TableFunctionView getTableFunctionView() {
+        return tableFunctionView;
+    }
+
+    @Override
     public WindowContext getWindowContext() {
         return windowContext;
     }
@@ -442,6 +449,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public boolean isLiveViewCompile() {
         return liveViewCompile;
+    }
+
+    @Override
+    public boolean isMetadataProbe() {
+        return isMetadataProbe;
     }
 
     @Override
@@ -645,6 +657,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     }
 
     @Override
+    public void setMetadataProbe(boolean value) {
+        this.isMetadataProbe = value;
+    }
+
+    @Override
     public void setQueryRegistryOwnerId(long queryRegistryOwnerId) {
         this.queryRegistryOwnerId = queryRegistryOwnerId;
     }
@@ -705,6 +722,11 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
     @Override
     public void setReaderPoolSupervisor(@Nullable ResourcePoolSupervisor<TableReader> supervisor) {
         this.readerPoolSupervisor = supervisor;
+    }
+
+    @Override
+    public void setTableFunctionView(TableFunctionView view) {
+        this.tableFunctionView = view;
     }
 
     @Override
@@ -832,6 +854,8 @@ public class SqlExecutionContextImpl implements SqlExecutionContext {
         // but a reused per-connection context must never inherit a stale live-view flag.
         // setLiveViewCompile also clears the mirrored windowContext flag.
         setLiveViewCompile(false);
+        this.tableFunctionView = null;
+        isMetadataProbe = false;
         // QueryRegistry owns the tracker lifecycle; null it defensively so an error
         // unwinding between register() and unregister() cannot leak it into reuse.
         this.memoryTracker = null;
