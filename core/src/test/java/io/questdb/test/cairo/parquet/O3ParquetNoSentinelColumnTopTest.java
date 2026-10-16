@@ -795,6 +795,10 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         drainWalQueue();
         assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
         assertDayRows(parquetDays, expectedByDay, true, true, false);
+        // the same filter once ALTER c1 TYPE SYMBOL has turned the partition native
+        for (int i = 0, n = expectedByDay.size(); i < n; i++) {
+            assertC2NullCount(parquetDays[i], countTop(expectedByDay.get(i)));
+        }
         for (String day : parquetDays) {
             execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '" + day + "'");
         }
