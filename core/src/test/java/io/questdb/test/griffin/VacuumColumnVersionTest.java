@@ -36,6 +36,8 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlCompilerImpl;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
+import io.questdb.std.FindVisitor;
+import io.questdb.std.Misc;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Os;
 import io.questdb.std.str.LPSZ;
@@ -58,6 +60,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.regex.Pattern;
 
 public class VacuumColumnVersionTest extends AbstractCairoTest {
     // the index clauses of s in the POSTING tests; the last one writes no .pc files
@@ -1453,8 +1456,416 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testVacuumKeepsCoverFilesOfConcurrentPostingIndexOnInstanceZero() throws Exception {
+        // In the default partition of a table that is not partitioned, DROP INDEX before the first commit
+        // writes instance 0 of s next to instance NONE, whose purge the full purge queue drops. ADD INDEX
+        // TYPE POSTING INCLUDE runs on instance 0 while VACUUM lists the partition, under a reader that
+        // does not see the index yet. Its .pc files carry the host token 0 that NONE also writes. VACUUM
+        // purges the POSTING files of NONE and keeps every file of instance 0.
+        final AtomicReference<String> concurrentAlter = new AtomicReference<>();
+        final ArrayList<String> listingsAfterAlter = new ArrayList<>();
+        assertMemoryLeak(newConcurrentAlterFilesFacade(concurrentAlter, listingsAfterAlter), () -> {
+            execute("CREATE TABLE pt (v INT, ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (d, vc), d DOUBLE, vc VARCHAR) TIMESTAMP(ts)");
+            alterWithFullPurgeQueue("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+            insertPostingRows();
+            Assert.assertEquals(0, getColumnNameTxn("pt", "s", 0));
+            final String staleFiles = filesOfInstance(listFiles("pt", "default"), "s", TableUtils.COLUMN_NAME_TXN_NONE);
+            assertHasFiles("instance NONE", staleFiles, "s.d", "s.pk", "s.pv.");
+            Assert.assertFalse(staleFiles, hasCoverDataFile(staleFiles));
+
+            concurrentAlter.set("ALTER TABLE pt ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (d, vc)");
+            vacuumTablePt();
+            Assert.assertNull(concurrentAlter.get());
+            Assert.assertEquals(1, listingsAfterAlter.size());
+            final String listingAfterAlter = listingsAfterAlter.get(0);
+            final String filesOfInstanceZero = filesOf(withoutFiles(listingAfterAlter, staleFiles), "s.");
+            assertHasFiles("instance 0", filesOfInstanceZero, "s.d.0", "s.pc0.0.", "s.pci.0", "s.pk.0", "s.pv.0.");
+
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+            Assert.assertEquals(withoutFiles(listingAfterAlter, staleFiles), listFiles("pt", "default"));
+            assertPostingRowsOfY("after VACUUM", true, POSTING_ROWS_OF_Y);
+        });
+    }
+
+    @Test
+    public void testVacuumKeepsCoverFilesOfConcurrentPostingIndexOnTxnNoneColumn() throws Exception {
+        // s comes from CREATE TABLE (column name txn NONE) without an index. ADD INDEX TYPE POSTING
+        // INCLUDE runs while VACUUM lists the first partition, under a reader that does not see the index
+        // yet. The .pc files of the new index carry the host token 0, which VACUUM parses as txn 0, and
+        // VACUUM keeps them as files of the live instance NONE.
+        final AtomicReference<String> concurrentAlter = new AtomicReference<>();
+        final ArrayList<String> listingsAfterAlter = new ArrayList<>();
+        assertMemoryLeak(newConcurrentAlterFilesFacade(concurrentAlter, listingsAfterAlter), () -> {
+            for (String walMode : WAL_MODES) {
+                for (boolean isParquet : new boolean[]{false, true}) {
+                    final String context = walMode + (isParquet ? ", parquet" : ", native");
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("CREATE TABLE pt (v INT, ts TIMESTAMP, s SYMBOL, d DOUBLE, vc VARCHAR) TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+                    insertPostingRows();
+                    if (isParquet) {
+                        execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                        drainWalQueue();
+                    }
+                    final String[] partitionDirs = livePartitionDirs("pt");
+                    Assert.assertEquals(context, 2, partitionDirs.length);
+                    for (int i = 0; i < 2; i++) {
+                        Assert.assertEquals(context, TableUtils.COLUMN_NAME_TXN_NONE, getColumnNameTxn("pt", "s", i));
+                        Assert.assertEquals(context, isParquet && i == 0 ? "" : "s.d", filesOf(listFiles("pt", partitionDirs[i]), "s."));
+                    }
+
+                    listingsAfterAlter.clear();
+                    concurrentAlter.set("ALTER TABLE pt ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (d, vc)");
+                    vacuumTablePt();
+                    Assert.assertNull(context, concurrentAlter.get());
+                    Assert.assertEquals(context, 2, listingsAfterAlter.size());
+                    Assert.assertArrayEquals(context, partitionDirs, livePartitionDirs("pt"));
+                    for (int i = 0; i < 2; i++) {
+                        Assert.assertEquals(context, TableUtils.COLUMN_NAME_TXN_NONE, getColumnNameTxn("pt", "s", i));
+                        // the files of the new index of instance NONE: .pk, .pci and .pv carry no txn, the
+                        // .pc files the host token 0
+                        final String filesOfS = filesOf(listingsAfterAlter.get(i), "s.");
+                        assertHasFiles(context, filesOfS, "s.pc0.0.", "s.pci", "s.pk", "s.pv.");
+                        Assert.assertEquals(context + ", " + filesOfS, !(isParquet && i == 0), filesOfS.startsWith("s.d "));
+                    }
+
+                    try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                    }
+                    for (int i = 0; i < 2; i++) {
+                        Assert.assertEquals(context + ", " + partitionDirs[i], listingsAfterAlter.get(i), listFiles("pt", partitionDirs[i]));
+                    }
+                    assertPostingRowsOfY(context, true, POSTING_ROWS_OF_Y);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumKeepsLivePostingFilesOfReIndexedColumn() throws Exception {
+        // DROP INDEX moves s to a new instance L, whose purge of instance NONE the full purge queue drops,
+        // and ADD INDEX TYPE POSTING INCLUDE indexes L. VACUUM removes the files of NONE and keeps L.
+        assertMemoryLeak(() -> {
+            for (String walMode : WAL_MODES) {
+                for (boolean isParquet : new boolean[]{false, true}) {
+                    final String context = walMode + (isParquet ? ", parquet" : ", native");
+                    final String[] partitionDirs = createStaleInstanceNone(context, walMode, POSTING_INDEX_CLAUSES[0], isParquet);
+                    final String[] staleFiles = staleFilesOfInstanceNone(context, partitionDirs);
+                    alterWithFullPurgeQueue(
+                            "ALTER TABLE pt ALTER COLUMN s DROP INDEX",
+                            "ALTER TABLE pt ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (d, vc)"
+                    );
+                    final String[] expected = new String[2];
+                    for (int i = 0; i < 2; i++) {
+                        final long liveTxn = getColumnNameTxn("pt", "s", i);
+                        Assert.assertTrue(context, liveTxn > 0);
+                        final String listing = listFiles("pt", partitionDirs[i]);
+                        Assert.assertEquals(context, staleFiles[i], filesOfInstance(listing, "s", TableUtils.COLUMN_NAME_TXN_NONE));
+                        expected[i] = withoutFiles(listing, staleFiles[i]);
+                        final String liveFiles = filesOfInstance(listing, "s", liveTxn);
+                        Assert.assertEquals(context, liveFiles, filesOf(expected[i], "s."));
+                        assertHasFiles(context, liveFiles, "s.pc0." + liveTxn + ".", "s.pci." + liveTxn, "s.pk." + liveTxn, "s.pv." + liveTxn + ".");
+                    }
+
+                    Assert.assertEquals(context, 0, vacuumAndPurge());
+                    for (int i = 0; i < 2; i++) {
+                        Assert.assertEquals(context + ", " + partitionDirs[i], expected[i], listFiles("pt", partitionDirs[i]));
+                    }
+                    assertPostingRowsOfY(context, true, POSTING_ROWS_OF_Y);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumPurgesPostingFilesOfDroppedColumn() throws Exception {
+        // DROP COLUMN s, whose purge the full purge queue drops, leaves every file of s in the partitions,
+        // the POSTING files among them, and the symbol table files in the table root. VACUUM removes them.
+        assertMemoryLeak(() -> {
+            for (String walMode : WAL_MODES) {
+                for (boolean isParquet : new boolean[]{false, true}) {
+                    final String context = walMode + (isParquet ? ", parquet" : ", native");
+                    final String[] partitionDirs = createStaleInstanceNone(context, walMode, POSTING_INDEX_CLAUSES[0], isParquet);
+                    final String[] staleFiles = staleFilesOfInstanceNone(context, partitionDirs);
+                    alterWithFullPurgeQueue("ALTER TABLE pt DROP COLUMN s");
+                    final String[] expected = new String[2];
+                    for (int i = 0; i < 2; i++) {
+                        final String listing = listFiles("pt", partitionDirs[i]);
+                        Assert.assertEquals(context, staleFiles[i], filesOf(listing, "s."));
+                        expected[i] = withoutFiles(listing, staleFiles[i]);
+                    }
+                    Assert.assertEquals(context, "s.c s.k s.o s.v", filesOf(listFiles("pt", ""), "s."));
+
+                    Assert.assertEquals(context, 0, vacuumAndPurge());
+                    for (int i = 0; i < 2; i++) {
+                        Assert.assertEquals(context + ", " + partitionDirs[i], expected[i], listFiles("pt", partitionDirs[i]));
+                    }
+                    Assert.assertEquals(context, "", filesOf(listFiles("pt", ""), "s."));
+                    assertQuery("SELECT v, ts, d, vc FROM pt")
+                            .noLeakCheck()
+                            .expectSize()
+                            .timestamp("ts")
+                            .returns("""
+                                    v\tts\td\tvc
+                                    1\t2024-01-01T00:00:00.000000Z\t1.5\ta1
+                                    2\t2024-01-01T01:00:00.000000Z\t2.5\ta2
+                                    3\t2024-01-01T02:00:00.000000Z\t3.5\ta3
+                                    4\t2024-01-01T03:00:00.000000Z\t4.5\ta4
+                                    5\t2024-01-02T00:00:00.000000Z\t5.5\ta5
+                                    """);
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumPurgesStaleInstancesNoneAndZeroInOneTask() throws Exception {
+        // In the default partition of a table that is not partitioned, DROP INDEX before the first commit
+        // writes instance 0 of s next to instance NONE, ADD INDEX TYPE POSTING INCLUDE indexes 0, and
+        // DROP INDEX after the rows moves s to instance L. The full purge queue drops both purges. One
+        // VACUUM task purges NONE, whose purge keeps the .pc files of token 0 while s.d.0 exists, and then
+        // 0, whose purge removes them, and leaves only s.d.L.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (v INT, ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (d, vc), d DOUBLE, vc VARCHAR) TIMESTAMP(ts)");
+            alterWithFullPurgeQueue("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+            execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (d, vc)");
+            insertPostingRows();
+            Assert.assertEquals(0, getColumnNameTxn("pt", "s", 0));
+            alterWithFullPurgeQueue("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+            final long liveTxn = getColumnNameTxn("pt", "s", 0);
+            Assert.assertTrue(liveTxn > 0);
+
+            final String listing = listFiles("pt", "default");
+            final String filesOfNone = filesOfInstance(listing, "s", TableUtils.COLUMN_NAME_TXN_NONE);
+            final String filesOfZero = filesOfInstance(listing, "s", 0);
+            assertHasFiles("instance NONE", filesOfNone, "s.d", "s.pk", "s.pv.");
+            assertHasFiles("instance 0", filesOfZero, "s.d.0", "s.pc0.0.", "s.pci.0", "s.pk.0", "s.pv.0.");
+            final String staleFiles = sortedFiles(filesOfNone, filesOfZero);
+            Assert.assertEquals("s.d." + liveTxn, filesOf(withoutFiles(listing, staleFiles), "s."));
+
+            Assert.assertEquals(0, vacuumAndPurge());
+            Assert.assertEquals(withoutFiles(listing, staleFiles), listFiles("pt", "default"));
+            assertPostingRowsOfY("after VACUUM", false, POSTING_ROWS_OF_Y);
+        });
+    }
+
+    @Test
+    public void testVacuumPurgesStaleNoneUnderInstanceZeroNonPartitioned() throws Exception {
+        // In the default partition of a table that is not partitioned, DROP INDEX before the first commit
+        // writes instance 0 of s next to instance NONE, whose purge the full purge queue drops; s then has
+        // no index, or a BITMAP one. VACUUM removes the POSTING files of NONE and keeps instance 0.
+        assertMemoryLeak(() -> {
+            for (boolean isLiveBitmap : new boolean[]{false, true}) {
+                final String context = isLiveBitmap ? "BITMAP" : "no index";
+                execute("DROP TABLE IF EXISTS pt");
+                execute("CREATE TABLE pt (v INT, ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (d, vc), d DOUBLE, vc VARCHAR) TIMESTAMP(ts)");
+                if (isLiveBitmap) {
+                    alterWithFullPurgeQueue("ALTER TABLE pt ALTER COLUMN s DROP INDEX", "ALTER TABLE pt ALTER COLUMN s ADD INDEX TYPE BITMAP");
+                } else {
+                    alterWithFullPurgeQueue("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                }
+                insertPostingRows();
+                Assert.assertEquals(context, 0, getColumnNameTxn("pt", "s", 0));
+                final String listing = listFiles("pt", "default");
+                final String staleFiles = filesOfInstance(listing, "s", TableUtils.COLUMN_NAME_TXN_NONE);
+                assertHasFiles(context, staleFiles, "s.d", "s.pk", "s.pv.");
+                Assert.assertEquals(context, isLiveBitmap ? "s.d.0 s.k.0 s.v.0" : "s.d.0", filesOf(withoutFiles(listing, staleFiles), "s."));
+
+                Assert.assertEquals(context, 0, vacuumAndPurge());
+                Assert.assertEquals(context, withoutFiles(listing, staleFiles), listFiles("pt", "default"));
+                assertPostingRowsOfY(context, false, POSTING_ROWS_OF_Y);
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumPurgesStalePostingAfterRefusedPurge() throws Exception {
+        // DROP INDEX with a reader open defers the purge of instance NONE of s, and DROP PARTITION of
+        // another day changes the truncate version of the table, so the purge job refuses the purge.
+        // VACUUM removes the files of NONE.
+        assertMemoryLeak(() -> {
+            for (String walMode : WAL_MODES) {
+                final String context = walMode;
+                final String[] partitionDirs = createStaleInstanceNone(context, walMode, POSTING_INDEX_CLAUSES[0], false);
+                execute("INSERT INTO pt (v, ts, s, d, vc) VALUES (6, '2024-01-03T00:00:00.000000Z', 'y', 6.5, 'a6')");
+                drainWalQueue();
+                final String[] staleFiles = staleFilesOfInstanceNone(context, partitionDirs);
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    try (TableReader ignore = getReader("pt")) {
+                        execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                        drainWalQueue();
+                        runPurgeJob(purgeJob);
+                    }
+                    Assert.assertEquals(context, 1, purgeJob.getOutstandingPurgeTasks());
+                    execute("ALTER TABLE pt DROP PARTITION LIST '2024-01-03'");
+                    drainWalQueue();
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                }
+                Assert.assertArrayEquals(context, partitionDirs, livePartitionDirs("pt"));
+                final String[] expected = new String[2];
+                for (int i = 0; i < 2; i++) {
+                    final String listing = listFiles("pt", partitionDirs[i]);
+                    Assert.assertEquals(context, staleFiles[i], filesOfInstance(listing, "s", TableUtils.COLUMN_NAME_TXN_NONE));
+                    expected[i] = withoutFiles(listing, staleFiles[i]);
+                    Assert.assertEquals(context, "s.d." + getColumnNameTxn("pt", "s", i), filesOf(expected[i], "s."));
+                }
+
+                Assert.assertEquals(context, 0, vacuumAndPurge());
+                for (int i = 0; i < 2; i++) {
+                    Assert.assertEquals(context + ", " + partitionDirs[i], expected[i], listFiles("pt", partitionDirs[i]));
+                }
+                assertPostingRowsOfY(context, false, POSTING_ROWS_OF_Y);
+            }
+        });
+    }
+
+    @Test
+    public void testVacuumPurgesStalePostingFilesUnderLiveBitmapColumn() throws Exception {
+        assertVacuumPurgesStalePostingFilesOfInstanceNone(true);
+    }
+
+    @Test
+    public void testVacuumPurgesStalePostingFilesUnderNonIndexedColumn() throws Exception {
+        assertVacuumPurgesStalePostingFilesOfInstanceNone(false);
+    }
+
+    @Test
+    public void testVacuumQueuesPostingPurgeThatCannotFinish() throws Exception {
+        // VACUUM cannot finish the purge of the stale instance NONE of s: a reader that predates DROP
+        // INDEX holds it, or the removal of one of its .pv files fails once. VACUUM queues the purge, and
+        // the purge job, or the purge job of a restart that replays its log, removes the POSTING files.
+        final AtomicReference<String> failingFile = new AtomicReference<>();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        assertMemoryLeak(newOrphanPurgeFilesFacade(new ArrayList<>(), failingFile, failedRemoveCount), () -> {
+            for (String blocker : new String[]{"reader", "reader, replayed", "failed remove"}) {
+                final String[] partitionDirs = createStaleInstanceNone(blocker, "BYPASS WAL", POSTING_INDEX_CLAUSES[0], false);
+                final String[] staleFiles = staleFilesOfInstanceNone(blocker, partitionDirs);
+                final String[] listingsBefore = new String[2];
+                final String[] expected = new String[2];
+                TableReader staleReader = getReader("pt");
+                try {
+                    alterWithFullPurgeQueue("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                    for (int i = 0; i < 2; i++) {
+                        listingsBefore[i] = listFiles("pt", partitionDirs[i]);
+                        Assert.assertEquals(blocker, staleFiles[i], filesOfInstance(listingsBefore[i], "s", TableUtils.COLUMN_NAME_TXN_NONE));
+                        expected[i] = withoutFiles(listingsBefore[i], staleFiles[i]);
+                    }
+                    final String failedFile = staleFiles[0].substring(staleFiles[0].indexOf("s.pv.")).split(" ")[0];
+                    if (blocker.equals("failed remove")) {
+                        staleReader = Misc.free(staleReader);
+                        failingFile.set(partitionDirs[0] + Files.SEPARATOR + failedFile);
+                    }
+
+                    vacuumTablePt();
+                    if (blocker.equals("failed remove")) {
+                        Assert.assertEquals(blocker, 1, failedRemoveCount.getAndSet(0));
+                        Assert.assertEquals(blocker, sortedFiles(expected[0], failedFile), listFiles("pt", partitionDirs[0]));
+                        Assert.assertEquals(blocker, expected[1], listFiles("pt", partitionDirs[1]));
+                    } else {
+                        for (int i = 0; i < 2; i++) {
+                            Assert.assertEquals(blocker, listingsBefore[i], listFiles("pt", partitionDirs[i]));
+                        }
+                    }
+                    if (blocker.equals("reader, replayed")) {
+                        // the purge job saves the queued purge in its log and stops before the reader goes
+                        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                            runPurgeJob(purgeJob);
+                            Assert.assertEquals(blocker, 1, purgeJob.getOutstandingPurgeTasks());
+                        }
+                    }
+                } finally {
+                    Misc.free(staleReader);
+                }
+
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(blocker, 0, purgeJob.getOutstandingPurgeTasks());
+                }
+                for (int i = 0; i < 2; i++) {
+                    Assert.assertEquals(blocker + ", " + partitionDirs[i], expected[i], listFiles("pt", partitionDirs[i]));
+                }
+                assertPostingRowsOfY(blocker, false, POSTING_ROWS_OF_Y);
+            }
+        });
+    }
+
+    // asserts that the space-separated listing holds each of the files, or a file that starts with each name ending with a dot
+    private static void assertHasFiles(String context, String listing, String... files) {
+        final String paddedListing = " " + listing + " ";
+        for (String file : files) {
+            Assert.assertTrue(context + ", " + file + " in " + listing, paddedListing.contains(" " + file + (file.endsWith(".") ? "" : " ")));
+        }
+    }
+
     private static String fileName(LPSZ name) {
         return Utf8s.stringFromUtf8Bytes(name);
+    }
+
+    /**
+     * The files in the space-separated listing of the instance of {@code col} with the column name txn
+     * {@code columnNameTxn}, from the file naming of TableUtils, BitmapIndexUtils and PostingIndexUtils:
+     * the data and var-size index files, the BITMAP key and value files, the POSTING key and cover info
+     * files, the sealed .pv files, and the .pc files of the host token of the txn, which is 0 for txn NONE.
+     */
+    private static String filesOfInstance(String listing, String col, long columnNameTxn) {
+        final String txnSuffix = columnNameTxn > TableUtils.COLUMN_NAME_TXN_NONE ? "\\." + columnNameTxn : "";
+        final Pattern names = Pattern.compile(Pattern.quote(col) + "\\.(?:(?:d|i|k|v|pk|pci)" + txnSuffix
+                + "|pv" + txnSuffix + "\\.[0-9]+"
+                + "|pc[0-9]+\\." + Math.max(0, columnNameTxn) + "(?:\\.[0-9]+)?\\.[0-9]+)");
+        final ArrayList<String> files = new ArrayList<>();
+        for (String file : listing.split(" ")) {
+            if (names.matcher(file).matches()) {
+                files.add(file);
+            }
+        }
+        return String.join(" ", files);
+    }
+
+    /**
+     * A files facade that runs the SQL of {@code concurrentAlter}, once, on another thread when VACUUM
+     * TABLE first lists a partition of pt, waits for it, and adds the listing of every live partition of
+     * pt to {@code listingsAfterAlter}. The other thread keeps the thread-local paths of VACUUM intact.
+     */
+    private static FilesFacade newConcurrentAlterFilesFacade(AtomicReference<String> concurrentAlter, ArrayList<String> listingsAfterAlter) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public void iterateDir(LPSZ path, FindVisitor func) {
+                final String alter = concurrentAlter.get();
+                final File parent = new File(fileName(path)).getParentFile();
+                if (alter != null && parent != null && parent.getName().startsWith("pt~")) {
+                    concurrentAlter.set(null);
+                    final AtomicReference<Throwable> alterError = new AtomicReference<>();
+                    final Thread alterThread = new Thread(() -> {
+                        try {
+                            execute(alter);
+                            drainWalQueue();
+                            for (String partitionDir : livePartitionDirs("pt")) {
+                                listingsAfterAlter.add(listFiles("pt", partitionDir));
+                            }
+                        } catch (Throwable th) {
+                            alterError.set(th);
+                        } finally {
+                            Path.clearThreadLocals();
+                        }
+                    });
+                    alterThread.start();
+                    try {
+                        alterThread.join();
+                    } catch (InterruptedException e) {
+                        throw new RuntimeException(e);
+                    }
+                    if (alterError.get() != null) {
+                        throw new RuntimeException(alterError.get());
+                    }
+                }
+                super.iterateDir(path, func);
+            }
+        };
     }
 
     /**
@@ -1615,6 +2026,48 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         assertPostingRowsOfY(context + ", reopened", isCovering, expectedRowsOfY);
     }
 
+    /**
+     * DROP INDEX, and with {@code isLiveBitmap} ADD INDEX TYPE BITMAP, leave instance NONE of s with its
+     * POSTING files in every partition, native or parquet, and the full purge queue drops its purge.
+     * VACUUM removes them and keeps the live instance L: s.d.L, with s.k.L and s.v.L for BITMAP, and
+     * no s.d.L in a parquet partition.
+     */
+    private void assertVacuumPurgesStalePostingFilesOfInstanceNone(boolean isLiveBitmap) throws Exception {
+        assertMemoryLeak(() -> {
+            for (String walMode : WAL_MODES) {
+                for (boolean isParquet : new boolean[]{false, true}) {
+                    for (String indexClause : new String[]{POSTING_INDEX_CLAUSES[0], POSTING_INDEX_CLAUSES[3]}) {
+                        final String context = walMode + (isParquet ? ", parquet, " : ", native, ") + indexClause;
+                        final String[] partitionDirs = createStaleInstanceNone(context, walMode, indexClause, isParquet);
+                        final String[] staleFiles = staleFilesOfInstanceNone(context, partitionDirs);
+                        if (isLiveBitmap) {
+                            alterWithFullPurgeQueue("ALTER TABLE pt ALTER COLUMN s DROP INDEX", "ALTER TABLE pt ALTER COLUMN s ADD INDEX TYPE BITMAP");
+                        } else {
+                            alterWithFullPurgeQueue("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+                        }
+                        final String[] expected = new String[2];
+                        for (int i = 0; i < 2; i++) {
+                            final long liveTxn = getColumnNameTxn("pt", "s", i);
+                            Assert.assertTrue(context, liveTxn > 0);
+                            final String listing = listFiles("pt", partitionDirs[i]);
+                            Assert.assertEquals(context, staleFiles[i], filesOfInstance(listing, "s", TableUtils.COLUMN_NAME_TXN_NONE));
+                            expected[i] = withoutFiles(listing, staleFiles[i]);
+                            final String liveFiles = (isParquet && i == 0 ? "" : "s.d." + liveTxn)
+                                    + (isLiveBitmap ? " s.k." + liveTxn + " s.v." + liveTxn : "");
+                            Assert.assertEquals(context, liveFiles.trim(), filesOf(expected[i], "s."));
+                        }
+
+                        Assert.assertEquals(context, 0, vacuumAndPurge());
+                        for (int i = 0; i < 2; i++) {
+                            Assert.assertEquals(context + ", " + partitionDirs[i], expected[i], listFiles("pt", partitionDirs[i]));
+                        }
+                        assertPostingRowsOfY(context, false, POSTING_ROWS_OF_Y);
+                    }
+                }
+            }
+        });
+    }
+
     private void assertOrphanIndexFilesTableRows(String context, boolean isCovering) throws Exception {
         assertPostingRowsOfY(context, isCovering, """
                 ts\ts\td\tvc
@@ -1698,6 +2151,65 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
             }
         }
         return new OrphanIndexFiles(partitionDirs, liveFiles);
+    }
+
+    /**
+     * Runs the changes while a reader holds pt and the purge queue, which holds two tasks, is full: an
+     * UPDATE of two columns of filler, with a reader open, queues one purge task per column. The writer of
+     * pt then drops the purge tasks of the changes, as it logs "purge queue is full. Please run 'VACUUM
+     * TABLE'". Then the purge job takes the two tasks of filler off the queue.
+     */
+    private void alterWithFullPurgeQueue(String... changes) throws SqlException {
+        execute("CREATE TABLE IF NOT EXISTS filler (ts TIMESTAMP, a INT, b INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+        execute("INSERT INTO filler VALUES ('2024-01-01', 1, 1)");
+        try (TableReader ignore = getReader("filler")) {
+            update("UPDATE filler SET a = a + 1, b = b + 1");
+        }
+        try (TableReader ignore = getReader("pt")) {
+            for (String change : changes) {
+                execute(change);
+                drainWalQueue();
+            }
+        }
+        try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+            runPurgeJob(purgeJob);
+            Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+        }
+    }
+
+    /**
+     * Creates pt with s from CREATE TABLE (column name txn NONE) under {@code indexClause}, writes the
+     * rows of {@link #insertPostingRows()}, and converts 2024-01-01 to parquet when {@code isParquet}.
+     * Returns the directories of the two live partitions.
+     */
+    private String[] createStaleInstanceNone(String context, String walMode, String indexClause, boolean isParquet) throws SqlException {
+        execute("DROP TABLE IF EXISTS pt");
+        createPostingTableOfColumnNameTxnNone(walMode, indexClause);
+        insertPostingRows();
+        if (isParquet) {
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+        }
+        final String[] partitionDirs = livePartitionDirs("pt");
+        Assert.assertEquals(context, 2, partitionDirs.length);
+        Assert.assertEquals(context, isParquet, listFiles("pt", partitionDirs[0]).contains("data.parquet"));
+        return partitionDirs;
+    }
+
+    /**
+     * The files of instance NONE of s in each of the partitions, which hold s.pk and the sealed .pv files,
+     * and s.d in a native partition.
+     */
+    private String[] staleFilesOfInstanceNone(String context, String[] partitionDirs) {
+        final String[] staleFiles = new String[partitionDirs.length];
+        for (int i = 0; i < partitionDirs.length; i++) {
+            Assert.assertEquals(context, TableUtils.COLUMN_NAME_TXN_NONE, getColumnNameTxn("pt", "s", i));
+            final String listing = listFiles("pt", partitionDirs[i]);
+            staleFiles[i] = filesOfInstance(listing, "s", TableUtils.COLUMN_NAME_TXN_NONE);
+            Assert.assertEquals(context, filesOf(listing, "s."), staleFiles[i]);
+            assertHasFiles(context, staleFiles[i], "s.pk", "s.pv.");
+        }
+        return staleFiles;
     }
 
     private void createPostingTableOfColumnNameTxnNone(String walMode, String indexClause) throws SqlException {

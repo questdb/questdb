@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.PropertyKey;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnPurgeJob;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.IndexType;
@@ -36,10 +37,12 @@ import io.questdb.cairo.TimestampDriver;
 import io.questdb.cairo.idx.BitmapIndexUtils;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.griffin.SqlException;
+import io.questdb.log.Log;
 import io.questdb.mp.Sequence;
 import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
+import io.questdb.std.Misc;
 import io.questdb.std.NumericException;
 import io.questdb.std.datetime.microtime.Micros;
 import io.questdb.std.str.LPSZ;
@@ -49,6 +52,7 @@ import io.questdb.tasks.ColumnPurgeTask;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.TestTimestampType;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.junit.Assert;
 import org.junit.Before;
@@ -933,6 +937,144 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                                 """, timestampType.getTypeName()));
             }
         });
+    }
+
+    @Test
+    public void testPurgeDuringDropTable() throws Exception {
+        assertPurgeDuringDropTable(false);
+    }
+
+    @Test
+    public void testPurgeDuringFailedDropTable() throws Exception {
+        assertPurgeDuringDropTable(true);
+    }
+
+    @Test
+    public void testPurgeMixesRetryAndLiveEntries() throws Exception {
+        // The table id of t cannot be read for the first entry of the purge only. The job retries that
+        // entry and purges the other two partitions in the same run; the purge log marks the rows of the
+        // task complete once every entry is done.
+        final AtomicBoolean isMetaOpenFailureArmed = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isMetaFileOfT(name) && isMetaOpenFailureArmed.compareAndSet(true, false)) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                final String[] oldFiles = dropIndexOfRetryTableWithReader(purgeJob, "BYPASS WAL");
+                final String[] listings = listRetryTablePartitions(oldFiles);
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 10L * iteration++);
+                isMetaOpenFailureArmed.set(true);
+                purgeJob.run();
+                Assert.assertFalse(isMetaOpenFailureArmed.get());
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 0);
+                Assert.assertEquals(listings[0], listFiles(partitionDir("t", 0)));
+                for (int i = 1; i < 3; i++) {
+                    Assert.assertEquals(withoutFiles(listings[i], oldFiles[i]), listFiles(partitionDir("t", i)));
+                }
+
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 3);
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(withoutFiles(listings[i], oldFiles[i]), listFiles(partitionDir("t", i)));
+                }
+            }
+            assertRowsOfRetryTable();
+        });
+    }
+
+    @Test
+    public void testPurgeOfRecreatedTableWithUnreadableMetaIsOrphan() throws Exception {
+        // t is dropped and created again under the same name while its purge waits. The registry holds
+        // another table id, so the job drops the purge even though it cannot read _meta, and the files
+        // of the new table stay.
+        final AtomicBoolean isMetaOpenFailing = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isMetaOpenFailing.get() && isMetaFileOfT(name)) {
+                    return -1;
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                dropIndexOfRetryTableWithReader(purgeJob, "BYPASS WAL");
+                engine.releaseInactive();
+                execute("DROP TABLE t");
+                createRetryTable("BYPASS WAL");
+                final String[] listings = new String[3];
+                for (int i = 0; i < 3; i++) {
+                    listings[i] = listFiles(partitionDir("t", i));
+                    Assert.assertTrue(listings[i], (" " + listings[i] + " ").contains(" sym.d "));
+                }
+                engine.releaseInactive();
+                isMetaOpenFailing.set(true);
+                runPurgeJob(purgeJob);
+                isMetaOpenFailing.set(false);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 3);
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(listings[i], listFiles(partitionDir("t", i)));
+                }
+            }
+            assertRowsOfRetryTable();
+        });
+    }
+
+    @Test
+    public void testPurgeOfTableWithMetaOfAnotherTableIsOrphan() throws Exception {
+        // The registry lists t with the table id of the purge, but _meta of t holds the id of another
+        // table. The job drops the purge and leaves the files.
+        final AtomicBoolean isMetaOfOtherTable = new AtomicBoolean();
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                if (isMetaOfOtherTable.get() && isMetaFileOfT(name)) {
+                    try (Path other = new Path()) {
+                        other.of(configuration.getDbRoot()).concat(engine.verifyTableName("other")).concat(TableUtils.META_FILE_NAME);
+                        return super.openRO(other.$());
+                    }
+                }
+                return super.openRO(name);
+            }
+        };
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE other (ts TIMESTAMP, v INT) TIMESTAMP(ts) PARTITION BY DAY BYPASS WAL");
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                final String[] oldFiles = dropIndexOfRetryTableWithReader(purgeJob, "BYPASS WAL");
+                final String[] listings = listRetryTablePartitions(oldFiles);
+                engine.releaseInactive();
+                isMetaOfOtherTable.set(true);
+                runPurgeJob(purgeJob);
+                isMetaOfOtherTable.set(false);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 3);
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(listings[i], listFiles(partitionDir("t", i)));
+                }
+            }
+            assertRowsOfRetryTable();
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesEntryDuringMetaSwap() throws Exception {
+        assertPurgeRetriesEntryDuringMetaSwap(false);
+    }
+
+    @Test
+    public void testPurgeRetryAfterMetaSwapReplayedOnRestart() throws Exception {
+        assertPurgeRetriesEntryDuringMetaSwap(true);
     }
 
     @Test
@@ -2278,6 +2420,231 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
                 return super.removeQuiet(name);
             }
         };
+    }
+
+    /**
+     * The job runs while non-WAL DROP TABLE t removes the table directory, after _meta is gone and before
+     * the registry forgets t: it retries the purge. With {@code isDropFailing}, the removal fails, DROP
+     * TABLE fails, the registry still lists t without _meta, and the job keeps retrying until DROP TABLE
+     * runs again. Once the directory is gone, the existence check completes the purge.
+     */
+    private void assertPurgeDuringDropTable(boolean isDropFailing) throws Exception {
+        final AtomicBoolean isPurgeInDropArmed = new AtomicBoolean();
+        final AtomicReference<ColumnPurgeJob> purgeJobRef = new AtomicReference<>();
+        final AtomicReference<String[]> listingsInDrop = new AtomicReference<>();
+        final AtomicInteger outstandingInDrop = new AtomicInteger(-1);
+        final String[] partitionNames = new String[3];
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean unlinkOrRemove(Path path, Log log) {
+                if (new File(Utf8s.stringFromUtf8Bytes(path.$())).getName().startsWith("t~") && isPurgeInDropArmed.compareAndSet(true, false)) {
+                    final int len = path.size();
+                    Assert.assertTrue(removeQuiet(path.concat(TableUtils.META_FILE_NAME).$()));
+                    path.trimTo(len);
+                    setCurrentMicros(currentMicros + 10L * iteration++);
+                    purgeJobRef.get().run();
+                    outstandingInDrop.set(purgeJobRef.get().getOutstandingPurgeTasks());
+                    final String[] listings = new String[3];
+                    for (int i = 0; i < 3; i++) {
+                        listings[i] = listFiles(new File(Utf8s.stringFromUtf8Bytes(path.$()), partitionNames[i]).getAbsolutePath());
+                    }
+                    listingsInDrop.set(listings);
+                    if (isDropFailing) {
+                        return false;
+                    }
+                }
+                return super.unlinkOrRemove(path, log);
+            }
+        };
+        assertMemoryLeak(() -> {
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                purgeJobRef.set(purgeJob);
+                final String[] oldFiles = dropIndexOfRetryTableWithReader(purgeJob, "BYPASS WAL");
+                final String[] listings = listRetryTablePartitions(oldFiles);
+                final File tableDir = new File(configuration.getDbRoot().toString(), engine.verifyTableName("t").getDirName());
+                for (int i = 0; i < 3; i++) {
+                    partitionNames[i] = new File(partitionDir("t", i)).getName();
+                }
+                engine.releaseInactive();
+                isPurgeInDropArmed.set(true);
+                try {
+                    execute("DROP TABLE t");
+                    Assert.assertFalse(isDropFailing);
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.getMessage(), isDropFailing);
+                    TestUtils.assertContains(e.getFlyweightMessage(), "could not remove table [table=t~");
+                }
+                Assert.assertFalse(isPurgeInDropArmed.get());
+                Assert.assertEquals(1, outstandingInDrop.get());
+                Assert.assertArrayEquals(listings, listingsInDrop.get());
+
+                if (isDropFailing) {
+                    Assert.assertNotNull(engine.getTableTokenIfExists("t"));
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 3, 0);
+                    for (int i = 0; i < 3; i++) {
+                        Assert.assertEquals(listings[i], listFiles(new File(tableDir, partitionNames[i]).getAbsolutePath()));
+                    }
+                    execute("DROP TABLE t");
+                }
+                Assert.assertNull(engine.getTableTokenIfExists("t"));
+                Assert.assertFalse(tableDir.exists());
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertPurgeLogRows(purgeJob, 3, 3);
+            }
+        });
+    }
+
+    /**
+     * The job runs while ALTER TABLE t ADD COLUMN swaps _meta, between the renames of _meta to
+     * _meta.prev and of _meta.swp to _meta, and retries the purge rather than dropping it. Then the job
+     * runs again, or, with {@code isRestarted}, a new job replays the purge from the log.
+     */
+    private void assertPurgeRetriesEntryDuringMetaSwap(boolean isRestarted) throws Exception {
+        final AtomicBoolean isPurgeInMetaSwapArmed = new AtomicBoolean();
+        final AtomicReference<ColumnPurgeJob> purgeJobRef = new AtomicReference<>();
+        final AtomicInteger outstandingInMetaSwap = new AtomicInteger(-1);
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public int rename(LPSZ from, LPSZ to) {
+                final int result = super.rename(from, to);
+                if (isMetaFileOfT(from) && isPurgeInMetaSwapArmed.compareAndSet(true, false)) {
+                    Assert.assertFalse(exists(from));
+                    purgeJobRef.get().run();
+                    outstandingInMetaSwap.set(purgeJobRef.get().getOutstandingPurgeTasks());
+                }
+                return result;
+            }
+        };
+        assertMemoryLeak(() -> {
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                execute("DROP TABLE IF EXISTS t");
+                final String[] oldFiles;
+                final String[] listings;
+                ColumnPurgeJob purgeJob = createPurgeJob();
+                try {
+                    purgeJobRef.set(purgeJob);
+                    oldFiles = dropIndexOfRetryTableWithReader(purgeJob, walMode);
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 10L * iteration++);
+                    outstandingInMetaSwap.set(-1);
+                    isPurgeInMetaSwapArmed.set(true);
+                    execute("ALTER TABLE t ADD COLUMN y INT");
+                    drainWalQueue();
+                    Assert.assertFalse(walMode, isPurgeInMetaSwapArmed.get());
+                    Assert.assertEquals(walMode, 1, outstandingInMetaSwap.get());
+                    Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
+                    assertPurgeLogRows(purgeJob, 3, 0);
+                    listings = listRetryTablePartitions(oldFiles);
+                    if (isRestarted) {
+                        purgeJob = Misc.free(purgeJob);
+                        purgeJob = createPurgeJob();
+                        purgeJobRef.set(purgeJob);
+                    } else {
+                        runPurgeJob(purgeJob);
+                        assertPurgeLogRows(purgeJob, 3, 3);
+                    }
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                } finally {
+                    Misc.free(purgeJob);
+                }
+                for (int i = 0; i < 3; i++) {
+                    Assert.assertEquals(walMode, withoutFiles(listings[i], oldFiles[i]), listFiles(partitionDir("t", i)));
+                }
+                assertRowsOfRetryTable();
+            }
+        });
+    }
+
+    // the rows of t, which createRetryTable() writes
+    private void assertRowsOfRetryTable() throws Exception {
+        assertQuery("SELECT ts, x, sym FROM t")
+                .noLeakCheck()
+                .expectSize()
+                .timestamp("ts")
+                .returns(replaceTimestampSuffix("""
+                        ts\tx\tsym
+                        1970-01-01T02:00:00.000000Z\t1\tA
+                        1970-01-02T02:00:00.000000Z\t2\tB
+                        1970-01-03T02:00:00.000000Z\t3\tA
+                        """, timestampType.getTypeName()));
+    }
+
+    // the number of rows of the purge log, and of those the purge job marked complete
+    private void assertPurgeLogRows(ColumnPurgeJob purgeJob, int expectedCount, int expectedCompletedCount) throws Exception {
+        assertQuery("SELECT count() c, count(completed) completed FROM \"" + purgeJob.getLogTableName() + "\"")
+                .noLeakCheck()
+                .expectSize()
+                .noRandomAccess()
+                .returns("c\tcompleted\n" + expectedCount + "\t" + expectedCompletedCount + "\n");
+    }
+
+    /**
+     * Creates t with one row in each of three daily partitions and sym, declared in CREATE TABLE (column
+     * name txn NONE), under a POSTING index that covers x.
+     */
+    private void createRetryTable(String walMode) throws SqlException {
+        execute("CREATE TABLE t (ts " + timestampType.getTypeName() + ", x LONG, sym SYMBOL INDEX TYPE POSTING INCLUDE (x))"
+                + " TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("""
+                INSERT INTO t VALUES
+                ('1970-01-01T02:00:00.000000Z', 1, 'A'),
+                ('1970-01-02T02:00:00.000000Z', 2, 'B'),
+                ('1970-01-03T02:00:00.000000Z', 3, 'A')""");
+        drainWalQueue();
+    }
+
+    /**
+     * Creates t, see {@link #createRetryTable(String)}, and drops the index of sym while a reader holds
+     * the table, so the purge job only saves the purge of instance NONE of sym in its log, one row per
+     * partition. Returns the files of that instance in each partition.
+     */
+    private String[] dropIndexOfRetryTableWithReader(ColumnPurgeJob purgeJob, String walMode) throws Exception {
+        createRetryTable(walMode);
+        final String[] oldFiles = new String[3];
+        for (int i = 0; i < 3; i++) {
+            Assert.assertEquals(TableUtils.COLUMN_NAME_TXN_NONE, getColumnNameTxn("t", "sym", i));
+            final String listing = listFiles(partitionDir("t", i));
+            oldFiles[i] = String.join(" ", filesOfInstance(listing, "sym", TableUtils.COLUMN_NAME_TXN_NONE));
+            Assert.assertEquals(String.join(" ", filesWithPrefix(listing, "sym.")), oldFiles[i]);
+            for (String file : new String[]{" sym.d ", " sym.pc0.0.", " sym.pci ", " sym.pk ", " sym.pv."}) {
+                Assert.assertTrue(file + " in " + oldFiles[i], (" " + oldFiles[i] + " ").contains(file));
+            }
+        }
+        try (TableReader ignored = getReader("t")) {
+            execute("ALTER TABLE t ALTER COLUMN sym DROP INDEX");
+            drainWalQueue();
+            runPurgeJob(purgeJob);
+        }
+        Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+        assertPurgeLogRows(purgeJob, 3, 0);
+        return oldFiles;
+    }
+
+    // whether name is the _meta file of the table t
+    private static boolean isMetaFileOfT(LPSZ name) {
+        final File file = new File(Utf8s.stringFromUtf8Bytes(name));
+        final File parent = file.getParentFile();
+        return TableUtils.META_FILE_NAME.equals(file.getName()) && parent != null && parent.getName().startsWith("t~");
+    }
+
+    // the listing of each partition of t, which still holds the files of the old instance of sym
+    private String[] listRetryTablePartitions(String[] oldFiles) {
+        final String[] listings = new String[3];
+        for (int i = 0; i < 3; i++) {
+            listings[i] = listFiles(partitionDir("t", i));
+            Assert.assertEquals(oldFiles[i], String.join(" ", filesOfInstance(listings[i], "sym", TableUtils.COLUMN_NAME_TXN_NONE)));
+        }
+        return listings;
+    }
+
+    // the space-separated listing without the space-separated files
+    private static String withoutFiles(String listing, String files) {
+        final TreeSet<String> remaining = new TreeSet<>(Arrays.asList(listing.split(" ")));
+        remaining.removeAll(Arrays.asList(files.split(" ")));
+        return String.join(" ", remaining);
     }
 
     private void assertIncompletePurgeLogRows(ColumnPurgeJob purgeJob, int expectedCount) throws Exception {

@@ -47,7 +47,12 @@ import java.io.Closeable;
 import static io.questdb.cairo.TableUtils.TXN_FILE_NAME;
 
 public class ColumnPurgeOperator implements Closeable {
+    private static final int INVALID_TABLE_ID = Integer.MIN_VALUE;
     private static final Log LOG = LogFactory.getLog(ColumnPurgeOperator.class);
+    // openScoreboardAndTxn() results
+    private static final int TABLE_STATE_LIVE = 0;
+    private static final int TABLE_STATE_REFUSED = 1;
+    private static final int TABLE_STATE_RETRY = 2;
     private final LongList completedRowIds = new LongList();
     private final CairoEngine engine;
     private final FilesFacade ff;
@@ -265,7 +270,7 @@ public class ColumnPurgeOperator implements Closeable {
         return ff.exists(BitmapIndexUtils.valueFileName(path, columnName, columnVersion));
     }
 
-    private boolean openScoreboardAndTxn(ColumnPurgeTask task) {
+    private int openScoreboardAndTxn(ColumnPurgeTask task) {
         switch (scoreboardUseMode) {
             case BAU_QUEUE_PROCESSING:
                 txnScoreboard = Misc.free(txnScoreboard);
@@ -276,11 +281,19 @@ public class ColumnPurgeOperator implements Closeable {
                 boolean tableChanged = updatedTableToken == null || updatedTableToken.getTableId() != task.getTableId();
                 if (!tableChanged) {
                     int tableId = readTableId(path);
+                    if (tableId == INVALID_TABLE_ID) {
+                        // The registry still lists the table under the id of the task, so _meta is missing
+                        // only for now: TableWriter renames _meta to _meta.prev before it renames _meta.swp
+                        // to _meta, and non-WAL DROP and RENAME remove the directory before the registry
+                        // forgets the table. The next run reads the id again.
+                        LOG.info().$("cannot read table id, will retry [path=").$(path.trimTo(pathTableLen)).I$();
+                        return TABLE_STATE_RETRY;
+                    }
                     tableChanged = tableId != task.getTableId();
                 }
                 if (tableChanged) {
                     LOG.info().$("cannot purge orphan table [path=").$(path.trimTo(pathTableLen)).I$();
-                    return false;
+                    return TABLE_STATE_REFUSED;
                 }
 
                 path.trimTo(pathTableLen).concat(TXN_FILE_NAME);
@@ -288,11 +301,13 @@ public class ColumnPurgeOperator implements Closeable {
                 txReader.unsafeLoadAll();
                 if (txReader.getTruncateVersion() != task.getTruncateVersion()) {
                     LOG.info().$("cannot purge, purge request overlaps with truncate [path=").$(path.trimTo(pathTableLen)).I$();
-                    return false;
+                    return TABLE_STATE_REFUSED;
                 }
-                return true;
+                return TABLE_STATE_LIVE;
             default:
-                return false;
+                // VACUUM_TABLE takes the scoreboard and the txn of its reader, and purge0() does not call here
+                assert false : "scoreboard use mode " + scoreboardUseMode;
+                return TABLE_STATE_REFUSED;
         }
     }
 
@@ -362,7 +377,13 @@ public class ColumnPurgeOperator implements Closeable {
                         // may not exist, including the entire table. Setting up
                         // scoreboard ahead of checking file existence would fail in those
                         // cases.
-                        if (!openScoreboardAndTxn(task)) {
+                        final int tableState = openScoreboardAndTxn(task);
+                        if (tableState == TABLE_STATE_RETRY) {
+                            // setupScoreboard stays true, so the next entry checks the table again
+                            allDone = false;
+                            continue;
+                        }
+                        if (tableState == TABLE_STATE_REFUSED) {
                             // the current table state precludes us from purging its columns
                             // nothing to do here
                             completedRowIds.add(updateRowId);
@@ -496,7 +517,6 @@ public class ColumnPurgeOperator implements Closeable {
     }
 
     private int readTableId(Path path) {
-        final int INVALID_TABLE_ID = Integer.MIN_VALUE;
         long fd = ff.openRO(path.trimTo(pathTableLen).concat(TableUtils.META_FILE_NAME).$());
         if (fd < 0) {
             return INVALID_TABLE_ID;

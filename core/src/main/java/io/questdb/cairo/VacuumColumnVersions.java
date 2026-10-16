@@ -134,6 +134,7 @@ public class VacuumColumnVersions implements Closeable {
         int columnIndex = -1;
         int writerIndex = -1;
         boolean isPostingColumn = false;
+        boolean isSymbolColumn = false;
         int tableId = reader.getMetadata().getTableId();
         long truncateVersion = reader.getTxFile().getTruncateVersion();
         TableReaderMetadata metadata = reader.getMetadata();
@@ -158,15 +159,23 @@ public class VacuumColumnVersions implements Closeable {
                             rogueColumns.keys().get(-newReaderIndex - 1).toString();
 
                     int columnType = newReaderIndex > -1 ? metadata.getColumnType(newReaderIndex) : ColumnType.UNDEFINED;
-                    byte indexType = newReaderIndex > -1 ? metadata.getColumnIndexType(newReaderIndex) : IndexType.NONE;
-                    isPostingColumn = IndexType.isPosting(indexType);
+                    // isPostingColumn and isSymbolColumn feed the NONE/0 rules of isLiveVersion below
+                    isPostingColumn = newReaderIndex > -1 && IndexType.isPosting(metadata.getColumnIndexType(newReaderIndex));
+                    isSymbolColumn = ColumnType.isSymbol(columnType);
+                    // VACUUM purges only stale instances, whose index type the live column, if any, does
+                    // not tell: DROP INDEX, an index type change and DROP COLUMN leave them behind. The
+                    // POSTING removal takes the files of every index type, the POSTING files and then the
+                    // BITMAP .k and .v files, each named with the column name txn of the stale instance.
+                    final byte staleIndexType = isSymbolColumn || columnType == ColumnType.UNDEFINED
+                            ? IndexType.POSTING
+                            : IndexType.NONE;
                     purgeTask.of(
                             reader.getTableToken(),
                             columnName,
                             tableId,
                             truncateVersion,
                             columnType,
-                            indexType,
+                            staleIndexType,
                             timestampType,
                             partitionBy,
                             updateTxn
@@ -182,9 +191,12 @@ public class VacuumColumnVersions implements Closeable {
             // a purge of either version removes the live .pc files of the other. Txn 0 comes only from a
             // change before the first commit, so no partition of a partitioned table holds files of both.
             // The default partition of a non-partitioned table can, and VACUUM leaves the stale files there.
+            // A SYMBOL column of txn NONE without a POSTING index in the reader can get one from ADD INDEX
+            // while VACUUM runs, and its .pc files list as txn 0, so txn 0 is live next to a live NONE. No
+            // stale instance 0 can sit there: a partition never goes back to txn NONE after a change.
             // The table root keeps the plain comparison: its purge removes no POSTING files.
             boolean isLiveVersion = columnVersion == latestColumnNameTxn
-                    || (isPostingColumn
+                    || ((isPostingColumn || (isSymbolColumn && latestColumnNameTxn == TableUtils.COLUMN_NAME_TXN_NONE))
                     && partitionTs != PurgingOperator.TABLE_ROOT_PARTITION
                     && PostingIndexUtils.coverFileHostTxn(columnVersion) == PostingIndexUtils.coverFileHostTxn(latestColumnNameTxn));
             // Do not delete if columnVersion >= reader.getTxn(), this may be the transaction not committed yet
