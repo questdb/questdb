@@ -130,6 +130,7 @@ final class ParquetRowGroupMaterializer {
                     decoder,
                     parquetIndex,
                     columnType,
+                    metadata.getColumnNullPolicy(columnIndex),
                     columnTop,
                     columnIndex == metadata.getTimestampIndex()
             );
@@ -259,6 +260,7 @@ final class ParquetRowGroupMaterializer {
             ParquetPartitionDecoder decoder,
             int parquetIndex,
             int targetType,
+            NullPolicy targetNullPolicy,
             long columnTop,
             boolean designatedTimestamp
     ) {
@@ -273,8 +275,13 @@ final class ParquetRowGroupMaterializer {
         // A raw Required page cannot sit under the modern Optional schema for
         // these no-sentinel types. Re-encode the column while the remaining,
         // schema-compatible chunks still take the hybrid raw-copy path.
-        return decoder.metadata().getColumnMaxDefLevel(parquetIndex) == 0
-                && (ColumnType.isSymbol(targetType) || ColumnType.isNoNullSentinelFixedType(targetType));
+        if (decoder.metadata().getColumnMaxDefLevel(parquetIndex) != 0) {
+            return false;
+        }
+        return switch (targetNullPolicy) {
+            case SENTINEL -> ColumnType.isSymbol(targetType);
+            case NONE -> true;
+        };
     }
 
     static void setTargetSchema(

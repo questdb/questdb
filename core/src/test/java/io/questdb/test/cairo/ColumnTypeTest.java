@@ -26,6 +26,7 @@ package io.questdb.test.cairo;
 
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ImplicitCastException;
+import io.questdb.cairo.TypeDriver;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.engine.functions.constants.*;
 import io.questdb.std.Decimal128;
@@ -36,9 +37,77 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class ColumnTypeTest {
+    // Every tag number, pseudo tags included; the index is the number. Inserting a tag renumbers
+    // every tag after it, so the insertion must also edit this table, column_type.h and
+    // col_type.rs (the two file tests below compare those against this table).
+    private static final String[] PINNED_TAG_NAMES = {
+            "UNDEFINED",     // 0
+            "BOOLEAN",       // 1
+            "BYTE",          // 2
+            "SHORT",         // 3
+            "CHAR",          // 4
+            "INT",           // 5
+            "LONG",          // 6
+            "DATE",          // 7
+            "TIMESTAMP",     // 8
+            "FLOAT",         // 9
+            "DOUBLE",        // 10
+            "STRING",        // 11
+            "SYMBOL",        // 12
+            "LONG256",       // 13
+            "GEOBYTE",       // 14
+            "GEOSHORT",      // 15
+            "GEOINT",        // 16
+            "GEOLONG",       // 17
+            "BINARY",        // 18
+            "UUID",          // 19
+            "CURSOR",        // 20
+            "VAR_ARG",       // 21
+            "RECORD",        // 22
+            "GEOHASH",       // 23
+            "LONG128",       // 24
+            "IPv4",          // 25
+            "VARCHAR",       // 26
+            "ARRAY",         // 27
+            "DECIMAL8",      // 28
+            "DECIMAL16",     // 29
+            "DECIMAL32",     // 30
+            "DECIMAL64",     // 31
+            "DECIMAL128",    // 32
+            "DECIMAL256",    // 33
+            "DECIMAL",       // 34
+            "REGCLASS",      // 35
+            "REGPROCEDURE",  // 36
+            "ARRAY_STRING",  // 37
+            "PARAMETER",     // 38
+            "INTERVAL",      // 39
+            "VARCHAR_SLICE", // 40
+            "NULL",          // 41
+    };
+    // Tags that qdb_core::ColumnTypeTag (col_type.rs) deliberately does not carry: the Rust side
+    // only sees types that reach disk, plus VARCHAR_SLICE.
+    private static final Set<String> TAGS_ABSENT_FROM_RUST = Set.of(
+            "UNDEFINED", "CURSOR", "VAR_ARG", "RECORD", "GEOHASH", "DECIMAL",
+            "REGCLASS", "REGPROCEDURE", "ARRAY_STRING", "PARAMETER", "INTERVAL", "NULL"
+    );
+
     public short getExpectedTag(int precision) {
         int size = Decimals.getStorageSizePow2(precision);
         switch (size) {
@@ -54,6 +123,22 @@ public class ColumnTypeTest {
                 return ColumnType.DECIMAL128;
             default:
                 return ColumnType.DECIMAL256;
+        }
+    }
+
+    @Test
+    public void testArrayIsNeverGeoHash() {
+        // bit 16, the geohash flag, is also bit 2 of the array dimension field, which an array of
+        // 5 to 8, 13 to 16, 21 to 24 or 29 to 32 dimensions sets; 33 dimensions stay rejected at
+        // the parser (ArrayTest.testUnsupportedDimensionality)
+        for (int n = 1; n <= ColumnType.ARRAY_NDIMS_LIMIT; n++) {
+            final int type = ColumnType.encodeArrayType(ColumnType.DOUBLE, n);
+            Assert.assertTrue(n + " dimensions", ColumnType.isArray(type));
+            Assert.assertFalse(n + " dimensions", ColumnType.isGeoHash(type));
+            Assert.assertEquals(n + " dimensions", n, ColumnType.decodeArrayDimensionality(type));
+        }
+        for (int bits = 1; bits <= ColumnType.GEOLONG_MAX_BITS; bits++) {
+            Assert.assertTrue(bits + " bits", ColumnType.isGeoHash(ColumnType.getGeoHashTypeWithBits(bits)));
         }
     }
 
@@ -228,6 +313,62 @@ public class ColumnTypeTest {
     }
 
     @Test
+    public void testArrayElementTagsFitTheElementTypeField() {
+        // encodeArrayType() stores the element tag in a 6-bit field (ARRAY_ELEMTYPE_FIELD_MASK = 0x3F).
+        // Every tag that can be an array element, or that has an array type name registered, must
+        // survive the round trip; a tag numbered 64 or above cannot.
+        for (short tag = ColumnType.UNDEFINED; tag <= ColumnType.MAX_TAG; tag++) {
+            final int arrayType = ColumnType.encodeArrayType(tag, 1, false);
+            final boolean isElementTag = ColumnType.isSupportedArrayElementType(tag)
+                    || !"unknown".equals(ColumnType.nameOf(arrayType));
+            if (isElementTag) {
+                Assert.assertTrue("array element tag " + ColumnType.nameOf(tag) + " = " + tag + " does not fit 6 bits", tag < 64);
+                Assert.assertEquals(ColumnType.nameOf(tag), tag, ColumnType.decodeArrayElementType(arrayType));
+            }
+        }
+    }
+
+    @Test
+    public void testColumnTypeHeaderMatchesJava() throws IOException {
+        // core/src/main/c/share/column_type.h mirrors the Java tag numbers by hand.
+        final Path header = sourceFile("src/main/c/share/column_type.h");
+        final Pattern entry = Pattern.compile("^\\s*([A-Z0-9_]+)\\s*=\\s*(\\d+)\\s*,");
+        final Map<String, Integer> parsed = new HashMap<>();
+        boolean isInEnum = false;
+        for (String line : Files.readAllLines(header, StandardCharsets.UTF_8)) {
+            if (line.startsWith("enum class ColumnType")) {
+                isInEnum = true;
+                continue;
+            }
+            if (!isInEnum) {
+                continue;
+            }
+            if (line.startsWith("}")) {
+                break;
+            }
+            final Matcher m = entry.matcher(line);
+            if (m.find()) {
+                // NULL_ avoids the C macro; TIMESTAMP_MICRO is the header's name for the TIMESTAMP tag
+                String name = m.group(1);
+                name = name.endsWith("_") ? name.substring(0, name.length() - 1) : name;
+                name = "TIMESTAMP_MICRO".equals(name) ? "TIMESTAMP" : name;
+                Assert.assertNull("duplicate entry " + name + " in " + header, parsed.put(name, Integer.parseInt(m.group(2))));
+            }
+        }
+        Assert.assertFalse("no enum entries found in " + header, parsed.isEmpty());
+
+        final Map<String, Integer> pinned = pinnedTagsByUpperCaseName();
+        for (Map.Entry<String, Integer> e : parsed.entrySet()) {
+            final Integer javaTag = pinned.get(e.getKey());
+            Assert.assertNotNull("column_type.h names a tag Java does not have: " + e.getKey(), javaTag);
+            Assert.assertEquals("column_type.h disagrees with Java on " + e.getKey(), javaTag, e.getValue());
+        }
+        for (String name : pinned.keySet()) {
+            Assert.assertTrue("column_type.h is missing tag " + name, parsed.containsKey(name));
+        }
+    }
+
+    @Test
     public void testGetDriverVarcharSlice() {
         // VARCHAR_SLICE is a transient in-memory type from read_parquet().
         // getDriver() must return the same VarcharTypeDriver as for VARCHAR.
@@ -244,6 +385,169 @@ public class ColumnTypeTest {
         Assert.assertFalse(ColumnType.isDecimal(ColumnType.VARCHAR));
         Assert.assertFalse(ColumnType.isDecimal(ColumnType.INTERVAL));
         Assert.assertFalse(ColumnType.isDecimal(ColumnType.GEOHASH));
+    }
+
+    @Test
+    public void testMaxTagFitsTheTagField() {
+        // The tag is an 8-bit field; keep the top bit clear so a tag never reads as negative when
+        // narrowed to a signed byte.
+        Assert.assertTrue(ColumnType.MAX_TAG < 128);
+        Assert.assertEquals(ColumnType.NULL, ColumnType.MAX_TAG);
+    }
+
+    @Test
+    public void testRustTagAnswersMatchTypeDrivers() throws IOException {
+        // col_type.rs answers, per tag, the data-movement tier, the NULL policy and the arithmetic
+        // tier the Parquet read and write paths key on; each must equal the type driver's answer
+        final Path source = sourceFile("rust/qdb-core/src/col_type.rs");
+        final String text = Files.readString(source, StandardCharsets.UTF_8);
+        final Map<String, String> movements = rustTagAnswers(text, "movement");
+        final Map<String, String> nullPolicies = rustTagAnswers(text, "null_policy");
+        final Map<String, String> arithmetics = rustTagAnswers(text, "arithmetic");
+        final Map<String, Integer> pinned = new HashMap<>();
+        for (int tag = 0; tag < PINNED_TAG_NAMES.length; tag++) {
+            pinned.put(PINNED_TAG_NAMES[tag].replace("_", "").toLowerCase(), tag);
+        }
+        Assert.assertEquals("tags with a movement() arm", movements.keySet(), nullPolicies.keySet());
+        Assert.assertEquals("tags with an arithmetic() arm", movements.keySet(), arithmetics.keySet());
+        for (String rustTag : movements.keySet()) {
+            final Integer tag = pinned.get(rustTag.toLowerCase());
+            Assert.assertNotNull("col_type.rs answers for a tag Java does not have: " + rustTag, tag);
+            final TypeDriver driver = ColumnType.getTypeDriver(tag);
+            Assert.assertEquals("movement() of " + rustTag, driver.getMovement().name(), movements.get(rustTag).toUpperCase());
+            Assert.assertEquals("null_policy() of " + rustTag, driver.getNullPolicy().name(), nullPolicies.get(rustTag).toUpperCase());
+            Assert.assertEquals("arithmetic() of " + rustTag, driver.getArithmetic().name(), arithmetics.get(rustTag).toUpperCase());
+        }
+        Assert.assertEquals(PINNED_TAG_NAMES.length - TAGS_ABSENT_FROM_RUST.size(), movements.size());
+    }
+
+    @Test
+    public void testRustColumnTypeTagMatchesJava() throws IOException {
+        // core/rust/qdb-core/src/col_type.rs hand-numbers ColumnTypeTag, repeats the numbers in
+        // TryFrom<u8>, and counts the variants in VALUES; ENT Rust depends on all three.
+        final Path source = sourceFile("rust/qdb-core/src/col_type.rs");
+        final List<String> lines = Files.readAllLines(source, StandardCharsets.UTF_8);
+        final Pattern variant = Pattern.compile("^\\s*([A-Za-z0-9]+)\\s*=\\s*(\\d+)\\s*,");
+        final Pattern tryFromArm = Pattern.compile("^\\s*(\\d+)\\s*=>\\s*Ok\\(ColumnTypeTag::([A-Za-z0-9]+)\\)");
+        final Pattern valuesLen = Pattern.compile("const VALUES: \\[Self; (\\d+)]");
+        final Map<String, Integer> variants = new HashMap<>();
+        final Map<String, Integer> tryFromArms = new HashMap<>();
+        int valuesCount = -1;
+        boolean isInEnum = false;
+        for (String line : lines) {
+            if (line.startsWith("pub enum ColumnTypeTag")) {
+                isInEnum = true;
+                continue;
+            }
+            if (isInEnum) {
+                if (line.startsWith("}")) {
+                    isInEnum = false;
+                    continue;
+                }
+                final Matcher m = variant.matcher(line);
+                if (m.find()) {
+                    Assert.assertNull("duplicate variant " + m.group(1), variants.put(m.group(1), Integer.parseInt(m.group(2))));
+                }
+                continue;
+            }
+            Matcher m = tryFromArm.matcher(line);
+            if (m.find()) {
+                Assert.assertNull("duplicate TryFrom arm for " + m.group(2), tryFromArms.put(m.group(2), Integer.parseInt(m.group(1))));
+                continue;
+            }
+            m = valuesLen.matcher(line);
+            if (m.find()) {
+                valuesCount = Integer.parseInt(m.group(1));
+            }
+        }
+        Assert.assertFalse("no ColumnTypeTag variants found in " + source, variants.isEmpty());
+        Assert.assertEquals("VALUES length in " + source, variants.size(), valuesCount);
+        Assert.assertEquals("TryFrom<u8> arms in " + source, variants, tryFromArms);
+
+        // Rust spells tags in CamelCase: GeoByte, VarcharSlice, IPv4. Compare case-insensitively
+        // with the underscores removed.
+        final Map<String, Integer> pinned = new HashMap<>();
+        for (int tag = 0; tag < PINNED_TAG_NAMES.length; tag++) {
+            pinned.put(PINNED_TAG_NAMES[tag].replace("_", "").toLowerCase(), tag);
+        }
+        final Set<String> expectedInRust = new HashSet<>();
+        for (String name : PINNED_TAG_NAMES) {
+            if (!TAGS_ABSENT_FROM_RUST.contains(name)) {
+                expectedInRust.add(name.replace("_", "").toLowerCase());
+            }
+        }
+        final Set<String> foundInRust = new HashSet<>();
+        for (Map.Entry<String, Integer> e : variants.entrySet()) {
+            final String key = e.getKey().toLowerCase();
+            final Integer javaTag = pinned.get(key);
+            Assert.assertNotNull("col_type.rs names a tag Java does not have: " + e.getKey(), javaTag);
+            Assert.assertEquals("col_type.rs disagrees with Java on " + e.getKey(), javaTag, e.getValue());
+            foundInRust.add(key);
+        }
+        Assert.assertEquals("col_type.rs variant set (update TAGS_ABSENT_FROM_RUST if the omission is deliberate)", expectedInRust, foundInRust);
+    }
+
+    @Test
+    public void testTagNumbersArePinned() throws Exception {
+        Assert.assertEquals("MAX_TAG must be the last pinned tag", PINNED_TAG_NAMES.length - 1, ColumnType.MAX_TAG);
+        for (int tag = 0; tag < PINNED_TAG_NAMES.length; tag++) {
+            final Field field = ColumnType.class.getField(PINNED_TAG_NAMES[tag]);
+            Assert.assertEquals("ColumnType." + PINNED_TAG_NAMES[tag], tag, field.getShort(null));
+        }
+        // Every public short constant in the tag range must be one of the pinned names, so a new
+        // tag cannot be added without extending the table, and no two tags share a number.
+        for (Field field : ColumnType.class.getFields()) {
+            final int mods = field.getModifiers();
+            if (field.getType() != short.class || !Modifier.isStatic(mods) || !Modifier.isFinal(mods) || "MAX_TAG".equals(field.getName())) {
+                continue;
+            }
+            final short value = field.getShort(null);
+            if (value >= 0 && value <= ColumnType.MAX_TAG) {
+                Assert.assertEquals("unpinned tag constant ColumnType." + field.getName(), PINNED_TAG_NAMES[value], field.getName());
+            }
+        }
+    }
+
+    private static Map<String, Integer> pinnedTagsByUpperCaseName() {
+        final Map<String, Integer> pinned = new HashMap<>();
+        for (int tag = 0; tag < PINNED_TAG_NAMES.length; tag++) {
+            pinned.put(PINNED_TAG_NAMES[tag].toUpperCase(), tag);
+        }
+        return pinned;
+    }
+
+    // the answer of each tag in a col_type.rs "pub const fn <fn>(self) -> ... { match self { ... } }",
+    // by the Rust tag name: arms list tags joined by '|' and end in "=> Enum::Answer"
+    private static Map<String, String> rustTagAnswers(String source, String fn) {
+        final int start = source.indexOf("pub const fn " + fn + "(self)");
+        Assert.assertTrue("no " + fn + "() in col_type.rs", start >= 0);
+        final int end = source.indexOf("\n    }\n", start);
+        final Matcher m = Pattern.compile("ColumnTypeTag::(\\w+)|=>\\s*\\{?\\s*\\w+::(\\w+)").matcher(source.substring(start, end));
+        final Map<String, String> answers = new HashMap<>();
+        final List<String> pending = new ArrayList<>();
+        while (m.find()) {
+            if (m.group(1) != null) {
+                pending.add(m.group(1));
+            } else {
+                for (String tag : pending) {
+                    Assert.assertNull("two arms for " + tag + " in " + fn + "()", answers.put(tag, m.group(2)));
+                }
+                pending.clear();
+            }
+        }
+        Assert.assertTrue("an arm without an answer in " + fn + "(): " + pending, pending.isEmpty());
+        return answers;
+    }
+
+    // Surefire runs with core/ as the working directory; fall back to the repository root.
+    private static Path sourceFile(String relativeToCore) {
+        final Path inCore = Paths.get(relativeToCore);
+        if (Files.exists(inCore)) {
+            return inCore;
+        }
+        final Path inRoot = Paths.get("core", relativeToCore);
+        Assert.assertTrue("source file not found: " + inCore.toAbsolutePath(), Files.exists(inRoot));
+        return inRoot;
     }
 
     private void callGetterForType(Function func, short type) {

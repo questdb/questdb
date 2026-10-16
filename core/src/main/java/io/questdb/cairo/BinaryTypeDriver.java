@@ -24,12 +24,22 @@
 
 package io.questdb.cairo;
 
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.columns.BinColumn;
+import io.questdb.griffin.engine.functions.constants.BinTypeConstant;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.NullBinConstant;
 import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 
-public class BinaryTypeDriver extends StringTypeDriver {
+public final class BinaryTypeDriver extends NPlusOneAuxTypeDriver {
     public static final BinaryTypeDriver INSTANCE = new BinaryTypeDriver();
+    // implicit-cast targets, best match first; see TypeDriver.getImplicitCasts()
+    private static final short[] IMPLICIT_CASTS = {ColumnType.BINARY};
 
     @Override
     public void appendNull(MemoryA auxMem, MemoryA dataMem) {
@@ -38,6 +48,110 @@ public class BinaryTypeDriver extends StringTypeDriver {
 
     public long getDataVectorMinEntrySize() {
         return Long.BYTES;
+    }
+
+    @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setBin(index);
+        return columnType;
+    }
+
+    @Override
+    public PhysicalDescriptor.Accessor getAccessor() {
+        return PhysicalDescriptor.Accessor.BINARY;
+    }
+
+    @Override
+    public PhysicalDescriptor.Arithmetic getArithmetic() {
+        return PhysicalDescriptor.Arithmetic.NONE;
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
+    }
+
+    @Override
+    public PhysicalDescriptor.Movement getMovement() {
+        return PhysicalDescriptor.Movement.VAR;
+    }
+
+    @Override
+    public String getName(int columnType) {
+        return columnType == ColumnType.BINARY ? "BINARY" : ColumnType.UNKNOWN_NAME;
+    }
+
+    @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return NullBinConstant.INSTANCE;
+    }
+
+    /**
+     * The 8-byte length prefix of a NULL binary in the data vector: NULL_LEN. The aux entry holds
+     * the data offset, as for any binary.
+     */
+    @Override
+    public long getNullLong(int longIndex) {
+        return TableUtils.NULL_LEN;
+    }
+
+    /**
+     * BINARY keeps NULL in the length prefix.
+     */
+    @Override
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    @Override
+    public int getPgOid() {
+        return PgTypeOids.PG_BYTEA;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return 0;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.BINARY;
+    }
+
+    @Override
+    public ColumnTypeTag getTag() {
+        return ColumnTypeTag.BINARY;
+    }
+
+    @Override
+    public char getSignatureChar() {
+        return 'u';
+    }
+
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return columnType == ColumnType.BINARY ? BinTypeConstant.INSTANCE : null;
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.BINARY;
+    }
+
+    @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        // the parser takes BINARY as a CAST target from NULL only
+        return isFromNull;
+    }
+
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return BinColumn.newInstance(columnIndex);
     }
 
     @Override

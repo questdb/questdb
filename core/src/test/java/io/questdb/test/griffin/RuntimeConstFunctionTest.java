@@ -766,7 +766,7 @@ public class RuntimeConstFunctionTest extends BaseFunctionFactoryTest {
         foldable.add(ColumnType.GEOLONG);
         foldable.add(ColumnType.UUID);
 
-        for (short tag = ColumnType.UNDEFINED; tag <= ColumnType.NULL; tag++) {
+        for (short tag = ColumnType.UNDEFINED; tag <= ColumnType.MAX_TAG; tag++) {
             assertEquals(
                     "isFoldableType mismatch for " + ColumnType.nameOf(tag),
                     foldable.contains(tag),

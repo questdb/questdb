@@ -27,13 +27,17 @@ package io.questdb.test.cutlass.line.udp;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.PartitionBy;
+import io.questdb.cairo.TableReader;
 import io.questdb.cairo.pool.PoolListener;
+import io.questdb.cairo.sql.Record;
 import io.questdb.client.cutlass.line.AbstractLineSender;
 import io.questdb.cutlass.line.udp.AbstractLineProtoUdpReceiver;
 import io.questdb.cutlass.line.udp.LineUdpParserSupport;
 import io.questdb.mp.SOCountDownLatch;
 import io.questdb.std.Os;
+import io.questdb.test.cairo.DefaultTestCairoConfiguration;
 import io.questdb.test.cairo.TableModel;
+import io.questdb.test.cairo.TestTableReaderRecordCursor;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -128,6 +132,98 @@ public class LineUdpParserSupportTest extends LineUdpInsertTest {
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("123a4"));
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("0x1"));
         Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("0x123a4"));
+    }
+
+    @Test
+    public void testInfinityFieldStored() throws Exception {
+        // the line's other columns arrive too; the printer shows a non-finite DOUBLE as null, so
+        // the reader checks the stored values
+        testColumnType(
+                ColumnType.DOUBLE,
+                """
+                        column\tlocation\ttimestamp
+                        null\tsp052w\t1970-01-01T00:00:01.000000Z
+                        null\tsp052w\t1970-01-01T00:00:02.000000Z
+                        3.5\t\t1970-01-01T00:00:03.000000Z
+                        """,
+                (sender) -> {
+                    sender.metric(tableName)
+                            .field(targetColumnName, Double.POSITIVE_INFINITY)
+                            .field(locationColumnName, "sp052w")
+                            .$(1_000_000_000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, Double.NEGATIVE_INFINITY)
+                            .field(locationColumnName, "sp052w")
+                            .$(2_000_000_000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, 3.5)
+                            .$(3_000_000_000L);
+                    sender.flush();
+                }
+        );
+        assertMemoryLeak(() -> {
+            refreshTablesInBaseEngine();
+            try (
+                    TableReader reader = newOffPoolReader(new DefaultTestCairoConfiguration(root), tableName);
+                    TestTableReaderRecordCursor cursor = new TestTableReaderRecordCursor().of(reader)
+            ) {
+                final Record record = cursor.getRecord();
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(Double.POSITIVE_INFINITY, record.getDouble(0), 0.0);
+                Assert.assertTrue(cursor.hasNext());
+                Assert.assertEquals(Double.NEGATIVE_INFINITY, record.getDouble(0), 0.0);
+            }
+        });
+    }
+
+    @Test
+    public void testInfinityIsAFloatField() {
+        // the spellings ILP over TCP parses as a float: Infinity, case-sensitive, with an
+        // optional sign
+        Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("Infinity"));
+        Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("-Infinity"));
+        Assert.assertEquals(ColumnType.DOUBLE, LineUdpParserSupport.getValueType("+Infinity"));
+        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("Infinity", ColumnType.FLOAT, ColumnType.LONG, true));
+        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("-Infinity", ColumnType.FLOAT, ColumnType.LONG, true));
+        Assert.assertEquals(ColumnType.FLOAT, LineUdpParserSupport.getValueType("+Infinity", ColumnType.FLOAT, ColumnType.LONG, true));
+
+        // other spellings, which ILP over TCP takes as a symbol
+        Assert.assertEquals(ColumnType.SYMBOL, LineUdpParserSupport.getValueType("infinity"));
+        Assert.assertEquals(ColumnType.SYMBOL, LineUdpParserSupport.getValueType("INFINITY"));
+        Assert.assertEquals(ColumnType.SYMBOL, LineUdpParserSupport.getValueType("-infinity"));
+        Assert.assertEquals(ColumnType.SYMBOL, LineUdpParserSupport.getValueType("Infinityy"));
+        Assert.assertEquals(ColumnType.SYMBOL, LineUdpParserSupport.getValueType("--Infinity"));
+    }
+
+    @Test
+    public void testLong256StringIntoNonWalTable() throws Exception {
+        // a string that is not a LONG256 drops its line, as over TCP; the next line arrives
+        testColumnType(
+                ColumnType.LONG256,
+                """
+                        column\tlocation\ttimestamp
+                        0x1234\tsp052w\t1970-01-01T00:00:01.000000Z
+                        0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7\t\t1970-01-01T00:00:02.000000Z
+                        \tsp052w\t1970-01-01T00:00:04.000000Z
+                        """,
+                (sender) -> {
+                    sender.metric(tableName)
+                            .field(targetColumnName, "0x1234")
+                            .field(locationColumnName, "sp052w")
+                            .$(1_000_000_000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, "0x7ee65ec7b6e3bc3a422a8855e9d7bfd29199af5c2aa91ba39c022fa261bdede7")
+                            .$(2_000_000_000);
+                    sender.metric(tableName)
+                            .field(targetColumnName, "0xzz")
+                            .field(locationColumnName, "sp052w12")
+                            .$(3_000_000_000L);
+                    sender.metric(tableName)
+                            .field(locationColumnName, "sp052w")
+                            .$(4_000_000_000L);
+                    sender.flush();
+                }
+        );
     }
 
     @Test

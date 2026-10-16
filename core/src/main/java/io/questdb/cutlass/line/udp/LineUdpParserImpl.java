@@ -39,6 +39,7 @@ import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.RecordMetadata;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryMARW;
+import io.questdb.cutlass.line.LineUtils;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.CharSequenceObjHashMap;
@@ -438,7 +439,9 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
             int geoHashBits = 0;
             if (valueType != ColumnType.NULL) {
                 final int valueTypeTag = ColumnType.tagOf(valueType);
-                final int columnTypeTag = ColumnType.tagOf(columnType);
+                // the column's ILP kind (LineUtils.columnKind()); no row below names the GEOHASH or
+                // DECIMAL kinds, and a geohash column takes a text value through its bits
+                final int columnTypeTag = LineUtils.columnKind(columnType);
                 valid = switch (valueTypeTag) {
                     case ColumnType.LONG -> columnTypeTag == ColumnType.LONG
                             || columnTypeTag == ColumnType.INT
@@ -457,6 +460,7 @@ public class LineUdpParserImpl implements LineUdpParser, Closeable {
                             columnTypeTag == ColumnType.VARCHAR ||
                             columnTypeTag == ColumnType.CHAR ||
                             columnTypeTag == ColumnType.IPv4 ||
+                            columnTypeTag == ColumnType.LONG256 && LineUdpParserSupport.isLong256String(value) ||
                             isForField &&
                                     (geoHashBits = ColumnType.getGeoHashBits(columnType)) != 0;
                     case ColumnType.DOUBLE -> columnTypeTag == ColumnType.DOUBLE || columnTypeTag == ColumnType.FLOAT;

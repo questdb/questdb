@@ -27,8 +27,15 @@ package io.questdb.cairo.arr;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypeDriver;
+import io.questdb.cairo.ColumnTypeTag;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.O3Utils;
+import io.questdb.cairo.PhysicalDescriptor;
+import io.questdb.cairo.RelationKind;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.WireKind;
+import io.questdb.cairo.sql.BindVariableService;
+import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.vm.api.MemoryA;
 import io.questdb.cairo.vm.api.MemoryARW;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -36,7 +43,14 @@ import io.questdb.cairo.vm.api.MemoryCR;
 import io.questdb.cairo.vm.api.MemoryMA;
 import io.questdb.cairo.vm.api.MemoryOM;
 import io.questdb.cairo.vm.api.MemoryR;
+import io.questdb.griffin.FunctionFactoryDescriptor;
+import io.questdb.griffin.SqlException;
+import io.questdb.griffin.TypeConstant;
+import io.questdb.griffin.engine.functions.columns.ArrayColumn;
+import io.questdb.griffin.engine.functions.constants.ConstantFunction;
+import io.questdb.griffin.engine.functions.constants.Constants;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.IntObjHashMap;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.Unsafe;
@@ -128,10 +142,16 @@ import org.jetbrains.annotations.Nullable;
  *         * enough padding for `int` alignment, ready for the next record (see START ALIGNMENT note).
  * </pre>
  */
-public class ArrayTypeDriver implements ColumnTypeDriver {
+public final class ArrayTypeDriver implements ColumnTypeDriver {
     // ensure that writeArrayEntry appends correct amount of bytes, for the width
     public static final int ARRAY_AUX_WIDTH_BYTES = 4 * Integer.BYTES;
+    // implicit-cast targets, best match first; see TypeDriver.getImplicitCasts()
+    private static final short[] IMPLICIT_CASTS = {ColumnType.ARRAY};
     public static final ArrayTypeDriver INSTANCE = new ArrayTypeDriver();
+    // names of the array types that have one, by encoded type: the bare ARRAY tag, and the
+    // element types in the static block below with 1 to ARRAY_NDIMS_LIMIT dimensions, strong
+    // dimensions only
+    private static final IntObjHashMap<String> NAMES = new IntObjHashMap<>();
     public static final long OFFSET_MAX = (1L << 48) - 1L;
     private static final ArrayValueAppender VALUE_APPENDER_DOUBLE = ArrayTypeDriver::appendDoubleFromArrayToSink;
     private static final ArrayValueAppender VALUE_APPENDER_LONG = ArrayTypeDriver::appendLongFromArrayToSink;
@@ -541,8 +561,117 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     }
 
     @Override
+    public int defineBindVariable(BindVariableService service, int index, int columnType, int position) throws SqlException {
+        service.setArrayType(index, columnType);
+        return columnType;
+    }
+
+    @Override
+    public PhysicalDescriptor.Accessor getAccessor() {
+        return PhysicalDescriptor.Accessor.ARRAY;
+    }
+
+    @Override
+    public PhysicalDescriptor.Arithmetic getArithmetic() {
+        return PhysicalDescriptor.Arithmetic.NONE;
+    }
+
+    @Override
     public long getAuxVectorOffset(long row) {
         return getAuxVectorOffsetStatic(row);
+    }
+
+    @Override
+    public short[] getImplicitCasts() {
+        return IMPLICIT_CASTS;
+    }
+
+    @Override
+    public PhysicalDescriptor.Movement getMovement() {
+        return PhysicalDescriptor.Movement.VAR;
+    }
+
+    /**
+     * Named as its element type followed by one "[]" per dimension, for the element types that
+     * have array names (see {@link #NAMES}); a weak-dimension array has no name.
+     */
+    @Override
+    public String getName(int columnType) {
+        final String name = NAMES.get(columnType);
+        return name != null ? name : ColumnType.UNKNOWN_NAME;
+    }
+
+    /**
+     * Typed by the encoded dimensionality; {@link Constants} caches the common DOUBLE arrays.
+     */
+    @Override
+    public ConstantFunction getNullConstant(int columnType) {
+        return Constants.getNullArrayConstant(columnType);
+    }
+
+    @Override
+    public long getNullLong(int longIndex) {
+        return TableUtils.NULL_LEN;
+    }
+
+    /**
+     * ARRAY keeps NULL in the aux entry.
+     */
+    @Override
+    public NullPolicy getNullPolicy() {
+        return NullPolicy.SENTINEL;
+    }
+
+    @Override
+    public int getPgArrayOid() {
+        return 0;
+    }
+
+    // an array takes the array OID of its element type, getPgArrayOid(); the bare ARRAY tag has none
+    @Override
+    public int getPgOid() {
+        return 0;
+    }
+
+    @Override
+    public int getRelationBits() {
+        return 0;
+    }
+
+    @Override
+    public RelationKind getRelationKind() {
+        return RelationKind.ARRAY;
+    }
+
+    @Override
+    public ColumnTypeTag getTag() {
+        return ColumnTypeTag.ARRAY;
+    }
+
+    // an array is named by its element character followed by []
+    @Override
+    public char getSignatureChar() {
+        return FunctionFactoryDescriptor.NO_SIGNATURE_CHAR;
+    }
+
+    @Override
+    public TypeConstant getTypeConstant(int columnType) {
+        return Constants.getArrayTypeConstant(columnType);
+    }
+
+    @Override
+    public WireKind getWireKind() {
+        return WireKind.ARRAY;
+    }
+
+    @Override
+    public boolean isCastTarget(boolean isFromNull) {
+        return true;
+    }
+
+    @Override
+    public Function newColumnFunction(int columnIndex, int columnType) {
+        return new ArrayColumn(columnIndex, columnType);
     }
 
     @Override
@@ -974,5 +1103,25 @@ public class ArrayTypeDriver implements ColumnTypeDriver {
     @FunctionalInterface
     public interface ArrayValueAppender {
         void appendItemAtFlatIndex(@NotNull ArrayView array, int index, @NotNull CharSink<?> sink, @NotNull String nullLiteral);
+    }
+
+    static {
+        final short[] elementTypes = {
+                ColumnType.BOOLEAN, ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG, ColumnType.FLOAT,
+                ColumnType.DOUBLE, ColumnType.LONG256, ColumnType.VARCHAR, ColumnType.STRING, ColumnType.IPv4,
+                ColumnType.TIMESTAMP, ColumnType.UUID, ColumnType.DATE
+        };
+        // the bare tag, which is also the encoding of a one-dimension array of UNDEFINED
+        NAMES.put(ColumnType.ARRAY, "ARRAY");
+        final StringBuilder name = new StringBuilder();
+        for (short elementType : elementTypes) {
+            // the tag's constant name is the element type's name for every type in the list
+            name.setLength(0);
+            name.append(ColumnTypeTag.of(elementType).name());
+            for (int dims = 1; dims <= ColumnType.ARRAY_NDIMS_LIMIT; dims++) {
+                name.append("[]");
+                NAMES.put(ColumnType.encodeArrayType(elementType, dims, false), name.toString());
+            }
+        }
     }
 }

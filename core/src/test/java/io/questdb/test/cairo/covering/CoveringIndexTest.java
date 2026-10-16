@@ -1375,6 +1375,60 @@ public class CoveringIndexTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testAddPostingCoveringIndexWithPendingLazyConversionNoNullSourceColumnTopWal() throws Exception {
+        // Fixed->var lazy conversion from types without a NULL (SHORT, BOOLEAN) whose Parquet
+        // partition has a column top: the top rows decode to an in-band 0/false, so both the
+        // covering build and the page-frame read must take the source column's NULL policy
+        // (NONE) and read them as NULL, while rows written after ADD COLUMN read as values.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t_lazy_conv_top (ts TIMESTAMP, sym SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            execute("""
+                    INSERT INTO t_lazy_conv_top
+                    SELECT dateadd('m', x::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), 'A' || (x % 2)
+                    FROM long_sequence(4)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_lazy_conv_top ADD COLUMN c_short_vc SHORT");
+            execute("ALTER TABLE t_lazy_conv_top ADD COLUMN c_bool_str BOOLEAN");
+            execute("""
+                    INSERT INTO t_lazy_conv_top
+                    SELECT dateadd('m', (x + 4)::INT, '2024-01-01T00:00:00Z'::TIMESTAMP), 'A' || (x % 2), x::SHORT, x % 4 = 0
+                    FROM long_sequence(4)
+                    """);
+            drainWalQueue();
+            execute("ALTER TABLE t_lazy_conv_top CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            drainWalQueue();
+            execute("ALTER TABLE t_lazy_conv_top ALTER COLUMN c_short_vc TYPE VARCHAR");
+            execute("ALTER TABLE t_lazy_conv_top ALTER COLUMN c_bool_str TYPE STRING");
+            drainWalQueue();
+            execute("ALTER TABLE t_lazy_conv_top ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (c_short_vc, c_bool_str)");
+            drainWalQueue();
+
+            assertQuery("SELECT suspended FROM wal_tables() WHERE name = 't_lazy_conv_top'")
+                    .noRandomAccess()
+                    .noLeakCheck()
+                    .returns("suspended\nfalse\n");
+            final String expected = """
+                    ts\tc_short_vc\tc_bool_str
+                    2024-01-01T00:02:00.000000Z\t\t
+                    2024-01-01T00:04:00.000000Z\t\t
+                    2024-01-01T00:06:00.000000Z\t2\tfalse
+                    2024-01-01T00:08:00.000000Z\t4\ttrue
+                    """;
+            assertQuery("SELECT ts, c_short_vc, c_bool_str FROM t_lazy_conv_top WHERE sym = 'A0' ORDER BY ts")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("SELECT /*+ no_covering */ ts, c_short_vc, c_bool_str FROM t_lazy_conv_top WHERE sym = 'A0' ORDER BY ts")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testAddPostingCoveringIndexWithPendingLazyConversionNullsAndVarcharSpillWal() throws Exception {
         // Stresses the pending-lazy-conversion covered columns on their hardest inputs:
         // NULLs in every converting column (exercises the null branch of each converter --
@@ -15911,6 +15965,42 @@ public class CoveringIndexTest extends AbstractCairoTest {
                         w.isDistressed());
             }
             failArmed.set(false);
+        });
+    }
+
+    @Test
+    public void testO3CommitIntoPartitionWithCoveredColumnTop() throws Exception {
+        // a covered column added after the partition's first rows has a column top there; an O3
+        // commit into that partition re-writes the covering index, and the rows below the top
+        // still read NULL, in a WAL and a non-WAL table
+        assertMemoryLeak(() -> {
+            for (String table : new String[]{"t_o3_ct_wal", "t_o3_ct"}) {
+                execute("CREATE TABLE " + table + " (ts TIMESTAMP, sym SYMBOL, qty INT) TIMESTAMP(ts) PARTITION BY DAY "
+                        + (table.endsWith("_wal") ? "WAL" : "BYPASS WAL"));
+                execute("INSERT INTO " + table + " VALUES ('2024-01-01T00:00:00', 'A', 10), ('2024-01-01T02:00:00', 'B', 20)");
+                drainWalQueue();
+                execute("ALTER TABLE " + table + " ADD COLUMN price DOUBLE");
+                execute("INSERT INTO " + table + " VALUES ('2024-01-01T04:00:00', 'A', 30, 100.5)");
+                drainWalQueue();
+                execute("ALTER TABLE " + table + " ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (price, qty)");
+                drainWalQueue();
+                // O3: both rows land before the partition's last row
+                execute("INSERT INTO " + table + " VALUES ('2024-01-01T01:00:00', 'A', 40, 200.5), ('2024-01-01T03:00:00', 'A', 50, NULL)");
+                drainWalQueue();
+                engine.releaseAllWriters();
+                assertQuery("SELECT sym, qty, price FROM " + table + " WHERE sym = 'A' ORDER BY ts")
+                        .noRandomAccess()
+                        .expectSize()
+                        .noLeakCheck()
+                        .withPlanContaining("CoveringIndex")
+                        .returns("""
+                                sym\tqty\tprice
+                                A\t10\tnull
+                                A\t40\t200.5
+                                A\t50\tnull
+                                A\t30\t100.5
+                                """);
+            }
         });
     }
 

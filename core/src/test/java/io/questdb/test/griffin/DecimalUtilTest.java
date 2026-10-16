@@ -53,12 +53,15 @@ import io.questdb.std.Decimal256;
 import io.questdb.std.Decimal64;
 import io.questdb.std.Decimals;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.str.StringSink;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.lang.reflect.Proxy;
 
 public class DecimalUtilTest extends AbstractCairoTest {
     private final Decimal128 decimal128 = new Decimal128();
@@ -510,6 +513,72 @@ public class DecimalUtilTest extends AbstractCairoTest {
 
         // Test INTERVAL - should return 0
         Assert.assertEquals(0, DecimalUtil.getTypePrecisionScale(ColumnType.INTERVAL));
+    }
+
+    @Test
+    public void testLoadCoversEveryAdmittedType() {
+        // Coverage of DecimalUtil.load: every value type the decimal code admits, through
+        // getTypePrecisionScale() or getImplicitCastType(), has a load arm. The value source
+        // answers 7 through every getter, so a type load reads comes out as 7 at the type's scale;
+        // a type with no arm leaves the target untouched. The list pins the types load reads.
+        final StringSink loaded = new StringSink();
+        final StringSink missing = new StringSink();
+        for (int t = 0; t < QueryEngineTypeFactsTest.TYPES.length; t++) {
+            final int type = QueryEngineTypeFactsTest.TYPES[t];
+            final Function seven = (Function) Proxy.newProxyInstance(
+                    Function.class.getClassLoader(),
+                    new Class<?>[]{Function.class},
+                    (proxy, method, args) -> switch (method.getName()) {
+                        case "getType" -> type;
+                        case "getByte", "getDecimal8" -> (byte) 7;
+                        case "getShort", "getDecimal16" -> (short) 7;
+                        case "getInt", "getDecimal32" -> 7;
+                        case "getLong", "getDate", "getTimestamp", "getDecimal64" -> 7L;
+                        case "getDecimal128" -> {
+                            ((Decimal128) args[1]).ofLong(7, 0);
+                            yield null;
+                        }
+                        case "getDecimal256" -> {
+                            ((Decimal256) args[1]).ofLong(7, 0);
+                            yield null;
+                        }
+                        default -> throw new UnsupportedOperationException(method.getName());
+                    }
+            );
+            decimal256.ofLong(-12_345, 3);
+            DecimalUtil.load(decimal256, decimal128, seven, null, type);
+            final boolean isLoaded = decimal256.compareTo(Decimal256.fromLong(-12_345, 3)) != 0;
+            if (isLoaded) {
+                loaded.put(QueryEngineTypeFactsTest.LABELS[t]).put('=').put(decimal256.toString()).put('\n');
+            }
+            // the pseudo DECIMAL tag of the signatures holds no value
+            final boolean isAdmitted = ColumnType.findTypeDriver(type) != null
+                    && (DecimalUtil.getTypePrecisionScale(type) != 0 || DecimalUtil.getImplicitCastType(type) != 0);
+            if (isAdmitted && !isLoaded) {
+                missing.put(QueryEngineTypeFactsTest.LABELS[t]).put('\n');
+            }
+        }
+        TestUtils.assertEquals("", missing);
+        TestUtils.assertEquals(
+                """
+                        BYTE=7
+                        SHORT=7
+                        INT=7
+                        LONG=7
+                        DATE=7
+                        TIMESTAMP=7
+                        DECIMAL8=7
+                        DECIMAL16=7
+                        DECIMAL32=7
+                        DECIMAL64=7
+                        DECIMAL128=7
+                        DECIMAL256=7
+                        TIMESTAMP_NS=7
+                        DECIMAL(5,2)=0.07
+                        DECIMAL(18,3)=0.007
+                        """,
+                loaded
+        );
     }
 
     @Test

@@ -171,8 +171,7 @@ class BucketSelectWindowFunction extends BaseWindowFunction implements Reopenabl
     static long coerceAndValidateConstantTarget(Function targetArg, int targetPosition, SqlExecutionContext sqlExecutionContext) throws SqlException {
         AbstractWindowFunctionFactory.coerceRuntimeConstantType(targetArg, ColumnType.LONG, sqlExecutionContext, "target point count must be an integer", targetPosition);
         final short targetTypeTag = ColumnType.tagOf(targetArg.getType());
-        if (targetTypeTag != ColumnType.INT && targetTypeTag != ColumnType.LONG
-                && targetTypeTag != ColumnType.SHORT && targetTypeTag != ColumnType.BYTE) {
+        if (!ColumnType.isIntegral(targetTypeTag)) {
             throw SqlException.$(targetPosition, "integer expected for target point count");
         }
         if (!targetArg.isConstant()) {

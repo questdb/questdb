@@ -8362,7 +8362,7 @@ public class SqlCodeGeneratorTest extends AbstractCairoTest {
         final int[][] actual = SqlCodeGenerator.actualUnionCastMatrix();
         Assert.assertEquals(expected.length, actual.length);
 
-        for (int typeA = 0; typeA <= ColumnType.NULL; typeA++) {
+        for (int typeA = 0; typeA <= ColumnType.MAX_TAG; typeA++) {
             final int[] expToTypes = expected[typeA];
             final int[] actToTypes = actual[typeA];
             Assert.assertArrayEquals(ColumnType.nameOf(typeA), expToTypes, actToTypes);

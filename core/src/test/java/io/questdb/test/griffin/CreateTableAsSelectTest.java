@@ -25,6 +25,7 @@
 package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoError;
+import io.questdb.cairo.ColumnType;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongHashSet;
@@ -201,6 +202,93 @@ public class CreateTableAsSelectTest extends AbstractCairoTest {
     @Test
     public void testCreatePartitionedTableAtomicAsSelectTimestampNoOrder() throws Exception {
         createPartitionedTableAtomicAsSelectWithOrderBy("");
+    }
+
+    @Test
+    public void testCtasCastLong256ToUuidFails() throws Exception {
+        assertException(
+                "CREATE TABLE dst AS (SELECT rnd_long256() l256 FROM long_sequence(3)), CAST(l256 AS UUID)",
+                76,
+                "unsupported cast [column=l256, from=LONG256, to=UUID]"
+        );
+    }
+
+    @Test
+    public void testCtasCastBetweenUuidAndLong128() throws Exception {
+        // CTAS copies the 16 bytes unchanged between UUID and LONG128, as on master; a round trip
+        // gives the UUID back
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (u UUID, l LONG128, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO src VALUES ('11111111-2222-3333-4444-555555555555', to_long128(1, 2), 0), (NULL, NULL, 1)");
+            execute("CREATE TABLE l_as_u AS (SELECT l, ts FROM src), CAST(l AS UUID)");
+            execute("CREATE TABLE u_as_l AS (SELECT u, ts FROM src), CAST(u AS LONG128)");
+            execute("CREATE TABLE u_back AS (SELECT u, ts FROM u_as_l), CAST(u AS UUID)");
+            assertQuery("SELECT l FROM l_as_u")
+                    .noLeakCheck()
+                    .columnType(0, ColumnType.UUID)
+                    .expectSize()
+                    .returns("""
+                            l
+                            00000000-0000-0002-0000-000000000001
+                            
+                            """);
+            assertQuery("SELECT u FROM u_back")
+                    .noLeakCheck()
+                    .columnType(0, ColumnType.UUID)
+                    .expectSize()
+                    .returns("""
+                            u
+                            11111111-2222-3333-4444-555555555555
+                            
+                            """);
+        });
+    }
+
+    @Test
+    public void testCtasCastToCharWithoutCopierArmFails() throws Exception {
+        // the copiers have no arm from these types into CHAR (bug y), so the cast clause refuses
+        // them at its position, before the table exists
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE src AS (
+                        SELECT 1::BYTE b, 2::SHORT s, 3 i, 4L l, 5::DATE d, 6::TIMESTAMP t, 7::TIMESTAMP_NS n, 8.0f f, 9.0 x
+                        FROM long_sequence(1)
+                    )
+                    """);
+            final String[][] pairs = {
+                    {"b", "BYTE"}, {"s", "SHORT"}, {"i", "INT"}, {"l", "LONG"}, {"d", "DATE"},
+                    {"t", "TIMESTAMP"}, {"n", "TIMESTAMP_NS"}, {"f", "FLOAT"}, {"x", "DOUBLE"}
+            };
+            for (String[] pair : pairs) {
+                final String sql = "CREATE TABLE dst AS (SELECT " + pair[0] + " FROM src), CAST(" + pair[0] + " AS CHAR)";
+                assertExceptionNoLeakCheck(sql, sql.indexOf(pair[0] + " AS CHAR"), "unsupported cast [column=" + pair[0] + ", from=" + pair[1] + ", to=CHAR]");
+                Assert.assertNull(sql, engine.getTableTokenIfExists("dst"));
+            }
+        });
+    }
+
+    @Test
+    public void testCtasCastUuidToStringAndVarchar() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE src (s UUID, v UUID)");
+            execute("""
+                    INSERT INTO src VALUES
+                        ('11111111-1111-1111-1111-111111111111', '22222222-2222-2222-2222-222222222222'),
+                        (NULL, NULL)
+                    """);
+            execute("CREATE TABLE dst AS (SELECT * FROM src), CAST(s AS STRING), CAST(v AS VARCHAR)");
+
+            assertQuery("dst")
+                    .noLeakCheck()
+                    .columnType(0, ColumnType.STRING)
+                    .columnType(1, ColumnType.VARCHAR)
+                    .expectSize()
+                    .returns("""
+                            s\tv
+                            11111111-1111-1111-1111-111111111111\t22222222-2222-2222-2222-222222222222
+                            \t
+                            """);
+        });
     }
 
     private void createPartitionedTableAsSelectWithOrderBy(String orderByClause) throws Exception {

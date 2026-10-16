@@ -1,0 +1,35 @@
+core/src/main/java/io/questdb/Bootstrap.java:58: warning: Signal is internal proprietary API and may be removed in a future release
+import sun.misc.Signal;
+               ^
+core/src/main/java/io/questdb/cutlass/text/types/TypeManager.java:149: error: the switch expression does not cover all possible input values
+        return switch (kind) {
+               ^
+core/src/main/java/io/questdb/std/Unsafe.java:72: warning: Unsafe is internal proprietary API and may be removed in a future release
+    private static final sun.misc.Unsafe UNSAFE;
+                                 ^
+core/src/main/java/io/questdb/cairo/NnIntTypeDriver.java:3: error: NnIntTypeDriver is not abstract and does not override abstract method setNull(long,long) in TypeDriver
+final class NnIntTypeDriver extends FixedSizeTypeDriver {
+      ^
+core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java:447: error: the switch expression does not cover all possible input values
+        return switch (fromTag) {
+               ^
+core/src/main/java/io/questdb/griffin/RecordToRowCopierUtils.java:447: error: the switch expression does not cover all possible input values
+        return switch (fromTag) {
+               ^
+core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java:1444: error: the switch expression does not cover all possible input values
+        return switch (ColumnTypeTag.of(function.getType())) {
+               ^
+core/src/main/java/io/questdb/griffin/SqlCodeGenerator.java:1715: error: the switch expression does not cover all possible input values
+        return switch (ColumnTypeTag.of(srcTag)) {
+               ^
+core/src/main/java/io/questdb/cutlass/text/types/TypeManager.java:149: error: the switch expression does not cover all possible input values
+        return switch (kind) {
+               ^
+Note: core/src/main/java/io/questdb/std/Os.java uses or overrides a deprecated API.
+Note: Recompile with -Xlint:deprecation for details.
+Note: Some input files use or override a deprecated API that is marked for removal.
+Note: Recompile with -Xlint:removal for details.
+Note: Some input files use unchecked or unsafe operations.
+Note: Recompile with -Xlint:unchecked for details.
+5 errors
+9 warnings

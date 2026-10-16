@@ -794,6 +794,10 @@ fn build_column_infos_from_partition<'a>(
             let (physical_type, fixed_byte_len, max_rep_level, max_def_level) =
                 if let Some(col_desc) = schema_columns.get(i) {
                     let phys_type = col_desc.descriptor.primitive_type.physical_type;
+                    #[allow(
+                        clippy::wildcard_enum_match_arm,
+                        reason = "not a tag match: parquet2 PhysicalType"
+                    )]
                     let fbl = match phys_type {
                         parquet2::schema::types::PhysicalType::FixedLenByteArray(len) => len as i32,
                         _ => 0,

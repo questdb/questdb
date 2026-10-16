@@ -1251,6 +1251,104 @@ public class SampleByFillTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testFillLinearListNullEndpoint() throws Exception {
+        // a fill list interpolates through a wrapper of its own; it fills NULL next to a NULL
+        // INT or LONG bucket as the single LINEAR fill does
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (l LONG, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, 1, '1970-01-01T00:00:00.000000Z'),
+                    (NULL, NULL, '1970-01-01T01:00:00.000000Z'),
+                    (NULL, NULL, '1970-01-01T03:00:00.000000Z'),
+                    (7, 7, '1970-01-01T05:00:00.000000Z'),
+                    (11, 11, '1970-01-01T07:00:00.000000Z'),
+                    (NULL, NULL, '1970-01-01T09:00:00.000000Z')""");
+            assertQuery("SELECT ts, sum(l) sl, min(i) mi FROM t SAMPLE BY 1h FILL(LINEAR, LINEAR)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .returns("""
+                            ts\tsl\tmi
+                            1970-01-01T00:00:00.000000Z\t1\t1
+                            1970-01-01T01:00:00.000000Z\tnull\tnull
+                            1970-01-01T02:00:00.000000Z\tnull\tnull
+                            1970-01-01T03:00:00.000000Z\tnull\tnull
+                            1970-01-01T04:00:00.000000Z\tnull\tnull
+                            1970-01-01T05:00:00.000000Z\t7\t7
+                            1970-01-01T06:00:00.000000Z\t9\t9
+                            1970-01-01T07:00:00.000000Z\t11\t11
+                            1970-01-01T08:00:00.000000Z\tnull\tnull
+                            1970-01-01T09:00:00.000000Z\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillLinearNullEndpoint() throws Exception {
+        // FILL(LINEAR) fills NULL next to a bucket whose INT or LONG aggregate is NULL, as NaN
+        // arithmetic does for DOUBLE, instead of interpolating the NULL sentinel as a number
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (l LONG, d DOUBLE, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO t VALUES
+                    (1, 1.5, 1, '1970-01-01T00:00:00.000000Z'),
+                    (NULL, NULL, NULL, '1970-01-01T01:00:00.000000Z'),
+                    (NULL, NULL, NULL, '1970-01-01T03:00:00.000000Z'),
+                    (7, 7.5, 7, '1970-01-01T05:00:00.000000Z'),
+                    (11, 11.5, 11, '1970-01-01T07:00:00.000000Z'),
+                    (NULL, NULL, NULL, '1970-01-01T09:00:00.000000Z')""");
+            // the gap at 02:00 has a NULL endpoint on both sides, 04:00 on the left, 08:00 on the
+            // right; the gap at 06:00 interpolates between two values
+            assertQuery("SELECT ts, sum(l) sl, sum(d) sd, min(i) mi FROM t SAMPLE BY 1h FILL(LINEAR)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tsl\tsd\tmi
+                            1970-01-01T00:00:00.000000Z\t1\t1.5\t1
+                            1970-01-01T01:00:00.000000Z\tnull\tnull\tnull
+                            1970-01-01T02:00:00.000000Z\tnull\tnull\tnull
+                            1970-01-01T03:00:00.000000Z\tnull\tnull\tnull
+                            1970-01-01T04:00:00.000000Z\tnull\tnull\tnull
+                            1970-01-01T05:00:00.000000Z\t7\t7.5\t7
+                            1970-01-01T06:00:00.000000Z\t9\t9.5\t9
+                            1970-01-01T07:00:00.000000Z\t11\t11.5\t11
+                            1970-01-01T08:00:00.000000Z\tnull\tnull\tnull
+                            1970-01-01T09:00:00.000000Z\tnull\tnull\tnull
+                            """);
+
+            // keyed: key b extrapolates its leading gap from a value and a NULL, and its trailing
+            // gap from a NULL and a value; key a interpolates its gaps between two values
+            execute("CREATE TABLE tk (k SYMBOL, l LONG, d DOUBLE, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO tk VALUES
+                    ('a', 1, 1.5, 1, '1970-01-01T00:00:00.000000Z'),
+                    ('b', 5, 5.5, 5, '1970-01-01T01:00:00.000000Z'),
+                    ('b', NULL, NULL, NULL, '1970-01-01T02:00:00.000000Z'),
+                    ('b', 7, 7.5, 7, '1970-01-01T03:00:00.000000Z'),
+                    ('a', 9, 9.5, 9, '1970-01-01T04:00:00.000000Z')""");
+            assertQuery("SELECT ts, k, sum(l) sl, sum(d) sd, min(i) mi FROM tk SAMPLE BY 1h FILL(LINEAR)")
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .expectSize()
+                    .returns("""
+                            ts\tk\tsl\tsd\tmi
+                            1970-01-01T00:00:00.000000Z\ta\t1\t1.5\t1
+                            1970-01-01T00:00:00.000000Z\tb\tnull\tnull\tnull
+                            1970-01-01T01:00:00.000000Z\tb\t5\t5.5\t5
+                            1970-01-01T01:00:00.000000Z\ta\t3\t3.5\t3
+                            1970-01-01T02:00:00.000000Z\tb\tnull\tnull\tnull
+                            1970-01-01T02:00:00.000000Z\ta\t5\t5.5\t5
+                            1970-01-01T03:00:00.000000Z\tb\t7\t7.5\t7
+                            1970-01-01T03:00:00.000000Z\ta\t7\t7.5\t7
+                            1970-01-01T04:00:00.000000Z\ta\t9\t9.5\t9
+                            1970-01-01T04:00:00.000000Z\tb\tnull\tnull\tnull
+                            """);
+        });
+    }
+
+    @Test
     public void testFillOffsetInvalidString() throws Exception {
         // Bind variable holding an unparseable offset value: SqlException at
         // cursor.of() time (runtime), pointing at the offset bind-variable
@@ -1932,6 +2030,50 @@ public class SampleByFillTest extends AbstractCairoTest {
                             2024-06-01T00:00:00.000000Z\tnull
                             2024-06-01T01:00:00.000000Z\tnull
                             2024-06-01T02:00:00.000000Z\t42.0
+                            """);
+        });
+    }
+
+    @Test
+    public void testFillNullPlan() throws Exception {
+        // FILL(NULL) fills each column with its type's NULL; BYTE and SHORT have no NULL and fill 0.
+        // The plan labels the fill "null" whatever the column types are
+        assertMemoryLeak(() -> {
+            execute("""
+                    CREATE TABLE x (
+                        b BYTE, s SHORT, i INT, l LONG, ip IPV4, u UUID, sym SYMBOL, g GEOHASH(4c),
+                        arr DOUBLE[], dec DECIMAL(10, 2), v VARCHAR, ts TIMESTAMP
+                    ) TIMESTAMP(ts) PARTITION BY DAY""");
+            execute("""
+                    INSERT INTO x VALUES
+                    (1, 2, 3, 4, '1.2.3.4', '11111111-1111-1111-1111-111111111111', 'a', #sp05, ARRAY[1.0], 1.25::DECIMAL(10, 2), 'v', '2024-01-01T00:00:00.000000Z'),
+                    (5, 6, 7, 8, '5.6.7.8', '22222222-2222-2222-2222-222222222222', 'b', #sp06, ARRAY[2.0], 2.5::DECIMAL(10, 2), 'w', '2024-01-01T02:00:00.000000Z')""");
+            assertQuery("""
+                    SELECT first(b) b, first(s) s, first(i) i, first(l) l, first(ip) ip, first(u) u, first(sym) sym,
+                    first(g) g, first(arr) arr, first(dec) dec, first(v) v, ts
+                    FROM x SAMPLE BY 1h FILL(NULL) ALIGN TO CALENDAR""")
+                    .timestamp("ts")
+                    .noRandomAccess()
+                    .withPlan("""
+                            Sample By Fill
+                              stride: '1h'
+                              fill: null
+                                Encode sort light
+                                  keys: [ts]
+                                    Async Group By workers: 1
+                                      keys: [ts]
+                                      keyFunctions: [timestamp_floor_utc('1h',ts)]
+                                      values: [first(b),first(s),first(i),first(l),first(ip),first(u),first(sym),first(g),first(arr),first(dec),first(v)]
+                                      filter: null
+                                        PageFrame
+                                            Row forward scan
+                                            Frame forward scan on: x
+                            """)
+                    .returns("""
+                            b\ts\ti\tl\tip\tu\tsym\tg\tarr\tdec\tv\tts
+                            1\t2\t3\t4\t1.2.3.4\t11111111-1111-1111-1111-111111111111\ta\tsp05\t[1.0]\t1.25\tv\t2024-01-01T00:00:00.000000Z
+                            0\t0\tnull\tnull\t\t\t\t\tnull\t\t\t2024-01-01T01:00:00.000000Z
+                            5\t6\t7\t8\t5.6.7.8\t22222222-2222-2222-2222-222222222222\tb\tsp06\t[2.0]\t2.50\tw\t2024-01-01T02:00:00.000000Z
                             """);
         });
     }

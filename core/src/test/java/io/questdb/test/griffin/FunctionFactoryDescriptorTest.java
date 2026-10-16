@@ -26,14 +26,17 @@ package io.questdb.test.griffin;
 
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
+import io.questdb.cairo.ColumnTypeTag;
 import io.questdb.cairo.sql.Function;
 import io.questdb.griffin.FunctionFactory;
 import io.questdb.griffin.FunctionFactoryDescriptor;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.IntList;
+import io.questdb.std.IntShortHashMap;
 import io.questdb.std.ObjList;
 import io.questdb.std.str.StringSink;
+import io.questdb.test.cairo.types.TypeConformanceTypes;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
@@ -41,6 +44,141 @@ import org.junit.Test;
 public class FunctionFactoryDescriptorTest {
 
     private static final StringSink sink = new StringSink();
+
+    @Test
+    public void testDuplicateSignatureCharacterFails() {
+        // the table the class initialisation builds, then a second tag under INT's character
+        final IntShortHashMap tagBySignatureChar = new IntShortHashMap();
+        for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+            final char c = FunctionFactoryDescriptor.signatureChar(tag);
+            if (c != FunctionFactoryDescriptor.NO_SIGNATURE_CHAR) {
+                FunctionFactoryDescriptor.registerSignatureChar(tagBySignatureChar, c, tag);
+            }
+        }
+        final char c = FunctionFactoryDescriptor.signatureChar(ColumnTypeTag.INT);
+        try {
+            FunctionFactoryDescriptor.registerSignatureChar(tagBySignatureChar, c, ColumnTypeTag.LONG);
+            Assert.fail("a second tag took signature character " + c);
+        } catch (IllegalStateException e) {
+            TestUtils.assertContains(e.getMessage(), "signature character taken twice [char=i, first=INT, second=LONG]");
+        }
+        // the table still names INT
+        Assert.assertEquals(ColumnType.INT, tagBySignatureChar.get(c));
+    }
+
+    @Test
+    public void testGetArgTypeTagOfNonSignatureChars() {
+        // 'y' is the one free ASCII letter; the brackets, '{' ('[' | 32) included, are not types
+        for (char c : new char[]{'y', 'Y', '[', ']', '{', '(', ')', ',', ' ', '0', '\u00e0'}) {
+            Assert.assertEquals("char " + c, -1, FunctionFactoryDescriptor.getArgTypeTag(c));
+        }
+    }
+
+    @Test
+    public void testSignatureCharsDifferFromUpperCaseInBit5Only() {
+        // FunctionFactoryDescriptor reads the constant flag as (c & 32) != 0 and folds case as
+        // c | 32, so every signature character must be a lower-case letter whose upper-case
+        // form is the same code point with bit 5 cleared. This holds for the three non-ASCII
+        // characters too (U+00F8/U+00D8, U+03B4/U+0394, U+03BE/U+039E).
+        for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+            final char c = FunctionFactoryDescriptor.signatureChar(tag);
+            if (c == FunctionFactoryDescriptor.NO_SIGNATURE_CHAR) {
+                continue;
+            }
+            final char upper = (char) (c & ~32);
+            Assert.assertTrue(tag + ": not lower case: " + c, Character.isLowerCase(c));
+            Assert.assertTrue(tag + ": bit 5 clear: " + c, (c & 32) != 0);
+            Assert.assertEquals(tag + ": upper case is not bit 5: " + c, Character.toUpperCase(c), upper);
+            Assert.assertTrue(tag + ": not upper case: " + upper, Character.isUpperCase(upper));
+            Assert.assertEquals(tag + ": lower case is not bit 5: " + upper, c, Character.toLowerCase(upper));
+            Assert.assertEquals(tag + ": lower", tag.code(), FunctionFactoryDescriptor.getArgTypeTag(c));
+            Assert.assertEquals(tag + ": upper", tag.code(), FunctionFactoryDescriptor.getArgTypeTag(upper));
+            Assert.assertNotNull(tag + ": no type name", FunctionFactoryDescriptor.signatureTypeName(tag));
+        }
+    }
+
+    @Test
+    public void testSignatureCharTable() {
+        // Pins the character of every existing tag; a tag without a character shows '-' and cannot
+        // be named by any factory signature. A type registered later is left out: its character is a
+        // type driver answer, which javac names for it.
+        final StringSink table = new StringSink();
+        for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+            if (TypeConformanceTypes.isLaterTag(tag.code())) {
+                continue;
+            }
+            final char c = FunctionFactoryDescriptor.signatureChar(tag);
+            table.put(tag.name()).put(' ');
+            if (c == FunctionFactoryDescriptor.NO_SIGNATURE_CHAR) {
+                table.put('-');
+            } else {
+                table.put(c).put(' ').put(FunctionFactoryDescriptor.signatureTypeName(tag));
+            }
+            table.put('\n');
+        }
+        TestUtils.assertEquals(
+                """
+                        UNDEFINED -
+                        BOOLEAN t boolean
+                        BYTE b byte
+                        SHORT e short
+                        CHAR a char
+                        INT i int
+                        LONG l long
+                        DATE m date
+                        TIMESTAMP n timestamp
+                        FLOAT f float
+                        DOUBLE d double
+                        STRING s string
+                        SYMBOL k symbol
+                        LONG256 h long256
+                        GEOBYTE -
+                        GEOSHORT -
+                        GEOINT -
+                        GEOLONG -
+                        BINARY u binary
+                        UUID z uuid
+                        CURSOR c cursor
+                        VAR_ARG v var_arg
+                        RECORD r record
+                        GEOHASH g geohash
+                        LONG128 j long128
+                        IPv4 x ipv4
+                        VARCHAR \u00f8 varchar
+                        ARRAY -
+                        DECIMAL8 -
+                        DECIMAL16 -
+                        DECIMAL32 -
+                        DECIMAL64 -
+                        DECIMAL128 -
+                        DECIMAL256 -
+                        DECIMAL \u03be decimal
+                        REGCLASS p reg_class
+                        REGPROCEDURE q reg_procedure
+                        ARRAY_STRING w array_string
+                        PARAMETER -
+                        INTERVAL \u03b4 interval
+                        VARCHAR_SLICE -
+                        NULL o null
+                        UNKNOWN -
+                        """,
+                table
+        );
+    }
+
+    @Test
+    public void testSignatureTypeNameOfTagWithoutCharThrows() {
+        for (ColumnTypeTag tag : ColumnTypeTag.values()) {
+            if (FunctionFactoryDescriptor.signatureChar(tag) == FunctionFactoryDescriptor.NO_SIGNATURE_CHAR) {
+                try {
+                    FunctionFactoryDescriptor.signatureTypeName(tag);
+                    Assert.fail(tag.name());
+                } catch (IllegalArgumentException e) {
+                    TestUtils.assertContains(e.getMessage(), "tag has no signature character: " + tag);
+                }
+            }
+        }
+    }
 
     @Test
     public void testSignatureWithArrayAsAFirstArgument() throws SqlException {

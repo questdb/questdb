@@ -27,6 +27,7 @@ package io.questdb.cairo.sql;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.ColumnTypes;
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.NullPolicy;
 import io.questdb.cairo.TableColumnMetadata;
 import io.questdb.griffin.PlanSink;
 import io.questdb.griffin.Plannable;
@@ -102,6 +103,20 @@ public interface RecordMetadata extends ColumnTypes, Plannable {
      * @return name of the column
      */
     String getColumnName(int columnIndex);
+
+    /**
+     * How column {@code columnIndex} represents NULL. Code that decides NULL for a column reads
+     * this, not the type driver's {@link io.questdb.cairo.TypeDriver#getNullPolicy()}, so a
+     * per-column representation of NULL would change only this method. A NOT NULL constraint is
+     * not one: the column keeps its type's policy and refuses NULL at write. The default returns
+     * the column type's policy. Not defined for a deleted column (negative type).
+     *
+     * @param columnIndex numeric index of a column
+     * @return the column's NULL policy
+     */
+    default NullPolicy getColumnNullPolicy(int columnIndex) {
+        return ColumnType.getTypeDriver(getColumnType(columnIndex)).getNullPolicy();
+    }
 
     /**
      * Return the type of column by index. Returns an integer defined

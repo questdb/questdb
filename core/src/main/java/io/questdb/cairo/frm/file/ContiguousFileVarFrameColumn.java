@@ -231,6 +231,7 @@ public class ContiguousFileVarFrameColumn implements FrameColumn {
             } finally {
                 TableUtils.mapAppendColumnBufferRelease(ff, targetAuxMemAddr, dstAuxOffset, srcAuxSize, MEMORY_TAG);
             }
+            // validity batch site: a column with a validity bitmap would mark these rows NULL here
         }
     }
 
