@@ -727,6 +727,16 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
     }
 
     /**
+     * Zeroes the redirect reference lookup count and starts it. A writer counts nothing
+     * until a test calls this, so production redirects pay one flag read rather than a
+     * counter write.
+     */
+    @TestOnly
+    public void resetRedirectRefWidthLookupCountForTest() {
+        publicationShells.roots.resetRedirectRefWidthLookupCountForTest();
+    }
+
+    /**
      * @return state page reference slots of every redirect reference array the writer
      * keeps for reuse, counted by walking its width cache
      */
@@ -737,14 +747,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
 
     @TestOnly
     public int getRootBuilderVisitorShellIdentityForTest(int index) {
-        switch (index) {
-            case 0:
-                return System.identityHashCode(redirectTimelineVisitor);
-            case 1:
-                return System.identityHashCode(redirectPartitionVisitor);
-            default:
-                return System.identityHashCode(missingPartitionVisitor);
-        }
+        return switch (index) {
+            case 0 -> System.identityHashCode(redirectTimelineVisitor);
+            case 1 -> System.identityHashCode(redirectPartitionVisitor);
+            default -> System.identityHashCode(missingPartitionVisitor);
+        };
     }
 
     @TestOnly
@@ -5342,6 +5349,11 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return chain == null ? 0 : chain.getFunctionIdentityQualificationCountForTest();
         }
 
+        /**
+         * Zeroes the identity qualification count of the open chain and starts it. A chain
+         * counts nothing until a test calls this, and a chain that {@link #collectBoundaries}
+         * opens afterwards starts uncounted.
+         */
         @TestOnly
         public void resetFunctionIdentityQualificationCountForTest() {
             if (chain != null) {
@@ -5461,6 +5473,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             private final ObjList<byte[]> functionIdentities = new ObjList<>();
             @TestOnly
             private int functionIdentityQualificationCountForTest;
+            private boolean isFunctionIdentityQualificationCountingForTest;
             // Both indexes name the staged keys by their handles in the capture scratch's key
             // arena, which the capture keeps leased until it closes - after this chain. Like
             // that arena they charge no tracker. Lazy, so a constructor that throws strands
@@ -5728,7 +5741,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             }
 
             private int functionOrdinal(byte[] functionIdentity, boolean isCreate) {
-                assert isCreate || incrementFunctionIdentityQualificationCountForTest();
+                if (!isCreate && isFunctionIdentityQualificationCountingForTest) {
+                    functionIdentityQualificationCountForTest++;
+                }
                 for (int i = 0, n = functionIdentities.size(); i < n; i++) {
                     if (Arrays.equals(functionIdentities.getQuick(i), functionIdentity)) {
                         return i;
@@ -5746,14 +5761,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
                 return functionIdentityQualificationCountForTest;
             }
 
-            private boolean incrementFunctionIdentityQualificationCountForTest() {
-                functionIdentityQualificationCountForTest++;
-                return true;
-            }
-
             @TestOnly
             private void resetFunctionIdentityQualificationCountForTest() {
                 functionIdentityQualificationCountForTest = 0;
+                isFunctionIdentityQualificationCountingForTest = true;
             }
 
             private @Nullable FrozenFunction findNewestFunction(byte[] functionIdentity, int stateFormatVersion) {
@@ -6410,6 +6421,7 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
          * repair's per-root reference transaction sees only its own.
          */
         private final LongList writtenMetaSegments = new LongList();
+        private boolean isRedirectRefWidthLookupCountingForTest;
         private int redirectRefWidthLookupCountForTest;
         // Reference slots of the arrays redirectRefBuffersByWidth holds.
         private long retainedRedirectRefCount;
@@ -6650,7 +6662,9 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
         }
 
         private LiveViewCheckpointStatePageRef[] redirectRefs(int count) {
-            assert isRedirectRefWidthLookupRecordedForTest();
+            if (isRedirectRefWidthLookupCountingForTest) {
+                redirectRefWidthLookupCountForTest++;
+            }
             LiveViewCheckpointStatePageRef[] refs = redirectRefBuffersByWidth.get(count);
             if (refs != null) {
                 return refs;
@@ -6695,9 +6709,10 @@ public class LiveViewCheckpointTimelineStoreWriter implements Closeable {
             return count;
         }
 
-        private boolean isRedirectRefWidthLookupRecordedForTest() {
-            redirectRefWidthLookupCountForTest++;
-            return true;
+        @TestOnly
+        private void resetRedirectRefWidthLookupCountForTest() {
+            redirectRefWidthLookupCountForTest = 0;
+            isRedirectRefWidthLookupCountingForTest = true;
         }
 
         /**

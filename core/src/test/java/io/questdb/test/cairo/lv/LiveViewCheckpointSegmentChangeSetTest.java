@@ -25,6 +25,7 @@
 package io.questdb.test.cairo.lv;
 
 import com.sun.management.ThreadMXBean;
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.lv.LiveViewCheckpointAnchorPlan;
@@ -35,7 +36,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongHashSet;
-import io.questdb.std.LongList;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Numbers;
 import io.questdb.std.NumericException;
@@ -798,6 +799,126 @@ public class LiveViewCheckpointSegmentChangeSetTest {
     }
 
     @Test
+    public void testWalkingAndCountingTheOpenSegmentsRowsAllocatesNoHeapOnceWarm() throws Exception {
+        // A keyed walk leaves one timestamp per open-segment row, and the resume sorts them
+        // once to count the rows at or below each checkpoint boundary. Two walk shapes used
+        // to turn that list into heap garbage on every repair, not only on a worker's first:
+        // a walk past the retained width regrew the list from scratch after of() dropped it,
+        // and a walk whose rows arrive in more than one ascending run - in-order commits,
+        // then a late one below them - sorted through a heap copy of the whole list. Once a
+        // worker has walked a shape, walking and counting it again must allocate nothing on
+        // the heap.
+        TestUtils.assertMemoryLeak(() -> {
+            final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+            final ThreadMXBean threadMXBean = (ThreadMXBean) ManagementFactory.getThreadMXBean();
+            final long threadId = Thread.currentThread().threadId();
+            try (LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet()) {
+                // Under the retained width, and past it.
+                assertOpenSegmentWalkAllocatesNoHeap(changeSet, plan, threadMXBean, threadId, 10_000);
+                assertOpenSegmentWalkAllocatesNoHeap(changeSet, plan, threadMXBean, threadId, 100_000);
+            }
+        });
+    }
+
+    @Test
+    public void testTheOpenSegmentsRowListLivesInTaggedNativeMemory() throws Exception {
+        // The row list is the one structure of a keyed walk that grows with every row the
+        // walk reads rather than with its keys, so it answers to the live view's memory tag
+        // like the rest of the change set: a change set no repair has bound holds no block,
+        // a wide walk's rows show under NATIVE_LIVE_VIEW_IN_MEM, of() hands the growth back,
+        // and close() returns the tag to where it started.
+        TestUtils.assertMemoryLeak(() -> {
+            final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+            final long baselineMemUsed = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+            try (LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet()) {
+                Assert.assertEquals(
+                        "a change set no repair has bound must hold no native block",
+                        baselineMemUsed,
+                        Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM)
+                );
+                changeSet.of(DAY_8, 16, true);
+                for (int row = 0; row < WIDE_RESIDUAL_ROWS; row++) {
+                    Assert.assertTrue(changeSet.addRow(DAY_8 + row, 1, plan));
+                }
+                Assert.assertTrue(changeSet.isResidualKeyDomainComplete());
+                Assert.assertEquals(WIDE_RESIDUAL_ROWS, changeSet.getResidualRowCount());
+                Assert.assertEquals(WIDE_RESIDUAL_ROWS / 2, changeSet.getResidualRowCountAtOrBelow(DAY_8 + WIDE_RESIDUAL_ROWS / 2 - 1));
+                final long wideMemUsed = Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                Assert.assertTrue(
+                        "a wide walk's row timestamps must sit in the live view's native memory [grownBytes="
+                                + (wideMemUsed - baselineMemUsed) + ']',
+                        wideMemUsed - baselineMemUsed >= (long) WIDE_RESIDUAL_ROWS * Long.BYTES
+                );
+
+                changeSet.of(DAY_8, 16, true);
+                final long releasedBytes = wideMemUsed - Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+                Assert.assertTrue(
+                        "of() must hand back the wide walk's rows [releasedBytes=" + releasedBytes + ']',
+                        releasedBytes >= (long) WIDE_RESIDUAL_ROWS * Long.BYTES
+                );
+                Assert.assertEquals(0, changeSet.getResidualRowCount());
+                Assert.assertTrue(changeSet.addRow(DAY_8 + 5, 1, plan));
+                Assert.assertTrue(changeSet.addRow(DAY_8 + 4, 1, plan));
+                Assert.assertEquals(1, changeSet.getResidualRowCountAtOrBelow(DAY_8 + 4));
+                Assert.assertEquals(2, changeSet.getResidualRowCountAtOrBelow(DAY_8 + 5));
+            }
+            Assert.assertEquals(baselineMemUsed, Unsafe.getMemUsedByTag(MemoryTag.NATIVE_LIVE_VIEW_IN_MEM));
+        });
+    }
+
+    @Test
+    public void testAnOpenSegmentRowListThatCannotGrowLeaksNothing() throws Exception {
+        // The row list allocates under the RSS limit, so a repair can meet it twice: when
+        // of() opens the list for the worker's first walk that collects the open segment's
+        // keys, and part way through a walk that outgrows the block. The walk's own catch
+        // turns the second into a declined decomposition. Either way the change set must
+        // keep what it had, give it all back on close, and serve the next repair in full.
+        TestUtils.assertMemoryLeak(() -> {
+            final LiveViewCheckpointAnchorPlan plan = dailyPlan();
+            try (LiveViewCheckpointSegmentChangeSet changeSet = new LiveViewCheckpointSegmentChangeSet()) {
+                // A keyed repair that leaves the open segment's keys alone opens everything
+                // but the row list, so the list is the one allocation the next of() makes.
+                changeSet.of(DAY_8, 16, false);
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 1);
+                try {
+                    changeSet.of(DAY_8, 16, true);
+                    Assert.fail("opening the row list must have met the RSS limit");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isOutOfMemory());
+                } finally {
+                    Unsafe.setRssMemLimit(0);
+                }
+
+                changeSet.of(DAY_8, 16, true);
+                Assert.assertTrue(changeSet.addRow(DAY_8, 1, plan));
+                int addedRows = 1;
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 64 * 1024);
+                try {
+                    for (; addedRows < WIDE_RESIDUAL_ROWS; addedRows++) {
+                        changeSet.addRow(DAY_8 + addedRows, 1, plan);
+                    }
+                    Assert.fail("growing the row list must have met the RSS limit");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isOutOfMemory());
+                } finally {
+                    Unsafe.setRssMemLimit(0);
+                }
+                Assert.assertTrue("addedRows=" + addedRows, addedRows > 1);
+                Assert.assertEquals(addedRows, changeSet.getResidualRowCount());
+                Assert.assertEquals(addedRows, changeSet.getResidualRowCountAtOrBelow(DAY_8 + WIDE_RESIDUAL_ROWS));
+
+                changeSet.of(DAY_8, 16, true);
+                Assert.assertEquals(0, changeSet.getResidualRowCount());
+                Assert.assertTrue(changeSet.addRow(DAY_8 + 2, 1, plan));
+                Assert.assertTrue(changeSet.addRow(DAY_8 + 1, 2, plan));
+                Assert.assertTrue(changeSet.isResidualKeyDomainComplete());
+                Assert.assertEquals(1, changeSet.getResidualRowCountAtOrBelow(DAY_8 + 1));
+                Assert.assertEquals(2, changeSet.getResidualRowCountAtOrBelow(DAY_8 + 2));
+            }
+        });
+    }
+
+    @Test
     public void testARepairAfterAWideOneKeepsNoRoomForTheWideOnesKeys() throws Exception {
         // Each closed segment's key list, and the open segment's, grows to the keys its
         // repair collected - a whole key budget each, at worst - and the worker's one change
@@ -1069,6 +1190,49 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         }
     }
 
+    /**
+     * Walks {@code rowCount} open-segment rows three times, each walk as in-order commits
+     * followed by a late commit below them, and counts them against three boundaries the
+     * way the keyed resume does. Asserts the counts and that the last walk, warm, allocated
+     * nothing on the heap.
+     */
+    private static void assertOpenSegmentWalkAllocatesNoHeap(
+            LiveViewCheckpointSegmentChangeSet changeSet,
+            LiveViewCheckpointAnchorPlan plan,
+            ThreadMXBean threadMXBean,
+            long threadId,
+            int rowCount
+    ) {
+        final int lateRows = rowCount / 2;
+        long allocated = 0;
+        long countBelowSegment = -1;
+        long countThroughLateRows = -1;
+        long countThroughAllRows = -1;
+        for (int walk = 0; walk < 3; walk++) {
+            changeSet.of(DAY_8, 16, true);
+            final long before = threadMXBean.getThreadAllocatedBytes(threadId);
+            for (int row = lateRows; row < rowCount; row++) {
+                changeSet.addRow(DAY_8 + row, 1, plan);
+            }
+            for (int row = 0; row < lateRows; row++) {
+                changeSet.addRow(DAY_8 + row, 1, plan);
+            }
+            changeSet.endClassification();
+            countBelowSegment = changeSet.getResidualRowCountAtOrBelow(DAY_8 - 1);
+            countThroughLateRows = changeSet.getResidualRowCountAtOrBelow(DAY_8 + lateRows - 1);
+            countThroughAllRows = changeSet.getResidualRowCountAtOrBelow(DAY_8 + rowCount);
+            allocated = threadMXBean.getThreadAllocatedBytes(threadId) - before;
+        }
+        Assert.assertTrue(changeSet.isResidualKeyDomainComplete());
+        Assert.assertEquals(rowCount, changeSet.getResidualRowCount());
+        Assert.assertEquals(0, countBelowSegment);
+        Assert.assertEquals(lateRows, countThroughLateRows);
+        Assert.assertEquals(rowCount, countThroughAllRows);
+        // Not zero: ThreadMXBean samples the thread's TLAB accounting rather than the walk's
+        // own allocations. A heap copy of the rows costs 8 bytes per row.
+        Assert.assertTrue("rows=" + rowCount + ", allocated=" + allocated, allocated < 16_384);
+    }
+
     private static LiveViewCheckpointAnchorPlan berlinPlan() {
         final LiveViewCheckpointAnchorPlan plan = LiveViewCheckpointAnchorPlan.ofTimeZone(
                 'd',
@@ -1126,8 +1290,8 @@ public class LiveViewCheckpointSegmentChangeSetTest {
         return keyMembership != null ? keyMembership.capacity() : 0;
     }
 
-    private static int residualRowCapacity(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
-        return ((LongList) fieldOf(changeSet, "residualRowTimestamps")).capacity();
+    private static long residualRowCapacity(LiveViewCheckpointSegmentChangeSet changeSet) throws ReflectiveOperationException {
+        return ((DirectLongList) fieldOf(changeSet, "residualRowTimestamps")).getCapacity();
     }
 
     /**

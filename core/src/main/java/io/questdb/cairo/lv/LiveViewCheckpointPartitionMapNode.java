@@ -257,7 +257,7 @@ final class LiveViewCheckpointPartitionMapNode {
     }
 
     int lowerBound(LiveViewCheckpointMutationArena arena, int mutationIndex) {
-        assert arena.isLowerBoundCountRecordedForTest();
+        arena.recordLowerBoundForTest();
         int lo = 0;
         int hi = count;
         while (lo < hi) {

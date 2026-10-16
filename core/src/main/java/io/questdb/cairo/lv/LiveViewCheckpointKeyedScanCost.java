@@ -83,6 +83,77 @@ public final class LiveViewCheckpointKeyedScanCost {
     private int sharedQueryWorkerCount;
 
     /**
+     * What one per-{@code (key, frame)} index seek is charged, in base rows: the configured
+     * open price divided by {@link #INDEX_SEEKS_PER_INDEX_OPEN}.
+     * <p>
+     * Never zero for a non-zero open price - a seek that costs nothing would let an
+     * arbitrarily wide key domain price as free - and zero for a zero one, because a
+     * configured zero disables the setup term outright and the seek must not smuggle it
+     * back in.
+     */
+    public static long indexSeekRows(long indexOpenRows) {
+        return indexOpenRows <= 0 ? 0 : Math.max(1, indexOpenRows / INDEX_SEEKS_PER_INDEX_OPEN);
+    }
+
+    /**
+     * Whether a keyed scan of {@code keyCount} keys yielding {@code postingRows} rows,
+     * behind {@code indexOpens} index opens and {@code indexSeeks} index seeks, reads less
+     * than a whole-range scan of {@code wholeRangeRows}.
+     * <p>
+     * A tie keeps the whole-range scan: it needs no key domain, no index and no merge, and
+     * this estimate rounds the keyed side down in exactly one place - the budget - so a tie
+     * is as likely to be a saturated count as a real draw.
+     */
+    public static boolean isKeyedScanCheaper(
+            long postingRows,
+            long indexOpens,
+            long indexSeeks,
+            int keyCount,
+            long wholeRangeRows,
+            long indexOpenRows,
+            long indexSeekRows
+    ) {
+        if (postingRows == UNPRICEABLE || keyCount < 1) {
+            return false;
+        }
+        return keyedScanCostRows(postingRows, indexOpens, indexSeeks, keyCount, indexOpenRows, indexSeekRows)
+                < wholeRangeRows;
+    }
+
+    /**
+     * The keyed scan's price in whole-range row equivalents: its posting rows, each carrying
+     * what the merge costs to yield it, plus the per-partition index opens and the
+     * per-key-per-frame index seeks the setup costs.
+     * <p>
+     * Saturating rather than overflowing: an unpriceably wide key domain has to read as
+     * expensive, and a wrapped long would read as free.
+     */
+    public static long keyedScanCostRows(
+            long postingRows,
+            long indexOpens,
+            long indexSeeks,
+            int keyCount,
+            long indexOpenRows,
+            long indexSeekRows
+    ) {
+        // The merge runs on IntLongSortedList, a binary min-heap: yielding a row sifts its
+        // replacement down from the root through a number of levels logarithmic in
+        // keyCount, whatever order the keys' rows interleave in. The charge is the bit
+        // width of keyCount - 1, which is ceil(log2(keyCount)) and at most 31, so it cannot
+        // overflow. A single-key scan merges nothing and pays one row per posting row, and a
+        // key count below one prices the same way.
+        final long merge = keyCount <= 1
+                ? 1L
+                : 1L + (Integer.SIZE - Integer.numberOfLeadingZeros(keyCount - 1));
+        final long merged = postingRows > Long.MAX_VALUE / merge ? Long.MAX_VALUE : postingRows * merge;
+        final long setup = Numbers.saturatedAddNonNegative(
+                Numbers.saturatedMultiplyNonNegative(indexOpens, indexOpenRows),
+                Numbers.saturatedMultiplyNonNegative(indexSeeks, indexSeekRows)
+        );
+        return Numbers.saturatedAddNonNegative(merged, setup);
+    }
+
+    /**
      * Estimates how many base rows a keyed scan of {@code symbolKeys} over the inclusive
      * interval pulls, and records the setup term beside it.
      *
@@ -171,44 +242,6 @@ public final class LiveViewCheckpointKeyedScanCost {
     }
 
     /**
-     * What one per-{@code (key, frame)} index seek is charged, in base rows: the configured
-     * open price divided by {@link #INDEX_SEEKS_PER_INDEX_OPEN}.
-     * <p>
-     * Never zero for a non-zero open price - a seek that costs nothing would let an
-     * arbitrarily wide key domain price as free - and zero for a zero one, because a
-     * configured zero disables the setup term outright and the seek must not smuggle it
-     * back in.
-     */
-    public static long indexSeekRows(long indexOpenRows) {
-        return indexOpenRows <= 0 ? 0 : Math.max(1, indexOpenRows / INDEX_SEEKS_PER_INDEX_OPEN);
-    }
-
-    /**
-     * Whether a keyed scan of {@code keyCount} keys yielding {@code postingRows} rows,
-     * behind {@code indexOpens} index opens and {@code indexSeeks} index seeks, reads less
-     * than a whole-range scan of {@code wholeRangeRows}.
-     * <p>
-     * A tie keeps the whole-range scan: it needs no key domain, no index and no merge, and
-     * this estimate rounds the keyed side down in exactly one place - the budget - so a tie
-     * is as likely to be a saturated count as a real draw.
-     */
-    public static boolean isKeyedScanCheaper(
-            long postingRows,
-            long indexOpens,
-            long indexSeeks,
-            int keyCount,
-            long wholeRangeRows,
-            long indexOpenRows,
-            long indexSeekRows
-    ) {
-        if (postingRows == UNPRICEABLE || keyCount < 1) {
-            return false;
-        }
-        return keyedScanCostRows(postingRows, indexOpens, indexSeeks, keyCount, indexOpenRows, indexSeekRows)
-                < wholeRangeRows;
-    }
-
-    /**
      * Whether the last {@link #estimateKeyedScanRows} stopped on its budget with postings
      * still uncounted, so that {@link #getPostingRows()}, {@link #getIndexOpens()} and
      * {@link #getIndexSeeks()} are floors rather than totals.
@@ -224,39 +257,6 @@ public final class LiveViewCheckpointKeyedScanCost {
      */
     public boolean isSaturated() {
         return isSaturated;
-    }
-
-    /**
-     * The keyed scan's price in whole-range row equivalents: its posting rows, each carrying
-     * what the merge costs to yield it, plus the per-partition index opens and the
-     * per-key-per-frame index seeks the setup costs.
-     * <p>
-     * Saturating rather than overflowing: an unpriceably wide key domain has to read as
-     * expensive, and a wrapped long would read as free.
-     */
-    public static long keyedScanCostRows(
-            long postingRows,
-            long indexOpens,
-            long indexSeeks,
-            int keyCount,
-            long indexOpenRows,
-            long indexSeekRows
-    ) {
-        // The merge runs on IntLongSortedList, a binary min-heap: yielding a row sifts its
-        // replacement down from the root through a number of levels logarithmic in
-        // keyCount, whatever order the keys' rows interleave in. The charge is the bit
-        // width of keyCount - 1, which is ceil(log2(keyCount)) and at most 31, so it cannot
-        // overflow. A single-key scan merges nothing and pays one row per posting row, and a
-        // key count below one prices the same way.
-        final long merge = keyCount <= 1
-                ? 1L
-                : 1L + (Integer.SIZE - Integer.numberOfLeadingZeros(keyCount - 1));
-        final long merged = postingRows > Long.MAX_VALUE / merge ? Long.MAX_VALUE : postingRows * merge;
-        final long setup = Numbers.saturatedAddNonNegative(
-                Numbers.saturatedMultiplyNonNegative(indexOpens, indexOpenRows),
-                Numbers.saturatedMultiplyNonNegative(indexSeeks, indexSeekRows)
-        );
-        return Numbers.saturatedAddNonNegative(merged, setup);
     }
 
     /**

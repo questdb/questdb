@@ -2603,16 +2603,13 @@ public class LiveViewWindow implements QuietCloseable {
      * its own two marker bytes.
      */
     private boolean isPartitionKeyPresent(@NotNull MapRecord record, int keyIndex) {
-        switch (ColumnType.tagOf(partitionKeyTypes.getColumnType(0))) {
-            case ColumnType.STRING:
-                return record.getStrA(keyIndex) != null;
-            case ColumnType.VARCHAR:
-                return record.getVarcharA(keyIndex) != null;
-            default:
-                throw CairoException.critical(0)
-                        .put("live view window state cannot test a partition key of this type [type=")
-                        .put(ColumnType.nameOf(partitionKeyTypes.getColumnType(0))).put(']');
-        }
+        return switch (ColumnType.tagOf(partitionKeyTypes.getColumnType(0))) {
+            case ColumnType.STRING -> record.getStrA(keyIndex) != null;
+            case ColumnType.VARCHAR -> record.getVarcharA(keyIndex) != null;
+            default -> throw CairoException.critical(0)
+                    .put("live view window state cannot test a partition key of this type [type=")
+                    .put(ColumnType.nameOf(partitionKeyTypes.getColumnType(0))).put(']');
+        };
     }
 
     /**

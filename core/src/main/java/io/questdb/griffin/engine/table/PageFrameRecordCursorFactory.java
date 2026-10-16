@@ -395,13 +395,25 @@ public class PageFrameRecordCursorFactory extends AbstractPageFrameRecordCursorF
         // call's keys for the heap factory's whole-list walks - init(), prepareCursor() and
         // toPlan(). SymbolIndexRowCursorFactory holds no resource, so trimmed slots need no close.
         final int keyCount = symbolKeys.size();
-        for (int i = fwdIndexedRowCursorFactories.size(); i < keyCount; i++) {
-            fwdIndexedRowCursorFactories.add(new SymbolIndexRowCursorFactory(
-                    columnIndex,
-                    SymbolTable.VALUE_IS_NULL,
-                    IndexReader.DIR_FORWARD,
-                    null
-            ));
+        int builtCount = fwdIndexedRowCursorFactories.size();
+        if (builtCount < keyCount) {
+            // setPos() moves only the size, so the buffer still holds the factories a narrower call
+            // trimmed, with only nulls past them. A column change clear()s the whole buffer, so
+            // each factory left there reads this call's column. Take them back and build only past
+            // them: every slot below size() then stays built should an allocation fail.
+            fwdIndexedRowCursorFactories.setPos(keyCount);
+            while (builtCount < keyCount && fwdIndexedRowCursorFactories.getQuick(builtCount) != null) {
+                builtCount++;
+            }
+            fwdIndexedRowCursorFactories.setPos(builtCount);
+            for (int i = builtCount; i < keyCount; i++) {
+                fwdIndexedRowCursorFactories.add(new SymbolIndexRowCursorFactory(
+                        columnIndex,
+                        SymbolTable.VALUE_IS_NULL,
+                        IndexReader.DIR_FORWARD,
+                        null
+                ));
+            }
         }
         fwdIndexedRowCursorFactories.setPos(keyCount);
         for (int i = 0; i < keyCount; i++) {

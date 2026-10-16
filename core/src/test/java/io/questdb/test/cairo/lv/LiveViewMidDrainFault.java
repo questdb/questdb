@@ -24,7 +24,9 @@
 
 package io.questdb.test.cairo.lv;
 
+import io.questdb.cairo.CairoException;
 import io.questdb.cairo.lv.LiveViewCheckpointLayout;
+import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
@@ -39,6 +41,7 @@ import org.junit.Assert;
 
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 /**
  * Fails one read of a base table's WAL {@code created_at} column after skipping a given number,
@@ -50,9 +53,19 @@ import java.util.concurrent.atomic.AtomicInteger;
  * {@link #armAppliedScan} fails the whole-view rebuild instead: the next open of the base's own
  * {@code amount} column outside the WAL, which is what the rebuild's scan of the applied base
  * reads and the raw-WAL drain never does. {@link #armTimelineOpen} fails the restore ahead of
- * both: the next open of the view's checkpoint timeline, which is the first file a restore maps.
+ * both: the next open of the view's checkpoint timeline, which is the first file a restore maps,
+ * reporting a missing file. No retry gets past that, so the recovery falls back to the rebuild.
  * Arming all three fails a recovery outright - neither the restore nor the rebuild behind it puts
  * the accumulators back - which is what leaves the window-state debt for a later turn's gate.
+ * {@link #armTimelineOpen(int)} fails the same open with the errno it names. An operating system
+ * error a retry may get past - EMFILE or EIO, say - has the recovery retry the restore on a later
+ * turn instead of falling back to the rebuild. {@link #armTimelineOpenUntilDisarmed} fails every
+ * such open, not just the next one, until {@link #disarmAll()}: a timeline file the process can no
+ * longer open for writing, which every restore and every seal meets.
+ * <p>
+ * {@link #armRuntimeRestore} fails nothing itself: it runs an action once, right before a
+ * running recovery's restore from the timeline reads the view's table, so a case can stage what
+ * that read meets - a reader pool every reader of the view's table is taken from, say.
  * <p>
  * {@link #armBreach} arms the same WAL read as {@link #arm}, but has it breach the view's own
  * refresh memory limit instead of failing the open, so the turn fails mid-drain with the error the
@@ -88,9 +101,18 @@ final class LiveViewMidDrainFault {
     private final AtomicBoolean hasViewSymbolKeyOpenFired = new AtomicBoolean();
     // Set by a failed WAL read that reports readErrno, until the errno read that reports it.
     private final AtomicBoolean isReadErrnoPending = new AtomicBoolean();
+    // Set by a failed timeline open that reports timelineOpenErrno, until the errno read that reports it.
+    private final AtomicBoolean isTimelineOpenErrnoPending = new AtomicBoolean();
+    // Set by armTimelineOpenUntilDisarmed: an armed timeline open fault fails every open, not one.
+    private final AtomicBoolean isTimelineOpenPersistent = new AtomicBoolean();
     private final AtomicBoolean isViewStateOpenArmed = new AtomicBoolean();
     private final AtomicBoolean isViewSymbolKeyOpenArmed = new AtomicBoolean();
+    // Run once by the check for the view's timeline that a running recovery's restore opens with;
+    // null when nothing is armed.
+    private final AtomicReference<Runnable> runtimeRestoreAction = new AtomicReference<>();
     private final AtomicBoolean timelineOpenArmed = new AtomicBoolean();
+    // The timeline opens the armed fault failed.
+    private final AtomicInteger timelineOpenFailures = new AtomicInteger();
     // The file name, with its leading separator, of the view symbol key file
     // armViewSymbolKeyOpen fails.
     private final String viewSymbolKeyFileName;
@@ -103,6 +125,8 @@ final class LiveViewMidDrainFault {
     private volatile MemoryTracker breachTracker;
     // The errno the failed WAL read reports; 0 leaves whatever errno the thread last saw.
     private volatile int readErrno;
+    // The errno the failed timeline open reports.
+    private volatile int timelineOpenErrno;
     // The directory of the view table whose symbol key file armViewSymbolKeyOpen fails.
     private volatile String viewDir;
 
@@ -166,7 +190,35 @@ final class LiveViewMidDrainFault {
     }
 
     void armTimelineOpen() {
+        armTimelineOpen(CairoException.ERRNO_FILE_DOES_NOT_EXIST);
+    }
+
+    /**
+     * Arms the open {@link #armTimelineOpen()} fails, and has it report {@code errno}.
+     */
+    void armTimelineOpen(int errno) {
+        timelineOpenErrno = errno;
+        isTimelineOpenPersistent.set(false);
         timelineOpenArmed.set(true);
+    }
+
+    /**
+     * Arms the open {@link #armTimelineOpen(int)} fails for every open of a live view's checkpoint
+     * timeline until {@link #disarmAll()}, each reporting {@code errno}.
+     */
+    void armTimelineOpenUntilDisarmed(int errno) {
+        timelineOpenErrno = errno;
+        isTimelineOpenPersistent.set(true);
+        timelineOpenArmed.set(true);
+    }
+
+    /**
+     * Arms {@code action} to run once, at the next check for a live view's checkpoint timeline
+     * that a running recovery's restore makes ({@code tryRestoreRuntimeFromTimeline}), which goes
+     * ahead afterwards. The restore reads the view's table right after that check.
+     */
+    void armRuntimeRestore(Runnable action) {
+        runtimeRestoreAction.set(action);
     }
 
     void armViewStateOpen() {
@@ -203,14 +255,33 @@ final class LiveViewMidDrainFault {
         appliedScanArmed.set(false);
         isViewStateOpenArmed.set(false);
         isViewSymbolKeyOpenArmed.set(false);
+        runtimeRestoreAction.set(null);
         timelineOpenArmed.set(false);
+        isTimelineOpenPersistent.set(false);
+        isTimelineOpenErrnoPending.set(false);
     }
 
     FilesFacade facade() {
         return new TestFilesFacadeImpl() {
             @Override
             public int errno() {
+                if (isTimelineOpenErrnoPending.compareAndSet(true, false)) {
+                    return timelineOpenErrno;
+                }
                 return isReadErrnoPending.compareAndSet(true, false) ? readErrno : super.errno();
+            }
+
+            @Override
+            public boolean exists(LPSZ path) {
+                if (runtimeRestoreAction.get() != null
+                        && Utf8s.endsWithAscii(path, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
+                        && isRuntimeRestore()) {
+                    final Runnable action = runtimeRestoreAction.getAndSet(null);
+                    if (action != null) {
+                        action.run();
+                    }
+                }
+                return super.exists(path);
             }
 
             @Override
@@ -260,7 +331,9 @@ final class LiveViewMidDrainFault {
             public long openRW(LPSZ name, int opts) {
                 if (timelineOpenArmed.get()
                         && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
-                        && timelineOpenArmed.compareAndSet(true, false)) {
+                        && (isTimelineOpenPersistent.get() || timelineOpenArmed.compareAndSet(true, false))) {
+                    timelineOpenFailures.incrementAndGet();
+                    isTimelineOpenErrnoPending.set(true);
                     return -1;
                 }
                 if (isViewStateOpenArmed.get()
@@ -272,6 +345,10 @@ final class LiveViewMidDrainFault {
                 return super.openRW(name, opts);
             }
         };
+    }
+
+    int getTimelineOpenFailures() {
+        return timelineOpenFailures.get();
     }
 
     boolean hasAppliedScanFired() {
@@ -316,6 +393,13 @@ final class LiveViewMidDrainFault {
             overflow.extend(tracker.getLimit() - tracker.getUsed() + 1);
         }
         throw new AssertionError("the view's tracker admitted a charge past its limit");
+    }
+
+    private static boolean isRuntimeRestore() {
+        return StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                frame -> LiveViewRefreshJob.class.getName().equals(frame.getClassName())
+                        && "tryRestoreRuntimeFromTimeline".equals(frame.getMethodName())
+        ));
     }
 
     // Read behind the armed check: armAppliedScan sets the partition before it arms.

@@ -242,12 +242,14 @@ public class LiveViewCheckpointWindowRootTest extends AbstractLiveViewTest {
                         LiveViewCheckpointTestKeys.domain(batch, directKey(i));
                     }
                 }
+                batch.resetSortComparisonCountForTest();
                 Assert.assertEquals(batchCount, batch.sortAndValidateForTest());
                 batchComparisons = batch.getSortComparisonCountForTest();
             }
-            // The arena counts comparisons only while JVM assertions are enabled, and the bound
+            // An arena counts comparisons only after a reset starts the count, and the bound
             // below would hold for a count that never advanced.
-            Assert.assertTrue("the comparison count needs JVM assertions enabled (-ea)", buildComparisons > 0);
+            Assert.assertTrue("the reset must start the comparison count", buildComparisons > 0);
+            Assert.assertTrue("the reset must start the batch comparison count", batchComparisons > 0);
             // The removals arrive in key order, so they cost one pass to prove that and one to
             // merge them into the sorted batch, not a second sort of every key.
             final long limit = batchComparisons + batchCount + 2L * removalCount;

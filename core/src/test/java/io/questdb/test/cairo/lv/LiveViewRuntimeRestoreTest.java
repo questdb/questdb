@@ -44,10 +44,13 @@ import io.questdb.cairo.lv.LiveViewInMemoryBuffer;
 import io.questdb.cairo.lv.LiveViewInMemoryTier;
 import io.questdb.cairo.lv.LiveViewInstance;
 import io.questdb.cairo.lv.LiveViewRebuildRestatementGuard;
+import io.questdb.cairo.lv.LiveViewRefreshHooks;
 import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.lv.LiveViewSymbolCache;
 import io.questdb.cairo.lv.LiveViewSymbolTable;
+import io.questdb.cairo.pool.AbstractMultiTenantPool;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.sql.RecordCursor;
 import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
@@ -57,10 +60,12 @@ import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursor;
 import io.questdb.griffin.engine.lv.LiveViewRecordCursorFactory;
+import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -168,6 +173,12 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     private static final String DAY_FOUR_OUTPUT = DAY_FOUR_FIRST_ROW_OUTPUT
             + "2026-01-04T09:10:00.000000Z\tacct-1\t3.0\t2\n"
             + "2026-01-04T09:20:00.000000Z\tacct-1\t7.0\t3\n";
+    // Day four's first row, then one row per account on the next timestamp, each in a commit of
+    // its own (commitDayFourBehindATie). Neither of the two collapses on the dedup keys, so the
+    // range they commit is provably clean and a drain of it reads the raw WAL.
+    private static final String DAY_FOUR_TIE_OUTPUT = DAY_FOUR_FIRST_ROW_OUTPUT
+            + "2026-01-04T09:10:00.000000Z\tacct-1\t3.0\t2\n"
+            + "2026-01-04T09:10:00.000000Z\tacct-2\t4.0\t1\n";
     // One commit per entry, and the last of them is the whole point: its rows are not in
     // timestamp order, every one of them sits above the frontier the commit before it left, and
     // two of them collide on the base's dedup keys.
@@ -195,6 +206,11 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             2026-01-03T09:40:00.000000Z\tacct-1\t184.0\t4
             2026-01-03T09:50:00.000000Z\tacct-1\t249.0\t5
             """;
+    // An in-order row in the anchor segment of O3_IN_THE_REPLAY_GAP's last commit, and the
+    // view's rows once it has materialized that row on top of the gap.
+    private static final String IN_ORDER_ROW_ABOVE_THE_O3_GAP = "('2026-01-03T10:00:00.000000Z', 'acct-1', 1.0)";
+    private static final String O3_GAP_THEN_IN_ORDER_ROW_OUTPUT = O3_GAP_OUTPUT
+            + "2026-01-03T10:00:00.000000Z\tacct-1\t250.0\t6\n";
     private static final String[] SIX_ROWS = {
             "('2026-01-01T09:00:00.000000Z', 'acct-1', 1.0)",
             "('2026-01-01T09:10:00.000000Z', 'acct-2', 2.0)",
@@ -352,9 +368,24 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     private static final String EIO_READ_ERROR_RE = "error=io\\.questdb\\.cairo\\.CairoException: \\["
             + ERRNO_EIO
             + "] could not open read-only \\[file=[^\\]]*created_at\\.d";
+    // The errno a failed open of the timeline reports: EMFILE, a fault a retry may get past.
+    private static final int ERRNO_EMFILE = 24;
     private static final String RESTORED = "live view restored its runtime from the checkpoint timeline";
+    // Logged by a running recovery whose restore returned over a runtime that an out-of-order repair
+    // in its replay set aside and could not put back, ahead of the recovery's cause.
+    private static final String RUNTIME_SET_ASIDE_DECLINED = "live view cannot restore its runtime from the checkpoint timeline, "
+            + "rebuilding from the applied base [view=lv, cause=";
+    private static final String RUNTIME_SET_ASIDE_REASON = ", reason=an out-of-order repair in its replay set the runtime aside]";
     // Logged by a seal that finds the view's lifetime row counter out of step with its table.
     private static final String ROW_COUNT_RETIRES_THE_TIMELINE = "live view emitted row count does not match its durable output, retiring the timeline";
+    // Logged by a running recovery whose restore met the full reader pool of the view's table.
+    private static final String RESTORE_REFUSED_BY_A_FULL_VIEW_READER_POOL = "live view could not restore its runtime from the checkpoint timeline, "
+            + "retrying [view=lv, cause=mid-drain refresh failure, error=io.questdb.cairo.EntryUnavailableException: [-1] table busy [reason="
+            + AbstractMultiTenantPool.POOL_SIZE + "]";
+    // Logged by a running recovery whose rebuild met the full reader pool of the view's table.
+    private static final String REBUILD_REFUSED_BY_A_FULL_VIEW_READER_POOL = "live view window-state recompute failed "
+            + "[view=lv, cause=mid-drain refresh failure, error=io.questdb.cairo.EntryUnavailableException: [-1] table busy [reason="
+            + AbstractMultiTenantPool.POOL_SIZE + "]";
     // Logged by a whole-view rebuild that runs without the restatement guard.
     private static final String GUARD_STAND_DOWN = "live view rebuild from the applied base runs without the restatement guard";
     // Logged by the rebuild a deduplicating base's restore falls back to when its replay of the raw
@@ -974,6 +1005,431 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             Assert.assertFalse(instance.isInvalid());
             Assert.assertEquals("the streak's first fault and the mid-drain failure are the two faults", 2, instance.getRefreshFaultCount());
             assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_OUTPUT);
+        });
+    }
+
+    @Test
+    public void testARestartRestoreWhoseResumeAnchorFailsRecoversBeforeTheDrain() throws Exception {
+        // A restart's replay meets a commit that is out of order within itself in the gap above
+        // its root, and hands off to the out-of-order repair. The repair resumes from the anchor
+        // root nearest the late row: it marks the window-state debt, sets the runtime aside and
+        // restores that root. The anchor's restore fails here - the failed open stands in for an
+        // IO error or a root it cannot read - and the repair absorbs the failure, retires the
+        // timeline and returns with the debt still standing, so the restore returns normally over
+        // a runtime short of the late commit's rows. The restart must leave that debt standing:
+        // the same turn's gate then rebuilds the view before anything drains. A restart that
+        // settled the debt on every return drained the next commit through the runtime the repair
+        // gave up on, and committed acct-1's 10:00 row as 57.0 / 4 rather than 250.0 / 6.
+        final AtomicBoolean isAnchorRestoreFaultArmed = new AtomicBoolean();
+        final AtomicBoolean hasAnchorRestoreFaultFired = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                return isFailedAnchorRestoreOpen(name) ? -1 : super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                return isFailedAnchorRestoreOpen(name) ? -1 : super.openRW(name, opts);
+            }
+
+            // Fails the first open under the view's checkpoint directory that the anchor's
+            // restore makes once armed.
+            private boolean isFailedAnchorRestoreOpen(LPSZ name) {
+                if (isAnchorRestoreFaultArmed.get()
+                        && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                        && isOnStack("restoreAnchorRoot")
+                        && isAnchorRestoreFaultArmed.compareAndSet(true, false)) {
+                    hasAnchorRestoreFaultFired.set(true);
+                    return true;
+                }
+                return false;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            commitOutOfOrderAboveTheAnchorRoot();
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + IN_ORDER_ROW_ABOVE_THE_O3_GAP);
+            drainWalQueue();
+
+            shutdown();
+            engine.buildViewGraphs();
+            isAnchorRestoreFaultArmed.set(true);
+            final LiveViewInstance instance = instance("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                runOnePass(job);
+                Assert.assertTrue("the anchor's restore must have been failed", hasAnchorRestoreFaultFired.get());
+                driveRefreshToQuiescence(job);
+            }
+
+            assertViewRowsMatchRecompute(O3_GAP_THEN_IN_ORDER_ROW_OUTPUT);
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isWindowStateDirty());
+            assertNoRefreshFaults("lv");
+            capture.drain();
+            capture.assertLogged("resumeFromAnchor=true");
+            capture.assertLogged("could not restore live view O3 resume anchor [view=lv");
+            // The debt the repair left had the restart's own turn recover the view before its
+            // drain.
+            capture.assertLogged("live view cannot restore its runtime from the checkpoint timeline, "
+                    + "rebuilding from the applied base [view=lv, cause=mid-drain refresh failure, reason=timeline is absent]");
+
+            shutdown();
+            restart();
+            Assert.assertFalse(instance("lv").isInvalid());
+            assertNoRefreshFaults("lv");
+            assertViewRowsMatchRecompute(O3_GAP_THEN_IN_ORDER_ROW_OUTPUT);
+        });
+    }
+
+    @Test
+    public void testARestartRestoreRetriedAtTheGateWhoseResumeAnchorFailsRebuildsBeforeTheDrain() throws Exception {
+        // The restart's restore fails on one EMFILE opening the timeline, a fault a retry may get
+        // past, so the restart leaves the window-state debt and the next turn's gate retries the
+        // restore in place. That retry replays the commit that is out of order within itself and
+        // hands off to the out-of-order repair, which resumes from the anchor root: it marks the
+        // debt, sets the runtime aside and restores that root. The anchor's restore fails once
+        // here, and the repair absorbs the failure, retires the timeline and returns with the debt
+        // standing, so the restore returns normally over a runtime short of the unsorted commit's
+        // rows. The gate's restore must leave that debt standing and fall back to the whole-view
+        // rebuild, as the restart's own attempt does through its gate. A restore that settled the
+        // debt on every return let the drain commit acct-1's 10:00 row through the runtime the
+        // repair gave up on, as 57.0 / 4 rather than 250.0 / 6.
+        final AtomicBoolean isRestartFaultArmed = new AtomicBoolean();
+        final AtomicBoolean hasRestartFaultFired = new AtomicBoolean();
+        final AtomicBoolean isAnchorFaultArmed = new AtomicBoolean();
+        final AtomicBoolean hasAnchorFaultFired = new AtomicBoolean();
+        final AtomicBoolean isErrnoPending = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public int errno() {
+                return isErrnoPending.compareAndSet(true, false) ? ERRNO_EMFILE : super.errno();
+            }
+
+            @Override
+            public long openRO(LPSZ name) {
+                return isFailed(name) ? -1 : super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                return isFailed(name) ? -1 : super.openRW(name, opts);
+            }
+
+            // Fails the restart restore's first open of the timeline, then the first open under
+            // the view's checkpoint directory that a running restore's anchor restore makes.
+            private boolean isFailed(LPSZ name) {
+                if (isRestartFaultArmed.get()
+                        && Utf8s.endsWithAscii(name, LiveViewCheckpointLayout.TIMELINE_FILE_NAME)
+                        && isOnStack("tryRestoreFromTimeline")
+                        && isRestartFaultArmed.compareAndSet(true, false)) {
+                    hasRestartFaultFired.set(true);
+                    isErrnoPending.set(true);
+                    return true;
+                }
+                if (isAnchorFaultArmed.get()
+                        && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                        && isOnStack("restoreAnchorRoot")
+                        && isOnStack("tryRestoreRuntimeFromTimeline")
+                        && isAnchorFaultArmed.compareAndSet(true, false)) {
+                    hasAnchorFaultFired.set(true);
+                    isErrnoPending.set(true);
+                    return true;
+                }
+                return false;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            commitOutOfOrderAboveTheAnchorRoot();
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES " + IN_ORDER_ROW_ABOVE_THE_O3_GAP);
+            drainWalQueue();
+
+            shutdown();
+            engine.buildViewGraphs();
+            isRestartFaultArmed.set(true);
+            isAnchorFaultArmed.set(true);
+            final LiveViewInstance instance = instance("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                runOnePass(job);
+                Assert.assertTrue("the restart's restore must have been failed", hasRestartFaultFired.get());
+                Assert.assertFalse("the restart's restore must not have reached the anchor", hasAnchorFaultFired.get());
+                Assert.assertTrue("the failed restart must leave the window-state debt", instance.isWindowStateDirty());
+                driveRefreshToQuiescence(job);
+            }
+
+            Assert.assertTrue("the gate's restore must have failed the anchor's restore", hasAnchorFaultFired.get());
+            assertViewRowsMatchRecompute(O3_GAP_THEN_IN_ORDER_ROW_OUTPUT);
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isWindowStateDirty());
+            Assert.assertEquals("the restart's restore fault is the one fault", 1, instance.getRefreshFaultCount());
+            capture.drain();
+            capture.assertLogged("could not restore live view from checkpoint timeline, retrying [view=lv");
+            capture.assertLogged("resumeFromAnchor=true");
+            capture.assertLogged("could not restore live view O3 resume anchor [view=lv");
+            capture.assertLogged(RUNTIME_SET_ASIDE_DECLINED + "mid-drain refresh failure" + RUNTIME_SET_ASIDE_REASON);
+            capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=mid-drain refresh failure]");
+
+            shutdown();
+            restart();
+            Assert.assertFalse(instance("lv").isInvalid());
+            assertNoRefreshFaults("lv");
+            assertViewRowsMatchRecompute(O3_GAP_THEN_IN_ORDER_ROW_OUTPUT);
+        });
+    }
+
+    @Test
+    public void testAMidDrainRestoreWhoseResumeAnchorFailsRebuildsBeforeTheDrain() throws Exception {
+        // A drain fails after it fed a row, and the running recovery restores the runtime from the
+        // timeline. The restore's replay hands off to the out-of-order repair, which resumes from
+        // the anchor root: it marks the window-state debt, sets the runtime aside and restores that
+        // root. The anchor's restore fails once here, and the repair absorbs the failure, retires
+        // the timeline and returns with the debt standing, so the restore returns normally over a
+        // runtime short of the unsorted commit's rows. The recovery must leave that debt standing
+        // and fall back to the whole-view rebuild. A restore that settled the debt on every return
+        // let the next turn's drain commit acct-1's 10:00 row through the runtime the repair gave
+        // up on, as 57.0 / 4 rather than 250.0 / 6.
+        final AtomicReference<String> baseDir = new AtomicReference<>();
+        final AtomicBoolean isDrainFaultArmed = new AtomicBoolean();
+        final AtomicBoolean hasDrainFaultFired = new AtomicBoolean();
+        final AtomicBoolean isAnchorFaultArmed = new AtomicBoolean();
+        final AtomicBoolean hasAnchorFaultFired = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                return isFailedDayFourAmountRead(name, baseDir, isDrainFaultArmed, hasDrainFaultFired)
+                        || isFailedAnchorRestoreOpen(name) ? -1 : super.openRO(name);
+            }
+
+            @Override
+            public long openRW(LPSZ name, int opts) {
+                return isFailedAnchorRestoreOpen(name) ? -1 : super.openRW(name, opts);
+            }
+
+            // Fails the first open under the view's checkpoint directory that a running
+            // restore's anchor restore makes once armed.
+            private boolean isFailedAnchorRestoreOpen(LPSZ name) {
+                if (isAnchorFaultArmed.get()
+                        && Utf8s.containsAscii(name, LiveViewCheckpointLayout.CHECKPOINT_DIR_NAME)
+                        && isOnStack("restoreAnchorRoot")
+                        && isOnStack("tryRestoreRuntimeFromTimeline")
+                        && isAnchorFaultArmed.compareAndSet(true, false)) {
+                    hasAnchorFaultFired.set(true);
+                    return true;
+                }
+                return false;
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            commitOutOfOrderAboveTheAnchorRoot();
+            baseDir.set(engine.verifyTableName("tx").getDirName());
+            // The in-order row behind a duplicate the base collapses, which routes the drain
+            // through the applied base, and a row in the next day, whose read fails.
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
+                    + "('2026-01-03T10:00:00.000000Z', 'acct-1', 30.0), " + IN_ORDER_ROW_ABOVE_THE_O3_GAP);
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:00:00.000000Z', 'acct-1', 2.0)");
+            drainWalQueue();
+
+            isDrainFaultArmed.set(true);
+            isAnchorFaultArmed.set(true);
+            final LiveViewInstance instance = instance("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                runOnePass(job);
+                Assert.assertTrue("the drain's read of the fourth day must have been failed", hasDrainFaultFired.get());
+                Assert.assertTrue("the recovery's restore must have failed the anchor's restore", hasAnchorFaultFired.get());
+                driveRefreshToQuiescence(job);
+            }
+
+            final String expectedRows = O3_GAP_THEN_IN_ORDER_ROW_OUTPUT
+                    + "2026-01-04T09:00:00.000000Z\tacct-1\t2.0\t1\n";
+            assertViewRowsMatchRecompute(expectedRows);
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isWindowStateDirty());
+            Assert.assertEquals("the drain's read is the one fault", 1, instance.getRefreshFaultCount());
+            capture.drain();
+            capture.assertLogged("resumeFromAnchor=true");
+            capture.assertLogged("could not restore live view O3 resume anchor [view=lv");
+            capture.assertLogged(RUNTIME_SET_ASIDE_DECLINED + "mid-drain refresh failure" + RUNTIME_SET_ASIDE_REASON);
+            capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=mid-drain refresh failure]");
+
+            shutdown();
+            restart();
+            Assert.assertFalse(instance("lv").isInvalid());
+            assertNoRefreshFaults("lv");
+            assertViewRowsMatchRecompute(expectedRows);
+        });
+    }
+
+    @Test
+    public void testAMidDrainRestoreWhoseResumeAnchorRepairCommitsKeepsTheViewRunningOverABaseThatLostADay() throws Exception {
+        // testAMidDrainRestoreWhoseResumeAnchorFailsRebuildsBeforeTheDrain over a base that lost the
+        // view's oldest day, with the anchor's restore going through. The repair the recovery's
+        // restore hands off to marks the window-state debt as it sets the runtime aside, restores
+        // the anchor root and commits its replacement, which settles the debt. The runtime then
+        // stands where the view's durable output does, and the restore must report it restored. A
+        // restore that declined because a step inside it marked the debt, whether or not a commit
+        // settled it since, would fall back to the whole-view rebuild, which the restatement guard
+        // refuses over the lost day: the view would stop on a fault the recovery already got past.
+        final AtomicReference<String> baseDir = new AtomicReference<>();
+        final AtomicBoolean isDrainFaultArmed = new AtomicBoolean();
+        final AtomicBoolean hasDrainFaultFired = new AtomicBoolean();
+        final FilesFacade ff = new TestFilesFacadeImpl() {
+            @Override
+            public long openRO(LPSZ name) {
+                return isFailedDayFourAmountRead(name, baseDir, isDrainFaultArmed, hasDrainFaultFired) ? -1 : super.openRO(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            commitOutOfOrderAboveTheAnchorRoot();
+            baseDir.set(engine.verifyTableName("tx").getDirName());
+            // The view walks past the DROP PARTITION and keeps the day's rows. A whole-view
+            // rebuild from here would drop them, and the guard would refuse it.
+            execute("ALTER TABLE tx DROP PARTITION LIST '2026-01-01'");
+            drainWalQueue();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+            }
+            // As in testAMidDrainRestoreWhoseResumeAnchorFailsRebuildsBeforeTheDrain: a duplicate
+            // the base collapses routes the drain through the applied base, whose read of the
+            // next day fails.
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
+                    + "('2026-01-03T10:00:00.000000Z', 'acct-1', 30.0), " + IN_ORDER_ROW_ABOVE_THE_O3_GAP);
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:00:00.000000Z', 'acct-1', 2.0)");
+            drainWalQueue();
+
+            isDrainFaultArmed.set(true);
+            final LiveViewInstance instance = instance("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                runOnePass(job);
+                Assert.assertTrue("the drain's read of the fourth day must have been failed", hasDrainFaultFired.get());
+                driveRefreshToQuiescence(job);
+            }
+
+            // The lost day stays in the view.
+            final String expectedRows = O3_GAP_THEN_IN_ORDER_ROW_OUTPUT
+                    + "2026-01-04T09:00:00.000000Z\tacct-1\t2.0\t1\n";
+            assertViewRows(expectedRows);
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertFalse("a restore whose repair committed must not stop the view", instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isWindowStateDirty());
+            Assert.assertEquals("the drain's read is the one fault", 1, instance.getRefreshFaultCount());
+            Assert.assertEquals(1, instance.getCheckpointRuntimeRestores());
+            capture.drain();
+            capture.assertLogged("resumeFromAnchor=true");
+            capture.assertNotLogged("could not restore live view O3 resume anchor");
+            capture.assertNotLogged(RUNTIME_SET_ASIDE_REASON);
+            capture.assertNotLogged("live view recomputed window state from applied base");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+
+            shutdown();
+            restart();
+            Assert.assertFalse(instance("lv").isInvalid());
+            Assert.assertFalse(instance("lv").isCheckpointRecoveryBlocked());
+            assertNoRefreshFaults("lv");
+            assertViewRows(expectedRows);
+        });
+    }
+
+    @Test
+    public void testAGateRebuildThatFailsAfterItsCommitRecoversBeforeTheDrain() throws Exception {
+        // testAGateRestoreWhoseRepairFailsAfterItsCommitRecoversBeforeTheDrain, with the gate's
+        // restore failing once more, on the missing timeline file, so the gate falls back to the
+        // whole-view rebuild. The rebuild recomputes the view up to the base's applied head and
+        // commits there, day four's two rows at 09:10 included, which settles the window-state
+        // debt, and then finds the reader pool of the view's table full. The failed rebuild must
+        // leave the debt standing as well, or the next turn drains the two rows a second time.
+        assertAGateRecoveryThatFailsAfterItsCommitRecoversBeforeTheDrain(true);
+    }
+
+    @Test
+    public void testAGateRestoreWhoseRepairFailsAfterItsCommitRecoversBeforeTheDrain() throws Exception {
+        // The gate's restore of testAGateRestoreWhoseParkedRepairEndsTheTurn, with a repair that
+        // finishes on its turn rather than parking. The restore's replay meets the commit that is
+        // out of order within itself and hands off to the out-of-order repair, which recomputes
+        // the view up to the base's applied head and commits its replacement there, day four's
+        // two rows at 09:10 included. The commit settles the window-state debt. Right after it,
+        // the repair finds the reader pool of the view's table full, and the restore rethrows the
+        // refusal as a fault a retry may get past. The runtime then stands at the applied head,
+        // while the view's watermarks still stand below the two rows. The failed recovery must
+        // leave the debt standing, so the next turn recovers again before it drains. A recovery
+        // that left the debt settled had that turn drain the two rows from the raw WAL a second
+        // time - they tie the frontier the repair left, which the drain's strict out-of-order
+        // check lets through - and the view held acct-1's 09:10 row as 5.0 / 3 as well.
+        assertAGateRecoveryThatFailsAfterItsCommitRecoversBeforeTheDrain(false);
+    }
+
+    @Test
+    public void testARestartRestoreRetriedAtTheGateWhoseRepairFailsAfterItsCommitRecoversBeforeTheDrain() throws Exception {
+        // testAGateRestoreWhoseRepairFailsAfterItsCommitRecoversBeforeTheDrain, with the debt
+        // left by a restart rather than by a failing turn whose two recoveries both fail. The
+        // restart's restore fails on one EMFILE opening the timeline, which leaves the debt, and
+        // the next turn's gate retries the restore in place. Its repair commits day four's two
+        // rows at 09:10, the commits the view had not consumed before the restart, and then finds
+        // the reader pool of the view's table full.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("DEDUP UPSERT KEYS(created_at, account_id)");
+            createView();
+            insertAndRefresh(O3_IN_THE_REPLAY_GAP);
+            assertViewRows(O3_GAP_OUTPUT);
+            commitDayFourBehindATie();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                runOnePass(job);
+            }
+            assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_FIRST_ROW_OUTPUT);
+
+            shutdown();
+            engine.buildViewGraphs();
+            fault.armTimelineOpen(ERRNO_EMFILE);
+            final LiveViewInstance instance = instance("lv");
+            final boolean isDebtLeftByTheGate;
+            try (ViewReaderRefusal refusal = new ViewReaderRefusal(instance.getLiveViewToken(), "tryRestoreRuntimeFromTimeline")) {
+                engine.setPoolListener(refusal);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    job.setHooksForTest(refusal);
+                    refusal.arm();
+                    runOnePass(job);
+                    Assert.assertFalse("the restart's restore must have been failed", fault.isTimelineOpenArmed());
+                    Assert.assertEquals("the restart's restore must not have reached the repair", 0, refusal.getRefusals());
+                    Assert.assertTrue("the failed restart must leave the window-state debt", instance.isWindowStateDirty());
+                    final long watermarkBeforeTheGate = instance.getLastProcessedSeqTxn();
+
+                    runOnePass(job);
+                    Assert.assertEquals("the full pool must have refused one read", 1, refusal.getRefusals());
+                    Assert.assertTrue(
+                            "the pool must have refused the repair of the gate's restore, after its commit",
+                            refusal.isRefusedAfterTheCommit()
+                    );
+                    Assert.assertEquals(
+                            "the failed repair must not have moved the view's watermark",
+                            watermarkBeforeTheGate,
+                            instance.getLastProcessedSeqTxn()
+                    );
+                    isDebtLeftByTheGate = instance.isWindowStateDirty();
+
+                    driveRefreshToQuiescence(job);
+                } finally {
+                    engine.setPoolListener(null);
+                }
+            }
+
+            assertViewRowsMatchRecompute(O3_GAP_OUTPUT + DAY_FOUR_TIE_OUTPUT);
+            Assert.assertTrue("the gate's failed recovery must leave the window-state debt standing", isDebtLeftByTheGate);
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isWindowStateDirty());
+            Assert.assertEquals("the restart's restore fault and the refusal are the two faults", 2, instance.getRefreshFaultCount());
+            capture.drain();
+            capture.assertLogged("could not restore live view from checkpoint timeline, retrying [view=lv");
+            capture.assertLogged(RESTORE_REFUSED_BY_A_FULL_VIEW_READER_POOL);
+            capture.assertNotLogged(ROW_COUNT_RETIRES_THE_TIMELINE);
+
+            shutdown();
+            restart();
+            Assert.assertFalse(instance("lv").isInvalid());
+            assertNoRefreshFaults("lv");
+            assertViewRowsMatchRecompute(O3_GAP_OUTPUT + DAY_FOUR_TIE_OUTPUT);
         });
     }
 
@@ -4707,7 +5163,7 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
             shutdown();
             engine.buildViewGraphs();
             // The restore fails before its replay reaches the duplicate: the failed open of the
-            // timeline stands in for an IO error or a root it cannot read. Only a replay that
+            // timeline stands in for a root it cannot read. Only a replay that
             // disagrees with the view's durable output stands the guard down, so the guard still
             // refuses the rebuild that would drop the day the base lost. Armed after the boot
             // pass, which reads the same file, so the open the restore makes is the one that fails.
@@ -6073,6 +6529,35 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
     }
 
     /**
+     * Whether {@code name} is the base's amount column in its fourth day, outside the WAL, while
+     * {@code isArmed}, which the first such open disarms and records in {@code hasFired}. The drain
+     * of a deduplicating base reads the applied base, and reaches that file only after it fed every
+     * row of the third day.
+     */
+    private static boolean isFailedDayFourAmountRead(LPSZ name, AtomicReference<String> baseDir, AtomicBoolean isArmed, AtomicBoolean hasFired) {
+        final String dir = baseDir.get();
+        if (isArmed.get()
+                && dir != null
+                && Utf8s.containsAscii(name, dir)
+                && !Utf8s.containsAscii(name, "wal")
+                && Utf8s.containsAscii(name, "2026-01-04")
+                && Utf8s.endsWithAscii(name, Files.SEPARATOR + "amount.d")
+                && isArmed.compareAndSet(true, false)) {
+            hasFired.set(true);
+            return true;
+        }
+        return false;
+    }
+
+    // Whether the refresh job's method named methodName is on the calling thread's stack.
+    private static boolean isOnStack(String methodName) {
+        return StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                frame -> LiveViewRefreshJob.class.getName().equals(frame.getClassName())
+                        && methodName.equals(frame.getMethodName())
+        ));
+    }
+
+    /**
      * Fails the first open for writing of the view's own {@code cumulative_sum} column in the
      * 2026-01-03 partition once {@code isArmed} is set: the apply of a block that opens that day
      * in the view's table.
@@ -6166,6 +6651,97 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                     .timestamp("created_at")
                     .returns("created_at\taccount_id\n" + expectedRows);
         }
+    }
+
+    /**
+     * Leaves the window-state debt for a turn of its own, as testAGateRestoreWhoseParkedRepairEndsTheTurn
+     * does, and has the gate's recovery fail right after it committed output of day four's two rows
+     * at 09:10: the reader pool of the view's table is full for the read that follows the commit.
+     * Then asserts the failed recovery left the debt standing, and that the view converges on its
+     * recompute.
+     *
+     * @param isGateRestoreFailed true fails the gate's restore on the missing timeline file, so the
+     *                            rebuild behind it commits and fails; false has the restore hand
+     *                            off to the out-of-order repair, which commits and fails
+     */
+    private void assertAGateRecoveryThatFailsAfterItsCommitRecoversBeforeTheDrain(boolean isGateRestoreFailed) throws Exception {
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            createBase("DEDUP UPSERT KEYS(created_at, account_id)");
+            createView();
+            fault.of(engine.verifyTableName("tx").getDirName());
+            insertAndRefresh(O3_IN_THE_REPLAY_GAP);
+            assertViewRows(O3_GAP_OUTPUT);
+            final LiveViewInstance instance = instance("lv");
+
+            final boolean isDebtLeftByTheGate;
+            final String failedRecovery = isGateRestoreFailed ? "rebuildActiveWindowStateFromAppliedBase" : "tryRestoreRuntimeFromTimeline";
+            try (ViewReaderRefusal refusal = new ViewReaderRefusal(instance.getLiveViewToken(), failedRecovery)) {
+                engine.setPoolListener(refusal);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    job.setHooksForTest(refusal);
+                    // The first commit drains on its own turn, and the next two coalesce behind it
+                    // so the fault strikes after the failing turn fed a row.
+                    commitDayFourBehindATie();
+                    runOnePass(job);
+                    assertViewRows(O3_GAP_OUTPUT + DAY_FOUR_FIRST_ROW_OUTPUT);
+
+                    // Both recoveries of the failing turn fail, which leaves the debt for a turn
+                    // of its own.
+                    fault.arm(1);
+                    fault.armTimelineOpen();
+                    fault.armAppliedScan();
+                    runOnePass(job);
+                    Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                    Assert.assertFalse("the recovery's restore must have been failed", fault.isTimelineOpenArmed());
+                    Assert.assertTrue("the recovery's rebuild must have been failed", fault.hasAppliedScanFired());
+                    Assert.assertTrue(
+                            "the failed recovery must leave the window-state debt for the next turn",
+                            instance.isWindowStateDirty()
+                    );
+                    final long watermarkBeforeTheGate = instance.getLastProcessedSeqTxn();
+
+                    // The gate turn. Its recovery commits and then finds the pool full.
+                    if (isGateRestoreFailed) {
+                        fault.armTimelineOpen();
+                    }
+                    refusal.arm();
+                    runOnePass(job);
+                    Assert.assertFalse("the gate's restore must have been failed", fault.isTimelineOpenArmed());
+                    Assert.assertEquals("the full pool must have refused one read", 1, refusal.getRefusals());
+                    Assert.assertTrue(
+                            "the pool must have refused the gate's recovery, after its commit",
+                            refusal.isRefusedAfterTheCommit()
+                    );
+                    Assert.assertEquals(
+                            "the failed recovery must not have moved the view's watermark",
+                            watermarkBeforeTheGate,
+                            instance.getLastProcessedSeqTxn()
+                    );
+                    isDebtLeftByTheGate = instance.isWindowStateDirty();
+
+                    driveRefreshToQuiescence(job);
+                } finally {
+                    engine.setPoolListener(null);
+                }
+            }
+
+            assertViewRowsMatchRecompute(O3_GAP_OUTPUT + DAY_FOUR_TIE_OUTPUT);
+            Assert.assertTrue("the gate's failed recovery must leave the window-state debt standing", isDebtLeftByTheGate);
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse(instance.isWindowStateDirty());
+            Assert.assertEquals("the mid-drain read and the refusal are the two faults", 2, instance.getRefreshFaultCount());
+            capture.drain();
+            capture.assertLogged(isGateRestoreFailed ? REBUILD_REFUSED_BY_A_FULL_VIEW_READER_POOL : RESTORE_REFUSED_BY_A_FULL_VIEW_READER_POOL);
+            capture.assertNotLogged(ROW_COUNT_RETIRES_THE_TIMELINE);
+
+            shutdown();
+            restart();
+            Assert.assertFalse(instance("lv").isInvalid());
+            assertNoRefreshFaults("lv");
+            assertViewRowsMatchRecompute(O3_GAP_OUTPUT + DAY_FOUR_TIE_OUTPUT);
+        });
     }
 
     /**
@@ -8133,6 +8709,42 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
         }
     }
 
+    /**
+     * Commits day four's first row, then one row per account on the next timestamp, each in a
+     * commit of its own, and has the base apply them. The first row gets a refresh task of its own,
+     * and the next two coalesce behind it, so a turn that drains them in one pass can fail after it
+     * fed the first of them. See {@link #DAY_FOUR_TIE_OUTPUT}.
+     */
+    private void commitDayFourBehindATie() throws Exception {
+        execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:00:00.000000Z', 'acct-1', 1.0)");
+        drainWalQueue();
+        execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:10:00.000000Z', 'acct-1', 2.0)");
+        execute("INSERT INTO tx (created_at, account_id, amount) VALUES ('2026-01-04T09:10:00.000000Z', 'acct-2', 4.0)");
+        drainWalQueue();
+    }
+
+    /**
+     * Commits {@link #O3_IN_THE_REPLAY_GAP} over a deduplicating base and refreshes the view after
+     * each commit, restarting it after the second: the restored head's first flush seals the root
+     * that an out-of-order repair resumes from. The last commit is out of order within itself,
+     * wholly above the frontier and collapsing on the dedup keys. The drain reads the applied base,
+     * which yields rows in timestamp order, so it consumes the commit with no repair and seals no
+     * root over it. A restore from the timeline then replays that commit from the raw WAL and
+     * hands off to the out-of-order repair, which resumes from the anchor root.
+     */
+    private void commitOutOfOrderAboveTheAnchorRoot() throws Exception {
+        createBase("DEDUP UPSERT KEYS(created_at, account_id)");
+        createView();
+        insertAndRefresh(O3_IN_THE_REPLAY_GAP[0], O3_IN_THE_REPLAY_GAP[1]);
+        shutdown();
+        restart();
+        assertRestoredFromTimeline("lv");
+        insertAndRefresh(O3_IN_THE_REPLAY_GAP[2]);
+        final int boundaries = countSealedBoundaries("lv");
+        insertAndRefresh(O3_IN_THE_REPLAY_GAP[3]);
+        Assert.assertEquals("the unsorted commit must seal no root", boundaries, countSealedBoundaries("lv"));
+    }
+
     private void createBase(String dedupClause) throws Exception {
         execute("CREATE TABLE tx (created_at TIMESTAMP, account_id SYMBOL, amount DOUBLE) "
                 + "TIMESTAMP(created_at) PARTITION BY DAY WAL " + dedupClause);
@@ -8561,6 +9173,81 @@ public class LiveViewRuntimeRestoreTest extends AbstractLiveViewCheckpointCompat
                     ts("2026-01-02T00:00:00.000000Z"),
                     engine.getTableSequencerAPI().lastTxn(instance.getLiveViewToken()) - 1
             );
+        }
+    }
+
+    /**
+     * Once armed, fills the reader pool of one live view's table right after a running recovery
+     * committed a replacement of the view's output, so the recovery's next read of the view's
+     * table finds the pool full. The recovery is the method the constructor names: the restore,
+     * whose out-of-order repair commits, or the rebuild. It hooks the apply of that replacement
+     * ({@link LiveViewRefreshHooks#isRepairApplySkipped}), which it never skips.
+     * Installed as the engine's pool listener as well, it gives every reader back the moment the
+     * pool refuses a read, the way busy readers come back on their own. {@link #close()} gives
+     * back whatever it still holds.
+     */
+    private static final class ViewReaderRefusal implements LiveViewRefreshHooks, PoolListener, QuietCloseable {
+        private final ObjList<TableReader> heldReaders = new ObjList<>();
+        // The refresh job's method that runs the recovery whose read the pool refuses.
+        private final String recovery;
+        private final TableToken token;
+        private boolean isArmed;
+        private boolean isFull;
+        private boolean isRefusedAfterTheCommit;
+        private int refusals;
+
+        ViewReaderRefusal(TableToken token, String recovery) {
+            this.token = token;
+            this.recovery = recovery;
+        }
+
+        @Override
+        public void close() {
+            isFull = false;
+            Misc.freeObjListAndClear(heldReaders);
+        }
+
+        @Override
+        public boolean isRepairApplySkipped() {
+            if (isArmed && isOnStack(recovery) && isOnStack("o3HeadMissReplay")) {
+                isArmed = false;
+                try {
+                    while (true) {
+                        heldReaders.add(engine.getReader(token));
+                    }
+                } catch (EntryUnavailableException full) {
+                    TestUtils.assertContains(full.getFlyweightMessage(), AbstractMultiTenantPool.POOL_SIZE);
+                }
+                Assert.assertTrue("the pool must have had readers to give", heldReaders.size() > 0);
+                isFull = true;
+            }
+            return false;
+        }
+
+        @Override
+        public void onEvent(byte factoryType, long thread, TableToken tableToken, short event, short segment, short position) {
+            if (isFull
+                    && factoryType == PoolListener.SRC_READER
+                    && event == PoolListener.EV_FULL
+                    && token.equals(tableToken)) {
+                refusals++;
+                isRefusedAfterTheCommit = isOnStack(recovery)
+                        && isOnStack("o3HeadMissReplay")
+                        && !isOnStack("reconcileLiveViewReplacement");
+                close();
+            }
+        }
+
+        void arm() {
+            isArmed = true;
+        }
+
+        int getRefusals() {
+            return refusals;
+        }
+
+        boolean isRefusedAfterTheCommit() {
+            return isRefusedAfterTheCommit;
         }
     }
 }

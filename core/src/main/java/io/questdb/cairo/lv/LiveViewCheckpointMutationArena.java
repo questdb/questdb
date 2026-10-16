@@ -73,6 +73,8 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
     private final DirectLongList ordinals;
     private final LiveViewCheckpointStatePageRef otherStateRefFlyweight = new LiveViewCheckpointStatePageRef();
     private final LiveViewCheckpointStatePageRef stateRefFlyweight = new LiveViewCheckpointStatePageRef();
+    private boolean isLowerBoundCountingForTest;
+    private boolean isSortComparisonCountingForTest;
     private int lowerBoundCountForTest;
     private int size;
     private long sortComparisonCountForTest;
@@ -163,24 +165,35 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         return lowerBoundCountForTest;
     }
 
+    /**
+     * Zeroes the lower-bound count and starts it. An arena counts nothing until a test
+     * calls this, so production searches pay one flag read rather than a counter write.
+     */
     @TestOnly
     public void resetLowerBoundCountForTest() {
         lowerBoundCountForTest = 0;
+        isLowerBoundCountingForTest = true;
     }
 
     /**
      * @return key comparisons {@link #sortAndValidate()} has made since the last
-     * {@link #resetSortComparisonCountForTest()}. The count advances only while assertions
-     * are enabled.
+     * {@link #resetSortComparisonCountForTest()}. The count advances only after that call
+     * starts it.
      */
     @TestOnly
     public long getSortComparisonCountForTest() {
         return sortComparisonCountForTest;
     }
 
+    /**
+     * Zeroes the comparison count and starts it. An arena counts nothing until a test
+     * calls this, so production sorts pay one flag read per comparison rather than a
+     * counter write.
+     */
     @TestOnly
     public void resetSortComparisonCountForTest() {
         sortComparisonCountForTest = 0;
+        isSortComparisonCountingForTest = true;
     }
 
     public int getSortedMutationIndex(int sortedIndex) {
@@ -395,11 +408,6 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         return lo < sortedSize && compareKey(getSortedMutationIndex(lo), keyAddress, keyLength) == 0;
     }
 
-    boolean isLowerBoundCountRecordedForTest() {
-        lowerBoundCountForTest++;
-        return true;
-    }
-
     /**
      * @return the native address of a staged key, valid only until the next append to
      * this arena
@@ -414,6 +422,16 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
 
     int operation(int mutationIndex) {
         return (int) descriptor(mutationIndex, DESC_OPERATION);
+    }
+
+    /**
+     * Counts one lower-bound search of a partition-map node once
+     * {@link #resetLowerBoundCountForTest()} has started the count.
+     */
+    void recordLowerBoundForTest() {
+        if (isLowerBoundCountingForTest) {
+            lowerBoundCountForTest++;
+        }
     }
 
     int refCount(int mutationIndex) {
@@ -607,10 +625,12 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
 
     /**
      * Compares two staged keys for {@link #sortAndValidate()}, and counts the comparison
-     * when assertions are enabled.
+     * once {@link #resetSortComparisonCountForTest()} has started the count.
      */
     private int compareSortKeys(int leftMutationIndex, int rightMutationIndex) {
-        assert isSortComparisonCountRecordedForTest();
+        if (isSortComparisonCountingForTest) {
+            sortComparisonCountForTest++;
+        }
         return compareKey(leftMutationIndex, rightMutationIndex);
     }
 
@@ -625,11 +645,6 @@ public final class LiveViewCheckpointMutationArena implements Closeable {
         if (ordinals.getCapacity() == 0) {
             ordinals.reopen();
         }
-    }
-
-    private boolean isSortComparisonCountRecordedForTest() {
-        sortComparisonCountForTest++;
-        return true;
     }
 
     private long keyOffset(int mutationIndex) {

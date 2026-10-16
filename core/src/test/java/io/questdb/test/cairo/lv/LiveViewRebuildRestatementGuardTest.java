@@ -27,6 +27,7 @@ package io.questdb.test.cairo.lv;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.MicrosTimestampDriver;
 import io.questdb.cairo.TableReader;
 import io.questdb.cairo.TableToken;
@@ -45,6 +46,8 @@ import io.questdb.cairo.lv.LiveViewRefreshJob;
 import io.questdb.cairo.lv.LiveViewState;
 import io.questdb.cairo.lv.LiveViewStateReader;
 import io.questdb.cairo.lv.LiveViewWindow;
+import io.questdb.cairo.pool.AbstractMultiTenantPool;
+import io.questdb.cairo.pool.PoolListener;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
 import io.questdb.cairo.wal.WalPurgeJob;
@@ -55,8 +58,10 @@ import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
+import io.questdb.std.Misc;
 import io.questdb.std.Numbers;
 import io.questdb.std.ObjList;
+import io.questdb.std.QuietCloseable;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.StringSink;
@@ -312,6 +317,30 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     // the log lines and the operator reasons a deferral or a refusal publishes.
     private static final String DRIFT_CAUSE = "base table metadata change";
     private static final String MID_DRAIN_CAUSE = "mid-drain refresh failure";
+    // The errno every open of the timeline reports in the cases whose fault never clears on its
+    // own: EACCES on Linux and macOS, a timeline file the process can no longer open for writing.
+    // It is an OS error other than a missing file, so it reads as one a retry may get past.
+    private static final int PERSISTENT_ERRNO = 13;
+    // The line a recovery logs when the guard refused the rebuild behind a restore that failed on
+    // an error naming no cause, and the recovery retries the restore instead of stopping the view.
+    // The recovery's cause follows it.
+    private static final String REFUSED_RESTORE_RETRY_LINE = "live view restore failed and its rebuild would drop rows "
+            + "the view retains, retrying the restore [view=lv, cause=";
+    // The restart's own door into the whole-view rebuild, as its log lines name it. A recovery
+    // whose restore kept failing until the flush-retry budget ran out names the same one.
+    private static final String RESTART_RESTORE_CAUSE = "timeline restore failed";
+    // The line handleRefreshFailure logs when the flush-retry budget runs out on a restore that
+    // failed on a fault a retry may get past, and the view takes the rebuild instead.
+    private static final String RESTORE_RETRIES_EXHAUSTED_LINE = "live view refresh budget exhausted retrying a failed restore, "
+            + "rebuilding from the applied base [view=lv, retryCount=";
+    // The errno a restore's failed timeline open reports in the cases whose fault a retry gets
+    // past: EMFILE on Linux and macOS. Any OS error other than a missing file reads the same.
+    private static final int TRANSIENT_ERRNO = 24;
+    // The error a restore logs for that failed open.
+    private static final String TRANSIENT_RESTORE_ERROR = "io.questdb.cairo.CairoException: [" + TRANSIENT_ERRNO
+            + "] could not open read-write [file=";
+    // The error a restore logs for the same failed open reporting errno 0, which names no cause.
+    private static final String UNCLASSIFIED_RESTORE_ERROR = "io.questdb.cairo.CairoException: [0] could not open read-write [file=";
     // The checkpoint files a truncating repair and the seals around it write: the repair's
     // marker, the seals' metadata segments and retirement queue, and the superblock. The view's
     // fused anchored state is inline in its metadata, so it writes no data segment.
@@ -2106,8 +2135,8 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     public void testAMidDrainBreachWhoseRebuildIsRefusedInvalidatesTheView() throws Exception {
         // A mid-drain fault that breaches the view's own refresh memory limit, over a base that
         // lost the day the view's oldest rows come from. The recovery's restore from the timeline
-        // fails - the failed open of the timeline stands in for a transient IO error, since every
-        // natural variant restores in place - so the recovery falls back to the whole-view
+        // fails - the failed open of the timeline stands in for a restore no retry gets past, since
+        // every natural variant restores in place - so the recovery falls back to the whole-view
         // rebuild, which the guard refuses on the history floor, stopping the view. A stopped view
         // refreshes no more, so handleRefreshFailure charges it nothing - except for a breach. The
         // view's working set does not fit the limit its operator set, so the breach invalidates
@@ -2179,6 +2208,690 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
     @Test
     public void testAMidDrainRebuildRefusedOverALostOldestDayRestartsFromTheTimelineItKept() throws Exception {
         assertRefusedMidDrainRebuildRestartsFromTheTimelineItKept("2026-01-01", LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR);
+    }
+
+    @Test
+    public void testATransientFaultAheadOfTheRestartRestoreRestoresBeforeTheNextDrain() throws Exception {
+        // A restart's recovery attempt runs once per view lifetime. A fault a retry gets past
+        // that ends it before the restore runs - here the compile of the view's SELECT failing to
+        // open a base file - used to leave the attempt spent and no debt behind, so the next
+        // turn drained over accumulators no restore had put back: acct-1's day three would start
+        // over at the next commit. The attempt leaves the window-state debt standing instead,
+        // and the next turn restores in place before it drains.
+        final RestartCompileFault fault = new RestartCompileFault();
+        assertMemoryLeak(fault, () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            shutdown();
+
+            engine.buildViewGraphs();
+            fault.arm();
+            final LiveViewInstance instance = instance("lv");
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue("the restart's compile must have been failed", fault.hasFired());
+                Assert.assertEquals(0, instance.getCheckpointRuntimeRestores());
+                assertViewRows(ALL_ROWS);
+
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            // acct-1's day three carries on from 16.0 over one row, not from nothing.
+            assertViewRows(ALL_ROWS + rowsAheadOutput(1));
+            assertTransientRestoreFaultRetried(instance, guard);
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertNoRefreshFaults("lv");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(1));
+        });
+    }
+
+    @Test
+    public void testATransientRestoreFaultAfterABaseSchemaChangeRetriesTheRestoreOverTheDayTheBaseLost() throws Exception {
+        // The drift of testABaseSchemaChangeRestoresInsteadOfRebuildingAndKeepsTheDayTheBaseLost,
+        // with the restore it asks for failing on an error a retry gets past. The whole-view
+        // rebuild behind the restore would be refused over the day the base lost, and the view
+        // would stop on a fault that clears. The recovery hands the error to the flush-retry
+        // accounting instead, and the turn after the back-off restores in place.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("DEDUP UPSERT KEYS(created_at, account_id)");
+            dropPartitionAndRefresh("2026-01-01");
+
+            execute("ALTER TABLE tx ADD COLUMN note INT");
+            execute("INSERT INTO tx (created_at, account_id, amount) VALUES "
+                    + "('2026-01-03T10:00:00.000000Z', 'acct-1', 30.0), "
+                    + "('2026-01-03T10:00:00.000000Z', 'acct-1', 64.0)");
+            drainWalQueue();
+            fault.armTimelineOpen(TRANSIENT_ERRNO);
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+            Assert.assertFalse("the drift recovery's restore must have been failed", fault.isTimelineOpenArmed());
+
+            final LiveViewInstance instance = instance("lv");
+            assertTransientRestoreFaultRetried(instance, guard);
+            capture.assertLogged("live view could not restore its runtime from the checkpoint timeline, retrying [view=lv, cause="
+                    + DRIFT_CAUSE + ", error=" + TRANSIENT_RESTORE_ERROR);
+            // The day the base lost is still in the view, and the commit that met the drift is
+            // materialized on top of the accumulation the retry put back.
+            final String resumedRows = ALL_ROWS + "2026-01-03T10:00:00.000000Z\tacct-1\t80.0\t2\n";
+            assertViewRows(resumedRows);
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertNoRefreshFaults("lv");
+            assertViewRows(resumedRows);
+        });
+    }
+
+    @Test
+    public void testATransientRestoreFaultMidDrainRetriesTheRestoreOverTheDayTheBaseLost() throws Exception {
+        // The mid-drain fault of testAMidDrainRebuildRefusedOverALostOldestDayRestartsFromTheTimelineItKept,
+        // with the recovery's restore failing on an error a retry gets past. The rebuild behind the
+        // restore would be refused over the day the base lost and stop the view, which only a
+        // restart would take up again. The recovery hands the error to the flush-retry accounting
+        // instead, the window-state debt keeps the drain off the runtime the failed restore left,
+        // and the turn after the back-off restores in place and drains on.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            dropPartitionAndRefresh("2026-01-01");
+            final LiveViewInstance instance = instance("lv");
+            final long generationBefore = newestGeneration(instance);
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The first commit lands in the view's un-flushed lead, and the next two coalesce
+                // behind it into one pass, which fails reading the third.
+                setCurrentMicros(instance.getLastFlushTimeUs());
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[1]);
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[2]);
+                drainWalQueue();
+                fault.arm(2);
+                fault.armTimelineOpen(TRANSIENT_ERRNO);
+                drainJob(job);
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                Assert.assertFalse("the recovery's restore must have been failed", fault.isTimelineOpenArmed());
+                Assert.assertFalse(
+                        "a restore fault a retry gets past must not stop the view",
+                        instance.isCheckpointRecoveryBlocked()
+                );
+                Assert.assertTrue(
+                        "the failed restore must leave the window-state debt for a later turn",
+                        instance.isWindowStateDirty()
+                );
+                Assert.assertEquals(0, instance.getCheckpointRuntimeRestores());
+                Assert.assertEquals("the failed restore must have kept the generation it found", generationBefore, newestGeneration(instance));
+
+                // The turn after the back-off restores in place and drains the three commits.
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            assertTransientRestoreFaultRetried(instance, guard);
+            capture.assertLogged("live view could not restore its runtime from the checkpoint timeline, retrying [view=lv, cause="
+                    + MID_DRAIN_CAUSE + ", error=" + TRANSIENT_RESTORE_ERROR);
+            assertViewRows(ALL_ROWS + rowsAheadOutput(3));
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertNoRefreshFaults("lv");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(3));
+        });
+    }
+
+    @Test
+    public void testATransientRestoreFaultOnARestartRetriesTheRestoreOverTheDayTheBaseLost() throws Exception {
+        // A restart whose restore from the timeline fails on an error a retry gets past. The
+        // restart used to fall back to the whole-view rebuild, which the guard refuses over the
+        // day the base lost, and the view stopped on a fault that clears. The restart leaves the
+        // window-state debt instead and hands the error to the flush-retry accounting. The view
+        // owes no base commit, so the next one drives it, and its turn restores in place before
+        // it drains.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            shutdown();
+
+            engine.buildViewGraphs();
+            fault.armTimelineOpen(TRANSIENT_ERRNO);
+            final LiveViewInstance instance = instance("lv");
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse("the restart's restore must have been failed", fault.isTimelineOpenArmed());
+                Assert.assertFalse(
+                        "a restore fault a retry gets past must not stop the view",
+                        instance.isCheckpointRecoveryBlocked()
+                );
+                Assert.assertTrue(
+                        "the failed restore must leave the window-state debt for a later turn",
+                        instance.isWindowStateDirty()
+                );
+                Assert.assertEquals(0, instance.getCheckpointRuntimeRestores());
+                assertViewRows(ALL_ROWS);
+
+                // The accumulators the retry puts back carry acct-1's day three on.
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            assertTransientRestoreFaultRetried(instance, guard);
+            capture.assertLogged("could not restore live view from checkpoint timeline, retrying [view=lv, error="
+                    + TRANSIENT_RESTORE_ERROR);
+            assertViewRows(ALL_ROWS + rowsAheadOutput(1));
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertNoRefreshFaults("lv");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(1));
+        });
+    }
+
+    @Test
+    public void testATransientRestoreFaultThatPersistsMidDrainStopsTheViewOverTheDayTheBaseLost() throws Exception {
+        // testATransientRestoreFaultMidDrainRetriesTheRestoreOverTheDayTheBaseLost with a fault
+        // that never clears: every open of the timeline fails. Each retry the back-off paces meets
+        // it again, until the flush-retry budget runs out. The view then takes the whole-view
+        // rebuild a restore that cannot run falls back to, and the guard refuses it over the day
+        // the base lost: the view stops, keeping every row, and a restart once the fault clears
+        // restores it from the timeline the stop left alone. A durable invalidation would have
+        // ended the view, and the day the base lost with it.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            dropPartitionAndRefresh("2026-01-01");
+            final LiveViewInstance instance = instance("lv");
+            final long generationBefore = newestGeneration(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The first commit lands in the view's un-flushed lead, and the next two coalesce
+                // behind it into one pass, which fails reading the third.
+                setCurrentMicros(instance.getLastFlushTimeUs());
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[1]);
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[2]);
+                drainWalQueue();
+                fault.arm(2);
+                fault.armTimelineOpenUntilDisarmed(PERSISTENT_ERRNO);
+                drainJob(job);
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                // The commits the fault stopped keep the view behind the base, so every retry the
+                // back-off paces drives it.
+                driveRefreshToQuiescence(job);
+            }
+            fault.disarmAll();
+
+            Assert.assertFalse("a restore fault that persists must not invalidate the view", instance.isInvalid());
+            assertRebuildBlocked(instance, RESTART_RESTORE_CAUSE);
+            assertLiveViewsReportsTheBlock();
+            Assert.assertEquals(
+                    "every retry the budget allows must have met the fault",
+                    configuration.getLiveViewFlushRetryMax(),
+                    instance.getRefreshFaultCount()
+            );
+            Assert.assertEquals(0, instance.getCheckpointRuntimeRestores());
+            Assert.assertEquals("the stop must keep the generation it found", generationBefore, newestGeneration(instance));
+            capture.drain();
+            capture.assertLogged(RESTORE_RETRIES_EXHAUSTED_LINE);
+            capture.assertLogged("live view rebuild from the applied base refused");
+            capture.assertNotLogged("live view refresh budget exhausted, invalidating");
+            capture.assertNotLogged(REFUSED_RESTORE_RETRY_LINE);
+            assertViewRows(ALL_ROWS + rowsAheadOutput(1));
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertLiveViewsReportsNoRecovery(instance("lv"));
+            assertNoRefreshFaults("lv");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(3));
+        });
+    }
+
+    @Test
+    public void testATransientRestoreFaultThatPersistsOnARestartInvalidatesTheViewWhenItsRebuildFails() throws Exception {
+        // testATransientRestoreFaultThatPersistsOnARestartRebuildsTheViewOverACompleteBase, with the
+        // whole-view rebuild the view takes once the flush-retry budget runs out failing as well, on
+        // a read of the applied base. Nothing then puts the window state back, and the budget is
+        // spent, so the view invalidates, as it did before that rebuild existed. A rebuild that
+        // failed and still counted as handled would leave the view valid with no back-off armed,
+        // and every pass would run the restore and the rebuild again while a commit stood pending.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            shutdown();
+
+            engine.buildViewGraphs();
+            fault.armTimelineOpenUntilDisarmed(PERSISTENT_ERRNO);
+            final LiveViewInstance instance = instance("lv");
+            final int maxRetry = configuration.getLiveViewFlushRetryMax();
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue("the restart's restore must have been failed", fault.getTimelineOpenFailures() > 0);
+                Assert.assertEquals(1, instance.getRefreshFaultCount());
+
+                // A base commit keeps the view behind the base, so every retry the back-off paces
+                // drives it. One pass per retry, up to the last one the budget allows.
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                for (int pass = 0; pass < REFRESH_QUIESCENCE_PASSES && instance.getRefreshFaultCount() < maxRetry - 1; pass++) {
+                    advanceClockToNextRefreshPass();
+                    drainJob(job);
+                }
+                Assert.assertEquals(maxRetry - 1, instance.getRefreshFaultCount());
+                Assert.assertFalse(instance.isInvalid());
+                Assert.assertFalse("no rebuild may run while the budget lasts", fault.hasAppliedScanFired());
+
+                // The retry that runs the budget out. Pooled readers of the base keep the
+                // partition files they opened, so give them back: the rebuild's scan then opens
+                // the file the fault fails, and nothing else in the pass reads it.
+                engine.releaseInactive();
+                fault.armAppliedScan();
+                advanceClockToNextRefreshPass();
+                drainJob(job);
+                Assert.assertTrue("the rebuild behind the spent budget must have been failed", fault.hasAppliedScanFired());
+            }
+            fault.disarmAll();
+
+            Assert.assertTrue("a rebuild behind the spent budget that fails must invalidate the view", instance.isInvalid());
+            TestUtils.assertEquals("flush retry budget exhausted", instance.getInvalidationReason());
+            Assert.assertEquals(
+                    "every retry the budget allows must have met the fault",
+                    maxRetry,
+                    instance.getRefreshFaultCount()
+            );
+            Assert.assertFalse(instance.isCheckpointRecoveryBlocked());
+            capture.drain();
+            capture.assertLogged(RESTORE_RETRIES_EXHAUSTED_LINE);
+            capture.assertLogged("live view window-state recompute failed [view=lv, cause=" + RESTART_RESTORE_CAUSE + ", error=");
+            capture.assertLogged("live view refresh budget exhausted, invalidating [view=lv, retryCount=" + maxRetry);
+            capture.assertNotLogged("live view recomputed window state from applied base");
+        });
+    }
+
+    @Test
+    public void testATransientRestoreFaultThatPersistsOnARestartRebuildsTheViewOverACompleteBase() throws Exception {
+        // A restart whose restore keeps failing on an error a retry may get past: every open of
+        // the timeline fails, as for a timeline file the process can no longer open for writing.
+        // The restart and every retry the back-off paces after it meet the same fault, until the
+        // flush-retry budget runs out. The view then takes the whole-view rebuild a restore that
+        // cannot run falls back to, and over a base that still holds every row the rebuild heals
+        // it. A durable invalidation would have ended the view for want of a file the rebuild
+        // does not need.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            shutdown();
+
+            engine.buildViewGraphs();
+            fault.armTimelineOpenUntilDisarmed(PERSISTENT_ERRNO);
+            final LiveViewInstance instance = instance("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue("the restart's restore must have been failed", fault.getTimelineOpenFailures() > 0);
+                Assert.assertEquals(1, instance.getRefreshFaultCount());
+                Assert.assertTrue(
+                        "the failed restore must leave the window-state debt for a later turn",
+                        instance.isWindowStateDirty()
+                );
+
+                // A base commit keeps the view behind the base, so every retry the back-off paces
+                // drives it.
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse("a restore fault that persists must not invalidate the view", instance.isInvalid());
+                Assert.assertEquals(
+                        "every retry the budget allows must have met the fault",
+                        configuration.getLiveViewFlushRetryMax(),
+                        instance.getRefreshFaultCount()
+                );
+
+                // The rebuilt view drains on, the timeline still failing every open.
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[1]);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            fault.disarmAll();
+
+            Assert.assertFalse(instance.isInvalid());
+            Assert.assertFalse("a rebuild over a complete base must not stop the view", instance.isCheckpointRecoveryBlocked());
+            Assert.assertFalse("the rebuild must have settled the window-state debt", instance.isWindowStateDirty());
+            Assert.assertEquals(0, instance.getCheckpointRuntimeRestores());
+            capture.drain();
+            capture.assertLogged(RESTORE_RETRIES_EXHAUSTED_LINE);
+            capture.assertLogged("live view recomputed window state from applied base [view=lv, cause=" + RESTART_RESTORE_CAUSE + "]");
+            capture.assertNotLogged("live view refresh budget exhausted, invalidating");
+            capture.assertNotLogged("live view rebuild from the applied base refused");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(2));
+
+            // The fault clears and the process restarts over the same rows.
+            shutdown();
+            restart();
+            final LiveViewInstance restarted = instance("lv");
+            Assert.assertFalse(restarted.isInvalid());
+            Assert.assertFalse(restarted.isCheckpointRecoveryBlocked());
+            assertNoRefreshFaults("lv");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(2));
+        });
+    }
+
+    @Test
+    public void testATransientRestoreFaultThatPersistsOnARestartStopsTheViewOverTheDayTheBaseLost() throws Exception {
+        // testATransientRestoreFaultThatPersistsOnARestartRebuildsTheViewOverACompleteBase over a
+        // base that lost the day the view's oldest rows come from. The guard refuses the rebuild
+        // the view takes once the budget runs out, and the view stops: it keeps every row, and a
+        // restart once the fault clears restores it from the timeline the stop left alone.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            final long generationBefore = newestGeneration(instance("lv"));
+            shutdown();
+
+            engine.buildViewGraphs();
+            fault.armTimelineOpenUntilDisarmed(PERSISTENT_ERRNO);
+            final LiveViewInstance instance = instance("lv");
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                Assert.assertTrue("the restart's restore must have been failed", fault.getTimelineOpenFailures() > 0);
+                // A base commit keeps the view behind the base, so every retry the back-off paces
+                // drives it.
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+            }
+            fault.disarmAll();
+
+            Assert.assertFalse("a restore fault that persists must not invalidate the view", instance.isInvalid());
+            assertRebuildBlocked(instance, RESTART_RESTORE_CAUSE);
+            assertLiveViewsReportsTheBlock();
+            Assert.assertEquals(
+                    "every retry the budget allows must have met the fault",
+                    configuration.getLiveViewFlushRetryMax(),
+                    instance.getRefreshFaultCount()
+            );
+            Assert.assertEquals(0, instance.getCheckpointRuntimeRestores());
+            Assert.assertEquals("the stop must keep the generation it found", generationBefore, newestGeneration(instance));
+            capture.drain();
+            capture.assertLogged(RESTORE_RETRIES_EXHAUSTED_LINE);
+            capture.assertLogged("live view rebuild from the applied base refused");
+            capture.assertNotLogged("live view refresh budget exhausted, invalidating");
+            assertViewRows(ALL_ROWS);
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertLiveViewsReportsNoRecovery(instance("lv"));
+            assertNoRefreshFaults("lv");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(1));
+        });
+    }
+
+    @Test
+    public void testABusyReaderPoolMidDrainRetriesTheRestoreOverTheDayTheBaseLost() throws Exception {
+        // The mid-drain fault of testATransientRestoreFaultMidDrainRetriesTheRestoreOverTheDayTheBaseLost,
+        // with the recovery's restore finding the reader pool of the view's table full. The pool
+        // refuses with "table busy" and errno -1, which names no operating system error. Its
+        // readers come back the moment it refuses the restore, before the whole-view rebuild
+        // behind the restore reads the view's table, so a recovery that took the refusal for a
+        // timeline it cannot restore from would have the guard refuse that rebuild over the day
+        // the base lost, and the view would stop on a fault that had already cleared. The
+        // recovery retries the restore instead, and the turn after the back-off restores in place.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            dropPartitionAndRefresh("2026-01-01");
+            final LiveViewInstance instance = instance("lv");
+            final long generationBefore = newestGeneration(instance);
+            final LiveViewRebuildRestatementGuard guard;
+            try (ReaderPoolExhaustion busyPool = new ReaderPoolExhaustion(instance.getLiveViewToken())) {
+                engine.setPoolListener(busyPool);
+                try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                    // The first commit lands in the view's un-flushed lead, and the next two coalesce
+                    // behind it into one pass, which fails reading the third.
+                    setCurrentMicros(instance.getLastFlushTimeUs());
+                    execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                    drainWalQueue();
+                    execute("INSERT INTO tx VALUES " + ROWS_AHEAD[1]);
+                    execute("INSERT INTO tx VALUES " + ROWS_AHEAD[2]);
+                    drainWalQueue();
+                    fault.arm(2);
+                    fault.armRuntimeRestore(busyPool);
+                    drainJob(job);
+                    Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                    Assert.assertEquals("the full pool must have refused the recovery's restore", 1, busyPool.getRefusals());
+                    Assert.assertFalse("a busy reader pool must not stop the view", instance.isCheckpointRecoveryBlocked());
+                    Assert.assertTrue(
+                            "the failed restore must leave the window-state debt for a later turn",
+                            instance.isWindowStateDirty()
+                    );
+                    Assert.assertEquals(0, instance.getCheckpointRuntimeRestores());
+                    Assert.assertEquals("the failed restore must have kept the generation it found", generationBefore, newestGeneration(instance));
+
+                    // The turn after the back-off restores in place and drains the three commits.
+                    driveRefreshToQuiescence(job);
+                    guard = job.rebuildRestatementGuardForTest();
+                } finally {
+                    engine.setPoolListener(null);
+                }
+            }
+
+            assertTransientRestoreFaultRetried(instance, guard);
+            capture.assertLogged("live view could not restore its runtime from the checkpoint timeline, retrying [view=lv, cause="
+                    + MID_DRAIN_CAUSE + ", error=io.questdb.cairo.EntryUnavailableException: [-1] table busy [reason="
+                    + AbstractMultiTenantPool.POOL_SIZE + "]");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(3));
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertNoRefreshFaults("lv");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(3));
+        });
+    }
+
+    @Test
+    public void testAnUnclassifiedRestoreFaultMidDrainRetriesTheRestoreOverTheDayTheBaseLost() throws Exception {
+        // The mid-drain fault of testATransientRestoreFaultMidDrainRetriesTheRestoreOverTheDayTheBaseLost,
+        // with the recovery's restore failing on an error that names no cause - errno 0, as a
+        // table reader's spin timeouts report. It says nothing about the timeline either, so the
+        // recovery still falls back to the whole-view rebuild, which heals a view over a complete
+        // base. Over the day the base lost the guard refuses that rebuild, and the refusal no
+        // longer stops the view at once: the recovery hands it to the flush-retry accounting, the
+        // window-state debt keeps the drain off the runtime, and the turn after the back-off
+        // restores in place.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            dropPartitionAndRefresh("2026-01-01");
+            final LiveViewInstance instance = instance("lv");
+            final long generationBefore = newestGeneration(instance);
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                // The first commit lands in the view's un-flushed lead, and the next two coalesce
+                // behind it into one pass, which fails reading the third.
+                setCurrentMicros(instance.getLastFlushTimeUs());
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[1]);
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[2]);
+                drainWalQueue();
+                fault.arm(2);
+                fault.armTimelineOpen(0);
+                drainJob(job);
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                Assert.assertFalse("the recovery's restore must have been failed", fault.isTimelineOpenArmed());
+                Assert.assertEquals(
+                        "the guard must have refused the rebuild behind the failed restore",
+                        LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR,
+                        job.rebuildRestatementGuardForTest().getVerdict()
+                );
+                Assert.assertFalse(
+                        "a refusal behind a restore fault that names no cause must not stop the view at once",
+                        instance.isCheckpointRecoveryBlocked()
+                );
+                Assert.assertTrue(
+                        "the refused rebuild must leave the window-state debt for a later turn",
+                        instance.isWindowStateDirty()
+                );
+                Assert.assertEquals(0, instance.getCheckpointRuntimeRestores());
+                Assert.assertEquals("the refusal must have kept the generation it found", generationBefore, newestGeneration(instance));
+                assertViewRows(ALL_ROWS + rowsAheadOutput(1));
+
+                // The turn after the back-off restores in place and drains the three commits.
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            assertRefusedRebuildRetried(instance, guard, MID_DRAIN_CAUSE, 0);
+            capture.assertLogged("live view could not restore its runtime from the checkpoint timeline, rebuilding from the applied base "
+                    + "[view=lv, cause=" + MID_DRAIN_CAUSE + ", error=" + UNCLASSIFIED_RESTORE_ERROR);
+            assertViewRows(ALL_ROWS + rowsAheadOutput(3));
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertNoRefreshFaults("lv");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(3));
+        });
+    }
+
+    @Test
+    public void testAnUnclassifiedRestoreFaultOnARestartRetriesTheRestoreOverTheDayTheBaseLost() throws Exception {
+        // testATransientRestoreFaultOnARestartRetriesTheRestoreOverTheDayTheBaseLost with the
+        // restore failing on an error that names no cause, errno 0. The restart falls back to the
+        // whole-view rebuild as before, and the guard refuses it over the day the base lost. The
+        // refusal no longer stops the view: the restart leaves the window-state debt and hands
+        // the refusal to the flush-retry accounting, and the turn the next base commit drives
+        // restores in place before it drains.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            dropPartitionAndRefresh("2026-01-01");
+            shutdown();
+
+            engine.buildViewGraphs();
+            fault.armTimelineOpen(0);
+            final LiveViewInstance instance = instance("lv");
+            final LiveViewRebuildRestatementGuard guard;
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                driveRefreshToQuiescence(job);
+                Assert.assertFalse("the restart's restore must have been failed", fault.isTimelineOpenArmed());
+                Assert.assertEquals(
+                        "the guard must have refused the rebuild behind the failed restore",
+                        LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR,
+                        job.rebuildRestatementGuardForTest().getVerdict()
+                );
+                Assert.assertFalse(
+                        "a refusal behind a restore fault that names no cause must not stop the view at once",
+                        instance.isCheckpointRecoveryBlocked()
+                );
+                Assert.assertTrue(
+                        "the refused rebuild must leave the window-state debt for a later turn",
+                        instance.isWindowStateDirty()
+                );
+                Assert.assertEquals(0, instance.getCheckpointRuntimeRestores());
+                assertViewRows(ALL_ROWS);
+
+                // The accumulators the retry puts back carry acct-1's day three on.
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                driveRefreshToQuiescence(job);
+                guard = job.rebuildRestatementGuardForTest();
+            }
+
+            assertRefusedRebuildRetried(instance, guard, RESTART_RESTORE_CAUSE, 1);
+            capture.assertLogged("could not restore live view from checkpoint timeline, rebuilding derived state [view=lv, error="
+                    + UNCLASSIFIED_RESTORE_ERROR);
+            assertViewRows(ALL_ROWS + rowsAheadOutput(1));
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertNoRefreshFaults("lv");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(1));
+        });
+    }
+
+    @Test
+    public void testAnUnclassifiedRestoreFaultThatPersistsStopsTheViewOnceTheRetryBudgetRunsOut() throws Exception {
+        // testAnUnclassifiedRestoreFaultMidDrainRetriesTheRestoreOverTheDayTheBaseLost with the
+        // restore failing the same way on every retry, as a fault in the restore's own code would.
+        // The view retries until the flush-retry budget runs out, and then stops the way a refusal
+        // behind a timeline that cannot be restored stops it at once: a stop that keeps every row
+        // and that a restart takes up again, not a durable invalidation.
+        final LiveViewMidDrainFault fault = new LiveViewMidDrainFault();
+        assertMemoryLeak(fault.facade(), () -> {
+            seedSixRows("");
+            fault.of(engine.verifyTableName("tx").getDirName());
+            dropPartitionAndRefresh("2026-01-01");
+            final LiveViewInstance instance = instance("lv");
+            final long generationBefore = newestGeneration(instance);
+            try (LiveViewRefreshJob job = new LiveViewRefreshJob(0, engine, 1)) {
+                setCurrentMicros(instance.getLastFlushTimeUs());
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[0]);
+                drainWalQueue();
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[1]);
+                execute("INSERT INTO tx VALUES " + ROWS_AHEAD[2]);
+                drainWalQueue();
+                fault.arm(2);
+                fault.armTimelineOpen(0);
+                drainJob(job);
+                Assert.assertTrue("the mid-drain segment read must have been failed", fault.hasFired());
+                // Every retry the back-off paces meets the same failed restore.
+                for (int i = 0; i < RETRY_BACKOFF_WAITS && !instance.isCheckpointRecoveryBlocked(); i++) {
+                    Assert.assertFalse("a retried refusal must not invalidate the view", instance.isInvalid());
+                    final long retryUs = nextRefreshRetryMicros();
+                    Assert.assertNotEquals("a view that retries must be backing off", Numbers.LONG_NULL, retryUs);
+                    setCurrentMicros(retryUs);
+                    fault.armTimelineOpen(0);
+                    drainJob(job);
+                }
+            }
+
+            Assert.assertEquals(
+                    "every turn up to the budget must have retried the restore",
+                    configuration.getLiveViewFlushRetryMax(),
+                    instance.getRefreshFaultCount()
+            );
+            assertRebuildBlocked(instance, MID_DRAIN_CAUSE);
+            assertLiveViewsReportsTheBlock();
+            Assert.assertEquals(0, instance.getCheckpointRuntimeRestores());
+            Assert.assertEquals("the stop must keep the generation it found", generationBefore, newestGeneration(instance));
+            capture.drain();
+            capture.assertLogged(REFUSED_RESTORE_RETRY_LINE + MID_DRAIN_CAUSE);
+            capture.assertNotLogged("live view refresh budget exhausted, invalidating");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(1));
+
+            shutdown();
+            restart();
+            assertRestoredFromTimeline("lv");
+            assertLiveViewsReportsNoRecovery(instance("lv"));
+            assertNoRefreshFaults("lv");
+            assertViewRows(ALL_ROWS + rowsAheadOutput(3));
+        });
     }
 
     @Test
@@ -4083,6 +4796,68 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
         });
     }
 
+    /**
+     * Asserts that a whole-view rebuild the guard refused behind a restore that failed on an error
+     * naming no cause had the recovery retry the restore rather than stop the view: the view runs,
+     * the guard's last verdict is the refusal, the restart rebuilt {@code restartRebuildAttempts}
+     * times, one restore from the timeline settled the window-state debt, and the turn after it
+     * ended the retry streak the one faulting turn started.
+     */
+    private void assertRefusedRebuildRetried(
+            LiveViewInstance instance,
+            LiveViewRebuildRestatementGuard guard,
+            String cause,
+            int restartRebuildAttempts
+    ) throws Exception {
+        Assert.assertFalse("a retried refusal must not stop the view", instance.isCheckpointRecoveryBlocked());
+        Assert.assertFalse(instance.isInvalid());
+        Assert.assertEquals(
+                "the guard must have refused the rebuild behind the failed restore",
+                LiveViewRebuildRestatementGuard.VERDICT_HISTORY_FLOOR,
+                guard.getVerdict()
+        );
+        Assert.assertEquals(restartRebuildAttempts, instance.getCheckpointRebuildAttempts());
+        Assert.assertEquals(0, instance.getCheckpointTimelineResets());
+        Assert.assertEquals("the retry must have restored from the timeline", 1, instance.getCheckpointRuntimeRestores());
+        Assert.assertEquals("one turn must have faulted", 1, instance.getRefreshFaultCount());
+        Assert.assertFalse("the retry must have settled the window-state debt", instance.isWindowStateDirty());
+        Assert.assertEquals("the turn after the retry must have ended the retry streak", 0, instance.getFlushRetryCount());
+        capture.drain();
+        capture.assertLogged(REFUSED_RESTORE_RETRY_LINE + cause + ", evidence=the view holds rows from ");
+        capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=");
+        capture.assertNotLogged("live view rebuild from the applied base refused");
+        capture.assertNotLogged("live view recomputed window state from applied base");
+        assertLiveViewsReportsNoRecovery(instance);
+    }
+
+    /**
+     * Asserts that a restore that failed on an error a retry gets past was retried rather than
+     * sent to the whole-view rebuild: the view runs, nothing rebuilt or consulted the guard, one
+     * restore from the timeline settled the window-state debt, and the turn after it ended the
+     * retry streak the one faulting turn started.
+     */
+    private void assertTransientRestoreFaultRetried(LiveViewInstance instance, LiveViewRebuildRestatementGuard guard) throws Exception {
+        Assert.assertFalse("a restore fault a retry gets past must not stop the view", instance.isCheckpointRecoveryBlocked());
+        Assert.assertFalse(instance.isInvalid());
+        Assert.assertEquals(
+                "no whole-view rebuild may have been asked for",
+                LiveViewRebuildRestatementGuard.ABSTAIN_NOT_EVALUATED,
+                guard.getAbstention()
+        );
+        Assert.assertEquals(0, instance.getCheckpointRebuildAttempts());
+        Assert.assertEquals(0, instance.getCheckpointTimelineResets());
+        Assert.assertEquals("the retry must have restored from the timeline", 1, instance.getCheckpointRuntimeRestores());
+        Assert.assertEquals("one turn must have faulted", 1, instance.getRefreshFaultCount());
+        Assert.assertFalse("the retry must have settled the window-state debt", instance.isWindowStateDirty());
+        Assert.assertEquals("the turn after the retry must have ended the retry streak", 0, instance.getFlushRetryCount());
+        capture.drain();
+        capture.assertLogged("live view restored its runtime from the checkpoint timeline [view=lv, cause=");
+        capture.assertNotLogged("live view rebuild from the applied base refused");
+        capture.assertNotLogged("live view restart rebuilding from applied base");
+        capture.assertNotLogged("live view recomputed window state from applied base");
+        assertLiveViewsReportsNoRecovery(instance);
+    }
+
     private void assertViewRows(String expected) throws Exception {
         assertQuery(VIEW_ROWS_QUERY)
                 .noLeakCheck()
@@ -5320,6 +6095,102 @@ public class LiveViewRebuildRestatementGuardTest extends AbstractLiveViewCheckpo
                 hasFired.set(true);
                 throw CairoException.critical(0).put("simulated replacement commit failure");
             }
+        }
+    }
+
+    /**
+     * Fills one table's reader pool when run, taking every reader the pool still has to give, so
+     * the next acquisition of that table's reader finds the pool full. Installed as the engine's
+     * pool listener, it gives them all back the moment the pool refuses that acquisition, before
+     * the refused caller can ask again - the way busy readers come back on their own.
+     * {@link #close()} gives back whatever it still holds.
+     */
+    private static final class ReaderPoolExhaustion implements PoolListener, Runnable, QuietCloseable {
+        private final ObjList<TableReader> heldReaders = new ObjList<>();
+        private final TableToken token;
+        private boolean isArmed;
+        private int refusals;
+
+        ReaderPoolExhaustion(TableToken token) {
+            this.token = token;
+        }
+
+        @Override
+        public void close() {
+            isArmed = false;
+            Misc.freeObjListAndClear(heldReaders);
+        }
+
+        @Override
+        public void onEvent(byte factoryType, long thread, TableToken tableToken, short event, short segment, short position) {
+            if (isArmed
+                    && factoryType == PoolListener.SRC_READER
+                    && event == PoolListener.EV_FULL
+                    && token.equals(tableToken)) {
+                refusals++;
+                close();
+            }
+        }
+
+        @Override
+        public void run() {
+            Assert.assertEquals("the pool must be filled once", 0, heldReaders.size());
+            try {
+                while (true) {
+                    heldReaders.add(engine.getReader(token));
+                }
+            } catch (EntryUnavailableException full) {
+                TestUtils.assertContains(full.getFlyweightMessage(), AbstractMultiTenantPool.POOL_SIZE);
+            }
+            Assert.assertTrue("the pool must have had readers to give", heldReaders.size() > 0);
+            isArmed = true;
+        }
+
+        int getRefusals() {
+            return refusals;
+        }
+    }
+
+    /**
+     * Once armed, fails the first read-only open the refresh job makes while it compiles a
+     * view's SELECT ({@code getWindowFactory}), and has it report {@link #TRANSIENT_ERRNO}. The
+     * cases arm it on a restart, after every pooled reader is gone, where the compile is the
+     * restart recovery's first step: it opens the base table to plan against it.
+     */
+    private static final class RestartCompileFault extends TestFilesFacadeImpl {
+        private final AtomicBoolean hasFired = new AtomicBoolean();
+        private final AtomicBoolean isArmed = new AtomicBoolean();
+        private final AtomicBoolean isErrnoPending = new AtomicBoolean();
+
+        @Override
+        public int errno() {
+            return isErrnoPending.compareAndSet(true, false) ? TRANSIENT_ERRNO : super.errno();
+        }
+
+        @Override
+        public long openRO(LPSZ name) {
+            if (isArmed.get() && isCompiling() && isArmed.compareAndSet(true, false)) {
+                hasFired.set(true);
+                isErrnoPending.set(true);
+                return -1;
+            }
+            return super.openRO(name);
+        }
+
+        void arm() {
+            hasFired.set(false);
+            isArmed.set(true);
+        }
+
+        boolean hasFired() {
+            return hasFired.get();
+        }
+
+        private static boolean isCompiling() {
+            return StackWalker.getInstance().walk(frames -> frames.anyMatch(
+                    frame -> LiveViewRefreshJob.class.getName().equals(frame.getClassName())
+                            && "getWindowFactory".equals(frame.getMethodName())
+            ));
         }
     }
 

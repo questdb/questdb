@@ -88,6 +88,7 @@ public final class LiveViewCheckpointPartitionMapEntry implements QuietCloseable
     // Lazy, as the key buffer: nothing is allocated until the first non-empty scalar.
     private final MemoryCARWImpl scalarMemory =
             new MemoryCARWImpl(SCALAR_BUFFER_PAGE_SIZE, Integer.MAX_VALUE, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM);
+    private boolean isWidthLookupCountingForTest;
     private int keyLength;
     private int scalarLength;
     private LiveViewCheckpointStatePageRef[] statePageRefs = EMPTY_REFS;
@@ -237,9 +238,14 @@ public final class LiveViewCheckpointPartitionMapEntry implements QuietCloseable
         return widthLookupCountForTest;
     }
 
+    /**
+     * Zeroes the lookup count and starts it. An entry counts nothing until a test calls
+     * this, so production copies pay one flag read rather than a counter write.
+     */
     @TestOnly
     public void resetWidthLookupCountForTest() {
         widthLookupCountForTest = 0;
+        isWidthLookupCountingForTest = true;
     }
 
     /**
@@ -375,13 +381,10 @@ public final class LiveViewCheckpointPartitionMapEntry implements QuietCloseable
         scalarLength = length;
     }
 
-    private boolean isWidthLookupRecordedForTest() {
-        widthLookupCountForTest++;
-        return true;
-    }
-
     private LiveViewCheckpointStatePageRef[] refBuffer(int count) {
-        assert isWidthLookupRecordedForTest();
+        if (isWidthLookupCountingForTest) {
+            widthLookupCountForTest++;
+        }
         LiveViewCheckpointStatePageRef[] target = refBuffers.get(count);
         if (target == null) {
             target = new LiveViewCheckpointStatePageRef[count];

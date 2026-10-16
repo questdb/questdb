@@ -88,53 +88,6 @@ public class LiveViewCheckpointWindowRootBuilder extends AbstractLiveViewCheckpo
     }
 
     @Override
-    protected void stageMutations() {
-        if (isCompleteSnapshot) {
-            mutations.sortAndValidate();
-            if (outputKeys != null) {
-                // A partial-domain repair is complete only inside Q. Walking the old
-                // root to discover Q's missing entries makes publication proportional
-                // to the view's whole retained key domain, even when Q contains one key.
-                // Q already is the exact removal-by-omission domain, so probe it directly:
-                // removing an entry the predecessor does not hold is a no-op one layer
-                // down, and every key outside Q remains untouched by construction.
-                for (int i = 0, n = outputKeys.getSlotCount(); i < n; i++) {
-                    if (!outputKeys.isSlotUsed(i)) {
-                        continue;
-                    }
-                    // Q's storage is not the mutation arena, so staging the removal
-                    // cannot move the key under the address.
-                    final long keyAddress = outputKeys.getKeyAddress(i);
-                    final int keyLength = outputKeys.getKeyLength(i);
-                    if (!mutations.hasSortedKey(keyAddress, keyLength)) {
-                        mutations.remove(keyAddress, keyLength);
-                    }
-                }
-            } else {
-                partitionMapReader.iterateAll(oldPartitionMapRoot, missingPartitionVisitor);
-            }
-        }
-    }
-
-    @Override
-    protected void writeRoot(
-            @NotNull LiveViewCheckpointMetaSegmentWriter writer,
-            @NotNull LiveViewCheckpointPageRef partitionMapRoot,
-            @NotNull LiveViewCheckpointPageRef out
-    ) {
-        resultWindowRoot.ofBuilder(
-                windowIdentity,
-                anchorValueType,
-                keySchema,
-                manifest,
-                totalInlineStateBytes,
-                partitionMapRoot,
-                segmentUseCounts
-        );
-        resultWindowRoot.writeTo(writer, out);
-    }
-
-    @Override
     public void close() {
         Misc.free(oldWindowRoot);
         Misc.free(resultWindowRoot);
@@ -146,11 +99,6 @@ public class LiveViewCheckpointWindowRootBuilder extends AbstractLiveViewCheckpo
         oldWindowRoot.detach();
         resultWindowRoot.detach();
         super.detach();
-    }
-
-    @TestOnly
-    boolean isBorrowingCompiledForTest(byte[] windowIdentity, byte[] keySchema, byte[] manifest) {
-        return this.windowIdentity == windowIdentity && this.keySchema == keySchema && this.manifest == manifest;
     }
 
     /**
@@ -203,6 +151,89 @@ public class LiveViewCheckpointWindowRootBuilder extends AbstractLiveViewCheckpo
     ) {
         of0(checkpointsDir, oldStateRootRef, windowIdentity, anchorValueType, keySchema, manifest,
                 totalInlineStateBytes, isCompleteSnapshot, outputKeys, false);
+    }
+
+    /**
+     * Stages one fused entry: the whole {@code scalarLength}-byte scalar payload at
+     * {@code scalarAddress} for the {@code keyLength}-byte key at {@code keyAddress},
+     * anchor value and every component together. The staging arena copies the key and
+     * the payload before this returns, so the caller may reuse its memory.
+     * <p>
+     * {@code isUnchanged} names a key whose payload the predecessor entry already holds
+     * byte for byte. It is still part of a complete snapshot's put domain - the key is
+     * live, and removal by omission would otherwise take out an entry nothing replaced -
+     * but no mutation is staged for it, so a full-scan seal over a cold key set neither
+     * allocates a mutation nor descends the tree per key. Nothing published distinguishes
+     * the two: the partition-map writer drops an equal put anyway.
+     */
+    public void putPartition(long keyAddress, int keyLength, long scalarAddress, int scalarLength, boolean isUnchanged) {
+        ensureInitialized();
+        validatePayloadWidth(scalarLength);
+        stageDomain(keyAddress, keyLength, isUnchanged);
+        if (!isUnchanged) {
+            mutations.put(keyAddress, keyLength, scalarAddress, scalarLength);
+        }
+    }
+
+    @Override
+    protected void clearBorrowedCompiled() {
+        resultWindowRoot.clearBorrowedCompiled();
+        isInitialized = false;
+        windowIdentity = null;
+        keySchema = null;
+        manifest = null;
+    }
+
+    @Override
+    protected void stageMutations() {
+        if (isCompleteSnapshot) {
+            mutations.sortAndValidate();
+            if (outputKeys != null) {
+                // A partial-domain repair is complete only inside Q. Walking the old
+                // root to discover Q's missing entries makes publication proportional
+                // to the view's whole retained key domain, even when Q contains one key.
+                // Q already is the exact removal-by-omission domain, so probe it directly:
+                // removing an entry the predecessor does not hold is a no-op one layer
+                // down, and every key outside Q remains untouched by construction.
+                for (int i = 0, n = outputKeys.getSlotCount(); i < n; i++) {
+                    if (!outputKeys.isSlotUsed(i)) {
+                        continue;
+                    }
+                    // Q's storage is not the mutation arena, so staging the removal
+                    // cannot move the key under the address.
+                    final long keyAddress = outputKeys.getKeyAddress(i);
+                    final int keyLength = outputKeys.getKeyLength(i);
+                    if (!mutations.hasSortedKey(keyAddress, keyLength)) {
+                        mutations.remove(keyAddress, keyLength);
+                    }
+                }
+            } else {
+                partitionMapReader.iterateAll(oldPartitionMapRoot, missingPartitionVisitor);
+            }
+        }
+    }
+
+    @Override
+    protected void writeRoot(
+            @NotNull LiveViewCheckpointMetaSegmentWriter writer,
+            @NotNull LiveViewCheckpointPageRef partitionMapRoot,
+            @NotNull LiveViewCheckpointPageRef out
+    ) {
+        resultWindowRoot.ofBuilder(
+                windowIdentity,
+                anchorValueType,
+                keySchema,
+                manifest,
+                totalInlineStateBytes,
+                partitionMapRoot,
+                segmentUseCounts
+        );
+        resultWindowRoot.writeTo(writer, out);
+    }
+
+    @TestOnly
+    boolean isBorrowingCompiledForTest(byte[] windowIdentity, byte[] keySchema, byte[] manifest) {
+        return this.windowIdentity == windowIdentity && this.keySchema == keySchema && this.manifest == manifest;
     }
 
     /**
@@ -280,37 +311,6 @@ public class LiveViewCheckpointWindowRootBuilder extends AbstractLiveViewCheckpo
             if (!isInitializationComplete) {
                 clearBorrowedCompiled();
             }
-        }
-    }
-
-    @Override
-    protected void clearBorrowedCompiled() {
-        resultWindowRoot.clearBorrowedCompiled();
-        isInitialized = false;
-        windowIdentity = null;
-        keySchema = null;
-        manifest = null;
-    }
-
-    /**
-     * Stages one fused entry: the whole {@code scalarLength}-byte scalar payload at
-     * {@code scalarAddress} for the {@code keyLength}-byte key at {@code keyAddress},
-     * anchor value and every component together. The staging arena copies the key and
-     * the payload before this returns, so the caller may reuse its memory.
-     * <p>
-     * {@code isUnchanged} names a key whose payload the predecessor entry already holds
-     * byte for byte. It is still part of a complete snapshot's put domain - the key is
-     * live, and removal by omission would otherwise take out an entry nothing replaced -
-     * but no mutation is staged for it, so a full-scan seal over a cold key set neither
-     * allocates a mutation nor descends the tree per key. Nothing published distinguishes
-     * the two: the partition-map writer drops an equal put anyway.
-     */
-    public void putPartition(long keyAddress, int keyLength, long scalarAddress, int scalarLength, boolean isUnchanged) {
-        ensureInitialized();
-        validatePayloadWidth(scalarLength);
-        stageDomain(keyAddress, keyLength, isUnchanged);
-        if (!isUnchanged) {
-            mutations.put(keyAddress, keyLength, scalarAddress, scalarLength);
         }
     }
 

@@ -29,6 +29,7 @@ import io.questdb.cairo.CairoEngine;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.EntityColumnFilter;
+import io.questdb.cairo.EntryUnavailableException;
 import io.questdb.cairo.FullPartitionFrameCursorFactory;
 import io.questdb.cairo.GenericRecordMetadata;
 import io.questdb.cairo.PartitionBy;
@@ -45,6 +46,7 @@ import io.questdb.cairo.file.BlockFileWriter;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.HighBoundTag;
 import io.questdb.cairo.lv.LiveViewCheckpointContracts.RepairPublicationStage;
 import io.questdb.cairo.map.Map;
+import io.questdb.cairo.pool.ex.EntryLockedException;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCARW;
 import io.questdb.cairo.vm.api.MemoryCR;
@@ -94,6 +96,7 @@ import io.questdb.mp.Job;
 import io.questdb.std.Chars;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.FiberLocal;
+import io.questdb.std.Files;
 import io.questdb.std.IntList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
@@ -219,6 +222,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // commit mid-gap and handed off to o3Replay (which rebuilt disk + re-stamped
     // the watermarks). Distinct from the non-negative replayed-row counts.
     private static final long REPLAY_TO_APPLIED_O3 = -1L;
+    // The cause the whole-view rebuild names itself by when it stands in for a restore from the
+    // checkpoint timeline that failed: at a restart, or once the flush-retry budget ran out on a
+    // restore that kept failing on a fault a retry may get past.
+    private static final String RESTORE_FAILED_CAUSE = "timeline restore failed";
     // Backoff arming the seal cooldown once MAX_CONSECUTIVE_SEAL_FAILURES is spent,
     // doubling per further failure and capped. A deterministically failing seal
     // re-streams the whole ring before it throws - up to gigabytes of encode for a
@@ -366,6 +373,14 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // (tryRestoreFromTimeline, recoverActiveWindowState) once the fallback returns, so no other
     // rebuild sees it. Refresh-worker thread only.
     private boolean isRestoreReplayMismatched;
+    // Set by a restore from the checkpoint timeline that failed on an error naming neither a fault
+    // a retry may get past (isTransientRestoreFailure) nor a timeline that cannot be restored from
+    // (isDefinitiveRestoreFailure). Read by the refusal arm of the whole-view rebuild that restore's
+    // caller falls back to, which then has the caller retry the restore instead of stopping the
+    // view (RestoreRetryException). Cleared by that caller (tryRestoreFromTimeline,
+    // recoverActiveWindowState) once the fallback returns, so no other rebuild sees it.
+    // Refresh-worker thread only.
+    private boolean isRestoreRetriedOnRefusal;
     // Reusable counter for the skip a resumed localized repair takes over the rows of
     // its resume group that a prior turn already folded.
     private final RecordCursor.Counter repairSkipCounter = new RecordCursor.Counter();
@@ -533,6 +548,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     // time, the accumulators lead the last durable commit -> handleRefreshFailure
     // rebuilds so the retry does not double-advance them.
     private boolean windowStateDirty;
+    // Counts markWindowStateDirty calls on this worker. A running restore from the timeline
+    // compares it across the restore to tell whether a step inside it, such as the out-of-order
+    // repair its replay hands off to, put the window-state debt on the view; see
+    // tryRestoreRuntimeFromTimeline. Refresh-worker thread only.
+    private long windowStateDirtyMarks;
     // Number of refresh workers in the pool. The idle fallback scan is sharded by
     // live-view table id across [0, workerCount), so each view is scanned by exactly
     // one worker per sweep - O(views) across the pool instead of O(workers x views).
@@ -994,6 +1014,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     private void markWindowStateDirty(LiveViewInstance instance) {
         windowStateDirty = true;
         instance.setWindowStateDirty(true);
+        windowStateDirtyMarks++;
     }
 
     /**
@@ -5932,19 +5953,15 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     isKeyed && segmentChangeSet.hasSegmentNullKey(i)
             );
         }
-        switch (driveChangeSetSegments(instance, windowFactory, reader, route, anchorPlan, segmentLoopScratch)) {
-            case SEGMENT_STEP_SUSPENDED:
-                return SEGMENT_REPAIR_SUSPENDED;
-            case SEGMENT_STEP_DECLINED:
-                // Nothing this loop published is wrong - a whole-segment recompute stands on
-                // its own - and the watermark has not moved, so the union range covers what
-                // is left along with what is already done.
-                return SEGMENT_REPAIR_NOT_TAKEN;
-            case SEGMENT_STEP_UNAPPLIED:
-                return SEGMENT_REPAIR_DEFERRED;
-            default:
-                return isResidualEmpty ? SEGMENT_REPAIR_COMPLETE : SEGMENT_REPAIR_RESIDUAL;
-        }
+        return switch (driveChangeSetSegments(instance, windowFactory, reader, route, anchorPlan, segmentLoopScratch)) {
+            case SEGMENT_STEP_SUSPENDED -> SEGMENT_REPAIR_SUSPENDED;
+            // Nothing this loop published is wrong - a whole-segment recompute stands on
+            // its own - and the watermark has not moved, so the union range covers what
+            // is left along with what is already done.
+            case SEGMENT_STEP_DECLINED -> SEGMENT_REPAIR_NOT_TAKEN;
+            case SEGMENT_STEP_UNAPPLIED -> SEGMENT_REPAIR_DEFERRED;
+            default -> isResidualEmpty ? SEGMENT_REPAIR_COMPLETE : SEGMENT_REPAIR_RESIDUAL;
+        };
     }
 
     /**
@@ -12847,11 +12864,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * nothing, and that every way the restore cannot run or does not finish ends
      * in the applied-base rebuild.
      * <p>
-     * Two failures propagate instead. A cancellation ends the attempt. A
+     * Three failures propagate instead. A cancellation ends the attempt. A
      * {@link TableReferenceOutOfDateException} says the base metadata moved past the
      * plan the caller compiled, so the rebuild could only fail the same way; it goes
      * to {@link #handleRefreshFailure}, whose drift recovery recompiles and finishes
-     * the recovery (see {@link #rebuildTimelineRecoveryFromAppliedBase}).
+     * the recovery (see {@link #rebuildTimelineRecoveryFromAppliedBase}). A restore
+     * that failed on a fault a retry may get past ({@link #isTransientRestoreFailure})
+     * goes to {@link #handleRefreshFailure} as well, which charges it and paces the
+     * retry, and the window-state debt the caller leaves on the throw has a later turn's
+     * gate restore in place; a fault that outlasts the flush-retry budget has the view
+     * take the rebuild then ({@link #rebuildAfterRestoreRetriesRanOut}). A restore that
+     * failed on an error naming no cause takes the
+     * rebuild, and a refusal of that rebuild propagates the same way, as a
+     * {@link RestoreRetryException}, rather than stopping the view at once.
      * <p>
      * A view carried over from an older checkpoint format decides first, because its
      * timeline is one this build never restores from: it takes the upgrade rebuild,
@@ -12950,18 +12975,35 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 // rebuildTimelineRecoveryFromAppliedBase for where the drift goes instead.
                 throw drift;
             }
+            if (t instanceof CairoException fault && isTransientRestoreFailure(fault)) {
+                // The timeline may well be intact, and the rebuild would replace the view's
+                // output where a retry restores it - over a base that lost rows the view
+                // retains, the restatement guard refuses that rebuild and stops the view on
+                // a fault that clears. handleRefreshFailure charges the fault and arms the
+                // retry back-off instead, and the window-state debt the caller leaves on the
+                // throw keeps the drain off the runtime until a later turn's gate restores it,
+                // or until the flush-retry budget runs out and the view takes the rebuild.
+                LOG.error().$("could not restore live view from checkpoint timeline, retrying [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", error=").$(t).I$();
+                throw fault;
+            }
             LOG.error().$("could not restore live view from checkpoint timeline, rebuilding derived state [view=")
                     .$(instance.getDefinition().getViewName())
                     .$(", error=").$(t).I$();
+            // An error that says nothing about the timeline may not recur either: should the guard
+            // refuse the rebuild, the restore is retried rather than the view stopped at once.
+            isRestoreRetriedOnRefusal = !isDefinitiveRestoreFailure(t);
             rebuildTimelineRecoveryFromAppliedBase(
                     instance,
                     windowFactory,
                     durableBaseSeqTxn,
-                    "timeline restore failed"
+                    RESTORE_FAILED_CAUSE
             );
         } finally {
-            // Set only by the restore's replay check, and meant for the rebuild above alone.
+            // Both set only by the failed restore, and meant for the rebuild above alone.
             isRestoreReplayMismatched = false;
+            isRestoreRetriedOnRefusal = false;
         }
     }
 
@@ -13039,7 +13081,8 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * <p>
      * Throws when the restore cannot produce that runtime - no compatible root, corrupt roots it
      * cannot heal, a replay that does not reproduce the durable row count and frontier - and
-     * leaves the caller to fall back to the applied-base rebuild.
+     * leaves the caller to fall back to the applied-base rebuild, or to retry the restore when
+     * the failure is a fault a retry may get past ({@link #isTransientRestoreFailure}).
      *
      * @param runtimeRestoreCause null for the restart; otherwise the running recovery that asked
      *                            for the restore, for its log line
@@ -13251,6 +13294,67 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
     }
 
     /**
+     * Whether {@code t}, which a restore from the checkpoint timeline failed with, shows that the
+     * timeline cannot be restored from, so a retry would read the same bytes and fail the same
+     * way: the timeline failed its own validation
+     * ({@link CairoException#LV_CHECKPOINT_TIMELINE_INVALID}: no valid generation, a root it
+     * cannot heal, a replay that does not reproduce the durable output), it declares a format
+     * this build does not implement ({@link CairoException#LV_CHECKPOINT_FORMAT_BLOCKED}), or a
+     * file it needs is gone - a checkpoint segment, or base WAL the replay needs that a restored
+     * backup never had. The timeline's own WAL floor holds that WAL for a running view, so its
+     * absence does not clear either.
+     * <p>
+     * The restart and the running recoveries fall back to the whole-view rebuild on such a
+     * failure, and a refusal of that rebuild stops the view at once. A failure that is neither
+     * this nor a fault a retry may get past ({@link #isTransientRestoreFailure}) names no cause -
+     * a table reader's spin timeout, a fault in the restore's own code - and takes the same
+     * rebuild, which heals a view over a complete base; a refusal of that rebuild retries the
+     * restore instead ({@link RestoreRetryException}).
+     */
+    private static boolean isDefinitiveRestoreFailure(Throwable t) {
+        if (!(t instanceof CairoException e)) {
+            return false;
+        }
+        final int errno = e.getErrno();
+        return errno == CairoException.LV_CHECKPOINT_TIMELINE_INVALID
+                || errno == CairoException.LV_CHECKPOINT_FORMAT_BLOCKED
+                || Files.isErrnoFileDoesNotExist(errno);
+    }
+
+    /**
+     * Whether {@code e}, which a restore from the checkpoint timeline failed with, is a fault
+     * of the environment that a retry may get past, rather than evidence that the timeline
+     * cannot be restored from. Four kinds qualify: an operating system error other than a
+     * missing file - EMFILE, EIO, ENOSPC and the like; an allocation refused for want of
+     * memory; a table pool with nothing to give right now, which reports "table busy" with no
+     * operating system error - full ({@link EntryUnavailableException}) or locked
+     * ({@link EntryLockedException}); and the read-only gate's refusal during a role switch,
+     * which {@link #handleRefreshFailure} retries later rather than charges. The restart and the
+     * running recoveries hand such a failure to {@link #handleRefreshFailure}, whose back-off and
+     * flush-retry budget retry the restore in place, instead of falling back to the whole-view
+     * rebuild: over a base that lost rows the view retains, {@link LiveViewRebuildRestatementGuard}
+     * refuses that rebuild, and a rebuild that is not refused replaces the view's output where a
+     * retry restores it. A fault that outlasts the budget is not one a retry gets past after all,
+     * and the view takes the rebuild then ({@link #rebuildAfterRestoreRetriesRanOut}) rather than
+     * being invalidated. A breach of the view's own refresh memory limit still invalidates the
+     * view there, as every breach does.
+     * <p>
+     * Every other failure still falls back to the rebuild at once: one that shows the timeline
+     * cannot be restored from ({@link #isDefinitiveRestoreFailure}), and one that names no cause,
+     * which a retry may meet again.
+     */
+    private static boolean isTransientRestoreFailure(CairoException e) {
+        if (e.isOutOfMemory()
+                || e.isAuthorizationError()
+                || e instanceof EntryUnavailableException
+                || e instanceof EntryLockedException) {
+            return true;
+        }
+        final int errno = e.getErrno();
+        return errno > 0 && !Files.isErrnoFileDoesNotExist(errno);
+    }
+
+    /**
      * The restart's whole-view rebuild from the applied base, for a view whose timeline cannot
      * be restored from. The route it records names why: {@code upgrade_rebuild} for a view
      * carried over from an older checkpoint format, {@code fallback_rebuild} for every other
@@ -13272,6 +13376,10 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the caller compiled {@code windowFactory}. The drift recovery that takes the latter records
      * no restart route, so the route stays unset; the rebuild attempt counter still counts the
      * rebuild this attempt started.
+     * <p>
+     * A refused rebuild stops the view, unless it stands in for a restore that failed on an error
+     * naming no cause ({@link #isRestoreRetriedOnRefusal}). The refusal then propagates as a
+     * {@link RestoreRetryException}, and the restart route stays unset as it does for a drift.
      */
     private void rebuildTimelineRecoveryFromAppliedBase(
             LiveViewInstance instance,
@@ -13302,7 +13410,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         } catch (RebuildRefusedException refused) {
             // Not a failure: the rebuild would have dropped rows the view retains, and it
             // stopped before anything moved. The view keeps its rows and stays valid, and
-            // the next restart asks the same question again.
+            // the next restart asks the same question again - or, behind a restore whose
+            // error may not recur, a later turn retries the restore first.
+            if (isRestoreRetriedOnRefusal) {
+                throw retryRefusedRestore(instance, cause);
+            }
             blockRefusedRebuild(instance, cause);
             instance.recordCheckpointRestoreRebuildBlocked();
         } catch (TableReferenceOutOfDateException drift) {
@@ -13495,6 +13607,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                 .$(", cause=").$(cause)
                 .$(", reason=").$(reason).I$();
         instance.markCheckpointRebuildBlocked(reason);
+    }
+
+    /**
+     * Answers a whole-view rebuild {@link #restatementGuard} refused behind a restore that failed
+     * on an error naming no cause ({@link #isRestoreRetriedOnRefusal}). Rather than stop the view
+     * ({@link #blockRefusedRebuild}), logs the refusal's evidence and returns the error that has
+     * the caller retry the restore. See {@link RestoreRetryException}.
+     */
+    private RestoreRetryException retryRefusedRestore(LiveViewInstance instance, CharSequence cause) {
+        final StringSink evidence = Misc.getThreadLocalSink();
+        restatementGuard.appendEvidence(
+                evidence,
+                ColumnType.getTimestampDriver(instance.getDefinition().getBaseTimestampType())
+        );
+        LOG.error().$("live view restore failed and its rebuild would drop rows the view retains, retrying the restore [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", cause=").$(cause)
+                .$(", evidence=").$(evidence).I$();
+        return RestoreRetryException.instance(cause);
     }
 
     /**
@@ -14258,8 +14389,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the recovery when {@code isFaultRecovery} - or when the rebuild was refused and the view
      * stopped, which the caller tells apart through
      * {@link LiveViewInstance#isCheckpointRecoveryBlocked()}. Otherwise returns the error for the
-     * caller's flush-retry accounting: the rebuild's, or the cancellation that ended the restore,
-     * which the rebuild would only meet again.
+     * caller's flush-retry accounting: the rebuild's, the cancellation that ended the restore,
+     * which the rebuild would only meet again, or the restore's own fault when a retry may get
+     * past it ({@link #isTransientRestoreFailure}). That one skips the rebuild, which over a base
+     * that lost rows the view retains the restatement guard refuses, stopping the view on a fault
+     * that clears; the caller leaves the window-state debt standing, and a later turn's gate
+     * retries the restore, until the flush-retry budget runs out and the view takes the rebuild
+     * ({@link #rebuildAfterRestoreRetriesRanOut}). A rebuild refused behind a restore that failed
+     * on an error naming no
+     * cause returns a {@link RestoreRetryException} the same way, with the view still running.
+     * <p>
+     * Every error it returns leaves the window-state debt standing, so the next turn's gate
+     * recovers the view again before anything drains. That holds even when a step inside the
+     * recovery committed before it failed - the out-of-order repair a restore's replay hands off
+     * to, or the rebuild - which settles the debt: the commit can hold output of base commits
+     * above the view's watermarks, which a failure ahead of their advance leaves behind, and a
+     * drain from them would feed those commits a second time.
      *
      * @param isFaultRecovery true when a refresh fault asked for the recovery. The recovery then
      *                        records no refresh success: its caller, which knows where the view
@@ -14275,8 +14420,11 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         final boolean restored;
         try {
             restored = tryRestoreRuntimeFromTimeline(instance, cause);
-        } catch (CairoException cancelled) {
-            return cancelled;
+        } catch (CairoException cancelledOrTransient) {
+            // A repair the restore handed off to may have committed, settling the debt, before
+            // the fault; see the method javadoc.
+            instance.setWindowStateDirty(true);
+            return cancelledOrTransient;
         }
         if (restored) {
             if (isFaultRecovery) {
@@ -14286,13 +14434,21 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             }
             return null;
         }
+        final Throwable rebuildErr;
         try {
-            return rebuildActiveWindowStateFromAppliedBase(instance, cause, isFaultRecovery);
+            rebuildErr = rebuildActiveWindowStateFromAppliedBase(instance, cause, isFaultRecovery);
         } finally {
-            // Set only by a restore that failed its replay check, and meant for this rebuild
-            // alone, including one that defers on the base's apply before it arms the guard.
+            // Both set only by the failed restore, and meant for this rebuild alone, including
+            // one that defers on the base's apply before it arms the guard.
             isRestoreReplayMismatched = false;
+            isRestoreRetriedOnRefusal = false;
         }
+        if (rebuildErr != null) {
+            // The rebuild, or a repair the restore before it handed off to, may have committed,
+            // settling the debt, before the failure; see the method javadoc.
+            instance.setWindowStateDirty(true);
+        }
+        return rebuildErr;
     }
 
     /**
@@ -14320,17 +14476,25 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * the runtime holding a root's state and part of the replay above it, exactly as the
      * restart's own fallback does: the full rebuild resets the runtime to identity whether or not
      * its scan finds a row, and a rebuild that fails before that leaves the window-state debt for
-     * the next turn's gate, which recompiles before it restores.
+     * the next turn's gate, which recompiles before it restores. A restore that fails on a fault
+     * a retry may get past ({@link #isTransientRestoreFailure}) throws it instead, leaving the
+     * runtime the same way: the rebuild would replace the view's output where a retry restores it,
+     * and the caller hands the fault to the flush-retry accounting with the debt standing. One
+     * that fails on an error naming no cause sets {@link #isRestoreRetriedOnRefusal} for the
+     * rebuild the caller falls back to.
      * <p>
      * On success the un-flushed lead goes: its rows came from the runtime this replaces, and the
      * next drain derives them again from the applied watermark. The in-memory tier is restaged
      * from the view's table and the window-state debt is settled. A replay that meets an
      * unresolved out-of-order commit hands off to {@link #o3Replay}, as the restart's does; a
-     * repair that parks there owns the runtime until it finishes, so the debt stays with it.
+     * repair that parks there owns the runtime until it finishes, so the debt stays with it. A
+     * repair that sets the runtime aside and cannot put it back leaves the debt as well, and the
+     * restore then declines rather than settle a debt a step inside it raised: the caller falls
+     * back to the rebuild, as the restart's gate does after the same hand-off.
      *
      * @return true when the runtime stands where the view's durable output does
-     * @throws CairoException a cancellation, which ends the recovery rather than falling back
-     *                        to the rebuild
+     * @throws CairoException a cancellation, or a fault a retry may get past, either of which
+     *                        ends the recovery rather than falling back to the rebuild
      */
     private boolean tryRestoreRuntimeFromTimeline(LiveViewInstance instance, CharSequence cause) {
         final String viewName = instance.getDefinition().getViewName();
@@ -14383,6 +14547,7 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // read it, but the out-of-order hand-off it may take expects none, as it does at a
             // restart.
             instance.setLeadRowCount(0);
+            final long marksBeforeRestore = windowStateDirtyMarks;
             restoreFromTimeline(
                     instance,
                     windowFactory,
@@ -14393,6 +14558,22 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                     durableLvSeqTxn,
                     cause
             );
+            if (windowStateDirtyMarks != marksBeforeRestore
+                    && instance.isWindowStateDirty()
+                    && instance.getSuspendedRepair() == null) {
+                // A step inside the restore put the window-state debt on the view, no commit after
+                // it settled the debt, and no repair parked to own the runtime. The out-of-order
+                // repair the replay handed off to set the runtime aside and could not put it back,
+                // because it could not restore its anchor root, say. The runtime then holds neither
+                // the durable output's state nor a repair's, and a drain over it commits output
+                // derived from neither. Leave the debt standing and decline, so the caller falls
+                // back to the whole-view rebuild, as a restart does through its gate. The flag
+                // alone cannot show such a step: the gate and the drift recovery enter with the
+                // debt already standing, and the restore settles that debt below when no step
+                // marked it again.
+                logRuntimeRestoreDeclined(viewName, cause, "an out-of-order repair in its replay set the runtime aside");
+                return false;
+            }
             // The published slot may still carry the dropped lead; restage it from the view's
             // table so reads and the next flush agree on what is durable.
             rebuildInMemoryTier(instance);
@@ -14407,10 +14588,20 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             if (t instanceof CairoException ce && ce.isCancellation()) {
                 throw ce;
             }
+            if (t instanceof CairoException fault && isTransientRestoreFailure(fault)) {
+                LOG.error().$("live view could not restore its runtime from the checkpoint timeline, retrying [view=")
+                        .$(viewName)
+                        .$(", cause=").$(cause)
+                        .$(", error=").$(t).I$();
+                throw fault;
+            }
             LOG.error().$("live view could not restore its runtime from the checkpoint timeline, rebuilding from the applied base [view=")
                     .$(viewName)
                     .$(", cause=").$(cause)
                     .$(", error=").$(t).I$();
+            // An error that says nothing about the timeline may not recur either: should the guard
+            // refuse the rebuild, the caller retries the restore rather than stop the view at once.
+            isRestoreRetriedOnRefusal = !isDefinitiveRestoreFailure(t);
             return false;
         }
     }
@@ -14486,6 +14677,9 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
      * A rebuild {@link LiveViewRebuildRestatementGuard} refuses also returns {@code null}:
      * it is not an error to count, and the view is stopped rather than recovered. The
      * caller can tell the two apart through {@link LiveViewInstance#isCheckpointRecoveryBlocked()}.
+     * A refused rebuild that stands in for a restore that failed on an error naming no cause
+     * ({@link #isRestoreRetriedOnRefusal}) returns a {@link RestoreRetryException} instead, and
+     * the view keeps running.
      * <p>
      * The rebuild pins the base's applied head and commits there. A view that flushed output of
      * raw WAL the base has not applied yet stands past that head ({@link #rebuildSnapshotFloor}),
@@ -14525,7 +14719,12 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // The in-memory tier is left as it was: the refusal committed nothing, so the
             // published slot still mirrors the view's table plus whatever lead it carried,
             // and readers - which take the lead from the slot, never from the count zeroed
-            // above - keep serving what they served. Nothing flushes a stopped view.
+            // above - keep serving what they served. Nothing flushes a stopped view, and
+            // nothing drains one whose restore is retried: the window-state debt stands until
+            // a recovery settles it.
+            if (isRestoreRetriedOnRefusal) {
+                return retryRefusedRestore(instance, cause);
+            }
             blockRefusedRebuild(instance, cause);
             return null;
         } catch (Throwable t) {
@@ -16347,6 +16546,19 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
                         final long restoreStartUs = engine.getConfiguration().getMicrosecondClock().getTicks();
                         try {
                             tryRestoreFromTimeline(instance, getWindowFactory(instance));
+                        } catch (Throwable t) {
+                            // An attempt that throws - a restore fault a retry may get past, a
+                            // refused rebuild behind a restore whose error may not recur, a failed
+                            // read of the view's table, a failed compile - puts no runtime back, and
+                            // the flag above keeps it from running again. It leaves the
+                            // window-state debt, so the gate of the next turn that drives the view,
+                            // once handleRefreshFailure's back-off expires, recovers it before
+                            // anything drains. A return leaves the debt as the restore left it:
+                            // settled, or standing where a step inside it - an out-of-order repair
+                            // that set the runtime aside and could not restore its anchor, one that
+                            // parked - still owes the view a recovery.
+                            instance.setWindowStateDirty(true);
+                            throw t;
                         } finally {
                             instance.recordCheckpointRestoreMicros(
                                     engine.getConfiguration().getMicrosecondClock().getTicks() - restoreStartUs
@@ -16874,6 +17086,27 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // its uncommitted replacement stands over, so discard it first, as the top of this
             // method does for a repair parked before the fault.
             instance.discardSuspendedRepair();
+            if (t instanceof RestoreRetryException retry && !isWindowStateRecovered) {
+                // Every retry of a restore that failed on an error naming no cause met it again,
+                // and the guard refused the rebuild behind the last one, in this turn. Stop the
+                // view on that refusal, as a refusal behind a timeline that cannot be restored
+                // from stops it at once: it keeps its rows, and a restart runs the recovery
+                // again. Invalidating would end a view, durably, on an error that may still clear.
+                LOG.critical().$("live view refresh budget exhausted retrying a refused restore, stopping [view=")
+                        .$(instance.getDefinition().getViewName())
+                        .$(", retryCount=").$(retryCount)
+                        .$(", elapsedUs=").$(elapsedUs).I$();
+                blockRefusedRebuild(instance, retry.getRecoveryCause());
+                return null;
+            }
+            // A restore that failed on a fault a retry may get past skips the rebuild, so a view
+            // whose every retry met that fault ran its budget out without ever taking it.
+            if (!isWindowStateRecovered
+                    && t instanceof CairoException restoreFault
+                    && isTransientRestoreFailure(restoreFault)
+                    && rebuildAfterRestoreRetriesRanOut(instance, t, retryCount, elapsedUs)) {
+                return null;
+            }
             // Last resort before a permanent invalidation: a base WAL segment the drain needs has
             // been missing for the whole budget, so it is not coming back. That is what a restore
             // leaves behind - a backup captures the applied base TABLE, not its WAL segments - and
@@ -16946,6 +17179,53 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
         return e.isOutOfMemory()
                 && engine.getConfiguration().getLiveViewRefreshMemoryLimitBytes() > 0
                 && Chars.contains(e.getFlyweightMessage(), "query memory limit exceeded");
+    }
+
+    /**
+     * Last resort before {@link #handleRefreshFailure} invalidates a view whose flush-retry budget
+     * ran out on {@code fault}, a fault a retry may get past ({@link #isTransientRestoreFailure}).
+     * A restore from the checkpoint timeline that fails on such a fault skips the whole-view
+     * rebuild a restore that cannot run falls back to, and leaves the window-state debt for a later
+     * turn's gate, which retries the restore. Every retry met the fault again - a timeline file the
+     * process can no longer open, say - so the view takes that rebuild now. Over a base that still
+     * holds every row the view retains, the rebuild heals the view and records a refresh success.
+     * Over one that lost such rows, {@link LiveViewRebuildRestatementGuard} refuses it and the view
+     * stops, keeping its rows, and a restart restores it once the fault clears. Invalidating instead
+     * would end the view durably on a fault the rebuild does not need to get past.
+     * <p>
+     * Takes only an ACTIVE view whose window-state debt stands. Every failed restore leaves it, at
+     * a restart and in each running recovery, and so does a whole-view rebuild that failed on such
+     * a fault, which gets one more attempt here. A fault in a turn that owes no recovery - a drain
+     * that fed nothing, or one whose recovery put the view back - goes to the invalidation as
+     * before.
+     *
+     * @return true when the rebuild healed the view, stopped it, or deferred on the base's apply,
+     * or a cancellation ended it; false when the rebuild failed or did not run, and the caller
+     * invalidates the view
+     */
+    private boolean rebuildAfterRestoreRetriesRanOut(LiveViewInstance instance, Throwable fault, int retryCount, long elapsedUs) {
+        if (!instance.isWindowStateDirty()
+                || instance.getStateReader().getSeedState() != LiveViewState.SEED_STATE_ACTIVE) {
+            return false;
+        }
+        LOG.critical().$("live view refresh budget exhausted retrying a failed restore, rebuilding from the applied base [view=")
+                .$(instance.getDefinition().getViewName())
+                .$(", retryCount=").$(retryCount)
+                .$(", elapsedUs=").$(elapsedUs)
+                .$(", error=").$(fault).I$();
+        final Throwable rebuildErr;
+        try {
+            rebuildErr = rebuildActiveWindowStateFromAppliedBase(instance, RESTORE_FAILED_CAUSE, false);
+        } catch (LiveViewApplyLagException lag) {
+            // Nothing moved: the base has not applied every commit the view consumed. The debt
+            // stands, and the turn after the apply lands meets the spent budget and rebuilds again.
+            armApplyLagDeferral(instance, lag);
+            return true;
+        }
+        // Null when the rebuild healed the view or the guard refused it and stopped the view. A
+        // cancellation is DROP, invalidation or engine shutdown, none of which a durable
+        // invalidation should answer.
+        return rebuildErr == null || (rebuildErr instanceof CairoException ce && ce.isCancellation());
     }
 
     private void refreshViewsForBaseTable(TableToken baseTableToken, long seqTxn) {
@@ -17448,6 +17728,39 @@ public class LiveViewRefreshJob implements Job, QuietCloseable {
             // This is to have a correct stack trace reported in CI.
             assert (result = super.getStackTrace()) != null;
             return result;
+        }
+    }
+
+    /**
+     * Thrown by the restart's recovery, and returned by a running one, when a restore from the
+     * checkpoint timeline failed on an error naming no cause ({@link #isRestoreRetriedOnRefusal})
+     * and {@link LiveViewRebuildRestatementGuard} refused the whole-view rebuild behind it. Nothing
+     * durable moved, and the error may not recur - a table reader's spin timeout, say - so the view
+     * is not stopped yet. {@link #handleRefreshFailure} charges it as a refresh fault and arms the
+     * back-off, and the window-state debt the recovery leaves standing has a later turn's gate
+     * retry the restore. Should the flush-retry budget run out first, the view stops on the refusal
+     * ({@link #blockRefusedRebuild}) as it would have at once, rather than being invalidated.
+     * <p>
+     * A {@link CairoException} that carries none of the flags {@link #handleRefreshFailure} answers
+     * apart, so it is counted as any refresh fault is. A fiber-local flyweight.
+     */
+    private static final class RestoreRetryException extends CairoException {
+        private static final FiberLocal<RestoreRetryException> tlException = new FiberLocal<>(RestoreRetryException::new);
+        // The recovery that asked for the rebuild, for the stop's reason; one of the cause
+        // constants the recoveries name themselves with.
+        private CharSequence recoveryCause;
+
+        static RestoreRetryException instance(CharSequence recoveryCause) {
+            final RestoreRetryException ex = tlException.get();
+            ex.clear(CairoException.NON_CRITICAL);
+            ex.recoveryCause = recoveryCause;
+            ex.put("live view restore failed and its rebuild would drop rows the view retains [cause=")
+                    .put(recoveryCause).put(']');
+            return ex;
+        }
+
+        CharSequence getRecoveryCause() {
+            return recoveryCause;
         }
     }
 

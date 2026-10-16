@@ -29,6 +29,7 @@ import io.questdb.cairo.sql.SymbolTable;
 import io.questdb.std.DirectIntIntHashMap;
 import io.questdb.std.DirectIntList;
 import io.questdb.std.DirectLongHashSet;
+import io.questdb.std.DirectLongList;
 import io.questdb.std.LongList;
 import io.questdb.std.MemoryTag;
 import io.questdb.std.Misc;
@@ -86,8 +87,10 @@ import org.jetbrains.annotations.NotNull;
  * <p>
  * Worker-owned scratch: {@link #of} clears every field, so one instance serves every repair
  * a refresh worker plans. The keys live in native memory the instance allocates on the
- * first keyed repair and retains across repairs, up to the bounds below, so collecting a
- * key costs no heap object; {@link #close()} releases it.
+ * first keyed repair, and the open segment's row timestamps in native memory it allocates
+ * on the first repair that collects the open segment's keys. It retains both across
+ * repairs, up to the bounds below, so collecting a key or a row costs no heap object;
+ * {@link #close()} releases both.
  */
 public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable {
     /**
@@ -139,8 +142,11 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     // Exact timestamps of rows newly inserted into the open segment while collecting its
     // key domain. On an unfiltered, non-deduplicating base each contributes exactly one
     // live-view output row, so this is the arithmetic replacement for scanning every
-    // stored output row merely to recount checkpoint positions.
-    private final LongList residualRowTimestamps = new LongList();
+    // stored output row merely to recount checkpoint positions. Native like the key lists,
+    // since it grows with every row the walk reads: created closed, so construction
+    // allocates nothing, and opened by the first of() that collects the open segment's
+    // keys, the way keyMembership is by the first keyed one.
+    private final DirectLongList residualRowTimestamps = new DirectLongList(16, MemoryTag.NATIVE_LIVE_VIEW_IN_MEM, true);
     private final LongList segments = new LongList();
     private long activeSegmentStart;
     // Whether the caller asked for the residual's keys. A caller that did not gets the
@@ -263,6 +269,7 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
     public void close() {
         Misc.freeObjListAndClear(keySets);
         Misc.free(residualKeys);
+        Misc.free(residualRowTimestamps);
         keyMembership = Misc.free(keyMembership);
         resolvedKeys = Misc.free(resolvedKeys);
     }
@@ -317,19 +324,21 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
      * Equal-timestamp rows are included as a group, matching checkpoint boundary
      * semantics. Meaningful only when the residual key domain is complete.
      */
-    public int getResidualRowCountAtOrBelow(long timestamp) {
+    public long getResidualRowCountAtOrBelow(long timestamp) {
         if (!isResidualRowSetSorted) {
-            residualRowTimestamps.sort();
+            // Unsigned order is timestamp order here: the WAL writer refuses a designated
+            // timestamp before 1970-01-01, so every row the walk reads is non-negative.
+            residualRowTimestamps.sortAsUnsigned();
             isResidualRowSetSorted = true;
         }
-        final int index = residualRowTimestamps.binarySearch(timestamp, Vect.BIN_SEARCH_SCAN_DOWN);
+        final long index = residualRowTimestamps.binarySearch(timestamp, Vect.BIN_SEARCH_SCAN_DOWN);
         return index >= 0 ? index + 1 : -index - 1;
     }
 
     /**
      * Total newly inserted rows in the open segment over the classified range.
      */
-    public int getResidualRowCount() {
+    public long getResidualRowCount() {
         return residualRowTimestamps.size();
     }
 
@@ -509,10 +518,15 @@ public final class LiveViewCheckpointSegmentChangeSet implements QuietCloseable 
                     false
             );
         }
-        if (residualRowTimestamps.capacity() > MAX_RETAINED_RESIDUAL_ROWS) {
-            residualRowTimestamps.restoreInitialCapacity();
-        } else {
-            residualRowTimestamps.clear();
+        // Cleared before the shrink, which keeps as many of the old rows as still fit.
+        residualRowTimestamps.clear();
+        if (residualRowTimestamps.getCapacity() > MAX_RETAINED_RESIDUAL_ROWS) {
+            residualRowTimestamps.resetCapacity();
+        }
+        if (isCollectingResidualKeys) {
+            // A no-op once open. DirectLongList cannot grow from zero capacity, so a closed
+            // list opens here rather than on the walk's first row.
+            residualRowTimestamps.reopen();
         }
         isResidualRowSetSorted = true;
         hasResidualNullKey = false;

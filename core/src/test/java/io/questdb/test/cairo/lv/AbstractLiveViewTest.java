@@ -274,11 +274,12 @@ public abstract class AbstractLiveViewTest extends AbstractCairoTest {
      * same witness.
      * <p>
      * {@code isCheckpointRestoreSucceeded()} alone cannot carry this assertion. Both restart routes
-     * report it: {@code tryRestoreFromTimeline} catches every {@link Throwable} and falls through to
-     * the applied-base rebuild, which recomputes the whole window, produces correct rows, faults no
-     * refresh cycle and fails no seal. A recompute oracle, the fault count and the seal-failure
-     * count are all green over that fallback, so a test that asserts only the flag proves the view
-     * has state - not that the roots it published are the state it came back on.
+     * report it: {@code tryRestoreFromTimeline} falls through to the applied-base rebuild on every
+     * restore failure a retry would meet again, and the rebuild recomputes the whole window,
+     * produces correct rows, faults no refresh cycle and fails no seal. A recompute oracle, the
+     * fault count and the seal-failure count are all green over that fallback, so a test that
+     * asserts only the flag proves the view has state - not that the roots it published are the
+     * state it came back on.
      */
     protected static void assertRestoredFromTimeline(String viewName, LiveViewInstance instance) {
         assertRestoreRoute(viewName, LiveViewCheckpointRecoveryPhase.ROUTE_TIMELINE_RESTORE, instance);

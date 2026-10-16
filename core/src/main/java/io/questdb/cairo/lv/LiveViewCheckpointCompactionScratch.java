@@ -428,14 +428,11 @@ public final class LiveViewCheckpointCompactionScratch implements Closeable {
 
     @TestOnly
     public int getVisitorShellIdentityForTest(int index) {
-        switch (index) {
-            case 0:
-                return System.identityHashCode(livePageTimelineVisitor);
-            case 1:
-                return System.identityHashCode(livePagePartitionVisitor);
-            default:
-                return System.identityHashCode(selectSegmentVisitor);
-        }
+        return switch (index) {
+            case 0 -> System.identityHashCode(livePageTimelineVisitor);
+            case 1 -> System.identityHashCode(livePagePartitionVisitor);
+            default -> System.identityHashCode(selectSegmentVisitor);
+        };
     }
 
     @TestOnly

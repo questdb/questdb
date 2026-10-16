@@ -693,9 +693,9 @@ public class LiveViewCheckpointMutationArenaTest {
                     arena.resetSortComparisonCountForTest();
                     Assert.assertEquals(retainedCount + 1, arena.sortAndValidateForTest());
                     final long comparisons = arena.getSortComparisonCountForTest();
-                    // The arena counts comparisons only while JVM assertions are enabled, and
-                    // the bound below would hold for a count that never advanced.
-                    Assert.assertTrue("the comparison count needs JVM assertions enabled (-ea)", comparisons > 0);
+                    // The arena counts comparisons only after the reset above starts the count,
+                    // and the bound below would hold for a count that never advanced.
+                    Assert.assertTrue("the reset must start the comparison count", comparisons > 0);
                     Assert.assertTrue(
                             "the retry must merge the one new key into the retained order [comparisons=" + comparisons + ']',
                             comparisons <= retainedCount
@@ -751,9 +751,9 @@ public class LiveViewCheckpointMutationArenaTest {
                 arena.resetSortComparisonCountForTest();
                 Assert.assertEquals(total, arena.sortAndValidateForTest());
                 final long comparisons = arena.getSortComparisonCountForTest();
-                // The arena counts comparisons only while JVM assertions are enabled, and the
-                // bound below would hold for a count that never advanced.
-                Assert.assertTrue("the comparison count needs JVM assertions enabled (-ea)", comparisons > 0);
+                // The arena counts comparisons only after the reset above starts the count, and
+                // the bound below would hold for a count that never advanced.
+                Assert.assertTrue("the reset must start the comparison count", comparisons > 0);
                 // One pass proves the removals ascend and one merges them into the batch. A
                 // sort of all the keys from scratch makes over ten times as many comparisons.
                 final long limit = batchCount + 2L * removalCount;

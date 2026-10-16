@@ -145,6 +145,7 @@ public class LiveViewCheckpointRedirectRefsTest extends AbstractLiveViewTest {
                     final int widthCount = 256;
                     final LiveViewCheckpointStatePageRef[][] firstPass =
                             new LiveViewCheckpointStatePageRef[widthCount][];
+                    writer.resetRedirectRefWidthLookupCountForTest();
                     for (int partition = 0; partition < widthCount; partition++) {
                         final int count = 2 * (partition + 1);
                         final LiveViewCheckpointStatePageRef[] refs =
