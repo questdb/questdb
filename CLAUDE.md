@@ -121,6 +121,14 @@ paste its output into the expectation.
 
    After each failure, assert the error, that nothing leaked, and that the
    table or connection still works.
+
+   Hostile input must not crash or hang the server or leak its resources. Fix
+   such a failure in the change that introduces it. Report the rest -
+   pre-existing ones and those a review lets through - only as issues in
+   `questdb/questdb-enterprise` with the label `crash`, never in a public
+   repository, issue or comment: they show how to take a server down. When
+   `gh repo view questdb/questdb-enterprise` fails, as it does for OSS
+   contributors, show such issues in the console instead.
 6. **Parsing and error messages.** Test every input the parser rejects with
    `assertException(sql, position, message)`: the position points at the
    offending character and the message tells the user what was expected.

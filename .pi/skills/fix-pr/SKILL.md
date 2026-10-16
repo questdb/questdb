@@ -1,6 +1,6 @@
 ---
 name: fix-pr
-description: Develop features and fix bugs or review findings from a list, one item at a time, with exhaustive tests enforced while developing - design the change and its test plan against CLAUDE.md "Testing" and have both challenged independently, build test-first, run the item's tests with coverage (ci/diff_coverage.py) and add tests until every changed line, branch and condition runs, have the tests reviewed independently and close the gaps; commit. When the list is done, run review-pr once as a backstop and treat what it finds the same way. Adjacent findings become GitHub issues. Use when the user runs /skill:fix-pr or asks to develop or fix items with it.
+description: Develop features and fix bugs or review findings from a list, one item at a time, with exhaustive tests enforced while developing - design the change and its test plan against CLAUDE.md "Testing" and have both challenged independently, build test-first, run the item's tests with coverage (ci/diff_coverage.py) and add tests until every changed line, branch and condition runs, have the tests reviewed independently and close the gaps; commit. When the list is done, run review-pr once as a backstop and treat what it finds the same way. Adjacent findings outside this PR's code become GitHub issues. Use when the user runs /skill:fix-pr or asks to develop or fix items with it.
 allowed-tools: bash read edit write subagent ctx_execute ctx_execute_file
 metadata:
   argument-hint: "[--include-adjacent] [--no-issues] [--review-level=N] [--max-review-rounds=N] <items: features, bugs or review findings>"
@@ -18,7 +18,9 @@ to fix, or a finding from a review.
 3. Design the best root-cause change - alternatives weighed; no regressions,
    slowdowns, races or reinvented code - and the test plan that proves it,
    dimension by dimension, per CLAUDE.md "Testing". An independent agent tries
-   to break both before any code changes.
+   to break both before any code changes. Only a flaw in the design sends the
+   plan back; the tests it finds missing join the plan, and other bugs it
+   finds become separate items or are reported.
 4. Write the failing tests first and build the change. Run the item's tests
    with coverage (`ci/diff_coverage.py`), read the lines, branches and
    conditions that never ran, and add tests until everything runs, measuring
@@ -28,9 +30,10 @@ to fix, or a finding from a review.
 
 Tests are written while developing; the review at the end is the last resort,
 not the place where test cases get discovered. When the queue is empty, run
-`review-pr` once over all commits. Treat its Critical and Moderate findings as
-new items: each is a test that should have existed. File Adjacent findings as
-GitHub issues.
+`review-pr` once over all commits. Treat its Critical and Moderate findings,
+and Adjacent ones in code this PR added or changed, as new items: each is a
+test that should have existed. File the other Adjacent findings as GitHub
+issues.
 
 CLAUDE.md governs code, tests and commit messages. Its "Testing" section is the
 standard every item meets.
@@ -77,10 +80,12 @@ background helper loses the cache and pays to rebuild it.
    continue. Commits never include them.
 3. Create a state directory outside the repo: `mktemp -d /tmp/fix-pr.XXXXXX`.
 4. Parse the items. Each entry of a list of features or bugs is one item. From
-   a `review-pr` report, queue Critical and Moderate findings, list Minor ones
-   as not fixed (cosmetic) unless the user asks, and send Adjacent ones to the
-   issue list unless `--include-adjacent`. Keep each item's text verbatim and
-   give it a short ID (the user's or the review's number, or I1, I2, ...).
+   a `review-pr` report, queue Critical and Moderate findings and Adjacent
+   ones in code this PR added or changed (compare with the PR base), list
+   Minor ones as not fixed (cosmetic) unless the user asks, and send the
+   other Adjacent ones to the issue list unless `--include-adjacent`. Keep
+   each item's text verbatim and give it a short ID (the user's or the
+   review's number, or I1, I2, ...).
 5. Show the queue in a few lines and start. Don't wait for approval.
 
 ## Per item
@@ -94,15 +99,28 @@ difference. Record `ITEM_START=$(git rev-parse HEAD)` before the build.
    - `SKIP`: record the reason and go to the next item.
    - `ASK`: show the QUESTIONS, wait for the user's answers, and run the
      analysis again with them.
-   - `OTHER` lines: a bug in code this PR added or changed becomes a new item
-     at the end of the queue; a pre-existing one goes to the issue list.
+   - `OTHER` lines: `PR` and `RELATED` bugs become new items at the end of
+     the queue, since CLAUDE.md bundles related fixes into one PR;
+     `PRE-EXISTING` ones go to the issue list. Skip a bug already queued or
+     listed.
 2. **Check.** Launch the check helper. It didn't write the plan and can't edit
    anything; its only job is to find what the change would break, a better
-   change, or a hole in the test plan.
-   - `OK`: go to the build.
-   - `REJECT`: run the analysis again with the objection. Each item gets two
-     proposals; if the second is rejected too, mark the item blocked and move
-     on.
+   change, or a hole in the test plan. It labels each problem `REDESIGN` (the
+   design is wrong for this item), `ADD` (a gap in the test plan) or
+   `ADJACENT` (a separate bug, including the same kind of bug in other code).
+   Only `REDESIGN` sends the plan back. A `REDESIGN` line that only asks for
+   more tests or a citation counts as `ADD`; one about a separate defect
+   elsewhere, even of the same kind, counts as `ADJACENT`.
+   - `ADJACENT` lines, whatever else the reply says: handle them like OTHER
+     lines in step 1, but list a `PRE-EXISTING` one for the user instead of
+     filing it; the check can't write an issue body.
+   - `OK`, or no `REDESIGN` line: replace `<state>/<ID>/amendments.md` with
+     the `ADD` lines, verbatim (an empty file if there are none), and go to
+     the build. The amendments are part of the plan from here on.
+   - `REDESIGN`: run the analysis again with the `REDESIGN` and `ADD` lines.
+     Each item gets two proposals; the second check is told what sent the
+     first one back. If the second proposal draws a `REDESIGN` line too, mark
+     the item blocked and move on.
 3. **Build.** Launch the build helper.
    - `BUILT <sha>`: check with `git show --stat <sha>` that it changed only the
      files named on the CHANGE line, plus tests. Record its COVERAGE and
@@ -136,12 +154,14 @@ When the queue is empty:
    files at its own commit: coverage a later item broke, lines a helper left
    open, files an item didn't measure. It grades never-run code by what it
    would break if it were wrong.
-2. Queue its Critical and Moderate findings as new items and run them through
-   the per-item steps. Each one is a test the standard should have produced:
-   its test plan names the dimension of CLAUDE.md "Testing" that missed it.
-   List Minor findings. List the never-run lines the review judged
-   low-exposure as open coverage gaps. Send Adjacent findings to the issue
-   list; invoking this skill is the user's request to file them.
+2. Queue its Critical and Moderate findings, and Adjacent ones in code this
+   PR added or changed (compare with the PR base, not START), as new items
+   and run them through the per-item steps. Each one is a test the standard
+   should have produced: its test plan names the dimension of CLAUDE.md
+   "Testing" that missed it. List Minor findings. List the never-run lines
+   the review judged low-exposure as open coverage gaps. Send the other
+   Adjacent findings to the issue list; invoking this skill is the user's
+   request to file them.
 3. If a finding concerns an item this run already built or skipped, don't loop
    on it: list it for the user with both views.
 4. Repeat until a review finds no Critical or Moderate items, or
@@ -154,7 +174,12 @@ Unless `--no-issues`, file each one:
 
 - Repository: the one that owns the affected file. Run
   `gh repo view --json nameWithOwner -q .nameWithOwner` in that file's
-  directory.
+  directory. A crash or hang that hostile input triggers (`[crash]` on a
+  helper's line) goes to `questdb/questdb-enterprise` instead, with
+  `--label crash`; never describe it anywhere public (CLAUDE.md "Failure
+  paths and misuse"). When `gh repo view questdb/questdb-enterprise` fails,
+  as it does for OSS contributors, show its issue body in the final summary
+  instead of filing it.
 - Search first:
   `gh issue list --repo <repo> --state all --search "<key words>" --limit 5`.
   If an issue already covers it, record that issue instead of filing.
@@ -169,9 +194,11 @@ Unless `--no-issues`, file each one:
 
 - One local commit per item for the change and its tests, plus one if the
   test-gaps step added tests. Never push, amend, rebase, reset, stash, clean,
-  switch branches or create worktrees; the one exception is the scratch
-  worktree review-pr creates and removes in the backstop review.
+  switch branches or create worktrees; the exceptions are the scratch
+  worktrees that review-pr and its falsifiers create and remove in the
+  backstop review.
 - Stage only the files a helper changed; never `git add -A` or `git commit -a`.
+- Every commit message, title included, is at most 120 words.
 - Never weaken an existing test to make a change pass (CLAUDE.md "Test
   integrity"); a changed expectation needs its reason in the commit message.
 - `java-questdb-client/` is a separate repo: commit inside it first, as
@@ -190,8 +217,10 @@ changed lines and branches covered, e.g. `42/42 L, 18/18 B`.
 
 Then one line each: review rounds, what they found and the range's measured
 coverage; issues filed or matched (links); items left for the user (blocked,
-security-sensitive, Minor, disagreements, open coverage gaps); and
-`git log --oneline <START>..HEAD`. State that nothing was pushed.
+security-sensitive, unfiled `ADJACENT` bugs, Minor, disagreements, open
+coverage gaps); and
+`git log --oneline <START>..HEAD`. State that nothing was pushed. Then print
+in full each crash issue the Issue list could not file.
 
 End with the PR body bullets, per CLAUDE.md "Git & PR Conventions": the
 EFFECT of each built item that isn't `none`, and any benchmark an EFFECT line
@@ -205,14 +234,18 @@ Fill in the `<placeholders>`; keep tasks this short.
 
 ```text
 Analyze one item in <repo>. Follow CLAUDE.md, including "Testing".
-Don't change existing files or commit. For probes, create new files and
-delete them when done.
+Don't change existing files or commit. For probes, create new files; when
+done, copy those that reproduce the problem to <state>/<ID>/probes/ for the
+build, and delete them from the repo.
 
 Item <ID> (<feature | bug | review finding>): <verbatim item>
 PR base: <sha>. Earlier items in this run: <ID: one line each, or none>.
-[Revision only: your previous proposal is in <state>/<ID>/analysis.md. It
-was rejected: <objection>. Change the plan, or show with file:line why the
-objection is wrong.]
+[Revision only: your previous proposal is in <state>/<ID>/analysis.md, with
+test-plan amendments in <state>/<ID>/amendments.md if that file exists. Its
+design was sent back: <REDESIGN lines, or the build's STOPPED reason>.
+Change the design, or show with file:line why an objection is wrong. Fold
+these test-plan gaps and the amendments into the new plan where they still
+apply: <ADD lines, or none>.]
 [Answers from the user: <answers>]
 
 1. Understand the item.
@@ -235,7 +268,8 @@ objection is wrong.]
    the symptom unless that layer owns the check.
 6. For BUILD and FIX: find the best change, not the first one that works.
    Weigh the real alternatives, such as another layer, and choose the one that:
-   - closes every path to the bug, not just the one in the item;
+   - closes every path to the item's problem, not just the one the item
+     names; the same kind of bug in other code is a separate bug (step 9);
    - keeps every user of the changed code working: list the callers,
      overrides and sibling implementations, and why each still works;
    - adds no avoidable cost on hot paths: say whether the changed code runs
@@ -260,9 +294,15 @@ objection is wrong.]
    PR reports. The bullet is none when users see no change against the PR
    base, such as a fix for a bug only this PR's own commits have, or a
    missing test.
-9. Other bugs you noticed: say whether each is in code this PR added or
-   changed (compare with the PR base) or pre-existing. For a pre-existing
-   one, write an issue body to <state>/<ID>/issue-<slug>.md.
+9. Other bugs you noticed, including the same kind of bug in other code. Mark
+   each PR if it is in code this PR added or changed (compare with the PR
+   base), RELATED if it is pre-existing but the item's own trigger - the same
+   input, operation or fault - reaches it, else PRE-EXISTING. PR and RELATED
+   bugs become items of their own in this run, so keep them out of this plan
+   unless this change can't work without them. For a PRE-EXISTING one, write
+   an issue body to <state>/<ID>/issue-<slug>.md. Add [security] when a bug
+   is security-sensitive and [crash] when hostile input can crash or hang the
+   server through it.
 
 Write <state>/<ID>/analysis.md, starting with the verbatim item; include the
 alternatives you rejected and why, and the test plan as a table: dimension,
@@ -274,7 +314,7 @@ EFFECT: <the PR body bullet; the JMH benchmark to report, if any> | none
 CHANGE: <one line, naming the files> | REASON: <one line, for SKIP> | QUESTIONS: <for ASK, one line each>
 WHY: <one line: why this change beats the alternatives>
 TESTS: <one line: the dimensions covered and the ones not applicable>
-OTHER: none | one line per bug: PR or PRE-EXISTING [security], file:line, problem, issue body path
+OTHER: none | one line per bug: PR, RELATED or PRE-EXISTING [security] [crash], file:line, problem, issue body path (PRE-EXISTING only)
 ```
 
 ### Check
@@ -289,7 +329,7 @@ the code and try to break the proposal:
 - What works today that the change would break? Consider other callers and
   inputs, NULL, empty and boundary values, error paths, cleanup, object
   reuse (toTop, clear, pools), and large data.
-- Does the same bug stay reachable through a path the change misses?
+- Does the item's problem stay reachable through a path the change misses?
 - Does it patch the symptom instead of the cause?
 - Does it add avoidable cost on a hot path: allocation, copying, or a call
   or branch per row or page frame?
@@ -302,23 +342,46 @@ Then hold the test plan to CLAUDE.md "Testing":
 - an expected result that comes from running the code under test;
 - a fuzz harness that covers the area but is not extended, or a missing
   oracle where one exists.
+[Second proposal only: the first was sent back for: <REDESIGN lines, or the
+build's STOPPED reason>. Repeat as a REDESIGN line any of it this proposal
+leaves unresolved.]
 
 Report only problems you can show in the code or the plan, with file:line or
-the dimension and the missing case. Style preferences don't count.
-Reply with only: OK, or REJECT followed by at most eight lines, one per
-problem.
+the dimension and the missing case. Style preferences don't count; neither
+does a wrong statement in the analysis that changes nothing about the change
+or its tests. Label each problem:
+- REDESIGN: built as planned, the change would be wrong for this item: it
+  breaks what works today, leaves the item's problem reachable, patches the
+  symptom, adds avoidable hot-path cost or a race, reimplements existing
+  code, or is clearly worse than an alternative. Show how.
+- ADD: a gap in the test plan: a missing test, a dimension skipped for a
+  wrong reason, or an expected result without an independent source. Name
+  the dimension, the case, input -> expected, and its source. A problem that
+  more tests or a citation would solve is ADD, never REDESIGN.
+- ADJACENT: a separate bug the change neither causes nor must fix to solve
+  the item, including the same kind of bug in other code. Mark it PR (in
+  code this PR added or changed), RELATED (pre-existing, but the item's own
+  trigger reaches it) or PRE-EXISTING, [security] when it is
+  security-sensitive, and [crash] when hostile input can crash or hang the
+  server through it.
+Reply with only: OK, or at most eight lines, one per problem, each starting
+with its label, REDESIGN lines first.
 ```
 
 ### Build
 
 ```text
 Build one item in <repo>. Follow CLAUDE.md, including "Testing".
-The plan is <state>/<ID>/analysis.md; an independent check approved it.
+The plan is <state>/<ID>/analysis.md plus the test-plan amendments in
+<state>/<ID>/amendments.md; an independent check approved it. Probes that
+reproduced the problem, if any, are in <state>/<ID>/probes/.
 Earlier items in this run: <ID: one line each, or none>.
 Run `git status --porcelain` first and never edit a file it lists.
 
-1. Write the planned tests and run them. They must fail: for a bug, for the
-   reason in the plan; for a feature, because the behavior doesn't exist yet.
+1. Write the planned tests, amendments included, and run them. They must
+   fail: for a bug, for the reason in the plan; for a feature, because the
+   behavior doesn't exist yet. Leave out an amendment that turns out wrong or
+   depends on another item, and say why on TESTS.
    A test that passes before the change proves nothing; rework it. Each test
    asserts the exact result - rows, value, error message and position, state -
    and stays plain, as CLAUDE.md "Writing tests" requires (no reflection).
@@ -350,7 +413,8 @@ Run `git status --porcelain` first and never edit a file it lists.
    delete the files you created, and say why.
 7. Commit only your files (`git add <paths>`). Commit message per CLAUDE.md:
    title of at most 50 characters, no type prefix; body with the problem or
-   goal, the root cause or design, and the tests.
+   goal, the root cause or design, and the tests. The whole message, title
+   included, is at most 120 words.
 
 Never push, amend, rebase, reset, stash or clean.
 Write <state>/<ID>/build.md. Reply with only these lines:
@@ -368,8 +432,9 @@ OTHER: none | one line per bug, as in the analysis (write issue bodies the same 
 Independent review of the tests for one item in <repo>. You didn't write
 them. Don't edit anything.
 
-Item <ID>. The plan and its test plan are in <state>/<ID>/analysis.md, the
-diff of commit <sha> is <state>/<ID>/build.diff, and the coverage report is
+Item <ID>. The plan and its test plan are in <state>/<ID>/analysis.md, with
+amendments in <state>/<ID>/amendments.md; the diff of commit <sha> is
+<state>/<ID>/build.diff, and the coverage report is
 <state>/<ID>/coverage.json. Read them and the code the diff changes, then
 check the tests against CLAUDE.md "Testing":
 - every dimension that applies has tests, and every skipped one a sound
@@ -398,7 +463,8 @@ most important first:
 ```text
 Add missing tests for one item in <repo>. Follow CLAUDE.md, including
 "Testing".
-Item <ID>: commit <sha>, item start <ITEM_START>, plan <state>/<ID>/analysis.md.
+Item <ID>: commit <sha>, item start <ITEM_START>, plan <state>/<ID>/analysis.md
+and <state>/<ID>/amendments.md.
 An independent review found these gaps:
 <GAPS lines>
 Run `git status --porcelain` first and never edit a file it lists.
@@ -417,7 +483,8 @@ Run `git status --porcelain` first and never edit a file it lists.
    If it reports no previous run, run all of the item's test classes without
    `--append`. Close any gap it shows.
 4. Commit only the tests (`git add <paths>`). Commit message per CLAUDE.md,
-   naming the item they cover.
+   naming the item they cover; the whole message, title included, is at most
+   120 words.
 
 Never push, amend, rebase, reset, stash or clean. One Maven command at a
 time.
