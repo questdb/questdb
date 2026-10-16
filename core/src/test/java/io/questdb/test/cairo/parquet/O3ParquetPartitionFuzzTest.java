@@ -107,7 +107,7 @@ public class O3ParquetPartitionFuzzTest extends AbstractO3Test {
         TimestampDriver timestampDriver;
         try (TableReader srcReader = engine.getReader("src")) {
             timestampDriver = ColumnType.getTimestampDriver(srcReader.getMetadata().getTimestampType());
-            partitionIndex = srcReader.getPartitionCount() > 2 ? 1 + rnd.nextInt(srcReader.getPartitionCount() - 2) : 0;
+            partitionIndex = rnd.nextInt(srcReader.getPartitionCount() - 1);
             partitionTs = srcReader.getPartitionTimestampByIndex(partitionIndex);
             PartitionBy.setSinkForPartition(stringSink, srcReader.getMetadata().getTimestampType(), srcReader.getPartitionedBy(), partitionTs);
         }
