@@ -535,6 +535,13 @@ public class TableReaderMetadata extends AbstractRecordMetadata implements Table
     }
 
     private void readCoveringColumnData(MemoryR mem, int columnCount) {
+        // applyTransition0() reuses the column objects whose index type did not change, and DROP INDEX
+        // plus ADD INDEX of the same type without INCLUDE keeps the index type, so a reused column can
+        // still hold the covering list of the dropped index. The writer omits the covering trailer
+        // when no column covers, hence the reset before any early return.
+        for (int i = 0, n = columnMetadata.size(); i < n; i++) {
+            columnMetadata.getQuick(i).setCoveringColumnIndices(null);
+        }
         long memSize = mem.size();
         // Compute offset past all column names
         long offset = TableUtils.getColumnNameOffset(columnCount);

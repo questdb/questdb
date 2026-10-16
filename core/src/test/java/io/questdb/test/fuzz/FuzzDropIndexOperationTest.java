@@ -70,6 +70,64 @@ public class FuzzDropIndexOperationTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testExecutePostDrainReAddsSameTypeOnCoveringHost() throws Exception {
+        for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
+            assertMemoryLeak(() -> {
+                createCoveredTable(walMode);
+                execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING INCLUDE (sym2)");
+                drainWalQueue();
+                assertIndex("c2", IndexType.POSTING, "[3,2]");
+                // the reader pool keeps a reader that has seen the cover
+                assertCoveredRowsMatchScan("[3,2]");
+
+                // a POSTING index without INCLUDE in place of the covering POSTING index: the reader
+                // and the pooled metadata reload across both ALTERs and lose the cover
+                new FuzzDropIndexOperation(0, "POSTING").executePostDrain(engine, "t");
+                drainWalQueue();
+                assertIndex("c2", IndexType.POSTING, "null");
+                assertQuery("SELECT c2, sym2, ts FROM t WHERE c2 = 'k1' LIMIT 2")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .withPlanNotContaining("CoveringIndex")
+                        .returns("""
+                                c2\tsym2\tts
+                                k1\tS1\t2022-02-26T00:07:00.000000Z
+                                k1\tS0\t2022-02-26T01:17:00.000000Z
+                                """);
+                assertSqlCursors(
+                        "SELECT /*+ no_index */ c2, sym2, ts FROM t WHERE c2 = 'k1'",
+                        "SELECT c2, sym2, ts FROM t WHERE c2 = 'k1'"
+                );
+
+                // another POSTING variant
+                new FuzzDropIndexOperation(0, "POSTING DELTA").executePostDrain(engine, "t");
+                drainWalQueue();
+                assertIndex("c2", IndexType.POSTING_DELTA, "null");
+                assertQuery("SELECT c2, sym2, ts FROM t WHERE c2 = 'k1' LIMIT 2")
+                        .noLeakCheck()
+                        .timestamp("ts")
+                        .returns("""
+                                c2\tsym2\tts
+                                k1\tS1\t2022-02-26T00:07:00.000000Z
+                                k1\tS0\t2022-02-26T01:17:00.000000Z
+                                """);
+
+                // a covering host whose cover lost its column to DROP COLUMN still covers it in a
+                // tombstone slot, which matches no column: the op changes the index type of sym2
+                execute("ALTER TABLE t ALTER COLUMN c2 DROP INDEX");
+                execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING INCLUDE (v)");
+                execute("ALTER TABLE t DROP COLUMN v");
+                drainWalQueue();
+                assertIndex("c2", IndexType.POSTING, "[-1,2]");
+                new FuzzDropIndexOperation(2, "POSTING EF").executePostDrain(engine, "t");
+                drainWalQueue();
+                assertIndex("sym2", IndexType.POSTING_EF, "null");
+                execute("DROP TABLE t");
+            });
+        }
+    }
+
+    @Test
     public void testExecutePostDrainSkipsColumnCoveredByAnotherIndex() throws Exception {
         for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
             assertMemoryLeak(() -> {
@@ -104,51 +162,6 @@ public class FuzzDropIndexOperationTest extends AbstractCairoTest {
                                 \tS3\t2022-02-26T00:21:00.000000Z
                                 \tS3\t2022-02-26T04:12:00.000000Z
                                 """);
-                execute("DROP TABLE t");
-            });
-        }
-    }
-
-    @Test
-    public void testExecutePostDrainSkipsSameTypeReAddOnCoveringHost() throws Exception {
-        for (String walMode : new String[]{"WAL", "BYPASS WAL"}) {
-            assertMemoryLeak(() -> {
-                createCoveredTable(walMode);
-                execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING INCLUDE (sym2)");
-                drainWalQueue();
-                assertIndex("c2", IndexType.POSTING, "[3,2]");
-                // the reader pool keeps a reader that has seen the cover
-                assertCoveredRowsMatchScan("[3,2]");
-
-                // a POSTING index without INCLUDE in place of the covering POSTING index: the op leaves it
-                new FuzzDropIndexOperation(0, "POSTING").executePostDrain(engine, "t");
-                drainWalQueue();
-                assertIndex("c2", IndexType.POSTING, "[3,2]");
-                assertCoveredRowsMatchScan("[3,2]");
-
-                // another POSTING variant: the op drops the cover
-                new FuzzDropIndexOperation(0, "POSTING DELTA").executePostDrain(engine, "t");
-                drainWalQueue();
-                assertIndex("c2", IndexType.POSTING_DELTA, "null");
-                assertQuery("SELECT c2, sym2, ts FROM t WHERE c2 = 'k1' LIMIT 2")
-                        .noLeakCheck()
-                        .timestamp("ts")
-                        .returns("""
-                                c2\tsym2\tts
-                                k1\tS1\t2022-02-26T00:07:00.000000Z
-                                k1\tS0\t2022-02-26T01:17:00.000000Z
-                                """);
-
-                // a covering host whose cover lost its column to DROP COLUMN still covers it in a
-                // tombstone slot, which matches no column: the op changes the index type of sym2
-                execute("ALTER TABLE t ALTER COLUMN c2 DROP INDEX");
-                execute("ALTER TABLE t ALTER COLUMN c2 ADD INDEX TYPE POSTING INCLUDE (v)");
-                execute("ALTER TABLE t DROP COLUMN v");
-                drainWalQueue();
-                assertIndex("c2", IndexType.POSTING, "[-1,2]");
-                new FuzzDropIndexOperation(2, "POSTING EF").executePostDrain(engine, "t");
-                drainWalQueue();
-                assertIndex("sym2", IndexType.POSTING_EF, "null");
                 execute("DROP TABLE t");
             });
         }
