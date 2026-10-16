@@ -116,7 +116,6 @@ public class FuzzRunner {
     private int fuzzRowCount;
     private int ioFailureCount;
     private int ioFailureCreatedCount;
-    private boolean isIoFailureOnApplyThreadOnly;
     private boolean isNoSentinelTypeChangeEnabled;
     private boolean isO3;
     private double notSetProb;
@@ -273,12 +272,7 @@ public class FuzzRunner {
                     // Maybe it's time to plant an IO failure
                     int nextFailureInTransactions = (transactions.size() - i) / (ioFailureCount - ioFailureCreatedCount);
                     if (nextFailureInTransactions == 0 || rnd.nextInt(nextFailureInTransactions) == 0) {
-                        final int ioFailureCallCount = rnd.nextInt((int) (writer.getColumnCount() * 1.5));
-                        if (isIoFailureOnApplyThreadOnly) {
-                            ff.setToFailAfterOnCurrentThread(ioFailureCallCount);
-                        } else {
-                            ff.setToFailAfter(ioFailureCallCount);
-                        }
+                        ff.setToFailAfter(rnd.nextInt((int) (writer.getColumnCount() * 1.5)));
                         ioFailureCreatedCount++;
                     }
                 }
@@ -841,14 +835,6 @@ public class FuzzRunner {
      */
     public void setDropIndexProbability(double dropIndexProb) {
         this.dropIndexProb = dropIndexProb;
-    }
-
-    /**
-     * Makes the IO failures that applyNonWal() plants count and fire only on the thread that applies the
-     * transactions, so that they cannot hit a background job such as the column purge job.
-     */
-    public void setIoFailureOnApplyThreadOnly(boolean isIoFailureOnApplyThreadOnly) {
-        this.isIoFailureOnApplyThreadOnly = isIoFailureOnApplyThreadOnly;
     }
 
     /**

@@ -407,7 +407,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // Pins the shape that hid the txn 0 sidecar bug, see FuzzRunner.setTxnZeroCoveredSymbol(): sym0
         // is added to the still-empty table (column name txn 0) and covered before the first row. These
         // seeds convert partitions to parquet and back, rename sym0 twice, drop other columns and change
-        // their types, all on that covering index.
+        // their types, all on that covering index. The fuzz plants no IO failure, see
+        // runTxnZeroCoveredSymbolRandomFuzz().
         Rnd rnd = generateRandom(LOG, 11L, 80L);
         setTestParams(rnd);
 
@@ -435,13 +436,13 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.0, // addCoveringIndexProb
                 0.0
         );
-        setFuzzCounts(true, 2_000, 60, 20, 10, 100, 100, 3);
+        fuzzer.setFuzzCounts(true, 2_000, 60, 20, 10, 100, 100, 3, -1, 0);
         runTxnZeroCoveredSymbolFuzz(rnd);
     }
 
     @Test
     public void testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbolFuzz() throws Exception {
-        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG), null, null);
+        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG), null, null, 1);
     }
 
     @Test
@@ -450,9 +451,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // its log. The job saves no purge after that, so the purge job after the run cannot replay the
         // deferred purges of the WAL tables: the check before VACUUM TABLE skips, and the check after VACUUM
         // TABLE proves VACUUM removes the files. In the original run an IO failure that the fuzz plants for
-        // the non-WAL writer hit the purge job by chance; the files facade below fails the first file the
-        // purge job opens in a partition of its log, which is the first save, in every run. The fuzz test
-        // drew the default symbol index type from other seeds.
+        // the non-WAL writer hit the purge job by chance; here the fuzz plants none, and the files facade
+        // below fails the first file the purge job opens in a partition of its log, which is the first
+        // save, in every run. The fuzz test drew the default symbol index type from other seeds.
         final AtomicBoolean isPurgeLogOpenFailed = new AtomicBoolean();
         runTxnZeroCoveredSymbolRandomFuzz(
                 generateRandom(LOG, 882492233733669L, 1792176408151L),
@@ -465,9 +466,10 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                         }
                         return super.openRW(name, opts);
                     }
-                }
+                },
+                0
         );
-        // an IO failure of the fuzz can hit the purge job before the files facade does, with the same effect
+        Assert.assertTrue(isPurgeLogOpenFailed.get());
         Assert.assertTrue(
                 txnZeroRunPurgeTasksLogged + " < " + txnZeroRunPurgeTasksConsumed,
                 txnZeroRunPurgeTasksLogged < txnZeroRunPurgeTasksConsumed
@@ -480,11 +482,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // table while the purge of the dropped index waits in the purge log. DROP PARTITION changes the
         // truncate version, and the purge job refuses the purge: the check before VACUUM TABLE exempts
         // its files, and the check after VACUUM TABLE proves VACUUM removes them. The fuzz test drew the
-        // default symbol index type from other seeds. The IO failures of the fuzz stay on the thread that
-        // applies the non-WAL transactions: one that hit the purge job would lose the purge log, and the
-        // check before VACUUM TABLE would skip.
-        fuzzer.setIoFailureOnApplyThreadOnly(true);
-        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 882356240241250L, 1792176272157L), "POSTING DELTA", null);
+        // default symbol index type from other seeds. The fuzz plants no IO failure: one that hit the purge
+        // job would lose the purge log, and the check before VACUUM TABLE would skip.
+        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 882356240241250L, 1792176272157L), "POSTING DELTA", null, 0);
         Assert.assertEquals(txnZeroRunPurgeTasksConsumed, txnZeroRunPurgeTasksLogged);
         // instance 0 of sym0 in partition 2022-02-24 (name txn 1) of the non-WAL table, whose index DROP
         // INDEX dropped before DROP PARTITION of 2022-02-25
@@ -509,7 +509,8 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // Pins VACUUM TABLE over covering indexes on sym0, added to the still-empty table (column name
         // txn 0), and on c2, declared in CREATE TABLE (column name txn NONE) and covered by a fuzz
         // operation. The .pc sidecar names of both carry the token 0, and VACUUM once purged them as
-        // files of a stale column version.
+        // files of a stale column version. The fuzz plants no IO failure, see
+        // runTxnZeroCoveredSymbolRandomFuzz().
         Rnd rnd = generateRandom(LOG, 1L, 2L);
         setTestParams(rnd);
 
@@ -537,7 +538,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.3, // addCoveringIndexProb
                 0.0
         );
-        setFuzzCounts(true, 2_000, 60, 20, 10, 100, 100, 3);
+        fuzzer.setFuzzCounts(true, 2_000, 60, 20, 10, 100, 100, 3, -1, 0);
         runTxnZeroCoveredSymbolFuzz(rnd, "c2[-1, -1, -1] sym0[0, 0, 0]");
     }
 
@@ -1297,8 +1298,18 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
      * @param defaultSymbolIndexType when not null, the default symbol index type, which otherwise
      *                               AbstractFuzzTest draws from its own seeds
      * @param filesFacade            when not null, the files facade under the IO failures of the fuzz
+     * @param ioFailureCount         the number of IO failures the fuzz plants in the non-WAL apply. A pinned
+     *                               seed plants none: the failure fires on the N-th call to the files
+     *                               facade, from any thread, and the engine makes some of those calls on
+     *                               one platform only (fsync of a directory on POSIX, removal before a
+     *                               copy on Windows), so the same seed would fail other calls on Windows.
      */
-    private void runTxnZeroCoveredSymbolRandomFuzz(Rnd rnd, String defaultSymbolIndexType, FilesFacade filesFacade) throws Exception {
+    private void runTxnZeroCoveredSymbolRandomFuzz(
+            Rnd rnd,
+            String defaultSymbolIndexType,
+            FilesFacade filesFacade,
+            int ioFailureCount
+    ) throws Exception {
         setTestParams(rnd);
         if (filesFacade != null) {
             // set after setTestParams(), which can set the test up again and reset ff
@@ -1338,7 +1349,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                 0.1, // addCoveringIndexProb
                 0.0
         );
-        setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3);
+        fuzzer.setFuzzCounts(rnd.nextBoolean(), 10_000, 300, 20, 10, 1000, 100, 3, -1, ioFailureCount);
         // DROP INDEX of a column that a POSTING index covers makes covering queries read NULL, so
         // FuzzDropIndexOperation skips that shape.
         fuzzer.setDropIndexProbability(0.05);
@@ -1468,7 +1479,9 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     private void setTestParams(Rnd rnd) throws Exception {
         int newScoreboardVersion = rnd.nextBoolean() ? 1 : 2;
-        boolean newAsyncMunmapEnabled = Os.isPosix() && rnd.nextBoolean(); // windows does not support async munmap
+        // draws on every platform so that a seed replays the same run on Windows, which does not support
+        // async munmap
+        boolean newAsyncMunmapEnabled = rnd.nextBoolean() && Os.isPosix();
         LOG.info().$("switching to [scoreboard-format=").$(newScoreboardVersion)
                 .$(", asyncMunmapEnabled = ").$(newAsyncMunmapEnabled)
                 .I$();
