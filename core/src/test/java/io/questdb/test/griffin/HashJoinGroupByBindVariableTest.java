@@ -402,9 +402,7 @@ public class HashJoinGroupByBindVariableTest extends AbstractCairoTest {
     /**
      * Runs the check on an engine of its own per pool mode, with a pool of workers or without, where
      * the query's own thread runs every task, under both build modes. Frames of up to 50 rows give
-     * every build and probe several tasks. Each build mode applies once per test: Overrides keeps one
-     * flag for a change, so that applying a mode whose last property is already set would leave the
-     * configuration as it was.
+     * every build and probe several tasks.
      */
     private void forEachMode(ModeCheck check) throws Exception {
         assertMemoryLeak(() -> {

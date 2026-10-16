@@ -273,19 +273,11 @@ public class PGHashJoinGroupByTest extends BasePGTest {
     }
 
     // setTimestamp() leaves the parameter type unspecified, since pgjdbc cannot tell TIMESTAMP
-    // from TIMESTAMPTZ, and the analysis rejects a bind variable without a defined type. Such
-    // queries keep the ordinary plan and still return the same rows.
+    // from TIMESTAMPTZ. The bind variables sit in the inputs' own WHERE clauses, so the analysis
+    // leaves their types to the compile of each input, which infers them as the ordinary plan does.
     @Test
     public void testNamedStatementRebindsUnspecifiedTimestamps() throws Exception {
-        assertNamedStatement(
-                SQL,
-                (statement, values) -> {
-                    statement.setTimestamp(1, Timestamp.from(Instant.parse(values[0] + ":00Z")));
-                    statement.setTimestamp(2, Timestamp.from(Instant.parse(values[1] + ":00Z")));
-                    statement.setString(3, values[2]);
-                },
-                false
-        );
+        assertNamedStatement(SQL, PGHashJoinGroupByTest::bindUnspecified, true);
     }
 
     // Describe compiles the statement with every parameter type unspecified. The fused analysis
@@ -313,7 +305,9 @@ public class PGHashJoinGroupByTest extends BasePGTest {
                         for (String sql : sqls) {
                             description.append(sql).append('\n').append(describe(connection, sql)).append('\n');
                         }
-                        // The described statements compile the plans that the enabled path chose.
+                        // The described statements compile the plans that the enabled path chose,
+                        // SQL with its timestamps unspecified and sqls[2] with typed parameters.
+                        assertFused(explain(connection, SQL, PGHashJoinGroupByTest::bindUnspecified, BINDS[0]), isFused);
                         assertFused(explain(connection, sqls[2], (statement, values) -> {
                             statement.setLong(1, 1);
                             statement.setDouble(2, 2.0);
@@ -355,6 +349,13 @@ public class PGHashJoinGroupByTest extends BasePGTest {
     private static void bindTyped(PreparedStatement statement, String[] values) throws SQLException {
         statement.setObject(1, LocalDateTime.parse(values[0]));
         statement.setObject(2, LocalDateTime.parse(values[1]));
+        statement.setString(3, values[2]);
+    }
+
+    // setTimestamp() leaves the parameter type unspecified.
+    private static void bindUnspecified(PreparedStatement statement, String[] values) throws SQLException {
+        statement.setTimestamp(1, Timestamp.from(Instant.parse(values[0] + ":00Z")));
+        statement.setTimestamp(2, Timestamp.from(Instant.parse(values[1] + ":00Z")));
         statement.setString(3, values[2]);
     }
 

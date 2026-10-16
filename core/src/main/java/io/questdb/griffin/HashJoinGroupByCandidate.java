@@ -141,7 +141,8 @@ public final class HashJoinGroupByCandidate {
     }
 
     /**
-     * Base-table indexes, including columns used only by post-join filters.
+     * Base-table indexes of the payload, including columns used only by post-join filters, and
+     * excluding columns used only by the build's own filters.
      */
     public IntList getRequiredBuildColumns() {
         return requiredBuildColumns;
@@ -245,7 +246,10 @@ public final class HashJoinGroupByCandidate {
      * Build payload types: the row heap copies a build column, so only a build column answers to
      * this set. A probe column reaches the joined record straight off its page frame and takes no
      * type check at all, and a key column and a grouping expression answer to
-     * {@link HashJoinGroupByKeys#isSupportedKeyType(int)} instead.
+     * {@link HashJoinGroupByKeys#isSupportedKeyType(int)} instead. A build column that only the
+     * build's filters read, its scan's WHERE filter and an outer join's ON condition on the build
+     * alone, takes no type check either: the build runs them over its page frames, before the row
+     * heap copies a row.
      */
     public static boolean isSupportedValueType(int type) {
         return switch (ColumnType.tagOf(type)) {
@@ -266,7 +270,9 @@ public final class HashJoinGroupByCandidate {
      * Returns null for a shape the fused plan does not support, and when analysis throws SqlException,
      * so that the ordinary compile reports its own error. Analysis parses an expression only when each
      * of its bind variables has a type that FunctionParser does not refine (not ColumnType.isUndefined()),
-     * so analysis leaves every bind variable type unchanged.
+     * so analysis leaves every bind variable type unchanged. An input's own WHERE clause may hold a bind
+     * variable without such a type, as a PG client's unspecified parameter is: analysis leaves that
+     * clause unparsed, and the compile of the input infers the type, as the ordinary compile does.
      */
     @Nullable
     static HashJoinGroupByCandidate analyse(
@@ -386,6 +392,13 @@ public final class HashJoinGroupByCandidate {
             analyzer.captureInputColumns();
             // captureInputColumns() tolerates unresolvable input columns, so check the flag after it.
             if (analyzer.hasUndefinedBindVariable) {
+                return null;
+            }
+            // The first compile that parses a bind variable without a type defines it. The ordinary
+            // plan compiles the input that comes first in join order first, and the fused plan its
+            // probe, so the inputs' compiles infer the types that the ordinary plan infers only when
+            // the probe comes first. A bind variable may sit in both inputs.
+            if (analyzer.deferredBindVariableCount > 0 && buildIndex == order.getQuick(0)) {
                 return null;
             }
             // A RIGHT join builds the table before it whatever its size, and the owner keeps every
@@ -564,11 +577,20 @@ public final class HashJoinGroupByCandidate {
         private final ObjList<ExpressionNode> resolvedPostJoinFilters = new ObjList<>();
         private final RecordMetadata[] sources;
         private ExpressionNode buildOnFilter;
+        // Bind variables without a type in the inputs' own WHERE clauses, whose types the analysis
+        // leaves to the compile of each input; see checkFilter().
+        private int deferredBindVariableCount;
         // Whether the post-join WHERE clause that checkClause() checks has a conjunct that is neither
         // a constant nor a runtime constant, and one that is a runtime constant.
         private boolean hasRowDependentConjunct;
         private boolean hasRuntimeConstantConjunct;
         private boolean hasUndefinedBindVariable;
+        // Whether resolve() is resolving an input's own WHERE clause, which may hold a bind variable
+        // without a type.
+        private boolean isDeferringBindVariables;
+        // A filter that runs on an input's page frames reads a build column straight off the build's
+        // frame, so the column takes no type check; see resolveFrameFilter().
+        private boolean isResolvingFrameFilter;
         // An input column reference is a key candidate or a name the input mapping captures, so it
         // takes no type check: HashJoinGroupByKeys.add() gates the key types, and the mapping must
         // name every input column that an admitted expression can later reach.
@@ -631,9 +653,7 @@ public final class HashJoinGroupByCandidate {
                 return false;
             }
             buildOnFilter = node;
-            int payloadSize = requiredBuildColumns.size();
-            resolvedBuildOnFilter = resolve(node, join, -1, 0);
-            requiredBuildColumns.setPos(payloadSize);
+            resolvedBuildOnFilter = resolveFrameFilter(node, join, -1);
             return true;
         }
 
@@ -665,17 +685,36 @@ public final class HashJoinGroupByCandidate {
             if (isPostJoin && node.type == ExpressionNode.OPERATION && Chars.equalsIgnoreCase(node.token, "and")) {
                 return checkFilter(node.lhs, model, source, true) && checkFilter(node.rhs, model, source, true);
             }
-            int payloadSize = requiredBuildColumns.size();
             usedSources = 0;
-            ExpressionNode expression = resolve(node, model, source, 0);
-            if (!isPostJoin) {
-                requiredBuildColumns.setPos(payloadSize);
+            final int deferredCount = deferredBindVariableCount;
+            // A post-join filter reads the joined record, whose build columns are payload columns.
+            // Any other filter runs on an input's page frames.
+            final ExpressionNode expression;
+            if (isPostJoin) {
+                expression = resolve(node, model, source, 0);
+            } else {
+                // Source -1 is the ON condition on the build, which the planner compiles itself.
+                isDeferringBindVariables = source >= 0;
+                try {
+                    expression = resolveFrameFilter(node, model, source);
+                } finally {
+                    isDeferringBindVariables = false;
+                }
             }
             if (expression == null || (isPostJoin && usedSources == 3)) {
                 return false;
             }
             if (isPostJoin) {
                 resolvedPostJoinFilters.add(expression);
+            }
+            // Both plans compile an input's own WHERE clause with generateQuery() on the input's
+            // model, and its interval extraction gives a bind variable the type of the designated
+            // timestamp, where FunctionParser would give a nanosecond timestamp's comparison a
+            // microsecond one. So leave a clause with a bind variable without a type to the input's
+            // compile, the checks below included: isSupportedFramedInput() checks the filter that
+            // the input's scan keeps, and a clause that is not BOOLEAN fails both compiles alike.
+            if (deferredBindVariableCount > deferredCount) {
+                return true;
             }
             try (Function function = parser.parseFunction(expression, metadata, executionContext)) {
                 if (function.getType() != ColumnType.BOOLEAN) {
@@ -733,8 +772,10 @@ public final class HashJoinGroupByCandidate {
             }
             final int source = columnSources.getQuick(index);
             // The row heap copies a build column, so only a build column takes the payload type set.
-            // A probe column of any type reaches the joined record straight off its page frame.
-            if (!isResolvingInputColumn && source == buildIndex && !isSupportedValueType(metadata.getColumnType(index))) {
+            // A probe column of any type reaches the joined record straight off its page frame, and
+            // a build filter reads a build column of any type straight off the build's page frame.
+            if (!isResolvingInputColumn && !isResolvingFrameFilter && source == buildIndex
+                    && !isSupportedValueType(metadata.getColumnType(index))) {
                 return null;
             }
             usedSources |= 1 << source;
@@ -820,10 +861,15 @@ public final class HashJoinGroupByCandidate {
             }
             // Type inference depends on parse order, and the fused plan parses its WHERE, ON and
             // aggregate expressions in a different order than the ordinary plan. Resolving before
-            // parsing also keeps this analysis from defining the type itself.
+            // parsing also keeps this analysis from defining the type itself. An input's own WHERE
+            // clause is the exception: the fused plan compiles each input as the ordinary plan
+            // does, before it parses any of these, and checkFilter() leaves the clause unparsed.
             if (node.type == ExpressionNode.BIND_VARIABLE && !isBindVariableTypeDefined(node.token)) {
-                hasUndefinedBindVariable = true;
-                return null;
+                if (!isDeferringBindVariables) {
+                    hasUndefinedBindVariable = true;
+                    return null;
+                }
+                deferredBindVariableCount++;
             }
             ExpressionNode copy = ExpressionNode.FACTORY.newInstance().of(node.type, node.token, node.precedence, node.position);
             copy.paramCount = node.paramCount;
@@ -841,6 +887,27 @@ public final class HashJoinGroupByCandidate {
                 copy.args.add(arg);
             }
             return copy;
+        }
+
+        /**
+         * Resolves a filter that runs on an input's page frames rather than on the joined record: an
+         * input's WHERE clause, which runs as the input scan's filter, and an outer join's ON
+         * condition on the build alone, which the build runs over each of its frames. Either one
+         * drops a build row before the row heap copies it, so a build column that the filter reads
+         * is no payload column: it takes no payload type check, and the resolution leaves the
+         * payload as it found it. The input scan compiles its own WHERE filter, and the planner
+         * compiles the ON condition against the build scan's metadata, which holds the column
+         * whatever its type.
+         */
+        private ExpressionNode resolveFrameFilter(ExpressionNode node, IQueryModel model, int source) {
+            final int payloadSize = requiredBuildColumns.size();
+            isResolvingFrameFilter = true;
+            try {
+                return resolve(node, model, source, 0);
+            } finally {
+                isResolvingFrameFilter = false;
+                requiredBuildColumns.setPos(payloadSize);
+            }
         }
 
         private int resolveInput(int source, CharSequence name, int depth) {

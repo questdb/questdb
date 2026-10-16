@@ -127,10 +127,21 @@ public class HttpHashJoinGroupByTest extends AbstractTest {
     private static void assertFusedPlan(String orientation) {
         // A connection of its own leaves the select cache of the asserted one alone.
         try (TestHttpClient client = new TestHttpClient()) {
+            client.setKeepConnection(true);
             final Utf8StringSink sink = new Utf8StringSink();
             client.toSink("/exec", "EXPLAIN " + SQL, sink);
             TestUtils.assertContains(sink.toString(), "Async Hash Join Group By workers: 1");
             TestUtils.assertContains(sink.toString(), orientation);
+            // The server closes the EXPLAIN factory, and the test function with it, only after it
+            // sends the response, when it resets the connection for the next request. The
+            // connection serves one request at a time, so the response to the next request on it
+            // proves the close happened, and the caller's count includes it.
+            sink.clear();
+            client.toSink("/exec", "SELECT 1", sink);
+            TestUtils.assertEquals(
+                    "{\"query\":\"SELECT 1\",\"columns\":[{\"name\":\"1\",\"type\":\"INT\"}],\"timestamp\":-1,\"dataset\":[[1]],\"count\":1}",
+                    sink.toString()
+            );
         }
     }
 

@@ -64,7 +64,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             try (SqlExecutionContextImpl context = enabledContext()) {
                 String sql = KEYED + " FROM r JOIN p ON r.plant_id = p.plant_id"
                         + " WHERE r.reading_ts >= $1 AND r.reading_ts < $2 ORDER BY country";
-                // The analysis rejects a bind variable without a type, so bind before compiling.
+                // Bind before compiling, as a client that sends typed parameters does.
                 bindInterval("2020-01-01T00", "2020-01-01T05");
                 try (RecordCursorFactory factory = engine.select(sql, context)) {
                     HashJoinGroupByBuildChoiceRecordCursorFactory choice = choice(factory);
@@ -233,7 +233,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             try (SqlExecutionContextImpl context = enabledContext()) {
                 String sql = "SELECT count() FROM r JOIN q ON r.plant_id = q.plant_id"
                         + " WHERE r.reading_ts >= $1 AND r.reading_ts < $2";
-                // The analysis rejects a bind variable without a type, so bind before compiling.
+                // Bind before compiling, as a client that sends typed parameters does.
                 bindInterval("2020-01-01T00", "2020-01-01T10");
                 try (RecordCursorFactory factory = engine.select(sql, context)) {
                     HashJoinGroupByBuildChoiceRecordCursorFactory choice = choice(factory);
@@ -266,7 +266,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             try (SqlExecutionContextImpl context = enabledContext()) {
                 String sql = KEYED + " FROM r JOIN p ON r.plant_id = p.plant_id"
                         + " WHERE r.reading_ts >= $1 AND r.reading_ts < $2 ORDER BY country";
-                // The analysis rejects a bind variable without a type, so bind before compiling.
+                // Bind before compiling, as a client that sends typed parameters does.
                 bindInterval("2020-01-01T00", "2020-01-01T05");
                 try (RecordCursorFactory factory = engine.select(sql, context)) {
                     HashJoinGroupByBuildChoiceRecordCursorFactory choice = choice(factory);
@@ -344,7 +344,7 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
             try (SqlExecutionContextImpl context = enabledContext()) {
                 String sql = KEYED + " FROM r JOIN p ON r.plant_id = p.plant_id"
                         + " WHERE r.reading_ts >= $1 AND r.reading_ts < $2 ORDER BY country";
-                // The analysis rejects a bind variable without a type, so bind before compiling.
+                // Bind before compiling, as a client that sends typed parameters does.
                 bindInterval("2020-01-01T00", "2020-01-01T05");
                 try (RecordCursorFactory factory = engine.select(sql, context)) {
                     // QueryProgress hands back its open cursor without asking again, so drive the choice itself.
@@ -363,6 +363,40 @@ public class HashJoinGroupByBuildChoiceTest extends AbstractCairoTest {
                     } finally {
                         first.close();
                     }
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testVarcharFilterRunsOnEitherOrientation() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            try (SqlExecutionContextImpl context = enabledContext()) {
+                // The row heap cannot copy r's VARCHAR label, but only a filter reads it here, and the
+                // filter runs on r's page frames, so r can still be the build. The alternate builds r
+                // and runs the filter over the build's frames; the primary probes r and runs it as the
+                // probe filter.
+                String sql = KEYED + " FROM r JOIN p ON r.plant_id = p.plant_id"
+                        + " WHERE r.reading_ts >= $1 AND r.reading_ts < $2 AND r.label <> 'L3' ORDER BY country";
+                // Bind before compiling, as a client that sends typed parameters does.
+                bindInterval("2020-01-01T00", "2020-01-01T05");
+                try (RecordCursorFactory factory = engine.select(sql, context)) {
+                    HashJoinGroupByBuildChoiceRecordCursorFactory choice = choice(factory);
+                    final String plan = plan(factory, context);
+                    final int alternate = plan.indexOf("Alternate\n");
+                    Assert.assertTrue(plan, plan.contains(BUILD_CHOICE) && alternate > 0);
+                    Assert.assertTrue(plan, plan.substring(0, alternate).contains("probeFilter: label!='L3'"));
+                    Assert.assertTrue(plan, plan.substring(alternate).contains("buildFilter: label!='L3'"));
+                    // 5 interval rows against p's 8: r builds, and its filter drops the L3 row.
+                    bindInterval("2020-01-01T00", "2020-01-01T05");
+                    assertExecution(sql, factory, choice, context, true, 4);
+                    // 30 against 8: p builds, and the probe filter drops r's four L3 rows.
+                    bindInterval("2020-01-01T00", "2020-01-02T06");
+                    assertExecution(sql, factory, choice, context, false, 8);
+                    // 3 against 8: r builds again, and 2 of its rows pass the filter.
+                    bindInterval("2020-01-03T10", "2020-01-03T13");
+                    assertExecution(sql, factory, choice, context, true, 2);
                 }
             }
         });

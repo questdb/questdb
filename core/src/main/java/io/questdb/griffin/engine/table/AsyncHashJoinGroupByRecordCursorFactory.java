@@ -239,32 +239,34 @@ public final class AsyncHashJoinGroupByRecordCursorFactory extends AbstractRecor
             sink.attr("countStrategy").val("per key");
         }
         sink.optAttr("keys", GroupByRecordCursorFactory.getKeys(functions.getOutputFunctions(), getMetadata()));
-        sink.setMetadata(joinedMetadata);
+        // This plan can print inside another operator's attribute, e.g. as a scalar sub-query in an
+        // aggregate, while that operator has set the sink's metadata or base-metadata mode for its
+        // own columns. The plan resolves its columns against the metadata it sets itself, prints its
+        // children as at the plan's root, and then gives the caller back its metadata and mode for
+        // the columns that follow the sub-query.
+        final RecordMetadata callerMetadata = sink.getMetadata();
+        final boolean isCallerUsingBaseMetadata = sink.getUseBaseMetadata();
+        sink.useBaseMetadata(false);
         try {
+            sink.setMetadata(joinedMetadata);
             sink.optAttr("keyFunctions", functions.getKeyFunctions(-1));
             sink.optAttr("values", functions.getGroupByFunctions(-1));
             sink.optAttr("postJoinFilter", functions.getFilter(-1));
-        } finally {
-            sink.setMetadata(null);
-        }
-        sink.setMetadata(probeFactory.getMetadata());
-        try {
+            sink.setMetadata(probeFactory.getMetadata());
             sink.optAttr("probeFilter", filterContext.getFilter(-1));
-        } finally {
-            sink.setMetadata(null);
-        }
-        sink.setMetadata(buildFactory.getMetadata());
-        try {
+            sink.setMetadata(buildFactory.getMetadata());
             // A compiled build filter runs as JIT code, so its attribute says so; the operator's own
             // name speaks for the probe filter only.
             sink.optAttr(buildFilterContext.getCompiledFilter() != null ? "buildJitFilter" : "buildFilter",
                     buildFilterContext.getFilter(-1));
             sink.optAttr("buildOnFilter", buildOnFilter);
-        } finally {
             sink.setMetadata(null);
+            sink.child("Probe", probeFactory);
+            sink.child("Build", buildFactory);
+        } finally {
+            sink.setMetadata(callerMetadata);
+            sink.useBaseMetadata(isCallerUsingBaseMetadata);
         }
-        sink.child("Probe", probeFactory);
-        sink.child("Build", buildFactory);
     }
 
     @Override

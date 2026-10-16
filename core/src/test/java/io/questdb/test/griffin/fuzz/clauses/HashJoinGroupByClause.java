@@ -71,13 +71,18 @@ import io.questdb.test.griffin.fuzz.types.ColumnKind;
  * probe's columns never reach it, so a STRING or VARCHAR reference joins the set of an input the
  * join type makes the probe - the master of a LEFT OUTER join, the slave of a RIGHT OUTER one.
  * An INNER join picks its build by size, which the generator cannot predict, so neither of its
- * inputs takes the wider set. The rest of the queries
+ * inputs takes the wider set. The row heap restricts only the build columns that the joined record
+ * reads: aggregate arguments, grouping keys and post-join filters. The build's own filters - its
+ * scan's WHERE filter, which an INNER join's single-side WHERE predicate becomes, and an outer
+ * join's ON predicate over the build alone - run over the build's page frames before the heap
+ * copies a row, so they may read a build column of any type, and such a predicate over a STRING
+ * or VARCHAR column of the build does not by itself keep the ordinary plan. The rest of the queries
  * reach the features the fused planner has to turn down, each of which keeps the ordinary plan
  * in both arms of the fused axis: a constant WHERE conjunct, SAMPLE BY with FILL, a
  * {@code LIMIT} sub-query, {@code LATEST ON} on a table input, a cross-input WHERE predicate, an ON predicate over the preserved side
- * of an outer join, columns of other types, and aggregates outside the fused
- * allowlist. A planner that accepts one of them by mistake returns different rows than the
- * ordinary plan, and the fused axis reports it.
+ * of an outer join, columns of other types where the joined record reads them, and aggregates
+ * outside the fused allowlist. A planner that accepts one of them by mistake returns different
+ * rows than the ordinary plan, and the fused axis reports it.
  * <p>
  * Two exact counts close every projection: {@code count()} counts the joined pairs of the group,
  * and {@code count(x.k)} counts the null-extended side's key, so a match that turns into a
@@ -94,7 +99,9 @@ public final class HashJoinGroupByClause {
     // count() arguments whose count class the fused plan accepts: CountInt, CountLong, CountFloat,
     // CountDouble, CountSymbol, CountIPv4, CountUuid, CountLong256, CountStr and CountVarchar,
     // each for its own argument type only. A STRING or VARCHAR column reaches this only on the
-    // probe side, because the fusable set of a build input leaves the two out.
+    // probe side: the joined record reads a count() argument, and the build's row heap copies
+    // fixed-size columns only, so the fusable set of a build input leaves the two out. Only the
+    // build's own filters may read a build column of either type.
     private static final String[] COUNT_ARGUMENT_DDLS = {
             "INT", "LONG", "FLOAT", "DOUBLE", "SYMBOL", "IPv4", "UUID", "LONG256", "STRING", "VARCHAR"
     };

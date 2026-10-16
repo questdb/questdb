@@ -145,7 +145,7 @@ public class HashJoinGroupByRuntimeConstantTest extends AbstractCairoTest {
             try (SqlExecutionContextImpl context = bindingContext()) {
                 final String sql = KEYED + " FROM r JOIN p ON r.plant_id = p.plant_id"
                         + " WHERE r.reading_ts >= $1 AND r.reading_ts < $2 ORDER BY country";
-                // The analysis rejects a bind variable without a type, so bind before compiling.
+                // Bind before compiling, as a client that sends typed parameters does.
                 bindInterval("2020-01-01T00:00:00.000000Z", "2020-01-01T05:00:00.000000Z");
                 try (RecordCursorFactory factory = engine.select(sql, context)) {
                     final HashJoinGroupByBuildChoiceRecordCursorFactory choice = choice(factory);

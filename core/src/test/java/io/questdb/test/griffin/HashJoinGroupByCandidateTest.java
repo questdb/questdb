@@ -38,6 +38,7 @@ import io.questdb.cairo.map.Map;
 import io.questdb.cairo.map.MapKey;
 import io.questdb.cairo.map.MapValue;
 import io.questdb.cairo.map.OrderedMap;
+import io.questdb.cairo.security.AllowAllSecurityContext;
 import io.questdb.cairo.sql.Function;
 import io.questdb.cairo.sql.Record;
 import io.questdb.cairo.sql.RecordCursor;
@@ -52,6 +53,7 @@ import io.questdb.griffin.HashJoinGroupByMetadata;
 import io.questdb.griffin.SqlCodeGenerator;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
+import io.questdb.griffin.SqlExecutionContextImpl;
 import io.questdb.griffin.engine.functions.DoubleFunction;
 import io.questdb.griffin.engine.functions.columns.DoubleColumn;
 import io.questdb.griffin.engine.functions.groupby.SumDoubleGroupByFunction;
@@ -116,7 +118,35 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
                 Assert.assertNotNull(candidate.getBuildOnFilter());
                 Assert.assertTrue(candidate.isInputSwapped());
                 Assert.assertEquals(0, candidate.getRequiredBuildColumns().size());
+                // The build scan's WHERE filter runs on the build's frames as well, so its columns are
+                // no payload either: p builds, the second of two empty inputs, and copies only the
+                // aggregate's installed_kwp, column 2.
+                candidate = candidate(compiler,
+                        "select r.plant_id, sum(p.installed_kwp) from r join p on r.plant_id=p.plant_id where p.long_key > 0");
+                Assert.assertNotNull(candidate);
+                Assert.assertEquals("p", candidate.getBuildModel().getTableName().toString());
+                Assert.assertEquals("[2]", candidate.getRequiredBuildColumns().toString());
+                // Neither build filter copies its columns, so a filter over a variable-size column,
+                // which the row heap cannot copy, qualifies.
+                execute("alter table p add column name varchar");
+                execute("alter table p add column tag string");
+                candidate = candidate(compiler,
+                        "select r.plant_id, sum(p.installed_kwp) from r join p on r.plant_id=p.plant_id where p.name ~ 'x' and p.tag = 't'");
+                Assert.assertNotNull(candidate);
+                Assert.assertEquals("p", candidate.getBuildModel().getTableName().toString());
+                Assert.assertEquals("[2]", candidate.getRequiredBuildColumns().toString());
+                candidate = candidate(compiler,
+                        "select r.plant_id, sum(r.energy_kwh) from r left join p on r.plant_id=p.plant_id and p.name ~ 'x' and p.tag = 't'");
+                Assert.assertNotNull(candidate);
+                Assert.assertNotNull(candidate.getBuildOnFilter());
+                Assert.assertEquals(0, candidate.getRequiredBuildColumns().size());
             }
+            // The joined record reads a variable-size build column as a payload: as an aggregate
+            // argument, a grouping key, a post-join filter, or an ON condition that reads the probe too.
+            assertCandidate("select r.plant_id, count(p.name) from r left join p on r.plant_id=p.plant_id and p.name ~ 'x'", false);
+            assertCandidate("select p.tag, sum(r.energy_kwh) from r left join p on r.plant_id=p.plant_id and p.tag = 't'", false);
+            assertCandidate("select r.plant_id, sum(r.energy_kwh) from r left join p on r.plant_id=p.plant_id where p.name ~ 'x'", false);
+            assertCandidate("select r.plant_id, sum(r.energy_kwh) from r left join p on r.plant_id=p.plant_id and length(p.name) > r.plant_id", false);
             assertCandidate("select p.country, sum(r.energy_kwh) from p right join r on r.plant_id=p.plant_id and r.energy_kwh > 0", false);
             assertCandidate("select p.country, sum(r.energy_kwh) from r left join p on r.plant_id=p.plant_id and (p.installed_kwp > 0 or r.energy_kwh > 0)", false);
             assertCandidate("select p.country, sum(r.energy_kwh) from r left join p on r.plant_id=p.plant_id where p.installed_kwp > 0 or r.energy_kwh > 0", false);
@@ -555,6 +585,83 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
         });
     }
 
+    // A PG client that leaves a parameter type unspecified, as pgjdbc's setTimestamp() does, leaves
+    // the bind variable undefined until a compile infers its type.
+    @Test
+    public void testUndefinedBindVariablesInInputWhereClauses() throws Exception {
+        assertMemoryLeak(() -> {
+            // rn has more rows than pn, so an INNER join builds pn. The designated timestamp is in
+            // nanoseconds: interval extraction gives a bind variable that type, while a comparison
+            // that FunctionParser resolves would give it microseconds.
+            execute("CREATE TABLE rn (plant_id INT, reading_ts TIMESTAMP_NS, energy_kwh DOUBLE) TIMESTAMP(reading_ts) PARTITION BY DAY");
+            execute("CREATE TABLE pn (plant_id INT, country SYMBOL, installed_kwp DOUBLE)");
+            execute("""
+                    INSERT INTO rn SELECT (x % 4)::INT, ('2020-01-01'::TIMESTAMP + x * 3_600_000_000L)::TIMESTAMP_NS, x
+                    FROM long_sequence(48)""");
+            execute("INSERT INTO pn SELECT (x % 4)::INT, 'C' || (x % 2), x FROM long_sequence(4)");
+            final String select = "SELECT pn.country, sum(rn.energy_kwh) e, count(*) n FROM ";
+            final String on = " ON rn.plant_id = pn.plant_id";
+            final String interval = " WHERE rn.reading_ts >= $1 AND rn.reading_ts < $2";
+            // [sql, the types that both plans infer, whether the analysis accepts it, whether the fused
+            // plan runs, values bound as text]
+            final String[][] queries = {
+                    // The analysis leaves an input's own WHERE clause unparsed, and the compile of the
+                    // input infers the types, as the ordinary compile does, when the fused plan compiles
+                    // its inputs in the ordinary plan's order: the probe, first in join order, first.
+                    {select + "rn JOIN pn" + on + interval + " AND pn.country = $3 ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS STRING", "true", "true", "2020-01-01T05", "2020-01-02T03", "C1"},
+                    {select + "rn LEFT JOIN pn" + on + interval + " ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS", "true", "true", "2020-01-01T05", "2020-01-02T03"},
+                    {select + "rn JOIN pn" + on + " WHERE rn.reading_ts IN $1 ORDER BY 1",
+                            "STRING", "true", "true", "2020-01-02"},
+                    // The analysis leaves these unparsed clauses' checks to isSupportedFramedInput(),
+                    // which keeps the ordinary plan for the scan filter that the workers would run:
+                    // a cast to SYMBOL does not support parallelism, and rnd_double() is not stable
+                    // within an execution. The rnd_double() conjunct is true on every row.
+                    {select + "rn JOIN pn" + on + interval + " AND rn.plant_id::SYMBOL <> 'z' ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS", "true", "false", "2020-01-01T05", "2020-01-02T03"},
+                    {select + "rn JOIN pn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp + rnd_double() > $2 ORDER BY 1",
+                            "TIMESTAMP_NS DOUBLE", "true", "false", "2020-01-01T05", "-1"},
+                    // These build the first input in join order.
+                    {select + "pn JOIN rn" + on + interval + " ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS", "false", "false", "2020-01-01T05", "2020-01-02T03"},
+                    {select + "pn RIGHT JOIN rn" + on + interval + " ORDER BY 1",
+                            "TIMESTAMP_NS TIMESTAMP_NS", "false", "false", "2020-01-01T05", "2020-01-02T03"},
+                    // The fused plan parses an aggregate, a post-join filter and an ON condition in an
+                    // order of its own.
+                    {"SELECT pn.country, sum(rn.energy_kwh * $1) FROM rn JOIN pn" + on + " WHERE rn.reading_ts >= $2 ORDER BY 1",
+                            "DOUBLE TIMESTAMP_NS", "false", "false", "2", "2020-01-02T03"},
+                    {select + "rn JOIN pn" + on + " WHERE rn.energy_kwh > pn.installed_kwp + $1 ORDER BY 1",
+                            "DOUBLE", "false", "false", "20"},
+                    // A LEFT join keeps its WHERE clause on pn above the join, a post-join filter that
+                    // reads pn alone. The analysis stops deferring bind variables once it leaves rn's
+                    // own WHERE clause, so it rejects $2 rather than leaving it unparsed.
+                    {select + "rn LEFT JOIN pn" + on + " WHERE rn.reading_ts >= $1 AND pn.installed_kwp > $2 ORDER BY 1",
+                            "TIMESTAMP_NS DOUBLE", "false", "false", "2020-01-01T05", "2"},
+                    {select + "rn LEFT JOIN pn" + on + " AND pn.installed_kwp > $1 ORDER BY 1",
+                            "DOUBLE", "false", "false", "2"},
+                    {"SELECT pn.country, sum(rn.energy_kwh + $1) FROM rn JOIN pn" + on + " WHERE rn.energy_kwh > $1 ORDER BY 1",
+                            "DOUBLE", "false", "false", "20"}
+            };
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                for (String[] query : queries) {
+                    bindVariableService.clear();
+                    Assert.assertEquals(query[0], Boolean.parseBoolean(query[2]), candidate(compiler, query[0]) != null);
+                    // The analysis defines no type either way.
+                    Assert.assertEquals(query[0], 0, bindVariableService.getIndexedVariableCount());
+                }
+            }
+            try (SqlExecutionContextImpl context = HashJoinGroupByQualificationTest.context(engine, 4)) {
+                context.with(AllowAllSecurityContext.INSTANCE, bindVariableService, null, -1, null);
+                for (String[] query : queries) {
+                    final String ordinary = undefinedBindOutcome(query, context, false, false);
+                    Assert.assertEquals(query[0], "types: " + query[1], ordinary.substring(0, ordinary.indexOf('\n')));
+                    Assert.assertEquals(query[0], ordinary, undefinedBindOutcome(query, context, true, Boolean.parseBoolean(query[3])));
+                }
+            }
+        });
+    }
+
     @Test
     public void testUnsupportedKeyTypes() throws Exception {
         assertMemoryLeak(() -> {
@@ -845,5 +952,31 @@ public class HashJoinGroupByCandidateTest extends AbstractCairoTest {
     private void createTables() throws Exception {
         execute("create table r (plant_id int, reading_ts timestamp, energy_kwh double, irradiance_wm2 double, long_key long, sym_key symbol) timestamp(reading_ts) partition by month");
         execute("create table p (plant_id int, country symbol, installed_kwp double, long_key long, sym_key symbol)");
+    }
+
+    // Compiles [sql, types, candidate, fused, values...] with every bind variable undefined, as PG
+    // Parse leaves an unspecified parameter, binds the values as text, as PG Bind does for one, and
+    // returns the inferred types and the rows, read twice.
+    private String undefinedBindOutcome(String[] query, SqlExecutionContextImpl context, boolean isEnabled, boolean isFused) throws Exception {
+        bindVariableService.clear();
+        context.setParallelHashJoinGroupByEnabled(isEnabled);
+        try (RecordCursorFactory factory = engine.select(query[0], context)) {
+            final String plan = HashJoinGroupByQualificationTest.plan(factory, context);
+            Assert.assertEquals(plan, isFused, plan.contains("Hash Join Group By"));
+            final StringSink outcome = new StringSink();
+            outcome.put("types:");
+            for (int i = 0, n = bindVariableService.getIndexedVariableCount(); i < n; i++) {
+                final Function variable = bindVariableService.getFunction(i);
+                outcome.put(' ').put(variable == null ? "null" : ColumnType.nameOf(variable.getType()));
+            }
+            for (int i = 4; i < query.length; i++) {
+                bindVariableService.setStr(i - 4, query[i]);
+            }
+            outcome.put('\n').put(HashJoinGroupByQualificationTest.result(factory, context));
+            outcome.put(HashJoinGroupByQualificationTest.result(factory, context));
+            return outcome.toString();
+        } finally {
+            context.setParallelHashJoinGroupByEnabled(true);
+        }
     }
 }

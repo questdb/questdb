@@ -446,8 +446,11 @@ public final class HashJoinBuildFrames implements HashJoinPayloadSource, QuietCl
      * in its key table. It averages over the distinct keys that the build kept, of native and
      * Parquet frames alike, though, so it errs low for a build whose longer keys repeat more often
      * than its shorter ones, or whose filter drops longer keys than it keeps. A var-size column that
-     * the sink does not stage counts {@value #UNSTAGED_VAR_SIZE_DECODED_BYTES} bytes a row; the
-     * planner admits none today, since it admits var-size build columns as join keys only.
+     * the sink does not stage counts {@value #UNSTAGED_VAR_SIZE_DECODED_BYTES} bytes a row. The
+     * planner admits a var-size build column as a join key, which the sink stages, or as a column
+     * that only the build's own filters read, its scan's WHERE filter and an outer join's ON
+     * condition on the build alone. Such a filter-only column stays in the build scan, so it counts
+     * at that estimate.
      */
     public boolean isReaderCacheExceeded(long parquetFrameRows, long stagedKeySize) {
         final long rowSize = Math.max(decodedRowSize + stagedKeyDecodeFactor * stagedKeySize, 1);

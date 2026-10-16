@@ -941,7 +941,11 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                             "SELECT sum(p.d) FROM (SELECT * FROM a WHERE d > $1) r" + join
                                     + "(SELECT * FROM b WHERE length($1) > 0) p ON r.id = p.id",
                             "SELECT sum(p.d) FROM (SELECT * FROM a WHERE length($1) > 0) r" + join
-                                    + "(SELECT * FROM b WHERE d > $1) p ON r.id = p.id"
+                                    + "(SELECT * FROM b WHERE d > $1) p ON r.id = p.id",
+                            // Interval extraction infers $1 in one input, FunctionParser in the other.
+                            "SELECT sum(p.d)" + from + " WHERE r.t >= $1 AND p.d > $1",
+                            "SELECT sum(p.d)" + from + " WHERE r.d > $1 AND p.t >= $1",
+                            "SELECT sum(p.d)" + from + " WHERE r.t >= $1 AND r.d > $2"
                     }) {
                         expected.append(sql).append('\n').append(bindOutcome(sql, context, false, ColumnType.UNDEFINED, "1")).append('\n');
                         actual.append(sql).append('\n').append(bindOutcome(sql, context, true, ColumnType.UNDEFINED, "1")).append('\n');
@@ -952,6 +956,17 @@ public class HashJoinGroupBySemanticTest extends AbstractCairoTest {
                 bindVariableService.clear();
                 bindVariableService.setStr(0, "1");
                 assertOutcome("SELECT sum(r.d + $1) FROM a r JOIN b p ON r.id = p.id WHERE r.n = $1", context, true);
+                // So do undefined ones in the inputs' own WHERE clauses, whose types each input's
+                // compile infers, when the fused plan compiles the inputs in the ordinary plan's
+                // order. A RIGHT join's WHERE clause on r filters the joined rows.
+                for (String join : JOINS) {
+                    bindVariableService.clear();
+                    String sql = "SELECT sum(p.d) FROM a r" + join + "b p ON r.id = p.id WHERE r.t >= $1 AND r.d > $2";
+                    try (RecordCursorFactory factory = engine.select(sql, context)) {
+                        String actualPlan = plan(factory, context);
+                        Assert.assertEquals(sql + '\n' + actualPlan, !join.equals(" right join "), actualPlan.contains("Hash Join Group By"));
+                    }
+                }
             }
         });
     }

@@ -742,8 +742,7 @@ public class HashJoinGroupByConcurrentTest extends AbstractCairoTest {
         // A share holds less than a decoded build, so the readers decode row groups again.
         Assert.assertTrue(readerShare < decodedBuildSize);
         // Every worker must hold a probe frame at once, and the gated owner publishes no frame past
-        // a full queue, so the queue needs a frame per worker. This goes first: Overrides keeps the
-        // changes only when the last property set in a batch changes.
+        // a full queue, so the queue needs a frame per worker.
         setProperty(PropertyKey.CAIRO_UNORDERED_PAGE_FRAME_REDUCE_QUEUE_CAPACITY, workerCount);
         setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 2_000);
         setProperty(PropertyKey.CAIRO_SQL_PARQUET_CACHE_MEMORY_SIZE, cacheSize);

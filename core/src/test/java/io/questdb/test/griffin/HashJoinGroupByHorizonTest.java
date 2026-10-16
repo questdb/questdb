@@ -312,14 +312,17 @@ public class HashJoinGroupByHorizonTest extends AbstractCairoTest {
         });
     }
 
-    @Ignore("PR7618 bug: EXPLAIN fails over a fused scalar sub-query, see PR7618_BUGS_HANDOFF.md")
     @Test
     public void testPlanOfFusedScalarSubQueryInAggregate() throws Exception {
-        // AsyncHashJoinGroupByRecordCursorFactory.toPlan() sets the plan sink's metadata and leaves
-        // it null, and it ignores the sink's base-metadata mode. An operator that prints its
-        // functions over its own metadata, a HORIZON JOIN or an outer fused GROUP BY, or over its
-        // base metadata, an Async Group By, then resolves the columns that follow a fused sub-query
-        // in the wrong metadata. Each fragment is the text that follows the sub-query's plan.
+        // AsyncHashJoinGroupByRecordCursorFactory.toPlan() sets the plan sink's metadata for its own
+        // columns. It must give the caller back its metadata and base-metadata mode, and it must not
+        // resolve its own columns through the caller's base metadata. An operator that prints its
+        // functions over its own metadata, a HORIZON JOIN, or over its base metadata, a GROUP BY
+        // over a hash join, an Async Group By or a SAMPLE BY, otherwise resolves the fused
+        // sub-query's columns or the columns that follow it in the wrong metadata. The outer GROUP
+        // BY over the hash join doesn't fuse: the fused path rejects a sub-query in an aggregate.
+        // Each fragment is the text that follows the sub-query's plan, which matches the text the
+        // plan prints with the fused path off.
         assertMemoryLeak(() -> {
             createTables();
             try (SqlExecutionContextImpl context = context(engine, 1)) {
@@ -338,7 +341,7 @@ public class HashJoinGroupByHorizonTest extends AbstractCairoTest {
                         {
                                 "SELECT t.sym, sum(CASE WHEN t.qty * 50 > " + FUSED_SUBQUERY + " THEN r.w ELSE 0.0 END) a, sum(r.w) b"
                                         + " FROM trades t JOIN refs r ON t.k = r.k ORDER BY 1",
-                                "r.w,0.0])),sum(r.w)]"
+                                "w,0.0])),sum(w)]"
                         },
                         {
                                 "SELECT sym, t.qty * 50 > " + FUSED_SUBQUERY + " big, sum(CASE WHEN qty * 50 > " + FUSED_SUBQUERY
@@ -562,9 +565,11 @@ public class HashJoinGroupByHorizonTest extends AbstractCairoTest {
     @Test
     public void testRepeatedMasterKeyColumnInHashJoin() throws Exception {
         // t.sym pairs with a SYMBOL and a VARCHAR column of p. The optimiser keeps one pair and
-        // filters p on the equality of its two columns: the fused INNER join runs that filter on
-        // its input, and the LEFT join keeps the ordinary plan. A master that projects sym twice
-        // keeps both pairs, a SYMBOL and a VARCHAR one over the same base column, on the ordinary plan.
+        // filters p on the equality of its two columns, which the fused plan runs on its input:
+        // the LEFT join builds p and runs the filter over the build's page frames, VARCHAR column
+        // and all, and the filter drops the C price whose VARCHAR reads A. A master that projects
+        // sym twice keeps both pairs, a SYMBOL and a VARCHAR one over the same base column, on the
+        // ordinary plan.
         assertMemoryLeak(() -> {
             createTables();
             try (SqlExecutionContextImpl context = context(engine, 4)) {
@@ -584,7 +589,7 @@ public class HashJoinGroupByHorizonTest extends AbstractCairoTest {
                 assertBothPlans(
                         "SELECT t.sym, count() n, count(p.price) np, sum(p.price) s FROM trades t LEFT JOIN prices p ON t.sym = p.sym AND t.sym = p.v ORDER BY 1",
                         context,
-                        false,
+                        true,
                         """
                                 sym\tn\tnp\ts
                                 A\t4\t4\t440.0
@@ -690,8 +695,8 @@ public class HashJoinGroupByHorizonTest extends AbstractCairoTest {
         }
     }
 
-    // Asserts results only: the EXPLAIN of these queries fails with the fused path on, see
-    // testPlanOfFusedScalarSubQueryInAggregate().
+    // Asserts results only, with the fused path on and off. testPlanOfFusedScalarSubQueryInAggregate()
+    // asserts the plans of a fused scalar sub-query nested in an outer operator.
     private void assertResultsOfBothPlans(
             String sql,
             SqlExecutionContextImpl context,

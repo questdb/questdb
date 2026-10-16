@@ -59,14 +59,18 @@ import static io.questdb.test.griffin.HashJoinGroupByQualificationTest.result;
  * shared filter would race, and compare the rows with the ordinary plan's.
  */
 public class HashJoinGroupByWorkerFilterTest extends AbstractCairoTest {
-    // An INNER join builds b, the smaller input, and runs the WHERE regex as its scan's filter.
+    // An INNER join builds b, the smaller input, and runs the WHERE regex as its scan's filter, over
+    // b's VARCHAR and STRING columns or over its SYMBOL columns cast to those types.
     private static final String[] INNER_QUERIES = {
             "SELECT p.g, count() n, sum(b.w) w, sum(p.v) v FROM p JOIN b ON p.id = b.id WHERE b.name::VARCHAR ~ 'x.*' ORDER BY p.g",
-            "SELECT count() n, sum(b.w) w FROM p JOIN b ON p.id = b.id WHERE b.name::VARCHAR ~ 'x.*' AND b.tag::STRING ~ 't[01]'"
+            "SELECT count() n, sum(b.w) w FROM p JOIN b ON p.id = b.id WHERE b.name::VARCHAR ~ 'x.*' AND b.tag::STRING ~ 't[01]'",
+            "SELECT p.g, count() n, sum(b.w) w, sum(p.v) v FROM p JOIN b ON p.id = b.id WHERE b.vname ~ 'x.*' ORDER BY p.g",
+            "SELECT count() n, sum(b.w) w FROM p JOIN b ON p.id = b.id WHERE b.vname ~ 'x.*' AND b.stag ~ 't[01]'"
     };
-    // b's ON condition and its scan's WHERE filter both use a regex. They cast b's SYMBOL columns,
-    // since a build column of a variable-size type keeps the ordinary plan. A LEFT join builds b, the input
-    // after it, and a RIGHT join, which the planner runs as a LEFT one, builds b too.
+    // b's ON condition and its scan's WHERE filter both use a regex, over b's VARCHAR and STRING
+    // columns or over its SYMBOL columns cast to those types. The build runs both filters over its
+    // page frames, so a variable-size column they read never reaches the row heap. A LEFT join
+    // builds b, the input after it, and a RIGHT join, which the planner runs as a LEFT one, builds b too.
     private static final String[] OUTER_QUERIES = {
             """
                     SELECT p.g, count() n, count(b.id) m, sum(b.w) w, sum(p.v) v
@@ -93,6 +97,22 @@ public class HashJoinGroupByWorkerFilterTest extends AbstractCairoTest {
                     SELECT p.g, count() n, count(b.id) m, sum(b.w) w
                     FROM p LEFT JOIN (SELECT * FROM b WHERE tag::STRING ~ 't[01]') b
                         ON p.id = b.id AND p.g = b.g AND b.name::VARCHAR ~ 'x.*'
+                    ORDER BY p.g
+                    """,
+            """
+                    SELECT p.g, count() n, count(b.id) m, sum(b.w) w, sum(p.v) v
+                    FROM p LEFT JOIN (SELECT * FROM b WHERE stag ~ 't[01]') b ON p.id = b.id AND b.vname ~ 'x.*'
+                    ORDER BY p.g
+                    """,
+            """
+                    SELECT p.g, count() n, count(b.id) m, sum(b.w) w
+                    FROM (SELECT * FROM b WHERE stag ~ 't[01]') b RIGHT JOIN p ON p.id = b.id AND b.vname ~ 'x.*'
+                    ORDER BY p.g
+                    """,
+            """
+                    SELECT p.g, count() n, count(b.id) m, sum(b.w) w
+                    FROM p LEFT JOIN (SELECT * FROM b WHERE stag ~ 't[01]') b
+                        ON p.id = b.id AND p.g = b.g AND b.vname ~ 'x.*'
                     ORDER BY p.g
                     """
     };
@@ -170,10 +190,15 @@ public class HashJoinGroupByWorkerFilterTest extends AbstractCairoTest {
     }
 
     // p holds 6_000 rows, b 2_400 over two days. One in three of b's names contains an x, and half of
-    // its tags are t0 or t1, so each regex drops a different share of the build's rows.
+    // its tags are t0 or t1, so each regex drops a different share of the build's rows. b holds each
+    // name and tag twice: as a SYMBOL, and as a VARCHAR name and a STRING tag. One in eight of the
+    // VARCHAR and STRING copies is NULL, which no regex matches.
     private static void createTables(CairoEngine db, SqlExecutionContext context) throws Exception {
         db.execute("CREATE TABLE p (id INT, g INT, v DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", context);
-        db.execute("CREATE TABLE b (id INT, g INT, name SYMBOL, tag SYMBOL, w DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY", context);
+        db.execute("""
+                CREATE TABLE b (id INT, g INT, name SYMBOL, tag SYMBOL, vname VARCHAR, stag STRING, w DOUBLE, ts TIMESTAMP)
+                TIMESTAMP(ts) PARTITION BY DAY
+                """, context);
         db.execute("""
                 INSERT INTO p
                 SELECT (x % 1_500)::INT, (x % 7)::INT, x * 0.5, timestamp_sequence('2020-01-01', 30_000_000L)
@@ -181,10 +206,16 @@ public class HashJoinGroupByWorkerFilterTest extends AbstractCairoTest {
                 """, context);
         db.execute("""
                 INSERT INTO b
-                SELECT (x % 1_200)::INT, (x % 7)::INT,
-                    CASE WHEN x % 3 = 0 THEN 'x' ELSE 'y' END || (x % 11),
-                    't' || (x % 4), x * 0.25, timestamp_sequence('2020-01-01', 72_000_000L)
-                FROM long_sequence(2_400)
+                SELECT id, g, name, tag,
+                    CASE WHEN x % 8 = 0 THEN NULL ELSE name END::VARCHAR,
+                    CASE WHEN x % 8 = 0 THEN NULL ELSE tag END::STRING,
+                    w, ts
+                FROM (
+                    SELECT x, (x % 1_200)::INT id, (x % 7)::INT g,
+                        CASE WHEN x % 3 = 0 THEN 'x' ELSE 'y' END || (x % 11) name,
+                        't' || (x % 4) tag, x * 0.25 w, timestamp_sequence('2020-01-01', 72_000_000L) ts
+                    FROM long_sequence(2_400)
+                )
                 """, context);
     }
 
