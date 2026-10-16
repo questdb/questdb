@@ -294,7 +294,10 @@ read by nothing and not deleted.
 1. If neither generation file exists, the table is not enrolled: nothing to do. That is two existence checks (four
    `access` calls) per WAL table, the whole cost of recovery for a table without a save point: about 2 µs per table,
    2.2 ms per 1,000 tables.
-2. If the internal roll-forward test hook is disabled, refuse. There is no server-side property for this; it
+2. If roll-forward is disabled, refuse. The switch is the debug property
+   `cairo.adaptive.recovery.roll.forward.enabled` (default `true`). Like the `debug.*` keys, it is read from
+   `server.conf` but left out of `SHOW PARAMETERS` and the shipped `server.conf`. Setting it to `false` makes startup
+   refuse every table that has a save point (`adaptive recovery is disabled; refusing unsafe startup`). It
    exists only so a test can force the refusal path.
 3. Repair an interrupted `_meta` swap (the `_todo_` file), as the writer would.
 4. Delete unpublished generation files. If none is left, the table is not enrolled.
