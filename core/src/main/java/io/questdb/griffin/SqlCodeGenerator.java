@@ -565,6 +565,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     private final BitSet writeTimestampAsNanosB = new BitSet();
     private boolean enableJitNullChecks = true;
     private boolean fullFatJoins = false;
+    private boolean isParallelismEnabled = true;
     // Only this RHS leaf must retain a time-frame-capable scan beneath its residual filter.
     private IQueryModel horizonJoinSlaveModel;
     // Used to pass ORDER BY context from outer query down to join generation for markout horizon optimization
@@ -2732,7 +2733,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
      *   <li>Changes the keyTypes entry from STRING to INT</li>
      *   <li>Collects master/slave column indices into arrays</li>
      * </ul>
-     * Must be called after createSymbolShortCircuit() and before createRecordCopierMaster/Slave().
+     * Must be called before createRecordCopierMaster/Slave().
      *
      * @return null if no SYMBOL-SYMBOL pairs found, otherwise [masterIndices, slaveIndices]
      */
@@ -5188,7 +5189,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         sqlNodeStack, sqlNodeStack2, filterExpr, factory.getMetadata(), functionParser, executionContext));
             }
 
-            final boolean enableParallelFilter = executionContext.isParallelFilterEnabled();
+            final boolean enableParallelFilter = isParallelismEnabled && executionContext.isParallelFilterEnabled();
             final boolean enablePreTouch = SqlHints.hasEnablePreTouchHint(model, model.getName());
             if (enableParallelFilter && factory.supportsPageFrameCursor()) {
                 IntHashSet filterUsedColumnIndexes = new IntHashSet();
@@ -5415,7 +5416,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // This method adopts both input factories on entry. Until a cursor factory constructor
             // adopts them, this catch owns their rollback as well as the derived resources below.
             offsets = computeHorizonOffsets(horizonContext, masterMetadata);
-            final boolean parallelHorizonJoinEnabled = executionContext.isParallelHorizonJoinEnabled();
+            final boolean parallelHorizonJoinEnabled = isParallelismEnabled && executionContext.isParallelHorizonJoinEnabled();
             supportsParallelism = parallelHorizonJoinEnabled && masterFactory.supportsPageFrameCursor();
 
             // Check if filter stealing is possible, but delay the actual stealing until
@@ -6016,6 +6017,64 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         final JoinRecordMetadata joinMetadata = createJoinMetadata(masterAlias, masterMetadata, slaveAlias, slaveMetadata);
         try {
             boolean hasLinearHint = SqlHints.hasAsOfLinearHint(model, masterAlias, slaveAlias);
+            if (!hasLinearHint && !slave.supportsTimeFrameCursor()) {
+                final boolean isProjection = slave.isProjection();
+                final IntList stolenCrossIndex = isProjection ? slave.getColumnCrossIndex() : null;
+                final RecordCursorFactory filterFactory = isProjection ? slave.getBaseFactory() : slave;
+                if ((filterFactory.supportsFilterStealing()
+                        || (!isParallelismEnabled && filterFactory instanceof FilteredRecordCursorFactory
+                        && (!isProjection || stolenCrossIndex != null)))
+                        && filterFactory.getBaseFactory().supportsTimeFrameCursor()) {
+                    // no_parallel lets filtered ASOF consume serial filters on the caller thread.
+                    // Require a projection mapping only for this hint-specific serial alternative.
+                    RecordCursorFactory slaveBase = filterFactory.getBaseFactory();
+                    assert !isProjection || stolenCrossIndex != null;
+                    int slaveTimestampIndex = isProjection
+                            ? slaveMetadata.getTimestampIndex()
+                            : validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
+                    assert !isProjection
+                            || stolenCrossIndex.get(slaveTimestampIndex) == slaveBase.getMetadata().getTimestampIndex();
+                    Function stolenFilter = filterFactory.getFilter();
+                    assert stolenFilter != null;
+
+                    Misc.free(filterFactory.getCompiledFilter());
+                    Misc.free(filterFactory.getBindVarMemory());
+                    Misc.freeObjList(filterFactory.getBindVarFunctions());
+                    filterFactory.halfClose();
+
+                    if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
+                        int[][] filteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
+                        return new FilteredAsOfJoinFastRecordCursorFactory(
+                                configuration,
+                                joinMetadata,
+                                master,
+                                createRecordCopierMaster(masterMetadata),
+                                slaveBase,
+                                createRecordCopierSlave(slaveMetadata),
+                                stolenFilter,
+                                masterMetadata.getColumnCount(),
+                                NullRecordFactory.getInstance(slaveMetadata),
+                                stolenCrossIndex,
+                                slaveTimestampIndex,
+                                toleranceInterval,
+                                filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[0] : null,
+                                filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[1] : null
+                        );
+                    }
+                    return new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
+                            configuration,
+                            joinMetadata,
+                            master,
+                            slaveBase,
+                            stolenFilter,
+                            masterMetadata.getColumnCount(),
+                            NullRecordFactory.getInstance(slaveMetadata),
+                            stolenCrossIndex,
+                            slaveTimestampIndex,
+                            toleranceInterval
+                    );
+                }
+            }
             if (isKeyedTemporalJoin(masterMetadata, slaveMetadata)) {
                 SymbolShortCircuit symbolShortCircuit = createSymbolShortCircuit(masterMetadata, slaveMetadata, isSelfJoin);
                 int joinColumnSplit = masterMetadata.getColumnCount();
@@ -6124,79 +6183,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                     fastSymbolKeyIndices != null ? fastSymbolKeyIndices[1] : null
                             );
                         }
-                    } else if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
-                        RecordCursorFactory slaveBase = slave.getBaseFactory();
-                        int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
-
-                        Function stolenFilter = slave.getFilter();
-                        assert stolenFilter != null;
-
-                        Misc.free(slave.getCompiledFilter());
-                        Misc.free(slave.getBindVarMemory());
-                        Misc.freeObjList(slave.getBindVarFunctions());
-                        slave.halfClose();
-
-                        int[][] filteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
-                        return new FilteredAsOfJoinFastRecordCursorFactory(
-                                configuration,
-                                joinMetadata,
-                                master,
-                                createRecordCopierMaster(masterMetadata),
-                                slaveBase,
-                                createRecordCopierSlave(slaveMetadata),
-                                stolenFilter,
-                                masterMetadata.getColumnCount(),
-                                NullRecordFactory.getInstance(slaveMetadata),
-                                null,
-                                slaveTimestampIndex,
-                                toleranceInterval,
-                                filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[0] : null,
-                                filteredSymbolKeyIndices != null ? filteredSymbolKeyIndices[1] : null
-                        );
-                    } else if (slave.isProjection()) {
-                        RecordCursorFactory projectionBase = slave.getBaseFactory();
-                        // We know projectionBase does not support supportsTimeFrameCursor, because
-                        // Projections forward this call to its base factory and if we are in this branch
-                        // then slave.supportsTimeFrameCursor() returned false in one the previous branches.
-                        // There is still chance that projectionBase is just a filter
-                        // and its own base supports timeFrameCursor. let's see.
-                        if (projectionBase.supportsFilterStealing()) {
-                            // ok cool, it's used only as a filter.
-                            RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
-                            if (filterStealingBase.supportsTimeFrameCursor()) {
-                                IntList stolenCrossIndex = slave.getColumnCrossIndex();
-                                assert stolenCrossIndex != null;
-                                Function stolenFilter = projectionBase.getFilter();
-                                assert stolenFilter != null;
-
-                                // index *after* applying the projection
-                                int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-                                assert stolenCrossIndex.get(slaveTimestampIndex) == filterStealingBase.getMetadata().getTimestampIndex();
-
-                                Misc.free(projectionBase.getCompiledFilter());
-                                Misc.free(projectionBase.getBindVarMemory());
-                                Misc.freeObjList(projectionBase.getBindVarFunctions());
-                                projectionBase.halfClose();
-
-                                int[][] projFilteredSymbolKeyIndices = convertSymbolJoinKeysToInt(masterMetadata, slaveMetadata);
-                                return new FilteredAsOfJoinFastRecordCursorFactory(
-                                        configuration,
-                                        joinMetadata,
-                                        master,
-                                        createRecordCopierMaster(masterMetadata),
-                                        filterStealingBase,
-                                        createRecordCopierSlave(slaveMetadata),
-                                        stolenFilter,
-                                        masterMetadata.getColumnCount(),
-                                        NullRecordFactory.getInstance(slaveMetadata),
-                                        stolenCrossIndex,
-                                        slaveTimestampIndex,
-                                        toleranceInterval,
-                                        projFilteredSymbolKeyIndices != null ? projFilteredSymbolKeyIndices[0] : null,
-                                        projFilteredSymbolKeyIndices != null ? projFilteredSymbolKeyIndices[1] : null
-                                );
-                            }
-                        }
                     }
                 }
 
@@ -6256,74 +6242,6 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             masterMetadata.getColumnCount(),
                             toleranceInterval
                     );
-                }
-                if (slave.supportsFilterStealing() && slave.getBaseFactory().supportsTimeFrameCursor()) {
-                    // Try to steal the filter from the slave. This downgrades to
-                    // single-threaded Java-level filtering, so it's only worth it if the filter
-                    // selectivity is low. We don't have statistics to tell selectivity, so
-                    // we allow the user to disable this with the asof_linear_search hint.
-                    RecordCursorFactory slaveBase = slave.getBaseFactory();
-                    int slaveTimestampIndex = validateAndGetSlaveTimestampIndex(slaveMetadata, slaveBase);
-
-                    Function stolenFilter = slave.getFilter();
-                    assert stolenFilter != null;
-
-                    Misc.free(slave.getCompiledFilter());
-                    Misc.free(slave.getBindVarMemory());
-                    Misc.freeObjList(slave.getBindVarFunctions());
-                    slave.halfClose();
-                    return new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
-                            configuration,
-                            joinMetadata,
-                            master,
-                            slaveBase,
-                            stolenFilter,
-                            masterMetadata.getColumnCount(),
-                            NullRecordFactory.getInstance(slaveMetadata),
-                            null,
-                            slaveTimestampIndex,
-                            toleranceInterval
-                    );
-                }
-                if (slave.isProjection()) {
-                    RecordCursorFactory projectionBase = slave.getBaseFactory();
-                    // We know projectionBase does not support supportsTimeFrameCursor, because
-                    // projections forward this call to its base factory, and if we are in this branch,
-                    // slave.supportsTimeFrameCursor() returned false in a previous branch.
-                    // There is still chance that projectionBase is just a filter
-                    // and its own base supports timeFrameCursor. Let's see.
-                    if (projectionBase.supportsFilterStealing()) {
-                        // ok, cool, it's used only as a filter
-                        RecordCursorFactory filterStealingBase = projectionBase.getBaseFactory();
-                        if (filterStealingBase.supportsTimeFrameCursor()) {
-                            IntList stolenCrossIndex = slave.getColumnCrossIndex();
-                            assert stolenCrossIndex != null;
-                            Function stolenFilter = projectionBase.getFilter();
-                            assert stolenFilter != null;
-
-                            // index *after* applying the projection
-                            int slaveTimestampIndex = slaveMetadata.getTimestampIndex();
-                            assert stolenCrossIndex.get(slaveTimestampIndex) == filterStealingBase.getMetadata().getTimestampIndex();
-
-                            Misc.free(projectionBase.getCompiledFilter());
-                            Misc.free(projectionBase.getBindVarMemory());
-                            Misc.freeObjList(projectionBase.getBindVarFunctions());
-                            projectionBase.halfClose();
-
-                            return new FilteredAsOfJoinNoKeyFastRecordCursorFactory(
-                                    configuration,
-                                    joinMetadata,
-                                    master,
-                                    filterStealingBase,
-                                    stolenFilter,
-                                    masterMetadata.getColumnCount(),
-                                    NullRecordFactory.getInstance(slaveMetadata),
-                                    stolenCrossIndex,
-                                    slaveTimestampIndex,
-                                    toleranceInterval
-                            );
-                        }
-                    }
                 }
             }
             // fallback for non-keyed join when no optimizations are applicable, or the asof_linear hint is used:
@@ -6994,7 +6912,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 }
 
                                 // is parallel windowJoin?
-                                final boolean parallelWindowJoinEnabled = executionContext.isParallelWindowJoinEnabled();
+                                final boolean parallelWindowJoinEnabled = isParallelismEnabled && executionContext.isParallelWindowJoinEnabled();
                                 final boolean masterSupportsPageFrames = master.supportsPageFrameCursor()
                                         || (master.supportsFilterStealing() && master.getBaseFactory().supportsPageFrameCursor());
                                 if (parallelWindowJoinEnabled
@@ -7530,7 +7448,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                             // branch that builds EmptyTableRecordCursorFactory over the freed
                             // master's JoinRecordMetadata - no incrementRefCount is needed here.
                             master = new RuntimeConstGateRecordCursorFactory(master, filter, deepClone(expressionNodePool, filterExpr));
-                        } else if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
+                        } else if (isParallelismEnabled && executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
                             collectColumnIndexes(sqlNodeStack, postJoinFilterMetadata, filterExpr, filterUsedColumnIndexes);
 
@@ -7624,7 +7542,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         }
                     } else {
                         // make it a post-join filter (same as for post join where clause above)
-                        if (executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
+                        if (isParallelismEnabled && executionContext.isParallelFilterEnabled() && master.supportsPageFrameCursor()) {
                             IntHashSet filterUsedColumnIndexes = new IntHashSet();
                             collectColumnIndexes(sqlNodeStack, master.getMetadata(), constFilterExpr, filterUsedColumnIndexes);
 
@@ -8116,7 +8034,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         latestByIndex,
                         columnIndexes,
                         columnSizeShifts,
-                        prefixes
+                        prefixes,
+                        isParallelismEnabled
                 );
             } else {
                 return new LatestByDeferredListValuesFilteredRecordCursorFactory(
@@ -8254,7 +8173,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // This method adopts the master and every slave factory on entry. Until a cursor
             // factory constructor adopts them, this catch owns their rollback.
             offsets = computeHorizonOffsets(horizonContext, masterMetadata);
-            if (executionContext.isParallelHorizonJoinEnabled()) {
+            if (isParallelismEnabled && executionContext.isParallelHorizonJoinEnabled()) {
                 // !supportsPageFrameCursor(): prefer the runtime-const gate's direct page-frame
                 // passthrough over stealing its filter, same as the single-slave horizon path.
                 canStealFilter = !masterFactory.supportsPageFrameCursor()
@@ -8941,7 +8860,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                                 // re-wrap the freshly-built top-K so the output shape is
                                 // preserved. See io.questdb.cairo.sql.RecordCursorFactory
                                 // for the default methods and the per-wrapper overrides.
-                                final boolean parallelTopKEnabled = executionContext.isParallelTopKEnabled();
+                                final boolean parallelTopKEnabled = isParallelismEnabled && executionContext.isParallelTopKEnabled();
                                 if (parallelTopKEnabled && canReachPageFrameLeafForTopK(recordCursorFactory)) {
                                     final RecordCursorFactory projectionWrapper = recordCursorFactory.canPeelForTopK()
                                             ? recordCursorFactory : null;
@@ -9140,31 +9059,39 @@ public class SqlCodeGenerator implements Mutable, Closeable {
     }
 
     private RecordCursorFactory generateQuery0(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
-        if (model instanceof QueryModelWrapper wrapper) {
-            QueryModel delegate = wrapper.getDelegate();
-            int sid = wrapper.getShareId();
-            RecordCursorFactory primaryFactory = sharedFactoryCache.get(delegate);
-            boolean cached = true;
-            if (primaryFactory == null) {
-                primaryFactory = generateSharedSource(delegate, executionContext, processJoins);
-                cached = false;
+        // Unlike table-specific hints, no_parallel also covers CTEs and scalar subqueries.
+        // Keep its scope on the generation stack rather than changing the execution context.
+        final boolean isParallelismEnabledBefore = isParallelismEnabled;
+        isParallelismEnabled &= !SqlHints.hasNoParallelHint(model);
+        try {
+            if (model instanceof QueryModelWrapper wrapper) {
+                QueryModel delegate = wrapper.getDelegate();
+                int sid = wrapper.getShareId();
+                RecordCursorFactory primaryFactory = sharedFactoryCache.get(delegate);
+                boolean cached = true;
+                if (primaryFactory == null) {
+                    primaryFactory = generateSharedSource(delegate, executionContext, processJoins);
+                    cached = false;
+                }
+                if (primaryFactory.supportsSharedCursors()) {
+                    sharedFactoryCache.put(delegate, primaryFactory);
+                    return new SharedRecordCursorFactory(primaryFactory, sid);
+                }
+                return cached ? generateSharedSource(delegate, executionContext, processJoins) : primaryFactory;
             }
-            if (primaryFactory.supportsSharedCursors()) {
-                sharedFactoryCache.put(delegate, primaryFactory);
-                return new SharedRecordCursorFactory(primaryFactory, sid);
-            }
-            return cached ? generateSharedSource(delegate, executionContext, processJoins) : primaryFactory;
-        }
 
-        if (model instanceof QueryModel qm && qm.hasSharedRefs()) {
-            RecordCursorFactory factory = generateSharedSource(model, executionContext, processJoins);
-            if (factory.supportsSharedCursors()) {
-                sharedFactoryCache.put(qm, factory);
+            if (model instanceof QueryModel qm && qm.hasSharedRefs()) {
+                RecordCursorFactory factory = generateSharedSource(model, executionContext, processJoins);
+                if (factory.supportsSharedCursors()) {
+                    sharedFactoryCache.put(qm, factory);
+                }
+                return factory;
             }
-            return factory;
-        }
 
-        return generateQuery0Inner(model, executionContext, processJoins);
+            return generateQuery0Inner(model, executionContext, processJoins);
+        } finally {
+            isParallelismEnabled = isParallelismEnabledBefore;
+        }
     }
 
     private RecordCursorFactory generateSharedSource(IQueryModel model, SqlExecutionContext executionContext, boolean processJoins) throws SqlException {
@@ -10503,7 +10430,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
 
             RecordMetadata baseMetadata = factory.getMetadata();
 
-            boolean enableParallelGroupBy = executionContext.isParallelGroupByEnabled();
+            boolean enableParallelGroupBy = isParallelismEnabled && executionContext.isParallelGroupByEnabled();
             // The vectorized (Rosti) group-by runs SIMD over raw page addresses with no
             // type-cast guard and no row-wise fallback, so it cannot read a column decoded
             // in its pre-conversion source type. Let the guarded Async group-by handle those.
@@ -13199,7 +13126,8 @@ public class SqlCodeGenerator implements Mutable, Closeable {
                         listColumnFilterA.getColumnIndexFactored(0),
                         columnIndexes,
                         columnSizeShifts,
-                        prefixes
+                        prefixes,
+                        isParallelismEnabled
                 );
             }
 
@@ -14067,7 +13995,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // A non-thread-safe residual needs per-worker filter clones. Without a covering delegate
             // the adaptive factory cannot expose page frames, so an outer filter would run serially.
             // Return to the ordinary scan path, which already compiles and owns those worker clones.
-            if (coveringDelegate == null && executionContext.isParallelFilterEnabled() && !preparedFilter.isThreadSafe()) {
+            if (coveringDelegate == null && isParallelismEnabled && executionContext.isParallelFilterEnabled() && !preparedFilter.isThreadSafe()) {
                 Misc.free(indexDelegate);
                 Misc.free(patternFilter);
                 return null;
@@ -14097,7 +14025,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             // Both routes evaluate the very same filter instance, so they cannot diverge on a re-bound
             // bind variable, and exactly one owner (the async factory) closes it.
             boolean isSelfFiltering = false;
-            if (coveringDelegate == null && executionContext.isParallelFilterEnabled() && preparedFilter.isThreadSafe()) {
+            if (coveringDelegate == null && isParallelismEnabled && executionContext.isParallelFilterEnabled() && preparedFilter.isThreadSafe()) {
                 final IntHashSet filterUsedColumnIndexes = new IntHashSet();
                 collectColumnIndexes(sqlNodeStack, queryMeta, intrinsicModel.filter, filterUsedColumnIndexes);
                 // Until this constructor returns, patternFilter and the unwrapped scanDelegate are both
@@ -14580,7 +14508,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
             SqlExecutionContext executionContext
     ) throws SqlException {
         try {
-            if (executionContext.isParallelFilterEnabled() && adaptiveFactory.supportsPageFrameCursor()) {
+            if (isParallelismEnabled && executionContext.isParallelFilterEnabled() && adaptiveFactory.supportsPageFrameCursor()) {
                 final IntHashSet filterUsedColumnIndexes = new IntHashSet();
                 collectColumnIndexes(sqlNodeStack, queryMeta, filterExpr, filterUsedColumnIndexes);
                 final ExpressionNode filterExprCopy = deepClone(expressionNodePool, filterExpr);
@@ -14631,7 +14559,7 @@ public class SqlCodeGenerator implements Mutable, Closeable {
         // functions), the filter, and the limit function we may create here.
         Function limitLoFunction = null;
         try {
-            if (executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
+            if (isParallelismEnabled && executionContext.isParallelFilterEnabled() && coveringFactory.supportsPageFrameCursor()) {
                 limitLoFunction = getLimitLoFunctionOnly(model, executionContext);
                 // A pushed-down LIMIT lets the async filter stop early (positive limit)
                 // or scan the tail backward (negative limit). Both are correct only

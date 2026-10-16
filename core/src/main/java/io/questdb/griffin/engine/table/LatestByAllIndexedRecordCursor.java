@@ -58,6 +58,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
     private final int columnIndex;
     private final SOUnboundedCountDownLatch doneLatch = new SOUnboundedCountDownLatch();
     private final long indexShift = 0;
+    private final boolean isParallel;
     private final QueryParallelOwnerLoop ownerLoop = new QueryParallelOwnerLoop();
     private final DirectLongList prefixes;
     private final AsyncQueryProgressState progressState = new AsyncQueryProgressState();
@@ -80,13 +81,15 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
             @NotNull @Transient RecordMetadata metadata,
             int columnIndex,
             @NotNull DirectLongList rows,
-            @NotNull DirectLongList prefixes
+            @NotNull DirectLongList prefixes,
+            boolean isParallel
     ) {
         super(configuration, metadata);
         sharedCircuitBreaker = new AtomicBooleanCircuitBreaker(engine);
         this.rows = rows;
         this.columnIndex = columnIndex;
         this.prefixes = prefixes;
+        this.isParallel = isParallel;
     }
 
     @Override
@@ -123,8 +126,7 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
         recordB.of(pageFrameCursor);
         circuitBreaker = executionContext.getCircuitBreaker();
         bus = executionContext.getMessageBus();
-        // If the worker count is 0
-        sharedQueryWorkerCount = executionContext.getSharedQueryWorkerCount();
+        sharedQueryWorkerCount = isParallel ? executionContext.getSharedQueryWorkerCount() : 0;
         rows.setMemoryTracker(executionContext.getMemoryTracker());
         rows.reopen();
         keyCount = -1;
@@ -147,8 +149,10 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
 
     @Override
     public void toPlan(PlanSink sink) {
-        sink.type("Async index backward scan").meta("on").putColumnName(columnIndex);
-        sink.meta("workers").val(sharedQueryWorkerCount + 1);
+        sink.type(isParallel ? "Async index backward scan" : "Index backward scan").meta("on").putColumnName(columnIndex);
+        if (isParallel) {
+            sink.meta("workers").val(sharedQueryWorkerCount + 1);
+        }
 
         if (prefixes.size() > 2) {
             int geoHashColumnIndex = (int) prefixes.get(0);
@@ -257,7 +261,9 @@ class LatestByAllIndexedRecordCursor extends AbstractPageFrameRecordCursor {
                 doneLatch.reset();
 
                 queuedCount = 0;
-                ownerLoop.tryAcquirePublication();
+                if (isParallel) {
+                    ownerLoop.tryAcquirePublication();
+                }
                 try {
                     for (long i = 0; i < taskCount; i++) {
                         final long argsAddress = argumentsAddress + i * LatestByArguments.MEMORY_SIZE;
