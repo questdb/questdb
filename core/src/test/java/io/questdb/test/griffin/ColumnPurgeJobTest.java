@@ -61,6 +61,7 @@ import java.util.Collection;
 import java.util.TreeSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 @RunWith(Parameterized.class)
@@ -1546,6 +1547,325 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testPurgeRetriesPostingCoverInfoFile() throws Exception {
+        // UPDATE with a reader open leaves the old instance of sym in the last three of five partitions.
+        // The purge job cannot remove the .pci file of the old instance in the middle one of them, once
+        // or three times in a row: each failed run keeps the task, and the next run removes the file
+        // after every other file of the old instance is gone. The old instance has the column name txn
+        // NONE, or the txn of an earlier UPDATE whose synchronous purge completed.
+        final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
+        final AtomicInteger remainingFailures = new AtomicInteger();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        ff = newFailingRemoveFilesFacade(failingFileSuffix, remainingFailures, failedRemoveCount);
+        assertMemoryLeak(ff, () -> {
+            final String[][] cases = {
+                    // WAL mode, column name txn of the old instance, covered columns, failed removals
+                    {"BYPASS WAL", "NONE", "x", "1"},
+                    {"WAL", "NONE", "x", "1"},
+                    {"BYPASS WAL", "NONE", "d, vc, str", "1"},
+                    {"BYPASS WAL", "UPDATED", "x", "1"},
+                    {"WAL", "UPDATED", "d, vc, str", "1"},
+                    {"BYPASS WAL", "UPDATED", "d, vc, str", "3"},
+            };
+            for (String[] testCase : cases) {
+                final String context = String.join(", ", testCase);
+                final boolean isUpdatedBefore = testCase[1].equals("UPDATED");
+                final int failures = Integer.parseInt(testCase[3]);
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createCoverInfoTable(testCase[0], testCase[2]);
+                    if (isUpdatedBefore) {
+                        // no reader: the writer purges the instance NONE itself
+                        update("UPDATE t_pci SET sym = 'B' WHERE ts >= '1970-01-03'");
+                        drainWalQueue();
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                    }
+                    final String[] oldInstanceFiles = filesOfSymInPartitions2To4(context);
+                    final String[] coverInfoFiles = new String[3];
+                    for (int i = 0; i < 3; i++) {
+                        final long columnNameTxn = getColumnNameTxn("t_pci", "sym", i + 2);
+                        if (isUpdatedBefore) {
+                            Assert.assertTrue(context, columnNameTxn > 0);
+                        } else {
+                            Assert.assertEquals(context, TableUtils.COLUMN_NAME_TXN_NONE, columnNameTxn);
+                        }
+                        coverInfoFiles[i] = coverInfoFileName("sym", columnNameTxn);
+                        Assert.assertTrue(context + ", " + oldInstanceFiles[i], (" " + oldInstanceFiles[i] + " ").contains(" " + coverInfoFiles[i] + " "));
+                    }
+
+                    try (TableReader ignore = getReader("t_pci")) {
+                        update("UPDATE t_pci SET sym = 'Z' WHERE ts >= '1970-01-03'");
+                        drainWalQueue();
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(context, 1, purgeJob.getOutstandingPurgeTasks());
+                    }
+                    final String[] liveFiles = liveFilesOfPartitions2To4(context, oldInstanceFiles);
+
+                    final String middleDir = partitionDir("t_pci", 3);
+                    failingFileSuffix.set(Files.SEPARATOR + new File(middleDir).getName() + Files.SEPARATOR + coverInfoFiles[1]);
+                    remainingFailures.set(failures);
+                    failedRemoveCount.set(0);
+                    for (int k = 1; k <= failures; k++) {
+                        engine.releaseInactive();
+                        setCurrentMicros(currentMicros + 100_000_000L);
+                        purgeJob.run();
+                        Assert.assertEquals(context, k, failedRemoveCount.get());
+                        Assert.assertEquals(context, 1, purgeJob.getOutstandingPurgeTasks());
+                        Assert.assertEquals(context, liveFiles[0], listFiles(partitionDir("t_pci", 2)));
+                        Assert.assertEquals(context, joinSorted(liveFiles[1], coverInfoFiles[1]), listFiles(middleDir));
+                        Assert.assertEquals(context, liveFiles[2], listFiles(partitionDir("t_pci", 4)));
+                    }
+
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(context, failures, failedRemoveCount.get());
+                    Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertLiveFilesOfPartitions2To4(context, liveFiles);
+                    assertRowsOfCoverInfoTable(context);
+                    failingFileSuffix.set(null);
+                    execute("DROP TABLE t_pci");
+                    drainWalQueue();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesPostingCoverInfoFileAfterUpdateWithoutReader() throws Exception {
+        // No reader holds the old instance of sym, so the writer purges it during UPDATE. It cannot
+        // remove the .pci file in the middle one of the three updated partitions and hands the purge to
+        // the purge job, whose first run removes the file.
+        final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
+        final AtomicInteger remainingFailures = new AtomicInteger();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        ff = newFailingRemoveFilesFacade(failingFileSuffix, remainingFailures, failedRemoveCount);
+        assertMemoryLeak(ff, () -> {
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createCoverInfoTable(walMode, "x");
+                    final String[] oldInstanceFiles = filesOfSymInPartitions2To4(walMode);
+                    final String middleDir = partitionDir("t_pci", 3);
+                    failingFileSuffix.set(Files.SEPARATOR + new File(middleDir).getName() + Files.SEPARATOR + "sym.pci");
+                    remainingFailures.set(1);
+                    failedRemoveCount.set(0);
+
+                    update("UPDATE t_pci SET sym = 'Z' WHERE ts >= '1970-01-03'");
+                    drainWalQueue();
+                    Assert.assertEquals(walMode, 1, failedRemoveCount.get());
+                    final String[] liveFiles = new String[3];
+                    for (int i = 0; i < 3; i++) {
+                        final TreeSet<String> files = new TreeSet<>(Arrays.asList(listFiles(partitionDir("t_pci", i + 2)).split(" ")));
+                        files.removeAll(Arrays.asList(oldInstanceFiles[i].split(" ")));
+                        liveFiles[i] = String.join(" ", files);
+                    }
+                    Assert.assertEquals(walMode, liveFiles[0], listFiles(partitionDir("t_pci", 2)));
+                    Assert.assertEquals(walMode, joinSorted(liveFiles[1], "sym.pci"), listFiles(middleDir));
+                    Assert.assertEquals(walMode, liveFiles[2], listFiles(partitionDir("t_pci", 4)));
+
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(walMode, 1, failedRemoveCount.get());
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    assertLiveFilesOfPartitions2To4(walMode, liveFiles);
+                    assertRowsOfCoverInfoTable(walMode);
+                    failingFileSuffix.set(null);
+                    execute("DROP TABLE t_pci");
+                    drainWalQueue();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesPostingCoverInfoFileOfDroppedOrRenamedColumn() throws Exception {
+        // DROP COLUMN and RENAME COLUMN with a reader open leave the instance NONE of sym in all five
+        // partitions. The purge job cannot remove its .pci file in the middle partition the first time
+        // and removes it on the retry.
+        final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
+        final AtomicInteger remainingFailures = new AtomicInteger();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        ff = newFailingRemoveFilesFacade(failingFileSuffix, remainingFailures, failedRemoveCount);
+        assertMemoryLeak(ff, () -> {
+            for (String change : new String[]{"DROP COLUMN", "RENAME COLUMN"}) {
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createCoverInfoTable("BYPASS WAL", "x");
+                    final String[] oldInstanceFiles = new String[5];
+                    for (int i = 0; i < 5; i++) {
+                        oldInstanceFiles[i] = String.join(" ", filesWithPrefix(listFiles(partitionDir("t_pci", i)), "sym."));
+                        Assert.assertTrue(change + ", " + oldInstanceFiles[i], (" " + oldInstanceFiles[i] + " ").contains(" sym.pci "));
+                    }
+                    try (TableReader ignore = getReader("t_pci")) {
+                        execute(change.equals("DROP COLUMN") ? "ALTER TABLE t_pci DROP COLUMN sym" : "ALTER TABLE t_pci RENAME COLUMN sym TO s2");
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(change, 1, purgeJob.getOutstandingPurgeTasks());
+                    }
+                    final String[] liveFiles = new String[5];
+                    for (int i = 0; i < 5; i++) {
+                        final String listing = listFiles(partitionDir("t_pci", i));
+                        final TreeSet<String> files = new TreeSet<>(Arrays.asList(listing.split(" ")));
+                        Assert.assertTrue(change + ", " + listing, files.containsAll(Arrays.asList(oldInstanceFiles[i].split(" "))));
+                        files.removeAll(Arrays.asList(oldInstanceFiles[i].split(" ")));
+                        Assert.assertEquals(change + ", " + listing, change.equals("RENAME COLUMN"), !filesWithPrefix(String.join(" ", files), "s2.pci").isEmpty());
+                        liveFiles[i] = String.join(" ", files);
+                    }
+
+                    final String middleDir = partitionDir("t_pci", 2);
+                    failingFileSuffix.set(Files.SEPARATOR + new File(middleDir).getName() + Files.SEPARATOR + "sym.pci");
+                    remainingFailures.set(1);
+                    failedRemoveCount.set(0);
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(change, 1, failedRemoveCount.get());
+                    Assert.assertEquals(change, 1, purgeJob.getOutstandingPurgeTasks());
+                    for (int i = 0; i < 5; i++) {
+                        Assert.assertEquals(change, i == 2 ? joinSorted(liveFiles[i], "sym.pci") : liveFiles[i], listFiles(partitionDir("t_pci", i)));
+                    }
+
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(change, 0, purgeJob.getOutstandingPurgeTasks());
+                    for (int i = 0; i < 5; i++) {
+                        Assert.assertEquals(change, liveFiles[i], listFiles(partitionDir("t_pci", i)));
+                    }
+                    if (change.equals("DROP COLUMN")) {
+                        assertQuery("SELECT ts, x FROM t_pci")
+                                .noLeakCheck()
+                                .expectSize()
+                                .timestamp("ts")
+                                .returns(replaceTimestampSuffix("""
+                                        ts\tx
+                                        1970-01-01T02:00:00.000000Z\t1
+                                        1970-01-02T02:00:00.000000Z\t2
+                                        1970-01-03T02:00:00.000000Z\t3
+                                        1970-01-04T02:00:00.000000Z\t4
+                                        1970-01-05T02:00:00.000000Z\t5
+                                        """, timestampType.getTypeName()));
+                    } else {
+                        assertQuery("SELECT ts, s2, x FROM t_pci WHERE s2 = 'A'")
+                                .noLeakCheck()
+                                .noRandomAccess()
+                                .expectSize()
+                                .timestamp("ts")
+                                .withPlanContaining("CoveringIndex on: s2 with: ts, x")
+                                .returns(replaceTimestampSuffix("""
+                                        ts\ts2\tx
+                                        1970-01-01T02:00:00.000000Z\tA\t1
+                                        1970-01-04T02:00:00.000000Z\tA\t4
+                                        """, timestampType.getTypeName()));
+                    }
+                    failingFileSuffix.set(null);
+                    execute("DROP TABLE t_pci");
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testPurgeRetriesPostingCoverInfoFileOfNameTxnZero() throws Exception {
+        // DROP INDEX with a reader open leaves instance 0 of s in both partitions. The purge job cannot
+        // remove s.pci.0 in the first partition the first time and removes it on the retry.
+        final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
+        final AtomicInteger remainingFailures = new AtomicInteger();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        ff = newFailingRemoveFilesFacade(failingFileSuffix, remainingFailures, failedRemoveCount);
+        assertMemoryLeak(ff, () -> {
+            for (String walMode : new String[]{"BYPASS WAL", "WAL"}) {
+                try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                    createTxnZeroCoveringTables(walMode);
+                    final String[] oldInstanceFiles = new String[2];
+                    for (int i = 0; i < 2; i++) {
+                        oldInstanceFiles[i] = String.join(" ", filesWithPrefix(listFiles(partitionDir("t_z", i)), "s."));
+                        Assert.assertTrue(walMode + ", " + oldInstanceFiles[i], (" " + oldInstanceFiles[i] + " ").contains(" s.pci.0 "));
+                    }
+                    try (TableReader ignored = getReader("t_z")) {
+                        execute("ALTER TABLE t_z ALTER COLUMN s DROP INDEX");
+                        execute("ALTER TABLE t_twin ALTER COLUMN s DROP INDEX");
+                        drainWalQueue();
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
+                    }
+                    final String[] liveFiles = new String[2];
+                    for (int i = 0; i < 2; i++) {
+                        final TreeSet<String> files = new TreeSet<>(Arrays.asList(listFiles(partitionDir("t_z", i)).split(" ")));
+                        Assert.assertTrue(walMode, files.containsAll(Arrays.asList(oldInstanceFiles[i].split(" "))));
+                        files.removeAll(Arrays.asList(oldInstanceFiles[i].split(" ")));
+                        liveFiles[i] = String.join(" ", files);
+                    }
+
+                    final String firstDir = partitionDir("t_z", 0);
+                    failingFileSuffix.set(Files.SEPARATOR + new File(firstDir).getName() + Files.SEPARATOR + "s.pci.0");
+                    remainingFailures.set(1);
+                    failedRemoveCount.set(0);
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(walMode, 1, failedRemoveCount.get());
+                    Assert.assertEquals(walMode, 1, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertEquals(walMode, joinSorted(liveFiles[0], "s.pci.0"), listFiles(firstDir));
+                    Assert.assertEquals(walMode, liveFiles[1], listFiles(partitionDir("t_z", 1)));
+
+                    engine.releaseInactive();
+                    setCurrentMicros(currentMicros + 100_000_000L);
+                    purgeJob.run();
+                    Assert.assertEquals(walMode, 0, purgeJob.getOutstandingPurgeTasks());
+                    Assert.assertEquals(walMode, liveFiles[0], listFiles(firstDir));
+                    Assert.assertEquals(walMode, liveFiles[1], listFiles(partitionDir("t_z", 1)));
+                    assertSqlCursors("SELECT ts, s, d, vc FROM t_twin WHERE s = 'x'", "SELECT ts, s, d, vc FROM t_z WHERE s = 'x'");
+                    assertSqlCursors("SELECT ts, s, d, vc FROM t_twin", "SELECT ts, s, d, vc FROM t_z");
+                    failingFileSuffix.set(null);
+                    execute("DROP TABLE t_z");
+                    execute("DROP TABLE t_twin");
+                    drainWalQueue();
+                }
+            }
+        });
+    }
+
+    @Test
+    public void testReplayedPurgeRetriesPostingCoverInfoFile() throws Exception {
+        // The purge job cannot remove the .pci file of the old instance of sym in the middle partition
+        // and closes with the task incomplete in the purge log. A new purge job replays the task and
+        // removes the file.
+        final AtomicReference<String> failingFileSuffix = new AtomicReference<>();
+        final AtomicInteger remainingFailures = new AtomicInteger();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        ff = newFailingRemoveFilesFacade(failingFileSuffix, remainingFailures, failedRemoveCount);
+        assertMemoryLeak(ff, () -> {
+            final String[] liveFiles;
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                createCoverInfoTable("BYPASS WAL", "x");
+                final String[] oldInstanceFiles = filesOfSymInPartitions2To4("replay");
+                try (TableReader ignore = getReader("t_pci")) {
+                    update("UPDATE t_pci SET sym = 'Z' WHERE ts >= '1970-01-03'");
+                    runPurgeJob(purgeJob);
+                    Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                }
+                liveFiles = liveFilesOfPartitions2To4("replay", oldInstanceFiles);
+                final String middleDir = partitionDir("t_pci", 3);
+                failingFileSuffix.set(Files.SEPARATOR + new File(middleDir).getName() + Files.SEPARATOR + "sym.pci");
+                remainingFailures.set(1);
+                engine.releaseInactive();
+                setCurrentMicros(currentMicros + 100_000_000L);
+                purgeJob.run();
+                Assert.assertEquals(1, failedRemoveCount.get());
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals(joinSorted(liveFiles[1], "sym.pci"), listFiles(middleDir));
+                // the purge log holds a row per partition of the task and completes them all at once
+                assertIncompletePurgeLogRows(purgeJob, 3);
+            }
+            engine.releaseInactive();
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                Assert.assertEquals(1, failedRemoveCount.get());
+                assertLiveFilesOfPartitions2To4("replay", liveFiles);
+                assertRowsOfCoverInfoTable("replay");
+            }
+        });
+    }
+
+    @Test
     public void testPurgeKeepsPostingCoverFilesOfIndexReAddedAtTxnZero() throws Exception {
         // DROP INDEX as the first change of a table that is not partitioned gives the column the column
         // name txn 0 in default, next to the files of instance NONE, whose purge an open reader defers.
@@ -1823,6 +2143,133 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
             Assert.assertTrue(context + ", " + file + " in " + listing, paddedListing.contains(" " + file + " "));
         }
         assertFilesOfInstanceZero(context, col, listing);
+    }
+
+    private void assertLiveFilesOfPartitions2To4(String context, String[] liveFiles) {
+        for (int i = 0; i < 3; i++) {
+            Assert.assertEquals(context, liveFiles[i], listFiles(partitionDir("t_pci", i + 2)));
+        }
+    }
+
+    /**
+     * The rows of t_pci after UPDATE ... SET sym = 'Z' WHERE ts >= '1970-01-03', through the index of
+     * sym and through a filter that reads no index.
+     */
+    private void assertRowsOfCoverInfoTable(String context) throws Exception {
+        final String query = "SELECT ts, sym, x, d, vc, str FROM t_pci WHERE sym = 'Z'";
+        try {
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix("""
+                            ts\tsym\tx\td\tvc\tstr
+                            1970-01-03T02:00:00.000000Z\tZ\t3\t3.5\tv3\ts3
+                            1970-01-04T02:00:00.000000Z\tZ\t4\t4.5\t\u00e94\ts4
+                            1970-01-05T02:00:00.000000Z\tZ\t5\tnull\t\t
+                            """, timestampType.getTypeName()));
+            assertSqlCursors("SELECT ts, sym, x, d, vc, str FROM t_pci WHERE sym::STRING = 'Z'", query);
+        } catch (AssertionError e) {
+            throw new AssertionError(context, e);
+        }
+    }
+
+    /**
+     * Creates t_pci with one row in each of five daily partitions and a POSTING index on sym that covers
+     * {@code includeClause}, so each partition holds sym.pci.
+     */
+    private void createCoverInfoTable(String walMode, String includeClause) throws SqlException {
+        execute("CREATE TABLE t_pci (ts " + timestampType.getTypeName() + ", x LONG, d DOUBLE, vc VARCHAR, str STRING, sym SYMBOL)"
+                + " TIMESTAMP(ts) PARTITION BY DAY " + walMode);
+        execute("""
+                INSERT INTO t_pci VALUES
+                ('1970-01-01T02:00:00.000000Z', 1, 1.5, 'v1', 's1', 'A'),
+                ('1970-01-02T02:00:00.000000Z', 2, 2.5, 'v2', 's2', 'B'),
+                ('1970-01-03T02:00:00.000000Z', 3, 3.5, 'v3', 's3', 'C'),
+                ('1970-01-04T02:00:00.000000Z', 4, 4.5, '\u00e94', 's4', 'A'),
+                ('1970-01-05T02:00:00.000000Z', 5, NULL, NULL, NULL, 'B')""");
+        execute("ALTER TABLE t_pci ALTER COLUMN sym ADD INDEX TYPE POSTING INCLUDE (" + includeClause + ")");
+        drainWalQueue();
+    }
+
+    private static String coverInfoFileName(String columnName, long columnNameTxn) {
+        try (Path path = new Path()) {
+            return Utf8s.stringFromUtf8Bytes(PostingIndexUtils.coverInfoFileName(path.of(""), columnName, columnNameTxn));
+        }
+    }
+
+    // the sym.* files of the last three partitions of t_pci, space-separated in name order
+    private String[] filesOfSymInPartitions2To4(String context) {
+        final String[] files = new String[3];
+        for (int i = 0; i < 3; i++) {
+            files[i] = String.join(" ", filesWithPrefix(listFiles(partitionDir("t_pci", i + 2)), "sym."));
+            Assert.assertTrue(context + ", " + files[i], (" " + files[i] + " ").contains(" sym.pv."));
+        }
+        return files;
+    }
+
+    private static TreeSet<String> filesWithPrefix(String listing, String prefix) {
+        final TreeSet<String> files = new TreeSet<>();
+        for (String file : listing.split(" ")) {
+            if (file.startsWith(prefix)) {
+                files.add(file);
+            }
+        }
+        return files;
+    }
+
+    private static long getColumnNameTxn(String tableName, String col, int partitionIndex) {
+        try (TableReader reader = getReader(tableName)) {
+            final int writerIndex = reader.getMetadata().getWriterIndex(reader.getMetadata().getColumnIndex(col));
+            return reader.getColumnVersionReader().getColumnNameTxn(reader.getPartitionTimestampByIndex(partitionIndex), writerIndex);
+        }
+    }
+
+    // the space-separated file names of the listings, in name order
+    private static String joinSorted(String... listings) {
+        final TreeSet<String> files = new TreeSet<>();
+        for (String listing : listings) {
+            files.addAll(Arrays.asList(listing.split(" ")));
+        }
+        return String.join(" ", files);
+    }
+
+    /**
+     * The files of the last three partitions of t_pci without {@code oldInstanceFiles}, which each
+     * partition still holds.
+     */
+    private String[] liveFilesOfPartitions2To4(String context, String[] oldInstanceFiles) {
+        final String[] liveFiles = new String[3];
+        for (int i = 0; i < 3; i++) {
+            final String listing = listFiles(partitionDir("t_pci", i + 2));
+            final TreeSet<String> files = new TreeSet<>(Arrays.asList(listing.split(" ")));
+            Assert.assertTrue(context + ", " + listing, files.containsAll(Arrays.asList(oldInstanceFiles[i].split(" "))));
+            files.removeAll(Arrays.asList(oldInstanceFiles[i].split(" ")));
+            liveFiles[i] = String.join(" ", files);
+        }
+        return liveFiles;
+    }
+
+    /**
+     * A files facade that fails the next {@code remainingFailures} removals of the file whose path ends
+     * with {@code failingFileSuffix}, and counts them in {@code failedRemoveCount}.
+     */
+    private static TestFilesFacadeImpl newFailingRemoveFilesFacade(
+            AtomicReference<String> failingFileSuffix,
+            AtomicInteger remainingFailures,
+            AtomicInteger failedRemoveCount
+    ) {
+        return new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                final String suffix = failingFileSuffix.get();
+                if (suffix != null && Utf8s.endsWithAscii(name, suffix) && remainingFailures.get() > 0) {
+                    remainingFailures.decrementAndGet();
+                    failedRemoveCount.incrementAndGet();
+                    return false;
+                }
+                return super.removeQuiet(name);
+            }
+        };
     }
 
     private void assertIncompletePurgeLogRows(ColumnPurgeJob purgeJob, int expectedCount) throws Exception {

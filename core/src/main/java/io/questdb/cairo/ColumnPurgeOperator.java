@@ -216,6 +216,12 @@ public class ColumnPurgeOperator implements Closeable {
                 return true;
             }
             if (IndexType.isPosting(indexType)) {
+                // removeAllSealedFiles() and its callers go on after the .pci fails to go, so the .pci
+                // can outlive the .pk and every sealed file of its instance
+                path.trimTo(pathTrimToPartition);
+                if (ff.exists(PostingIndexUtils.coverInfoFileName(path, columnName, columnVersion))) {
+                    return true;
+                }
                 path.trimTo(pathTrimToPartition);
                 long fromPk = PostingIndexUtils.readSealTxnFromKeyFile(
                         ff, PostingIndexUtils.keyFileName(path, columnName, columnVersion));
@@ -234,6 +240,8 @@ public class ColumnPurgeOperator implements Closeable {
                     // .pc<N>.<columnVersion>.<C>.<sealTxn>; if one exists
                     // the purge is not complete and must retry, otherwise
                     // the caller's "files all gone" shortcut leaks them.
+                    // With the .pci and .pk probes above, this covers every
+                    // file removeAllSealedFiles() and the .pk removal take.
                     sealedPostingFileScanProbe.clear();
                     PostingIndexUtils.scanSealedFiles(ff, path, pathTrimToPartition, columnName, columnVersion, sealedPostingFileScanProbe);
                     if (sealedPostingFileScanProbe.hasMatch()) {
