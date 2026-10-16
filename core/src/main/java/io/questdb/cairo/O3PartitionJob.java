@@ -332,6 +332,20 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 // output opens upfront.
                 final boolean isSkipMode = tableWriter.isCommitDedupSkipMode();
 
+                // The output keeps the column tops below this row count, see computeColumnTopRowLimit()
+                final long columnTopRowLimit = computeColumnTopRowLimit(
+                        actionsBuf,
+                        rowGroupBounds,
+                        sortedTimestampsAddr,
+                        srcOooLo,
+                        isCommitDedup,
+                        partitionDecoder,
+                        timestampParquetIdx,
+                        timestampColumnType,
+                        parquetColumns,
+                        ctx
+                );
+
                 // Execute merge actions.
                 // metadataPosition tracks the final row group index in the output file.
                 // Actions are in timestamp order: each action occupies one position.
@@ -347,6 +361,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 final LongList srcPtrs = ctx.getSrcPtrs(colCount);
                 final PartitionDescriptor chunkDescriptor = ctx.getChunkDescriptor();
                 int metadataPosition = 0;
+                // the output row where the current action starts
+                long outputRowOffset = 0;
                 try {
                     if (!isSkipMode) {
                         // set before the call, so that the cleanup covers an output that opened partially
@@ -367,6 +383,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                 hasSchemaChange,
                                 forceFullReencode,
                                 timestampIndex,
+                                columnTopRowLimit,
                                 parquetMetaReader,
                                 partitionUpdater,
                                 tableWriter,
@@ -446,6 +463,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         hasSchemaChange,
                                         forceFullReencode,
                                         timestampIndex,
+                                        columnTopRowLimit,
                                         parquetMetaReader,
                                         partitionUpdater,
                                         tableWriter,
@@ -491,6 +509,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                                 tableWriterMetadata,
                                                 rowGroupSize,
                                                 metadataPosition,
+                                                outputRowOffset,
                                                 mergeDstBufs,
                                                 tableToParquetIdx,
                                                 nullBufs,
@@ -500,6 +519,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         );
                                         tableWriter.addPhysicallyWrittenRows(rgSize + action.getO3RowCount() - mergeDuplicates);
                                         metadataPosition += numOutputRGs;
+                                        outputRowOffset += rgSize + action.getO3RowCount() - mergeDuplicates;
                                     } else {
                                         LOG.info()
                                                 .$("parquet row group unchanged, dedup dropped all o3 rows [table=").$(tableWriter.getTableToken())
@@ -508,6 +528,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                                 .$(", rgHi=").$(action.rowGroupIndexHi)
                                                 .I$();
                                         if (isRewrite && isOutputOpen) {
+                                            long rowGroupRowOffset = outputRowOffset;
                                             for (int rg = action.rowGroupIndex; rg <= action.rowGroupIndexHi; rg++) {
                                                 copyRowGroupToRewrite(
                                                         ctx,
@@ -515,6 +536,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                                         partitionUpdater,
                                                         rg,
                                                         metadataPosition++,
+                                                        rowGroupRowOffset,
                                                         tableWriterMetadata,
                                                         tableToParquetIdx,
                                                         rowGroupBounds,
@@ -524,12 +546,14 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                                         hasTypeConvertedColumns,
                                                         forceFullReencode
                                                 );
+                                                rowGroupRowOffset += partitionDecoder.metadata().getRowGroupSize(rg);
                                             }
                                         } else {
                                             // An update keeps the row groups in place. A rewrite whose output
                                             // is not open yet copies them when the output opens.
                                             metadataPosition += action.rowGroupIndexHi - action.rowGroupIndex + 1;
                                         }
+                                        outputRowOffset += rgSize;
                                     }
                                 }
                                 case COPY_ROW_GROUP_SLICE -> {
@@ -547,6 +571,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                                 partitionUpdater,
                                                 action.rowGroupIndex,
                                                 metadataPosition,
+                                                outputRowOffset,
                                                 tableWriterMetadata,
                                                 tableToParquetIdx,
                                                 rowGroupBounds,
@@ -560,6 +585,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                     // Update mode: full row groups stay in place, nothing to do. A rewrite
                                     // whose output is not open yet copies the row group when the output opens.
                                     metadataPosition++;
+                                    outputRowOffset += copyRgRowCount;
                                 }
                                 case COPY_O3 -> {
                                     LOG.info()
@@ -579,10 +605,12 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                             action.o3Lo,
                                             action.o3Hi,
                                             tableWriterMetadata,
-                                            metadataPosition
+                                            metadataPosition,
+                                            outputRowOffset
                                     );
                                     tableWriter.addPhysicallyWrittenRows(action.o3Hi - action.o3Lo + 1);
                                     metadataPosition++;
+                                    outputRowOffset += action.o3Hi - action.o3Lo + 1;
                                 }
                             }
                         } finally {
@@ -1763,6 +1791,70 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
     }
 
     /**
+     * Returns the number of leading rows of a parquet partition that an O3 merge leaves in place,
+     * the rows below which the output keeps the column tops, see
+     * {@link PartitionUpdater#setColumnTopRowLimit(long)}. It follows the native merge, which keeps
+     * a column top iff the top ends inside the prefix of rows with {@code ts <= o3Lo - mergeEquals}
+     * (O3OpenColumnJob), and stops at the first action that takes O3 rows: rows past the merge point
+     * of that action move, even at a tied timestamp in the next row group. When every row stays in
+     * place, the commit appends and the output keeps every top, as native does.
+     */
+    private static long computeColumnTopRowLimit(
+            ObjList<O3ParquetMergeStrategy.MergeAction> actions,
+            LongList rowGroupBounds,
+            long sortedTimestampsAddr,
+            long srcOooLo,
+            boolean isCommitDedup,
+            ParquetPartitionDecoder partitionDecoder,
+            int timestampParquetIdx,
+            int timestampColumnType,
+            DirectIntList parquetColumns,
+            O3ParquetMergeContext ctx
+    ) {
+        // parquet partitions reject replace commits, so only dedup takes equal rows into the merge
+        final long lastPrefixTimestamp = getTimestampIndexValue(sortedTimestampsAddr, srcOooLo) - (isCommitDedup ? 1 : 0);
+        long prefixRowCount = 0;
+        // the actions always hold one that takes O3 rows, a MERGE or a COPY_O3
+        int actionIndex = 0;
+        O3ParquetMergeStrategy.MergeAction action = actions.getQuick(actionIndex);
+        while (action.type == O3ParquetMergeStrategy.ActionType.COPY_ROW_GROUP_SLICE) {
+            prefixRowCount += O3ParquetMergeStrategy.getRowGroupRowCount(rowGroupBounds, action.rowGroupIndex);
+            action = actions.getQuick(++actionIndex);
+        }
+        if (action.type == O3ParquetMergeStrategy.ActionType.MERGE) {
+            for (int rg = action.rowGroupIndex; rg <= action.rowGroupIndexHi; rg++) {
+                final long rowGroupRowCount = O3ParquetMergeStrategy.getRowGroupRowCount(rowGroupBounds, rg);
+                if (O3ParquetMergeStrategy.getRowGroupMax(rowGroupBounds, rg) <= lastPrefixTimestamp) {
+                    prefixRowCount += rowGroupRowCount;
+                    continue;
+                }
+                if (O3ParquetMergeStrategy.getRowGroupMin(rowGroupBounds, rg) <= lastPrefixTimestamp) {
+                    // the prefix ends inside the row group, count its rows up to the timestamp
+                    final RowGroupBuffers timestampBuffers = ctx.getKeyRowGroupBuffers();
+                    parquetColumns.clear();
+                    parquetColumns.add(timestampParquetIdx);
+                    parquetColumns.add(timestampColumnType);
+                    partitionDecoder.decodeRowGroup(timestampBuffers, parquetColumns, rg, 0, (int) rowGroupRowCount);
+                    parquetColumns.clear();
+                    prefixRowCount += Vect.boundedBinarySearch64Bit(
+                            timestampBuffers.getChunkDataPtr(0),
+                            lastPrefixTimestamp,
+                            0,
+                            rowGroupRowCount - 1,
+                            Vect.BIN_SEARCH_SCAN_DOWN
+                    ) + 1;
+                }
+                break;
+            }
+        }
+        long partitionRowCount = 0;
+        for (int rg = 0, n = O3ParquetMergeStrategy.getRowGroupCount(rowGroupBounds); rg < n; rg++) {
+            partitionRowCount += O3ParquetMergeStrategy.getRowGroupRowCount(rowGroupBounds, rg);
+        }
+        return prefixRowCount == partitionRowCount ? Long.MAX_VALUE : prefixRowCount;
+    }
+
+    /**
      * Writes a brand-new row group from O3 input only — there is no
      * pre-existing parquet data to merge against. The O3 source buffers reach
      * this method already sorted/deduped/dense (see TableWriter.cthO3SortColumn
@@ -1782,7 +1874,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             long o3Lo,
             long o3Hi,
             TableRecordMetadata tableWriterMetadata,
-            int metadataPosition
+            int metadataPosition,
+            long outputRowOffset
     ) {
         final long rowCount = o3Hi - o3Lo + 1;
         // Use the sorted timestamps directly as merge index for the timestamp
@@ -1808,7 +1901,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     o3Hi,
                     mergeIndexAddr
             );
-            partitionUpdater.addRowGroup(metadataPosition, descriptor);
+            partitionUpdater.addRowGroup(metadataPosition, outputRowOffset, descriptor);
         } finally {
             descriptor.clear();
         }
@@ -1823,6 +1916,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             PartitionUpdater partitionUpdater,
             int rowGroupIndex,
             int metadataPosition,
+            long outputRowOffset,
             TableRecordMetadata tableWriterMetadata,
             IntList tableToParquetIdx,
             LongList rowGroupBounds,
@@ -1849,6 +1943,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                     partitionUpdater,
                     rowGroupIndex,
                     metadataPosition,
+                    outputRowOffset,
                     tableWriterMetadata,
                     tableToParquetIdx,
                     tableWriter.getSymbolTableProvider()
@@ -1945,6 +2040,8 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             boolean forceFullReencode
     ) {
         int metadataPosition = 0;
+        // the copied row groups keep their rows: each starts where it starts in the source
+        long outputRowOffset = 0;
         for (int i = 0; i < actionHi; i++) {
             final O3ParquetMergeStrategy.MergeAction action = actions.getQuick(i);
             assert action.type != O3ParquetMergeStrategy.ActionType.COPY_O3;
@@ -1955,6 +2052,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         partitionUpdater,
                         rg,
                         metadataPosition++,
+                        outputRowOffset,
                         tableWriterMetadata,
                         tableToParquetIdx,
                         rowGroupBounds,
@@ -1964,6 +2062,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                         hasTypeConvertedColumns,
                         forceFullReencode
                 );
+                outputRowOffset += partitionDecoder.metadata().getRowGroupSize(rg);
             }
         }
     }
@@ -2653,6 +2752,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             TableRecordMetadata tableWriterMetadata,
             int maxRowGroupSize,
             int metadataPosition,
+            long outputRowOffset,
             LongList mergeDstBufs,
             IntList tableToParquetIdx,
             LongList nullBufs,
@@ -2917,9 +3017,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             }
 
             if (chunk == 0) {
-                partitionUpdater.updateRowGroup(rowGroupIndex, chunkDescriptor);
+                partitionUpdater.updateRowGroup(rowGroupIndex, outputRowOffset, chunkDescriptor);
             } else {
-                partitionUpdater.addRowGroup(metadataPosition + chunk, chunkDescriptor);
+                partitionUpdater.addRowGroup(metadataPosition + chunk, outputRowOffset + chunkLo, chunkDescriptor);
             }
             chunkLo += chunkRowCount;
         }
@@ -2945,6 +3045,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
             boolean hasSchemaChange,
             boolean forceFullReencode,
             int timestampIndex,
+            long columnTopRowLimit,
             ParquetMetaFileReader parquetMetaReader,
             PartitionUpdater partitionUpdater,
             TableWriter tableWriter,
@@ -3059,6 +3160,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 parquetFileSize, // existing parquet data-file size (gates first-time vs incremental)
                 seqTxn
         );
+        partitionUpdater.setColumnTopRowLimit(columnTopRowLimit);
 
         if (hasSchemaChange || forceFullReencode) {
             ParquetRowGroupMaterializer.setTargetSchema(

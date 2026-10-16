@@ -9290,9 +9290,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                             if (Numbers.decodeHighInt(flags) != 0) {
                                 upsertParquetIndexVersions(partitionTimestamp);
                             }
-                            // The Rust updater zeroes column_top of every column in the
-                            // file (update.rs), and updateParquetIndexes() indexed every
-                            // column from row 0, so _cv must not keep a top either.
+                            // The file keeps only the column tops below the first row the
+                            // update changed (update.rs), the decoder reads the top rows as
+                            // NULL from the file, and updateParquetIndexes() indexed every
+                            // column from row 0, so _cv must not keep a top.
                             zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
                         } else {
                             txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
@@ -9324,10 +9325,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
                         txWriter.updatePartitionSizeAndTxnByRawIndex(partitionIndexRaw, srcDataNewPartitionSize);
                         partitionRemoveCandidates.add(partitionTimestamp, srcNameTxn);
                         txWriter.setPartitionParquetFileSizeByRawIndex(partitionIndexRaw, parquetFileSize);
-                        // After O3 rewrite, the Rust updater zeros all column_tops
-                        // in the parquet metadata (update.rs), so the decoder will
-                        // produce data for every column.  Zero ALL column tops
-                        // here, including previously non-existent columns.
+                        // After an O3 rewrite the file keeps only the column tops
+                        // below the first row the update changed (update.rs), and the
+                        // decoder reads the top rows as NULL from the file. Zero ALL
+                        // column tops here, including previously non-existent columns.
                         zeroColumnTopsAfterParquetRewrite(partitionTimestamp, srcDataNewPartitionSize, true);
                         // Parquet rewrite replaces the partition directory (old dir
                         // queued for removal). Bump the partition table version so
@@ -12276,7 +12277,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
 
             // The native files hold the decoded rows from the column top on. The _cv top can disagree:
             // versions before the in-place update fix kept a stale top for files the update rewrote
-            // from row 0, and CONVERT TO PARQUET zeroes a top whose row groups the decoder skips.
+            // from row 0, CONVERT TO PARQUET zeroes a top whose row groups the decoder skips, and an O3
+            // update keeps a top in the file, below the first row it changed, while _cv keeps none.
             for (int columnIndex = 0; columnIndex < decodedColumnCount; columnIndex++) {
                 final int tableColIdx = parquetDecodedTableColumnIdx.getQuick(columnIndex);
                 long nativeTop = parquetToNativeTops.getQuick(columnIndex);
@@ -15728,9 +15730,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
      * @param zeroAllColumns when {@code true}, zero column tops for ALL
      *                       columns (including ones that had no data at all).
      *                       Use {@code true} for the O3 parquet rewrite and
-     *                       update in place, where the Rust updater zeros all column_tops in
-     *                       the parquet metadata, so the decoder produces data
-     *                       for every column.  Use {@code false} for
+     *                       update in place, where the file keeps only the
+     *                       column tops below the first row the update changed
+     *                       and the decoder reads the top rows as NULL from the
+     *                       file, so _cv keeps no top.  Use {@code false} for
      *                       native→parquet conversion, where the encoder
      *                       preserves the original column_top.  Readers of
      *                       the parquet partition return NULL for the rows
