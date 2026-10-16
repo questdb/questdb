@@ -4544,8 +4544,9 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                               functions: [dateadd('s',1,ts),sym,v]
                                 SelectedRecord
                                     PageFrame
-                                        Index forward scan on: sym
-                                          filter: sym=1 and dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
+                                        Index forward scan on: sym deferred: true
+                                          symbolFilter: sym='S1'
+                                          filter: dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
                                         Frame forward scan on: tr
                             """)
                     .returns("""
@@ -4563,10 +4564,12 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                                 SelectedRecord
                                     FilterOnValues
                                         Table-order scan
-                                            Index forward scan on: sym
-                                              filter: sym=2 and dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
-                                            Index forward scan on: sym
-                                              filter: sym=1 and dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
+                                            Index forward scan on: sym deferred: true
+                                              symbolFilter: sym='S2'
+                                              filter: dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
+                                            Index forward scan on: sym deferred: true
+                                              symbolFilter: sym='S1'
+                                              filter: dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
                                         Frame forward scan on: tr
                             """)
                     .returns("""
@@ -4608,8 +4611,9 @@ public class TimestampOffsetPushdownTest extends AbstractCairoTest {
                             VirtualRecord
                               functions: [dateadd('s',1,ts2),sym,v]
                                 PageFrame
-                                    Index forward scan on: sym
-                                      filter: sym=1 and dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
+                                    Index forward scan on: sym deferred: true
+                                      symbolFilter: sym='S1'
+                                      filter: dateadd('s',1,ts2)<2024-01-01T00:01:30.000000Z
                                     Frame forward scan on: tr
                             """)
                     .returns("""
