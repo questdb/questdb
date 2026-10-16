@@ -48,6 +48,7 @@ import io.questdb.std.IntHashSet;
 import io.questdb.std.IntList;
 import io.questdb.std.LongHashSet;
 import io.questdb.std.Misc;
+import io.questdb.std.Numbers;
 import io.questdb.std.ObjHashSet;
 import io.questdb.std.ObjIntHashMap;
 import io.questdb.std.ObjList;
@@ -341,6 +342,7 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
             // ts is the only dedup key, the rows of one timestamp differ in the s column
             CommitOracle oracle = applyWithDedupModeSwitch(rnd, tableName, twinTableName, twinRnd, "ts", false, isSkipMode, transactions, firstBatchKeys);
             validateNoTimestampDuplicates(tableName, from, delta, count, null, 1, ColumnType.NULL, oracle);
+            replayStoredRows(rnd, tableName, twinTableName);
             assertByteColumnTopMatchesTwin(tableName, twinTableName);
         });
     }
@@ -542,14 +544,29 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         return !transaction.rollback && transaction.operationList.size() > 1 && !transaction.hasReplaceRange();
     }
 
+    // Whether the table has a live BOOLEAN, BYTE or SHORT column, the types without a NULL value
+    private static boolean hasNoSentinelColumn(TableToken tableToken) {
+        try (TableReader reader = getReader(tableToken)) {
+            final TableReaderMetadata metadata = reader.getMetadata();
+            for (int i = 0, n = metadata.getColumnCount(); i < n; i++) {
+                final int columnType = metadata.getColumnType(i);
+                if (columnType == ColumnType.BOOLEAN || columnType == ColumnType.BYTE || columnType == ColumnType.SHORT) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
     // When every re-inserted row is a duplicate, SKIP leaves native and Parquet partitions as they are. UPSERT
-    // keeps a native partition only after it checks that the new rows carry the values the partition has, a
-    // check that the Parquet merge does not make: an UPSERT O3 merge into a Parquet partition writes the file
-    // even when the new rows equal the stored ones, so for UPSERT only native partitions must keep their name
-    // txn.
-    private static String readPartitionsToString(TableToken tableToken, boolean isSkipMode) {
+    // keeps a native partition only after it checks that the new rows carry the values the partition has. The
+    // Parquet merge makes that check only for tables with a BOOLEAN, BYTE or SHORT column, the types whose
+    // column tops a merge would turn into 0/false: without such a column, an UPSERT O3 merge into a Parquet
+    // partition writes the file even when the new rows equal the stored ones, so only native partitions must
+    // keep their name txn.
+    private static String readPartitionsToString(TableToken tableToken, boolean isUnchangedParquet) {
         final String partitions = readTxnToString(tableToken, false, true, true, false);
-        return isSkipMode ? partitions : partitions.replaceAll("txn: -?\\d+, parquetSize: \\d+", "parquet");
+        return isUnchangedParquet ? partitions : partitions.replaceAll("txn: -?\\d+, parquetSize: \\d+", "parquet");
     }
 
     private void addDuplicates(ObjList<FuzzTransaction> transactions, Rnd rnd, IntList upsertKeyIndexes, boolean isSkipMode) {
@@ -978,7 +995,8 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
 
         LOG.info().$("Re-inserting written rows into table ").$(tableNameDedup).$();
         TableToken tt = engine.verifyTableName(tableNameDedup);
-        String partitions = readPartitionsToString(tt, isSkipMode);
+        final boolean isUnchangedParquet = isSkipMode || hasNoSentinelColumn(tt);
+        String partitions = readPartitionsToString(tt, isUnchangedParquet);
         int inserts = 2 + rnd.nextInt(10);
         long minTs, maxTs;
         try (TableReader reader = getReader(tableNameDedup)) {
@@ -1004,8 +1022,67 @@ public class DedupInsertFuzzTest extends AbstractFuzzTest {
         drainWalQueue();
 
         Assert.assertFalse("table should not be suspended", engine.getTableSequencerAPI().getTxnTracker(tt).isSuspended());
-        String partitionsAfter = readPartitionsToString(tt, isSkipMode);
+        String partitionsAfter = readPartitionsToString(tt, isUnchangedParquet);
         Assert.assertEquals("partitions should be not rewritten", partitions, partitionsAfter);
+    }
+
+    // Switches the table and its native twin to UPSERT and resends stored rows unchanged, as an at-least-once
+    // client does after a reconnect: first rows of a random interval, which every partition keeps as it is, then
+    // the rows of a day up to its last row together with a new row 1us after it, which appends to the partition of
+    // that day. The rows of the first batch hold NULL in s and b, as their column tops read.
+    private void replayStoredRows(Rnd rnd, String tableName, String twinTableName) throws SqlException {
+        for (String t : new String[]{tableName, twinTableName}) {
+            execute("alter table " + t + " dedup upsert keys(ts)", sqlExecutionContext);
+        }
+        drainWalQueue();
+        final TableToken tableToken = engine.verifyTableName(tableName);
+        final TableToken twinToken = engine.verifyTableName(twinTableName);
+        final long minTs, maxTs;
+        try (TableReader reader = getReader(tableName)) {
+            if (reader.size() == 0) {
+                return;
+            }
+            minTs = reader.getMinTimestamp();
+            maxTs = reader.getMaxTimestamp();
+        }
+
+        final long replayLo = minTs + (maxTs > minTs ? rnd.nextLong(maxTs - minTs) : 0);
+        final long replayHi = replayLo + rnd.nextLong(Micros.DAY_MICROS);
+        LOG.info().$("replaying stored rows [table=").$(tableName).$(", lo=").$ts(replayLo).$(", hi=").$ts(replayHi).I$();
+        final String partitions = readTxnToString(tableToken, false, true, true, true);
+        final String twinPartitions = readTxnToString(twinToken, false, true, true, true);
+        for (String t : new String[]{tableName, twinTableName}) {
+            execute("insert into " + t + " select * from " + t + " where ts >= " + replayLo + " and ts <= " + replayHi);
+        }
+        drainWalQueue();
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(twinToken));
+        Assert.assertEquals(twinPartitions, readTxnToString(twinToken, false, true, true, true));
+        Assert.assertEquals(partitions, readTxnToString(tableToken, false, true, true, true));
+
+        // the last row of the day of replayLo, the new row goes 1us after it when that is still the same day
+        final long dayLo = Micros.floorDD(replayLo);
+        long dayMax = Long.MIN_VALUE;
+        try (
+                RecordCursorFactory factory = select("select max(ts) from " + tableName + " where ts >= " + dayLo + " and ts < " + (dayLo + Micros.DAY_MICROS));
+                RecordCursor cursor = factory.getCursor(sqlExecutionContext)
+        ) {
+            if (cursor.hasNext()) {
+                dayMax = cursor.getRecord().getTimestamp(0);
+            }
+        }
+        if (dayMax != Numbers.LONG_NULL && dayMax != Long.MIN_VALUE && dayMax + 1 < dayLo + Micros.DAY_MICROS) {
+            final long appendLo = Math.max(dayLo, dayMax - rnd.nextLong(Micros.DAY_MICROS));
+            LOG.info().$("replaying stored rows with an append [table=").$(tableName).$(", lo=").$ts(appendLo).$(", dayMax=").$ts(dayMax).I$();
+            for (String t : new String[]{tableName, twinTableName}) {
+                execute("insert into " + t + " select * from ("
+                        + "select ts, commit, s, b from " + t + " where ts >= " + appendLo + " and ts <= " + dayMax
+                        + " union all select ts + 1 ts, commit, s, b from " + t + " where ts = " + dayMax + ")");
+            }
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(twinToken));
+        }
     }
 
     private void runDedupWithShiftAndStep(

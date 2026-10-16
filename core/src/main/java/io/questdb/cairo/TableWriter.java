@@ -332,6 +332,8 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     private final MemoryMARW todoMem = Vm.getCMARWInstance();
     private final TxWriter txWriter;
     private final TxnScoreboard txnScoreboard;
+    // cumulative since the writer opened; tests assert the work the UPSERT identity check of parquet O3 merges adds
+    private final LongAdder upsertIdentityCheckDecodedColumnCount = new LongAdder();
     private final StringSink utf16Sink = new StringSink();
     private final Utf8StringSink utf8Sink = new Utf8StringSink();
     private final FindVisitor removePartitionDirsNotAttached = this::removePartitionDirsNotAttached;
@@ -915,6 +917,10 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
     public void addPhysicallyWrittenRows(long rows) {
         physicallyWrittenRowsSinceLastCommit.add(rows);
         tableWriterMetrics().addPhysicallyWrittenRows(rows);
+    }
+
+    public void addUpsertIdentityCheckDecodedColumns(long count) {
+        upsertIdentityCheckDecodedColumnCount.add(count);
     }
 
     public long apply(AbstractOperation operation, long seqTxn) {
@@ -2729,6 +2735,11 @@ public class TableWriter implements TableWriterAPI, MetadataService, Closeable {
             updateOperatorImpl = new UpdateOperatorImpl(configuration, this, path, pathSize, getPurgingOperator());
         }
         return updateOperatorImpl;
+    }
+
+    @TestOnly
+    public long getUpsertIdentityCheckDecodedColumnCount() {
+        return upsertIdentityCheckDecodedColumnCount.sum();
     }
 
     public WalTxnDetails getWalTnxDetails() {

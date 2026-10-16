@@ -27,7 +27,9 @@ package io.questdb.test.cairo.parquet;
 import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoException;
 import io.questdb.cairo.SqlJitMode;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.TableUtils;
+import io.questdb.cairo.TableWriter;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.StringSink;
 import io.questdb.std.str.Utf8s;
@@ -40,10 +42,13 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.junit.runners.Parameterized;
 
+import java.io.File;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 /**
@@ -98,6 +103,8 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             {"carr2", "DOUBLE[][]", "ARRAY[[1.0], [2.0]]", "false"},
     };
     private static final String O3_DAY = "2024-01-01";
+    // the columns of the rows that rowOf() renders
+    private static final String UPSERT_COLUMNS = "v, ts, c1, c2, c3, ci, cv, cg, cd";
     private final boolean isWal;
     private final String lazyTarget;
     private final String type;
@@ -566,6 +573,566 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupUpsertChangedColumnMaterializesTop() throws Exception {
+        // top 6, row 7 resent with one column changed and a row at 23:00: native compares the changed column,
+        // finds a difference and merges with the prefix of rows 1..6, which ends with the top: the top rows read
+        // 0/false. The cases cover the comparer of INT v, INT, VARCHAR, GEOHASH(1c), DECIMAL(2,1) and the tested
+        // type. Row 7 with v = 13 has the same values as row 7, see literalOf(). The tests that materialize a top
+        // use a single row group of 8 rows: the merge writes every row of the top
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(8);
+        final String[][] cases = {
+                // the changed row 7, the row it reads as
+                {rowOf(13, tsOf(7), literalOf(7), "7", "'7'", "#s", "7.5m"), "13", "VALUE"},
+                {rowOf(7, tsOf(7), literalOf(7), "70", "'7'", "#s", "7.5m"), "7", "VALUE"},
+                {rowOf(7, tsOf(7), literalOf(7), "7", "'70'", "#s", "7.5m"), "7", "VALUE"},
+                {rowOf(7, tsOf(7), literalOf(7), "7", "'7'", "#u", "7.5m"), "7", "VALUE"},
+                {rowOf(7, tsOf(7), literalOf(7), "7", "'7'", "#s", "8.5m"), "7", "VALUE"},
+                {rowOf(7, tsOf(7), o3Literal(), "7", "'7'", "#s", "7.5m"), "7", "O3"},
+        };
+        assertMemoryLeak(() -> {
+            for (String[] c : cases) {
+                createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+                insertUpsertRows(c[0], newRow("2024-01-01T23:00:00.000000Z"));
+                final List<Row> expected = topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", false);
+                expected.set(6, new Row(Integer.parseInt(c[1]), tsOf(7), Kind.valueOf(c[2])));
+                assertReaders(expected);
+                dropTables();
+            }
+        });
+    }
+
+    @Test
+    public void testDedupUpsertCommitDuplicatesLastChangedMaterializesTop() throws Exception {
+        // KEYS(ts): the commit holds row 4 as stored, then row 4 with v = 44. The dedup of the commit keeps
+        // the last copy, which changes row 4: native merges with the prefix of rows 1..3 and materializes
+        // the top (6)
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(8);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            insertUpsertRows(
+                    storedRow(4, 6),
+                    rowOf(44, tsOf(4), "NULL", "NULL", "NULL", "NULL", "NULL"),
+                    newRow("2024-01-01T23:00:00.000000Z")
+            );
+            final List<Row> expected = topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", false);
+            expected.set(3, new Row(44, tsOf(4), Kind.ZERO));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
+    public void testDedupUpsertCommitDuplicatesLastIdenticalKeepsTop() throws Exception {
+        // KEYS(ts): the commit holds row 4 with v = 44, then row 4 as stored. The dedup of the commit keeps
+        // the last copy, which replays row 4 unchanged: native appends the row at 23:00 and keeps the top
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            insertUpsertRows(
+                    rowOf(44, tsOf(4), "NULL", "NULL", "NULL", "NULL", "NULL"),
+                    storedRow(4, 6),
+                    newRow("2024-01-01T23:00:00.000000Z")
+            );
+            assertReaders(topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalAtMaxThenAppendKeepsTop() throws Exception {
+        // top 7, row 8 (07:00) sits on the partition max: its replay still counts among the O3 rows at or
+        // below the max
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 7);
+            insertUpsertRows(storedRow(8, 7), newRow("2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(8, 7, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalCoalescedTieThenAppendKeepsTop() throws Exception {
+        // KEYS(ts, v), top 4, row 5 shares the timestamp of row 4 (03:00) across the boundary of row groups
+        // 0 and 1: the replay of row 5 merges both row groups as one run, which forces a rewrite. The dedup
+        // turns on after the rows exist: the row 5 insert would otherwise merge at 03:00 and materialize the top
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables("", 4, 8, 5);
+            for (String t : tables()) {
+                execute("ALTER TABLE " + t + " DEDUP ENABLE UPSERT KEYS(ts, v)");
+            }
+            drainWalQueue();
+            insertUpsertRows(
+                    rowOf(5, tsOf(4), literalOf(5), "5", "'5'", "#s", "5.5m"),
+                    newRow("2024-01-01T23:00:00.000000Z")
+            );
+            assertReaders(topRows(8, 4, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalEveryTypeThenAppendKeepsTop() throws Exception {
+        // rows 1..8 hold a value in a column of every type, BYTE w is added after the conversion (top 8). The
+        // replay of row 6 with every value as stored is identical: native appends the row at 23:00 and keeps
+        // the top of w. Then, per type, row 6 resent with NULL in place of the value of that column differs:
+        // native merges and materializes the top of w. One row group holds the 8 rows, so that the merge writes
+        // every row of the top. The test does not depend on the parameters, it runs once
+        Assume.assumeTrue(isWal && "BYTE".equals(type) && "INT".equals(lazyTarget));
+        setInPlaceProperties(8);
+        assertMemoryLeak(() -> {
+            createEveryTypeValueTables();
+            insertEveryTypeRow6(null);
+            assertByteColumnW(8);
+            for (String[] column : EVERY_TYPE_COLUMNS) {
+                dropTables();
+                createEveryTypeValueTables();
+                insertEveryTypeRow6(column[0]);
+                assertByteColumnW(0);
+            }
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalInLastRowGroupThenAppendKeepsTop() throws Exception {
+        // 10 rows in row groups of 4, 4 and 2, top 9: one MERGE of the last row group takes the replay of
+        // row 10 and the row at 23:00, the compare covers the rows of the row group only
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 9, 10, -1);
+            insertUpsertRows(storedRow(10, 9), newRow("2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(10, 9, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalInTwoRowGroupsThenAppendKeepsTop() throws Exception {
+        // the replays of row 2 (row group 0) and row 6 (row group 1): two merges, both identical
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            insertUpsertRows(storedRow(2, 6), storedRow(6, 6), newRow("2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalNullsEveryTypeThenAppendKeepsTop() throws Exception {
+        // the columns of every type are absent from the parquet file (top 8): the replay of row 4 holds NULL
+        // in each, as the null buffers of the absent columns do. Native appends the row at 23:00, every column
+        // reads NULL in rows 1..8, also the types without NULL after a lazy change to INT. The test does not
+        // depend on the parameters, it runs once
+        Assume.assumeTrue(isWal && "BYTE".equals(type) && "INT".equals(lazyTarget));
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createEveryTypeTables(8, " DEDUP UPSERT KEYS(ts)");
+            final StringBuilder columns = new StringBuilder("v, ts");
+            final StringBuilder values = new StringBuilder("50, '2024-01-01T23:00:00.000000Z'");
+            for (String[] column : EVERY_TYPE_COLUMNS) {
+                columns.append(", ").append(column[0]);
+                values.append(", ").append(column[2]);
+            }
+            for (String t : tables()) {
+                execute("INSERT INTO " + t + " (" + columns + ") VALUES (4, '" + tsOf(4) + "'"
+                        + ", NULL".repeat(EVERY_TYPE_COLUMNS.length) + "), (" + values + ")");
+            }
+            drainWalQueue();
+            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            assertEveryTypeNullCounts(8, 1);
+            for (String t : tables()) {
+                for (String column : new String[]{"cbool", "cbyte", "cshort"}) {
+                    execute("ALTER TABLE " + t + " ALTER COLUMN " + column + " TYPE INT");
+                }
+            }
+            drainWalQueue();
+            assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+            for (String column : new String[]{"cbool", "cbyte", "cshort"}) {
+                assertNullCounts(column, 8, 1);
+            }
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalOnlyLeavesPartitionUnchanged() throws Exception {
+        // the replay of row 4 into two row groups (update mode): native leaves the partition as it is
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            assertUpsertLeavesPartitionUnchanged(storedRow(4, 6));
+            assertReaders(topRows(8, 6, -1, null, true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalOnlySchemaRewriteLeavesPartitionUnchanged() throws Exception {
+        // ci changed type, so a commit that writes rows rewrites the partition: the replay of row 4 writes none
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            changeControlColumnType();
+            assertUpsertLeavesPartitionUnchanged(storedRow(4, 6));
+            assertReaders(topRows(8, 6, -1, null, true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalOnlySingleRowGroupLeavesPartitionUnchanged() throws Exception {
+        // one row group of 8 rows: a commit that writes rows rewrites the file, the replay of row 4 writes none
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(8);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            assertUpsertLeavesPartitionUnchanged(storedRow(4, 6));
+            assertReaders(topRows(8, 6, -1, null, true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalPastTopThenAppendKeepsTop() throws Exception {
+        // the replay of row 7, the first row after the top (6): a merge would keep rows 1..6 in place, which
+        // ends the top with the prefix; the append keeps it
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            insertUpsertRows(storedRow(7, 6), newRow("2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalReplayTwiceKeepsTop() throws Exception {
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            assertUpsertLeavesPartitionUnchanged(storedRow(4, 6));
+            assertUpsertLeavesPartitionUnchanged(storedRow(4, 6), storedRow(7, 6));
+            assertReaders(topRows(8, 6, -1, null, true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalThenAppendAbsentColumnKeepsTop() throws Exception {
+        // c1..c3 are absent from the parquet file (top 8): the replay of row 4 holds NULL in them, the row at
+        // 23:00 rewrites the file with the new schema
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createAbsentColumnTables("", " DEDUP UPSERT KEYS(ts)");
+            insertUpsertRows(storedRow(4, 8), newRow("2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(8, 8, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalThenAppendIndexedSymbol() throws Exception {
+        // indexed SYMBOL s holds 'a' and 'b' in rows 7, 8: the replay of row 7 and the row at 23:00 with s = 'x'
+        // append, the index finds the rows of each value, JIT on and off
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            for (String t : tables()) {
+                createBaseTable(t, " DEDUP UPSERT KEYS(ts)");
+                execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, 6));
+                addColumns(t);
+                execute("ALTER TABLE " + t + " ADD COLUMN s SYMBOL INDEX");
+                execute("INSERT INTO " + t + " (v, ts, c1, c2, c3, s) VALUES "
+                        + "(7, '" + tsOf(7) + "', " + literalOf(7) + ", " + literalOf(7) + ", " + literalOf(7) + ", 'a'), "
+                        + "(8, '" + tsOf(8) + "', " + literalOf(8) + ", " + literalOf(8) + ", " + literalOf(8) + ", 'b')");
+                execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+            }
+            drainWalQueue();
+            convertToParquet();
+            for (String t : tables()) {
+                execute("INSERT INTO " + t + " (v, ts, c1, c2, c3, s) VALUES "
+                        + "(7, '" + tsOf(7) + "', " + literalOf(7) + ", " + literalOf(7) + ", " + literalOf(7) + ", 'a'), "
+                        + "(50, '2024-01-01T23:00:00.000000Z', " + o3Literal() + ", " + o3Literal() + ", " + o3Literal() + ", 'x')");
+            }
+            drainWalQueue();
+            for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                sqlExecutionContext.setJitMode(jitMode);
+                for (String[] symbolRows : new String[][]{{"a", "7"}, {"b", "8"}, {"x", "50"}}) {
+                    assertSqlCursors("tw WHERE s = '" + symbolRows[0] + "'", "pt WHERE s = '" + symbolRows[0] + "'");
+                    assertQuery("SELECT v FROM pt WHERE s = '" + symbolRows[0] + "'")
+                            .noLeakCheck()
+                            .returns("v\n" + symbolRows[1] + "\n");
+                }
+            }
+            assertReaders(topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalThenAppendKeepsTop() throws Exception {
+        // top 6, the replay of row 4 (03:00) and a row at 23:00 after the partition: native finds the replayed
+        // row identical and turns the commit into an append, which keeps the top, and so does the parquet update
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            insertUpsertRows(storedRow(4, 6), newRow("2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalThenAppendRewriteKeepsTop() throws Exception {
+        // ci changed type: the rewrite opens at the row group of the row at 23:00 and first copies row groups
+        // 0 and 1 through the materializer, which keeps the top rows
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            changeControlColumnType();
+            insertUpsertRows(storedRow(4, 6), newRow("2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalThenAppendSurvivesReopen() throws Exception {
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            insertUpsertRows(storedRow(4, 6), newRow("2024-01-01T23:00:00.000000Z"));
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            insertO3("2024-01-01T23:30:00.000000Z");
+            final List<Row> expected = topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", true);
+            expected.add(new Row(50, "2024-01-01T23:30:00.000000Z", Kind.O3));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalThenAppendTwoPartitionsKeepOwnTops() throws Exception {
+        // 2024-01-01 and 2024-01-02 hold rows 1..8 with top 3 each. One commit replays row 2 of each:
+        // 2024-01-01 then appends at 23:00 and keeps its top, 2024-01-02 also changes row 5, merges with the
+        // prefix of row 1 and materializes its top, as native does
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            for (String t : tables()) {
+                createBaseTable(t, " DEDUP UPSERT KEYS(ts)");
+                execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, 3) + ", "
+                        + rowsNoValue(1, 3).replace(O3_DAY, "2024-01-02"));
+                addColumns(t);
+                final StringBuilder sql = new StringBuilder("INSERT INTO " + t + " (v, ts, c1, c2, c3) VALUES ");
+                for (String day : new String[]{O3_DAY, "2024-01-02"}) {
+                    for (int v = 4; v <= 8; v++) {
+                        if (sql.charAt(sql.length() - 1) == ')') {
+                            sql.append(", ");
+                        }
+                        final String literal = literalOf(v);
+                        sql.append('(').append(v).append(", '").append(tsOf(v).replace(O3_DAY, day)).append("', ")
+                                .append(literal).append(", ").append(literal).append(", ").append(literal).append(')');
+                    }
+                }
+                execute(sql.toString());
+                execute("INSERT INTO " + t + " (v, ts) VALUES (100, '2024-01-03T00:00:00.000000Z')");
+            }
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            drainWalQueue();
+            insertUpsertRows(
+                    storedRow(2, 3),
+                    newRow("2024-01-01T23:00:00.000000Z"),
+                    storedRow(2, 3).replace(O3_DAY, "2024-01-02"),
+                    rowOf(5, "2024-01-02T04:00:00.000000Z", o3Literal(), "NULL", "NULL", "NULL", "NULL")
+            );
+            final List<Row> expectedDay2 = topRows(8, 3, -1, null, false);
+            expectedDay2.set(4, new Row(5, "2024-01-02T04:00:00.000000Z", Kind.O3));
+            assertReaders(
+                    true,
+                    new String[]{"2024-01-01", "2024-01-02"},
+                    List.of(topRows(8, 3, -1, "2024-01-01T23:00:00.000000Z", true), expectedDay2)
+            );
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalThenChangedMaterializesTop() throws Exception {
+        // the replay of row 2 passes the compare of row group 0, the change of row 7 fails the compare of row
+        // group 1: native merges with the prefix of row 1
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            insertUpsertRows(storedRow(2, 6), newRow(tsOf(7)));
+            assertReaders(topRows(8, 6, 7, null, false));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalThenGapRowMaterializesTop() throws Exception {
+        // top 3, the new row at 03:30 goes into a row group of its own between row groups 0 and 1, a row at or
+        // below the max that replaces nothing: native merges with the prefix of rows 1..3, which ends with the top
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 3);
+            insertUpsertRows(storedRow(4, 3), newRow("2024-01-01T03:30:00.000000Z"));
+            assertReaders(topRows(8, 3, -1, "2024-01-01T03:30:00.000000Z", false));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalThenNewRowJustAfterMaxKeepsTop() throws Exception {
+        // the new row lands one microsecond after the partition max
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            insertUpsertRows(storedRow(4, 6), newRow("2024-01-01T07:00:00.000001Z"));
+            assertReaders(topRows(8, 6, -1, "2024-01-01T07:00:00.000001Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalThenNewRowMaterializesTop() throws Exception {
+        // the new row at 05:30 merges into row group 1: not every O3 row at or below the max is a duplicate,
+        // native merges with the prefix of rows 1..3
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            insertUpsertRows(storedRow(4, 6), newRow("2024-01-01T05:30:00.000000Z"));
+            assertReaders(topRows(8, 6, -1, "2024-01-01T05:30:00.000000Z", false));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdenticalWithKeyColumnThenAppendKeepsTop() throws Exception {
+        // KEYS(ts, v): the dedup compares the INT key, the identity check skips it
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts, v)", 6);
+            insertUpsertRows(storedRow(4, 6), newRow("2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertIdentityCheckDecodedColumns() throws Exception {
+        // the columns that the identity check of an UPSERT commit decodes, per commit, out of the 9 columns
+        // of the parquet file. CHAR has no column without NULL in the table, the check does not run
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            final boolean isChecked = hasNoSentinelType();
+            // a pure append: the check does not run
+            assertIdentityCheckDecodedColumns(0, newRow("2024-01-01T23:00:00.000000Z"));
+            // a new row in row group 1: the key stage decodes ts and finds no duplicate
+            assertIdentityCheckDecodedColumns(isChecked ? 1 : 0, newRow("2024-01-01T05:30:00.000000Z"));
+            // a new row in a row group of its own: the check stops before it decodes
+            assertIdentityCheckDecodedColumns(0, newRow("2024-01-01T03:30:00.000000Z"));
+            // a value update of row 7: the key stage passes, the value stage decodes the other 8 columns
+            assertIdentityCheckDecodedColumns(
+                    isChecked ? 9 : 0,
+                    rowOf(7, tsOf(7), literalOf(7), "70", "'7'", "#s", "7.5m")
+            );
+            // the replay of row 2 in row group 0
+            assertIdentityCheckDecodedColumns(isChecked ? 9 : 0, storedRow(2, 6));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertNanResentOverNullKeepsTop() throws Exception {
+        // DOUBLE d and FLOAT f are NULL in row 7, the replay sends NaN, which is the same NULL: native appends
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            assertFloatReplay("NULL", "1.0", "NaN", "1.0", true);
+            dropTables();
+            assertFloatReplay("1.0", "NULL", "1.0", "NaN", true);
+        });
+    }
+
+    @Test
+    public void testDedupUpsertNegativeZeroResentAsZeroMaterializesTop() throws Exception {
+        // DOUBLE d or FLOAT f holds -0.0 in row 7, the replay sends 0.0: native compares the bits, finds a
+        // difference and merges with the prefix of rows 1..6
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(8);
+        assertMemoryLeak(() -> {
+            assertFloatReplay("-0.0", "1.0", "0.0", "1.0", false);
+            dropTables();
+            assertFloatReplay("1.0", "-0.0", "1.0", "0.0", false);
+        });
+    }
+
+    @Test
+    public void testDedupUpsertNewKeyAtStoredTimestampMaterializesTop() throws Exception {
+        // KEYS(ts, v): the row at 03:00 has another v than row 4, so it is not a duplicate
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(8);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts, v)", 6);
+            insertUpsertRows(newRow(tsOf(4)), newRow("2024-01-01T23:00:00.000000Z"));
+            final List<Row> expected = topRows(8, 6, -1, tsOf(4), false);
+            expected.add(new Row(50, "2024-01-01T23:00:00.000000Z", Kind.O3));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
+    public void testDedupUpsertNonNullIntoTopRowMaterializesTop() throws Exception {
+        // row 4 resent with a value in c1..c3, where its top reads NULL: native compares the value with NULL,
+        // finds a difference and merges with the prefix of rows 1..3
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(8);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP UPSERT KEYS(ts)", 6);
+            insertUpsertRows(
+                    rowOf(4, tsOf(4), o3Literal(), "NULL", "NULL", "NULL", "NULL"),
+                    newRow("2024-01-01T23:00:00.000000Z")
+            );
+            final List<Row> expected = topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", false);
+            expected.set(3, new Row(4, tsOf(4), Kind.O3));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
+    public void testDedupUpsertStoredDuplicatesChangedMaterializesTop() throws Exception {
+        // rows 4 and 40 share 03:00, stored before the dedup is on. UPSERT maps both onto the resent row 40,
+        // which changes row 4: native merges, both rows read v = 40 and the top (7) is materialized
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createStoredDuplicateTables(40);
+            insertUpsertRows(
+                    rowOf(40, tsOf(4), "NULL", "NULL", "NULL", "NULL", "NULL"),
+                    newRow("2024-01-01T23:00:00.000000Z")
+            );
+            assertReaders(storedDuplicateRows(40, false));
+        });
+    }
+
+    @Test
+    public void testDedupUpsertStoredDuplicatesIdenticalKeepTop() throws Exception {
+        // two copies of row 4 at 03:00, stored before the dedup is on, and the replay equals both: native
+        // appends the row at 23:00 and keeps the top (7)
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createStoredDuplicateTables(4);
+            insertUpsertRows(storedRow(4, 6), newRow("2024-01-01T23:00:00.000000Z"));
+            assertReaders(storedDuplicateRows(4, true));
+        });
+    }
+
+    @Test
     public void testDedupUpsertTieAfterTopKeepsTop() throws Exception {
         // UPSERT of row 4 (03:00): rows 1..3 keep their position, the top (2) is inside the prefix
         Assume.assumeTrue(isWal);
@@ -849,6 +1416,19 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         });
     }
 
+    private static long getIdentityCheckDecodedColumnCount() {
+        try (TableWriter writer = getWriter("pt")) {
+            return writer.getUpsertIdentityCheckDecodedColumnCount();
+        }
+    }
+
+    // names of the directories of the 2024-01-01 partition of the table, of every version that is on disk
+    private static Set<String> listPartitionDirs(TableToken tableToken) {
+        final String[] dirs = new File(root, tableToken.getDirName()).list((dir, name) -> name.startsWith(O3_DAY));
+        Assert.assertNotNull(dirs);
+        return new HashSet<>(Arrays.asList(dirs));
+    }
+
     private static String tsOf(int v) {
         return String.format("2024-01-01T%02d:00:00.000000Z", v - 1);
     }
@@ -900,6 +1480,21 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         });
     }
 
+    // changes BYTE w of the tables made by createEveryTypeValueTables() lazily to INT, then asserts that pt
+    // matches tw and that w reads NULL in nullCount rows of 2024-01-01
+    private void assertByteColumnW(long nullCount) throws Exception {
+        for (String t : tables()) {
+            execute("ALTER TABLE " + t + " ALTER COLUMN w TYPE INT");
+        }
+        drainWalQueue();
+        assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
+        assertQuery("SELECT count() FROM pt WHERE ts IN '" + O3_DAY + "' AND w IS NULL")
+                .noLeakCheck()
+                .noRandomAccess()
+                .expectSize()
+                .returns("count\n" + nullCount + "\n");
+    }
+
     private void assertC2NullCount(String day, long expectedCount) throws Exception {
         final String nullCount = "count\n" + expectedCount + "\n";
         for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
@@ -923,6 +1518,58 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             assertQuery("SELECT v, c1, c2, c3 FROM pt WHERE ts IN '" + days[i] + "' ORDER BY ts")
                     .noLeakCheck()
                     .returns(render(expectedByDay.get(i), isC1Altered, isC2Altered, isC3Altered));
+        }
+    }
+
+    // DOUBLE d and FLOAT f exist from the start, rows 7, 8 hold values, d and f of row 7 as given; the commit
+    // resends row 7 with the given d and f and adds a row at 23:00. The top (6) stays when isTopKept
+    private void assertFloatReplay(String storedD, String storedF, String resentD, String resentF, boolean isTopKept) throws Exception {
+        for (String t : tables()) {
+            createBaseTable(t, " DEDUP UPSERT KEYS(ts)");
+            execute("ALTER TABLE " + t + " ADD COLUMN d DOUBLE");
+            execute("ALTER TABLE " + t + " ADD COLUMN f FLOAT");
+            execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, 6));
+            addColumns(t);
+            execute("INSERT INTO " + t + " (v, ts, c1, c2, c3, d, f) VALUES "
+                    + "(7, '" + tsOf(7) + "', " + literalOf(7) + ", " + literalOf(7) + ", " + literalOf(7) + ", " + storedD + ", " + storedF + "::FLOAT), "
+                    + "(8, '" + tsOf(8) + "', " + literalOf(8) + ", " + literalOf(8) + ", " + literalOf(8) + ", 2.0, 2.0::FLOAT)");
+            execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+        }
+        drainWalQueue();
+        convertToParquet();
+        for (String t : tables()) {
+            execute("INSERT INTO " + t + " (v, ts, c1, c2, c3, d, f) VALUES "
+                    + "(7, '" + tsOf(7) + "', " + literalOf(7) + ", " + literalOf(7) + ", " + literalOf(7) + ", " + resentD + ", " + resentF + "::FLOAT), "
+                    + "(50, '2024-01-01T23:00:00.000000Z', " + o3Literal() + ", " + o3Literal() + ", " + o3Literal() + ", 1.0, 1.0::FLOAT)");
+        }
+        drainWalQueue();
+        assertReaders(topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", isTopKept));
+    }
+
+    // inserts the rows into pt and tw, then asserts that the identity check of the UPSERT commit into the parquet
+    // partition of pt decoded the given number of columns
+    private void assertIdentityCheckDecodedColumns(long expectedCount, String... rows) throws Exception {
+        final long count = getIdentityCheckDecodedColumnCount();
+        insertUpsertRows(rows);
+        Assert.assertEquals(expectedCount, getIdentityCheckDecodedColumnCount() - count);
+    }
+
+    // inserts the rows into pt and tw, then asserts that the commit left the parquet partition of pt as it was,
+    // as the native noop leaves tw: the row count, name txn, parquet size and column versions, the partition
+    // directories, and no row written. With CHAR the identity check does not run and the merge writes the partition
+    private void assertUpsertLeavesPartitionUnchanged(String... rows) throws Exception {
+        final TableToken tableToken = engine.verifyTableName("pt");
+        final String partitions = readTxnToString(tableToken, false, true, true, true);
+        final Set<String> partitionDirs = listPartitionDirs(tableToken);
+        final long writtenRows = engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows();
+        insertUpsertRows(rows);
+        Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+        if (hasNoSentinelType()) {
+            Assert.assertEquals(partitions, readTxnToString(tableToken, false, true, true, true));
+            Assert.assertEquals(partitionDirs, listPartitionDirs(tableToken));
+            Assert.assertEquals(writtenRows, engine.getMetrics().tableWriterMetrics().getPhysicallyWrittenRows());
+        } else {
+            Assert.assertNotEquals(partitions, readTxnToString(tableToken, false, true, true, true));
         }
     }
 
@@ -1064,10 +1711,14 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                 + (isWal ? "WAL" : "BYPASS WAL") + dedup);
     }
 
-    // rows 1..rowCount of 2024-01-01 converted to parquet, then the columns of every type added
     private void createEveryTypeTables(int rowCount) throws Exception {
+        createEveryTypeTables(rowCount, "");
+    }
+
+    // rows 1..rowCount of 2024-01-01 converted to parquet, then the columns of every type added
+    private void createEveryTypeTables(int rowCount, String dedup) throws Exception {
         for (String t : tables()) {
-            createBaseTable(t, "");
+            createBaseTable(t, dedup);
             execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, rowCount));
             execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
         }
@@ -1077,6 +1728,32 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             for (String[] column : EVERY_TYPE_COLUMNS) {
                 execute("ALTER TABLE " + t + " ADD COLUMN " + column[0] + " " + column[1]);
             }
+        }
+        drainWalQueue();
+    }
+
+    // DEDUP UPSERT KEYS(ts) tables with a column of every type, a value in each in rows 1..8 of 2024-01-01,
+    // converted to parquet, then BYTE w added (top 8)
+    private void createEveryTypeValueTables() throws Exception {
+        final StringBuilder columns = new StringBuilder("v INT, ts TIMESTAMP");
+        final StringBuilder values = new StringBuilder();
+        for (String[] column : EVERY_TYPE_COLUMNS) {
+            columns.append(", ").append(column[0]).append(' ').append(column[1]);
+            values.append(", ").append(column[2]);
+        }
+        for (String t : tables()) {
+            execute("CREATE TABLE " + t + " (" + columns + ") TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts)");
+            final StringBuilder sql = new StringBuilder("INSERT INTO " + t + " VALUES ");
+            for (int v = 1; v <= 8; v++) {
+                sql.append(v > 1 ? ", " : "").append('(').append(v).append(", '").append(tsOf(v)).append('\'').append(values).append(')');
+            }
+            execute(sql.toString());
+            execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+        }
+        drainWalQueue();
+        convertToParquet();
+        for (String t : tables()) {
+            execute("ALTER TABLE " + t + " ADD COLUMN w BYTE");
         }
         drainWalQueue();
     }
@@ -1114,6 +1791,31 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         convertToParquet();
     }
 
+    // rows 1..6 and a row with v = duplicateV at 03:00, the timestamp of row 4, before the columns exist (top 7),
+    // rows 7, 8 with values, converted to parquet; the dedup UPSERT KEYS(ts) turns on after the conversion
+    private void createStoredDuplicateTables(int duplicateV) throws Exception {
+        for (String t : tables()) {
+            createBaseTable(t, "");
+            execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, 6) + ", (" + duplicateV + ", '" + tsOf(4) + "')");
+            addColumns(t);
+            execute("INSERT INTO " + t + " (" + UPSERT_COLUMNS + ") VALUES " + storedRow(7, 6) + ", " + storedRow(8, 6));
+            execute("INSERT INTO " + t + " (v, ts) VALUES (99, '2024-01-02T00:00:00.000000Z')");
+        }
+        drainWalQueue();
+        convertToParquet();
+        for (String t : tables()) {
+            execute("ALTER TABLE " + t + " DEDUP ENABLE UPSERT KEYS(ts)");
+        }
+        drainWalQueue();
+    }
+
+    private void dropTables() throws Exception {
+        for (String t : tables()) {
+            execute("DROP TABLE " + t);
+        }
+        drainWalQueue();
+    }
+
     private String everyTypeColumnOf(String columnType) {
         for (String[] column : EVERY_TYPE_COLUMNS) {
             if (column[1].equals(columnType)) {
@@ -1136,12 +1838,42 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
+    // inserts row 6 as stored, or with NULL in nullColumn (null: none), and a row at 23:00 with w = 5 into the
+    // tables made by createEveryTypeValueTables(), in one commit
+    private void insertEveryTypeRow6(String nullColumn) throws Exception {
+        final StringBuilder columns = new StringBuilder("v, ts, w");
+        final StringBuilder row6 = new StringBuilder("(6, '").append(tsOf(6)).append("', NULL");
+        final StringBuilder row50 = new StringBuilder("(50, '2024-01-01T23:00:00.000000Z', 5::BYTE");
+        for (String[] column : EVERY_TYPE_COLUMNS) {
+            columns.append(", ").append(column[0]);
+            row6.append(", ").append(column[0].equals(nullColumn) ? "NULL" : column[2]);
+            row50.append(", ").append(column[2]);
+        }
+        for (String t : tables()) {
+            execute("INSERT INTO " + t + " (" + columns + ") VALUES " + row6 + "), " + row50 + ")");
+        }
+        drainWalQueue();
+    }
+
     private void insertO3(String ts) throws Exception {
         for (String t : tables()) {
             execute("INSERT INTO " + t + " (v, ts, c1, c2, c3, ci, cv) VALUES (50, '" + ts + "', "
                     + o3Literal() + ", " + o3Literal() + ", " + o3Literal() + ", 50, '50')");
         }
         drainWalQueue();
+    }
+
+    // inserts the rows, each from rowOf(), into pt and tw in one commit
+    private void insertUpsertRows(String... rows) throws Exception {
+        for (String t : tables()) {
+            execute("INSERT INTO " + t + " (" + UPSERT_COLUMNS + ") VALUES " + String.join(", ", rows));
+        }
+        drainWalQueue();
+    }
+
+    // whether the tested type has no NULL value: BOOLEAN, BYTE and SHORT. CHAR 0 is NULL
+    private boolean hasNoSentinelType() {
+        return !"CHAR".equals(type);
     }
 
     // inserts the rows, each from o3Row(), into pt and tw in one commit
@@ -1170,6 +1902,11 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             case "SHORT" -> "999::SHORT";
             default -> "'q'";
         };
+    }
+
+    // the VALUES tuple of a new row at ts with v = 50 and the O3 value in c1..c3, see insertUpsertRows()
+    private String newRow(String ts) {
+        return rowOf(50, ts, o3Literal(), "50", "'50'", "#s", "5.5m");
     }
 
     // the VALUES tuple of a row with v at ts and the O3 value in c1..c3, see insertO3Rows()
@@ -1230,6 +1967,11 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         return text;
     }
 
+    // the VALUES tuple of a row in UPSERT_COLUMNS, with the same value c in c1..c3
+    private String rowOf(int v, String ts, String c, String ci, String cv, String cg, String cd) {
+        return "(" + v + ", '" + ts + "', " + c + ", " + c + ", " + c + ", " + ci + ", " + cv + ", " + cg + ", " + cd + ")";
+    }
+
     private String[] rowsNoValueArray(int lo, int hi) {
         final String[] rows = new String[hi - lo + 1];
         for (int v = lo; v <= hi; v++) {
@@ -1240,6 +1982,32 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
 
     private String rowsNoValue(int lo, int hi) {
         return String.join(", ", Arrays.asList(rowsNoValueArray(lo, hi)));
+    }
+
+    // the rows of createStoredDuplicateTables() after a commit that sets v of both rows at 03:00 to duplicateV
+    // and adds a row at 23:00; the top rows read NULL when isTopKept, 0/false otherwise
+    private List<Row> storedDuplicateRows(int duplicateV, boolean isTopKept) {
+        final Kind topKind = isTopKept ? Kind.NULL : Kind.ZERO;
+        final List<Row> rows = new ArrayList<>();
+        for (int v = 1; v <= 6; v++) {
+            rows.add(new Row(v == 4 ? duplicateV : v, tsOf(v), topKind));
+            if (v == 4) {
+                rows.add(new Row(duplicateV, tsOf(4), topKind));
+            }
+        }
+        rows.add(new Row(7, tsOf(7), Kind.VALUE));
+        rows.add(new Row(8, tsOf(8), Kind.VALUE));
+        rows.add(new Row(50, "2024-01-01T23:00:00.000000Z", Kind.O3));
+        return rows;
+    }
+
+    // the VALUES tuple of row v of createShapeTables() with the values it stores: the columns are NULL in the
+    // top rows
+    private String storedRow(int v, int top) {
+        if (v <= top) {
+            return rowOf(v, tsOf(v), "NULL", "NULL", "NULL", "NULL", "NULL");
+        }
+        return rowOf(v, tsOf(v), literalOf(v), Integer.toString(v), "'" + v + "'", "#s", v % 10 + ".5m");
     }
 
     private String[] tables() {

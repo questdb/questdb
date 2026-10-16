@@ -170,8 +170,18 @@ a merge whose O3 rows are all duplicates reproduces the existing rows as they ar
   partition sink reports it as unchanged as the native path does (`updatePartitionSink(...,
   newPartitionSize = -1, partitionMutates = 0)`). Other commits open the output upfront.
 
-UPSERT has no such shortcut on parquet partitions: a merge writes the row group even when the O3
-rows carry the values the partition has.
+UPSERT takes the same shortcut on parquet partitions only for tables with a live BOOLEAN, BYTE or
+SHORT column, the types whose column tops a merge would turn into 0/false (native turns an
+identical replay into a noop or an append, which keeps every top). For those tables
+`isUpsertIdenticalUpToPartitionMax()` runs before the output opens: per `MERGE` up to the
+partition max it decodes the keys and dedups in UPSERT mode (`isKeyColumnsOnly = true`,
+`isSkipMode = false`), stops unless every O3 row at or below the max is a duplicate, then decodes
+the other columns and compares them with `FrameAlgebra.isColumnMergeIdentical()`, the native
+comparer of `checkDedupCommitIdenticalToPartition`. A `COPY_O3` at or below the max ends the
+check. When every compared row is identical, the commit runs in SKIP mode. Other tables, and
+UPSERT commits that change a value, merge and write the row group even when the O3 rows carry
+the values the partition has. The caller of `mergeRowGroupPrepare()` adds the duplicates to the
+dedup counter, so the check does not count them twice.
 
 | | Non-dedup | Dedup |
 |---|---|---|
