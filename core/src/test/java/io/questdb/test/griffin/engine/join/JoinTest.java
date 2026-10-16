@@ -18769,6 +18769,40 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimeSeriesJoinAfterKeyMoveOnPredicateReadsTimeSeriesJoinAheadAndTwoTables() throws Exception {
+        // The ON conjunct of the last INNER join reads q and i on one side of = and t on the other, and q,
+        // the ASOF JOIN that runs ahead of the RIGHT JOIN, last, so the optimiser keeps the conjunct after
+        // the RIGHT JOIN. It holds for trade B only (19.5 + 200 = 20.0 + 199.5). Below the RIGHT JOIN it
+        // dropped the A trades, so r rows 10.5 and 15.0, which match A trades only, came out NULL-extended,
+        // and w.n = i.lot kept them through the NULL row of more.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinAfterKeyMoveBehindRightJoin();
+            execute("INSERT INTO more VALUES (null)");
+            final String joins = KEY_MOVE_JOINS + " RIGHT JOIN extra r ON r.x > t.px ASOF JOIN quotes q ON (q.sym = t.sym)";
+            for (String conjunct : new String[]{"q.bid + i.lot = t.px + 199.5", "t.px + 199.5 = q.bid + i.lot"}) {
+                final String query = "SELECT t.sym, t.ts, q.bid, r.x, w.n " + joins + " JOIN more w ON w.n = i.lot AND " + conjunct + " ORDER BY r.x, t.ts";
+                assertQuery(query)
+                        .noLeakCheck()
+                        .withPlanContaining("Filter filter: " + conjunct.replace(" ", "") + "\n"
+                                + "            Hash Join Light\n"
+                                + "              condition: w.n=i.lot\n"
+                                + "                Nested Loop Right Join\n")
+                        .returns("""
+                                sym\tts\tbid\tx\tn
+                                B\t2024-01-01T00:00:20.000000Z\t19.5\t100.0\t200
+                                """);
+                // LIMIT keeps the joins up to the ASOF JOIN whole, so the conjunct can only run after them
+                assertSqlCursors(
+                        "SELECT sym, ts, bid, x, n FROM (SELECT * FROM (SELECT t.sym, t.ts, t.px, q.bid, r.x, i.lot " + joins
+                                + " LIMIT 1_000_000) j JOIN more w ON w.n = j.lot AND " + conjunct.replace("q.", "j.").replace("i.", "j.").replace("t.", "j.")
+                                + ") ORDER BY x, ts",
+                        query
+                );
+            }
+        });
+    }
+
+    @Test
     public void testTimeSeriesJoinAfterKeyMoveOnRekeyedTable() throws Exception {
         // the ASOF key reads instruments, which joins after trades again
         assertMemoryLeak(() -> {

@@ -2442,6 +2442,13 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // The RIGHT join with c2 is not the next join after the RIGHT join with s, and it still NULL-extends
+    // the rows of that join, so the rewriter does not repair it.
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterInnerJoinThenRightJoinFails() throws Exception {
+        assertRepairedRightJoinFollowedByJoinFails("JOIN c ON c.sid = s.id RIGHT JOIN c c2 ON c2.sid = s.id");
+    }
+
     // No c row has sid = s.id + 100, so the LEFT join keeps each row with a NULL cid.
     @Test
     public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterLeftJoin() throws Exception {
