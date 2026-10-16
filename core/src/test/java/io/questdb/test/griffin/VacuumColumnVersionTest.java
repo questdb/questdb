@@ -796,6 +796,44 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVacuumKeepsPostingFilesOfIndexReAddedAtTxnZeroNonPartitioned() throws Exception {
+        // In the default partition of a table that is not partitioned, DROP INDEX before the first commit
+        // writes instance 0 of s next to instance NONE, whose purge a reader defers. ADD INDEX then writes
+        // the .pc files of instance 0, with the host token 0 that NONE also writes. VACUUM keeps every
+        // file, and the purge that DROP INDEX queued removes only the files of NONE.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE pt (v INT, ts TIMESTAMP, s SYMBOL INDEX TYPE POSTING INCLUDE (d, vc), d DOUBLE, vc VARCHAR) TIMESTAMP(ts)");
+            try (TableReader ignore = getReader("pt")) {
+                execute("ALTER TABLE pt ALTER COLUMN s DROP INDEX");
+            }
+            execute("ALTER TABLE pt ALTER COLUMN s ADD INDEX TYPE POSTING INCLUDE (d, vc)");
+            insertPostingRows();
+            Assert.assertEquals(0, getColumnNameTxn("pt", "s", 0));
+            final String before = listFiles("pt", "default");
+            for (String file : new String[]{"s.d", "s.pk", "s.pv.0", "s.d.0", "s.pk.0", "s.pci.0"}) {
+                Assert.assertTrue(file + " in " + before, (" " + before + " ").contains(" " + file + " "));
+            }
+            Assert.assertTrue(before, before.contains(" s.pc0.0."));
+
+            engine.releaseInactive();
+            execute("VACUUM TABLE pt");
+            Assert.assertEquals(before, listFiles("pt", "default"));
+            assertPostingRowsOfY("after VACUUM", true, POSTING_ROWS_OF_Y);
+
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+            final ArrayList<String> remaining = new ArrayList<>(Arrays.asList(before.split(" ")));
+            remaining.remove("s.d");
+            remaining.remove("s.pk");
+            remaining.remove("s.pv.0");
+            Assert.assertEquals(String.join(" ", remaining), listFiles("pt", "default"));
+            assertPostingRowsOfY("after the purge job", true, POSTING_ROWS_OF_Y);
+        });
+    }
+
+    @Test
     public void testVacuumKeepsPostingIncludeFilesAfterO3Insert() throws Exception {
         // An O3 row rewrites 2024-01-01 into a new directory and reseals the index of s.
         assertMemoryLeak(() -> {
