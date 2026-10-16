@@ -16269,12 +16269,11 @@ public class SqlOptimiser implements Mutable {
                 keyOrigins.getQuick(holder).add(index);
                 linkDependencies(parent, keyParent, holder);
             }
-            // the ordering edges keep their direction, deferred edges follow their keys below
+            // Every parent of an ancestor is a key partner or a deferred edge, which follows its key below.
+            // An ordering edge into an INNER or CROSS join comes from a barrier join, and the walk above
+            // rejects a barrier ancestor and an ordering edge into model 0.
             for (int p = 0, pn = jc.parents.size(); p < pn; p++) {
-                final int parentIndex = jc.parents.get(p);
-                if (!hasJoinKey(jc, parentIndex) && !isDeferredInnerKeyEdge(parentIndex, index)) {
-                    getRootedJoinContext(rooted, index).parents.add(parentIndex);
-                }
+                assert hasJoinKey(jc, jc.parents.get(p)) || isDeferredInnerKeyEdge(jc.parents.get(p), index);
             }
         }
         for (int i = 0, n = deferredInnerKeyEdges.size(); i < n; i += 2) {

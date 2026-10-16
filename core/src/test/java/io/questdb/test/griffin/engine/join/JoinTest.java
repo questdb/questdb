@@ -17711,6 +17711,125 @@ public class JoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTimeSeriesJoinAfterKeyMoveDerivesKeyOntoDeferredTable() throws Exception {
+        // The ON clause of a3 implies the filter a1.s = a1.v on lanes, and reorderTables moves
+        // a4.s = a0.s onto a0. runFromModelFirst places a0, a4, a1 and a3 in that order, and a3 gets
+        // a3.s = a1.s and a3.s = a4.v, which differ in type. a3 keeps a3.s = a4.v and derives a1.s = a4.v
+        // onto a1, which has no key of its own: only the deferred edge of a1.k = a4.k links it to a4.
+        // runFromModelFirst reverses that edge, as a1 now runs after a4, and the filter a1.k = a4.k still
+        // runs after the RIGHT JOIN. The lane (S2, S1, 2) has s != v and joins no row, the owner B joins
+        // a lane with a1.k != a4.k, and the RIGHT JOIN keeps the slot that matches no post, whose NULL
+        // a1.k and a4.k are equal.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE orders (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE lanes (s SYMBOL, v VARCHAR, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE posts (s SYMBOL, m INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE owners (v VARCHAR, s SYMBOL, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE slots (m INT, k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE fills (k INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO orders VALUES ('A', '2024-01-01T00:00:10.000000Z'), ('B', '2024-01-01T00:00:20.000000Z')");
+            execute("""
+                    INSERT INTO quotes VALUES
+                    (9.0, '2024-01-01T00:00:00.000000Z'),
+                    (9.5, '2024-01-01T00:00:09.000000Z'),
+                    (19.5, '2024-01-01T00:00:19.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO lanes VALUES
+                    ('S1', 'S1', 1, '2023-12-01T00:00:00.000000Z'),
+                    ('S2', 'S1', 2, '2023-12-01T00:00:01.000000Z'),
+                    ('S2', 'S2', 3, '2023-12-01T00:00:02.000000Z')
+                    """);
+            execute("INSERT INTO posts VALUES ('S1', 1, '2023-12-01T00:00:00.000000Z'), ('S2', 2, '2023-12-01T00:00:01.000000Z')");
+            execute("INSERT INTO owners VALUES ('S1', 'A', 1, '2023-12-01T00:00:00.000000Z'), ('S2', 'B', 4, '2023-12-01T00:00:01.000000Z')");
+            execute("""
+                    INSERT INTO slots VALUES
+                    (1, 10, '2023-12-01T00:00:00.000000Z'),
+                    (2, 20, '2023-12-01T00:00:01.000000Z'),
+                    (3, 30, '2023-12-01T00:00:02.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO fills VALUES
+                    (10, '2023-12-01T00:00:00.000000Z'),
+                    (20, '2023-12-01T00:00:01.000000Z'),
+                    (30, '2023-12-01T00:00:02.000000Z')
+                    """);
+            final String joins = """
+                    FROM orders a0
+                    CROSS JOIN lanes a1
+                    JOIN posts a3 ON a3.s = a1.v AND a3.s = a1.s
+                    JOIN owners a4 ON a4.v = a3.s AND a4.s = a0.s
+                    """;
+            final String expected = """
+                    s\tts\ts1\tv\tbid\tm\tk
+                    A\t2024-01-01T00:00:10.000000Z\tS1\tS1\t9.5\t1\t10
+                    \t\t\t\tnull\t3\t30
+                    """;
+            assertQuery("SELECT a0.s, a0.ts, a1.s, a4.v, q.bid, r.m, a5.k " + joins
+                    + "LT JOIN quotes q RIGHT JOIN slots r ON r.m = a3.m JOIN fills a5 ON a5.k = r.k AND a1.k = a4.k")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .withPlanContaining("Filter filter: a1.k=a4.k", "condition: a1.s=a4.v", "condition: a3.s=a4.v")
+                    .returns(expected);
+            // the reference runs the joins before the LT JOIN in a sub-query, in the order of a0.ts
+            assertQuery("SELECT x.s, x.ts, x.s1, x.v, q.bid, r.m, a5.k FROM (SELECT a0.s, a0.ts, a1.s s1, a4.v, a3.m, a1.k k1, a4.k k4 "
+                    + joins + "ORDER BY ts) x LT JOIN quotes q RIGHT JOIN slots r ON r.m = x.m JOIN fills a5 ON a5.k = r.k AND x.k1 = x.k4")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveDerivesKeyOntoLaterPlacedTable() throws Exception {
+        // The ON clauses of a2 and a3 imply the filter a1.s = a1.v on routes, and reorderTables moves
+        // a4.k = a0.k onto a0. runFromModelFirst places a0, a4, a2, a1 and a3 in that order. a3 gets
+        // a3.s = a1.s and a3.s = a4.v, which differ in type, keeps a3.s = a4.v and derives a1.s = a4.v
+        // onto a1. a1 then holds a1.s = a2.s and a1.s = a4.v, which differ in type too, keeps a1.s = a2.s
+        // and derives a2.s = a4.v onto a2, which runs after a4. The route (S2, S1, 2) has s != v and
+        // joins no row.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinKeyClash();
+            execute("CREATE TABLE links (k INT, v VARCHAR, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO routes VALUES ('S2', 'S1', 2, '2023-12-01T00:00:02.000000Z')");
+            execute("""
+                    INSERT INTO links VALUES
+                    (1, 'S1', 1, '2023-12-01T00:00:00.000000Z'),
+                    (2, 'S2', 2, '2023-12-01T00:00:01.000000Z'),
+                    (2, 'S1', 2, '2023-12-01T00:00:02.000000Z')
+                    """);
+            final String joins = """
+                    FROM trades a0
+                    CROSS JOIN routes a1
+                    JOIN books a2 ON a2.s = a1.v AND a2.s = a1.s
+                    JOIN desks a3 ON a3.s = a1.v AND a3.s = a1.s
+                    JOIN links a4 ON a4.v = a3.s AND a4.k = a0.k AND a4.l = a2.l
+                    """;
+            final String expected = """
+                    k\tts\ts\tl\tv\tbid
+                    1\t2024-01-01T00:00:10.000000Z\tS1\t1\tS1\t9.5
+                    2\t2024-01-01T00:00:20.000000Z\tS1\t2\tS1\t19.5
+                    2\t2024-01-01T00:00:20.000000Z\tS2\t2\tS2\t19.5
+                    """;
+            assertQuery("SELECT a0.k, a0.ts, a1.s, a2.l, a4.v, q.bid " + joins + "LT JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("condition: a2.l=a4.l and a2.s=a4.v", "condition: a1.s=a2.s", "condition: a3.s=a4.v")
+                    .withPlanNotContaining("Cross Join")
+                    .returns(expected);
+            // the reference runs the joins before the LT JOIN in a sub-query, in the order of a0.ts
+            assertQuery("SELECT x.k, x.ts, x.s, x.l, x.v, q.bid FROM (SELECT a0.k, a0.ts, a1.s, a2.l, a4.v "
+                    + joins + "ORDER BY ts, s) x LT JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    @Test
     public void testTimeSeriesJoinAfterKeyMoveDerivesTimestampKeyOfTwoPrecisions() throws Exception {
         // As in testTimeSeriesJoinAfterKeyMoveDerivesConflictingKey, a2 gets two keys on one column:
         // a2.t = a1.t on microsecond timestamps and a2.t = a3.tn on a microsecond and a nanosecond one.
@@ -17810,6 +17929,152 @@ public class JoinTest extends AbstractCairoTest {
                             2\t2024-01-01T00:00:20.000000Z\t2020-01-02T00:00:00.000000Z\t19.5
                             3\t2024-01-01T00:00:30.000000Z\t\t19.5
                             """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveFiltersKeyOnSameTwoTables() throws Exception {
+        // reorderTables moves a4.k = a0.k onto a0, and runFromModelFirst places a0, a4, a3, a1 and a2 in
+        // that order. a2 gets a2.s = a1.s and a2.s = a3.v, which differ in type, keeps a2.s = a3.v and
+        // derives a1.s = a3.v onto a1. a1 already joins a3 on a1.s = a3.s, the same column of a1 with
+        // another type, so a1 keeps a1.s = a3.s and turns a1.s = a3.v into a filter above its join.
+        // The route (S2, S1, 2) has s != v, and without the filter it would join book (S2, 2) and desk S1
+        // for trade 2. The keys and the filter match NULL to NULL, so trade 3 joins its NULL book, desk
+        // and route.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinKeyClash();
+            execute("INSERT INTO trades VALUES (3, '2024-01-01T00:00:30.000000Z')");
+            execute("INSERT INTO accts VALUES (3, NULL, '2023-12-01T00:00:02.000000Z')");
+            execute("INSERT INTO routes VALUES ('S2', 'S1', 2, '2023-12-01T00:00:02.000000Z'), (NULL, NULL, 3, '2023-12-01T00:00:03.000000Z')");
+            execute("INSERT INTO books VALUES (NULL, 3, '2023-12-01T00:00:03.000000Z')");
+            execute("INSERT INTO desks VALUES (NULL, '2023-12-01T00:00:02.000000Z')");
+            final String joins = """
+                    FROM trades a0
+                    CROSS JOIN books a1
+                    JOIN desks a2 ON a2.s = a1.s
+                    JOIN routes a3 ON a3.l = a1.l AND a3.v = a2.s AND a3.s = a1.s
+                    JOIN accts a4 ON a4.s = a3.s AND a4.k = a0.k
+                    """;
+            final String flat = "SELECT a0.k, a0.ts, a1.s, a2.s, q.bid " + joins;
+            final String expected = """
+                    k\tts\ts\ts1\tbid
+                    1\t2024-01-01T00:00:10.000000Z\tS1\tS1\t9.5
+                    2\t2024-01-01T00:00:20.000000Z\tS2\tS2\t19.5
+                    3\t2024-01-01T00:00:30.000000Z\t\t\t19.5
+                    """;
+            for (String timeSeriesJoin : new String[]{"LT JOIN quotes q", "ASOF JOIN quotes q"}) {
+                assertQuery(flat + timeSeriesJoin)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .withPlanContaining("Filter filter: a1.s=a3.v", "condition: a1.s=a3.s and a1.l=a3.l", "condition: a2.s=a3.v")
+                        .returns(expected);
+            }
+            assertQuery("SELECT * FROM (" + flat + "LT JOIN quotes q) WHERE bid > 9.0")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery("WITH x AS (" + flat + "LT JOIN quotes q) SELECT k, ts, s, s1, bid FROM x")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
+            assertQuery(flat + "LT JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .expectSize()
+                    .fullFatJoins()
+                    .returns(expected);
+            // the reference runs the joins before the LT JOIN in a sub-query, in the order of a0.ts
+            assertQuery("SELECT x.k, x.ts, x.s, x.s1, q.bid FROM (SELECT a0.k, a0.ts, a1.s, a2.s s1 " + joins + "ORDER BY ts) x LT JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveFiltersKeyOnSameTwoTablesOnNewData() throws Exception {
+        // as testTimeSeriesJoinAfterKeyMoveFiltersKeyOnSameTwoTables, but the compiled query reads the
+        // route (S2, S1, 2) only after an INSERT, and then an empty routes table
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinKeyClash();
+            final String joins = """
+                    FROM trades a0
+                    CROSS JOIN books a1
+                    JOIN desks a2 ON a2.s = a1.s
+                    JOIN routes a3 ON a3.l = a1.l AND a3.v = a2.s AND a3.s = a1.s
+                    JOIN accts a4 ON a4.s = a3.s AND a4.k = a0.k
+                    """;
+            final String expected = """
+                    k\tts\ts\ts1\tbid
+                    1\t2024-01-01T00:00:10.000000Z\tS1\tS1\t9.5
+                    2\t2024-01-01T00:00:20.000000Z\tS2\tS2\t19.5
+                    """;
+            final String flat = "SELECT a0.k, a0.ts, a1.s, a2.s, q.bid " + joins + "LT JOIN quotes q";
+            final String reference = "SELECT x.k, x.ts, x.s, x.s1, q.bid FROM (SELECT a0.k, a0.ts, a1.s, a2.s s1 " + joins + "ORDER BY ts) x LT JOIN quotes q";
+            for (String query : new String[]{flat, reference}) {
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .mutateWith("INSERT INTO routes VALUES ('S2', 'S1', 2, '2023-12-01T00:00:02.000000Z')")
+                        .returns(expected, expected);
+                execute("TRUNCATE TABLE routes");
+                assertQuery(query)
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns("k\tts\ts\ts1\tbid\n");
+                execute("INSERT INTO routes VALUES ('S1', 'S1', 1, '2023-12-01T00:00:00.000000Z'), ('S2', 'S2', 2, '2023-12-01T00:00:01.000000Z')");
+            }
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveFiltersKeyOnSharedPartnerColumn() throws Exception {
+        // reorderTables moves a4.k = a0.k onto a0, and runFromModelFirst places a0, a4, a3, a1 and a2 in
+        // that order. a2 gets a2.s = a1.v and a2.s = a3.s, which differ in type, keeps a2.s = a3.s and
+        // derives a1.v = a3.s onto a1. a1 already joins a3 on a1.s = a3.S, the same column of a3 with
+        // another type, so a1 turns a1.v = a3.s into a filter above its join. a3.S in upper case keeps
+        // mergeContexts, which compares column names case-sensitively, from merging the two keys on a3.s
+        // first. The route (S2, S1, 2) has s != v, and without the filter it would join book (S2, 2) for
+        // trade 2.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinKeyClash();
+            execute("INSERT INTO trades VALUES (3, '2024-01-01T00:00:30.000000Z')");
+            execute("INSERT INTO accts VALUES (3, NULL, '2023-12-01T00:00:02.000000Z')");
+            execute("INSERT INTO routes VALUES ('S2', 'S1', 2, '2023-12-01T00:00:02.000000Z'), (NULL, NULL, 3, '2023-12-01T00:00:03.000000Z')");
+            execute("INSERT INTO books VALUES (NULL, 3, '2023-12-01T00:00:03.000000Z')");
+            execute("INSERT INTO desks VALUES (NULL, '2023-12-01T00:00:02.000000Z')");
+            final String joins = """
+                    FROM trades a0
+                    CROSS JOIN routes a1
+                    JOIN desks a2 ON a2.s = a1.v
+                    JOIN books a3 ON a3.l = a1.l AND a3.s = a2.s AND a3.S = a1.s
+                    JOIN accts a4 ON a4.s = a3.s AND a4.k = a0.k
+                    """;
+            final String expected = """
+                    k\tts\ts\tv\tbid
+                    1\t2024-01-01T00:00:10.000000Z\tS1\tS1\t9.5
+                    2\t2024-01-01T00:00:20.000000Z\tS2\tS2\t19.5
+                    3\t2024-01-01T00:00:30.000000Z\t\t\t19.5
+                    """;
+            assertQuery("SELECT a0.k, a0.ts, a1.s, a1.v, q.bid " + joins + "LT JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("Filter filter: a3.s=a1.v", "condition: a1.s=a3.S and a1.l=a3.l", "condition: a2.s=a3.s")
+                    .returns(expected);
+            // the reference runs the joins before the LT JOIN in a sub-query, in the order of a0.ts
+            assertQuery("SELECT x.k, x.ts, x.s, x.v, q.bid FROM (SELECT a0.k, a0.ts, a1.s, a1.v " + joins + "ORDER BY ts) x LT JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 
@@ -18159,6 +18424,118 @@ public class JoinTest extends AbstractCairoTest {
                             B\t2024-01-01T00:00:20.000000Z\t2024-01-01T00:00:20.000000Z\t19.5
                             A\t2024-01-01T00:00:30.000000Z\t2024-01-01T00:00:30.000000Z\t10.5
                             """);
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveSkipsDuplicateDerivedKey() throws Exception {
+        // reorderTables moves a4.k = a0.k onto a0, and runFromModelFirst places a0, a4, a3, a1 and a2 in
+        // that order. a2 gets a2.s = a1.s and a2.s = a3.v, which differ in type, keeps a2.s = a3.v and
+        // derives a1.s = a3.v onto a1, which already joins on that key, written as a3.V = a1.s or
+        // a1.s = a3.V, so a1 does not get it twice. a3.V in upper case keeps mergeContexts, which compares
+        // column names case-sensitively, from merging the two keys on a3.v first.
+        // The keys match NULL to NULL, so trade 3 joins its NULL book, desk and route.
+        assertMemoryLeak(() -> {
+            createTablesForTimeSeriesJoinKeyClash();
+            execute("INSERT INTO trades VALUES (3, '2024-01-01T00:00:30.000000Z')");
+            execute("INSERT INTO accts VALUES (3, NULL, '2023-12-01T00:00:02.000000Z')");
+            execute("INSERT INTO routes VALUES ('S2', 'S1', 2, '2023-12-01T00:00:02.000000Z'), (NULL, NULL, 3, '2023-12-01T00:00:03.000000Z')");
+            execute("INSERT INTO books VALUES (NULL, 3, '2023-12-01T00:00:03.000000Z')");
+            execute("INSERT INTO desks VALUES (NULL, '2023-12-01T00:00:02.000000Z')");
+            final String expected = """
+                    k\tts\ts\ts1\ts2\tbid
+                    1\t2024-01-01T00:00:10.000000Z\tS1\tS1\tS1\t9.5
+                    2\t2024-01-01T00:00:20.000000Z\tS1\tS1\tS2\t19.5
+                    2\t2024-01-01T00:00:20.000000Z\tS2\tS2\tS2\t19.5
+                    3\t2024-01-01T00:00:30.000000Z\t\t\t\t19.5
+                    """;
+            for (String key : new String[]{"a3.V = a1.s", "a1.s = a3.V"}) {
+                final String joins = "FROM trades a0 CROSS JOIN books a1 JOIN desks a2 ON a2.s = a1.s"
+                        + " JOIN routes a3 ON a3.l = a1.l AND a3.v = a2.s AND " + key
+                        + " JOIN accts a4 ON a4.s = a3.s AND a4.k = a0.k ";
+                assertQuery("SELECT a0.k, a0.ts, a1.s, a2.s, a3.s, q.bid " + joins + "LT JOIN quotes q")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .withPlanContaining("condition: a1.s=a3.V and a1.l=a3.l\n", "condition: a2.s=a3.v")
+                        .withPlanNotContaining("a1.s=a3.v", "Filter")
+                        .returns(expected);
+                // the reference runs the joins before the LT JOIN in a sub-query, in the order of a0.ts
+                assertQuery("SELECT x.k, x.ts, x.s, x.s1, x.s2, q.bid FROM (SELECT a0.k, a0.ts, a1.s, a2.s s1, a3.s s2 "
+                        + joins + "ORDER BY ts, s) x LT JOIN quotes q")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .timestamp("ts")
+                        .returns(expected);
+            }
+        });
+    }
+
+    @Test
+    public void testTimeSeriesJoinAfterKeyMoveSkipsDuplicateDerivedKeyOnFromTable() throws Exception {
+        // reorderTables moves a0.v = a4.s onto a0, and runFromModelFirst places a0, a3, a2, a1 and a4 in
+        // that order. a4 gets a4.s = a0.v and a4.S = a3.S, which differ in type, keeps a4.s = a0.v and
+        // derives a3.s = a0.v onto a3, which already joins on a0.v = a3.s, so a3 does not get it twice.
+        // a4.S and a3.S in upper case keep mergeContexts, which compares column names case-sensitively,
+        // from merging the keys on a4.s first. The trade with v = 'S3' matches a book but no desk, and the
+        // keys match NULL to NULL, so trade 3 joins its NULL book and desk.
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE trades (k INT, v VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE quotes (bid DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE books (s SYMBOL, l LONG, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE desks (s SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("""
+                    INSERT INTO trades VALUES
+                    (1, 'S1', '2024-01-01T00:00:10.000000Z'),
+                    (2, 'S2', '2024-01-01T00:00:20.000000Z'),
+                    (3, NULL, '2024-01-01T00:00:30.000000Z'),
+                    (4, 'S3', '2024-01-01T00:00:40.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO quotes VALUES
+                    (9.0, '2024-01-01T00:00:00.000000Z'),
+                    (9.5, '2024-01-01T00:00:09.000000Z'),
+                    (19.5, '2024-01-01T00:00:19.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO books VALUES
+                    ('S1', 1, '2023-12-01T00:00:00.000000Z'),
+                    ('S2', 2, '2023-12-01T00:00:01.000000Z'),
+                    (NULL, 3, '2023-12-01T00:00:02.000000Z'),
+                    ('S3', 4, '2023-12-01T00:00:03.000000Z')
+                    """);
+            execute("""
+                    INSERT INTO desks VALUES
+                    ('S1', '2023-12-01T00:00:00.000000Z'),
+                    ('S2', '2023-12-01T00:00:01.000000Z'),
+                    (NULL, '2023-12-01T00:00:02.000000Z')
+                    """);
+            final String joins = """
+                    FROM trades a0
+                    CROSS JOIN books a1
+                    JOIN books a2 ON a2.l = a1.l
+                    JOIN books a3 ON a3.l = a2.l AND a0.v = a3.s
+                    JOIN desks a4 ON a0.v = a4.s AND a3.S = a4.S
+                    """;
+            final String expected = """
+                    k\tts\ts\ts1\tbid
+                    1\t2024-01-01T00:00:10.000000Z\tS1\tS1\t9.5
+                    2\t2024-01-01T00:00:20.000000Z\tS2\tS2\t19.5
+                    3\t2024-01-01T00:00:30.000000Z\t\t\t19.5
+                    """;
+            assertQuery("SELECT a0.k, a0.ts, a3.s, a4.s, q.bid " + joins + "LT JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .withPlanContaining("condition: a3.s=a0.v\n", "condition: a4.s=a0.v\n")
+                    .withPlanNotContaining("Filter")
+                    .returns(expected);
+            // the reference runs the joins before the LT JOIN in a sub-query, in the order of a0.ts
+            assertQuery("SELECT x.k, x.ts, x.s, x.s1, q.bid FROM (SELECT a0.k, a0.ts, a3.s, a4.s s1 " + joins + "ORDER BY ts) x LT JOIN quotes q")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .timestamp("ts")
+                    .returns(expected);
         });
     }
 

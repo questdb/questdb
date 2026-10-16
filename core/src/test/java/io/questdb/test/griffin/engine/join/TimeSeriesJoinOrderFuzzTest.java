@@ -40,6 +40,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.function.Function;
+import java.util.regex.Pattern;
 
 /**
  * Compares a time-series join after INNER and CROSS joins with the same query that sorts those joins
@@ -49,8 +50,9 @@ import java.util.function.Function;
  * move a join key onto the FROM table: the FROM table is CROSS joined with the next table, and a later
  * INNER join is keyed on both. Keys compare SYMBOL, VARCHAR, computed columns, and TIMESTAMP and
  * TIMESTAMP_NS columns, so the optimiser may group keys that compare one column with columns of
- * different types. The data holds NULL keys, 1970-01-01, timestamps that differ by less than a
- * microsecond and rows that do not match.
+ * different types, and some key columns are in upper case. Some queries add a RIGHT JOIN after the
+ * time-series join, and then an INNER JOIN that compares two tables joined before it. The data holds
+ * NULL keys, 1970-01-01, timestamps that differ by less than a microsecond and rows that do not match.
  */
 public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
     // the key columns of every table: SYMBOL s, VARCHAR v, INT k, LONG l, TIMESTAMP m and TIMESTAMP_NS n
@@ -58,6 +60,38 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
     private static final Log LOG = LogFactory.getLog(TimeSeriesJoinOrderFuzzTest.class);
     private static final int QUERY_COUNT = 500;
     private static final int TABLE_COUNT = 5;
+
+    @Test
+    public void testGeneratorEmitsKeyDerivationShapes() {
+        // The shapes that reach the key placement of SqlOptimiser.runFromModelFirst, see
+        // JoinTest#testTimeSeriesJoinAfterKeyMoveDerivesKeyOntoDeferredTable and the tests next to it:
+        // an INNER join with three keys, a key column in upper case, and a RIGHT JOIN followed by an
+        // INNER JOIN that compares two tables joined before the time-series join. The seed is fixed.
+        final Rnd rnd = new Rnd(42, 4242);
+        final Pattern threeKeys = Pattern.compile(" a[2-4] ON [^J]* AND [^J]* AND ");
+        final Pattern upperCaseKey = Pattern.compile(" a[0-9]\\.[SVKLMN] = ");
+        final Pattern deferredKey = Pattern.compile(" RIGHT JOIN .* r ON r\\.k = a[0-4]\\.k JOIN .* a5 ON a5\\.k = r\\.k AND a[1-4]\\.[svklmn] = a[0-3]\\.[svklmn]$");
+        int threeKeyCount = 0;
+        int upperCaseKeyCount = 0;
+        int deferredKeyCount = 0;
+        for (int i = 0; i < QUERY_COUNT; i++) {
+            final String flat = generateQueries(rnd)[0];
+            if (threeKeys.matcher(flat).find()) {
+                threeKeyCount++;
+            }
+            if (upperCaseKey.matcher(flat).find()) {
+                upperCaseKeyCount++;
+            }
+            if (flat.contains(" RIGHT JOIN ")) {
+                Assert.assertTrue(flat, deferredKey.matcher(flat).find());
+                Assert.assertFalse("a comma join applies its WHERE clause after the RIGHT JOIN: " + flat, flat.contains(" WHERE "));
+                deferredKeyCount++;
+            }
+        }
+        Assert.assertTrue("INNER joins with three keys: " + threeKeyCount, threeKeyCount >= QUERY_COUNT / 10);
+        Assert.assertTrue("key columns in upper case: " + upperCaseKeyCount, upperCaseKeyCount >= QUERY_COUNT / 10);
+        Assert.assertTrue("RIGHT JOINs with a deferred key: " + deferredKeyCount, deferredKeyCount >= QUERY_COUNT / 10);
+    }
 
     @Test
     public void testTimeSeriesJoinOnTimestampKeysOfTwoPrecisions() throws Exception {
@@ -123,11 +157,19 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
         });
     }
 
-    // a key between two tables, on columns of kinds that SqlCodeGenerator can join on
+    // A key between two tables, on columns of kinds that SqlCodeGenerator can join on. The column of me
+    // is sometimes in upper case: SqlOptimiser.mergeContexts compares column names case-sensitively, so
+    // it keeps two keys on one column that differ in case, and the optimiser places both.
     private static String key(Rnd rnd, String me, String other) {
-        // the pairs of a SYMBOL or VARCHAR column with another, of INT and LONG with their own type, and
-        // of a TIMESTAMP or TIMESTAMP_NS column with another
-        final String pair = switch (rnd.nextInt(12)) {
+        final String pair = keyPair(rnd);
+        final char myColumn = rnd.nextInt(6) == 0 ? Character.toUpperCase(pair.charAt(0)) : pair.charAt(0);
+        return me + '.' + myColumn + " = " + other + '.' + pair.charAt(1);
+    }
+
+    // the columns of a key: a SYMBOL or VARCHAR column with another, INT and LONG with their own type,
+    // and a TIMESTAMP or TIMESTAMP_NS column with another
+    private static String keyPair(Rnd rnd) {
+        return switch (rnd.nextInt(12)) {
             case 0, 1 -> "ss";
             case 2, 3 -> "sv";
             case 4 -> "vs";
@@ -139,7 +181,6 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
             case 10 -> "nm";
             default -> "nn";
         };
-        return me + '.' + pair.charAt(0) + " = " + other + '.' + pair.charAt(1);
     }
 
     private static String[] generateQueries(Rnd rnd) {
@@ -160,7 +201,8 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
             if (i == n - 1 || rnd.nextInt(3) == 0) {
                 on.append(" AND ").append(key(rnd, me, "a0"));
             }
-            if (rnd.nextInt(5) == 0) {
+            // more keys give a table keys on one column that compare it with columns of other types
+            for (int k = 0, m = rnd.nextInt(3); k < m; k++) {
                 on.append(" AND ").append(key(rnd, me, aliases.get(rnd.nextInt(aliases.size()))));
             }
             if (isCommaJoin) {
@@ -200,10 +242,30 @@ public class TimeSeriesJoinOrderFuzzTest extends AbstractCairoTest {
             on = " ON (q." + column + " = " + alias + '.' + column + ')';
             referenceOn = " ON (q." + column + " = x." + alias + '_' + column + ')';
         }
-        final String projected = "a0.k, a0.ts, " + aliases.get(aliases.size() - 1) + ".s, q.k, q.ts";
-        final String referenceProjected = "x.a0_k, x.a0_ts, x." + aliases.get(aliases.size() - 1) + "_s, q.k, q.ts";
-        final String flat = "SELECT " + projected + " FROM " + joins + timeSeriesJoin + timeSeriesTable + " q" + on + where;
-        final String reference = "SELECT " + referenceProjected + " FROM " + subQuery + timeSeriesJoin + timeSeriesTable + " q" + referenceOn;
+        String projected = "a0.k, a0.ts, " + aliases.get(aliases.size() - 1) + ".s, q.k, q.ts";
+        String referenceProjected = "x.a0_k, x.a0_ts, x." + aliases.get(aliases.size() - 1) + "_s, q.k, q.ts";
+        // A RIGHT JOIN, and then an INNER JOIN whose ON clause compares two of the joins before the
+        // time-series join, which the optimiser defers to after the RIGHT JOIN. The comma join applies
+        // its WHERE clause after the RIGHT JOIN, and the reference before it, so it gets no RIGHT JOIN.
+        String tail = "";
+        String referenceTail = "";
+        if (!isCommaJoin && rnd.nextInt(4) == 0) {
+            final String rightTable = table(rnd);
+            final String innerTable = table(rnd);
+            final String right = aliases.get(rnd.nextInt(aliases.size()));
+            final int leftIndex = 1 + rnd.nextInt(aliases.size() - 1);
+            final String left = aliases.get(leftIndex);
+            final String other = aliases.get(rnd.nextInt(leftIndex));
+            final String pair = keyPair(rnd);
+            tail = " RIGHT JOIN " + rightTable + " r ON r.k = " + right + ".k JOIN " + innerTable + " a5 ON a5.k = r.k AND "
+                    + left + '.' + pair.charAt(0) + " = " + other + '.' + pair.charAt(1);
+            referenceTail = " RIGHT JOIN " + rightTable + " r ON r.k = x." + right + "_k JOIN " + innerTable + " a5 ON a5.k = r.k AND x."
+                    + left + '_' + pair.charAt(0) + " = x." + other + '_' + pair.charAt(1);
+            projected += ", r.k, a5.k";
+            referenceProjected += ", r.k, a5.k";
+        }
+        final String flat = "SELECT " + projected + " FROM " + joins + timeSeriesJoin + timeSeriesTable + " q" + on + tail + where;
+        final String reference = "SELECT " + referenceProjected + " FROM " + subQuery + timeSeriesJoin + timeSeriesTable + " q" + referenceOn + referenceTail;
         return new String[]{flat, reference};
     }
 
