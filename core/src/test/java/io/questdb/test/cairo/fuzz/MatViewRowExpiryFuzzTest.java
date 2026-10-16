@@ -432,9 +432,12 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
         // Every predicate here expires a SUBSET of the canonical policy (SCALAR_PREDICATE) the run is settled
         // to at the end: a row physically reclaimed under a churned policy is also expired by the canonical
         // one, so churn cannot desync the end-of-run keep-set oracle even though reclamation is irreversible.
+        // The fuzz data starts in 2022, so the ts BETWEEN policy expires no row. Reads under it filter with a
+        // NOT BETWEEN on the designated timestamp, on compilers the refresh jobs then compile on.
         final String[] alters = {
                 "alter materialized view " + view + " set expire rows when c3 < -100",
                 "alter materialized view " + view + " set expire rows when c3 < -10",
+                "alter materialized view " + view + " set expire rows when ts between '2000-01-01' and '2000-01-02'",
                 "alter materialized view " + view + " drop expire",
                 "alter materialized view " + view + " set expire rows when " + SCALAR_PREDICATE,
         };
@@ -499,11 +502,13 @@ public class MatViewRowExpiryFuzzTest extends AbstractFuzzTest {
                 "select c1, ts from " + view + " order by ts desc limit 25",
         };
         final Thread th = new Thread(() -> {
-            try (SqlCompiler compiler = engine.getSqlCompiler();
-                 SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
+            try (SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(engine)) {
                 while (!stop.get() && errors.isEmpty()) {
                     final String sql = queries[rnd.nextInt(queries.length)];
-                    try (RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
+                    // Each query takes a compiler from the pool the refresh jobs draw from, so the refresh
+                    // compiles run on compilers that have analyzed the view's read filter.
+                    try (SqlCompiler compiler = engine.getSqlCompiler();
+                         RecordCursorFactory factory = compiler.compile(sql, ctx).getRecordCursorFactory();
                          RecordCursor cursor = factory.getCursor(ctx)) {
                         //noinspection StatementWithEmptyBody
                         while (cursor.hasNext()) ;

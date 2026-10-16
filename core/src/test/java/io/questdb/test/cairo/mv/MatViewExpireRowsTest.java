@@ -99,6 +99,7 @@ import static org.junit.Assert.assertTrue;
  * ({@link #testBackfillReclaimsAPartitionAgain()}).
  */
 public class MatViewExpireRowsTest extends AbstractCairoTest {
+    private static final String PRICE_1H_SQL = "SELECT sym, last(price) AS price, ts FROM base_price SAMPLE BY 1h";
 
     @Before
     public void setUp() {
@@ -296,6 +297,65 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                 Misc.free(compiledFactory.get());
                 Misc.free(gatedCtx);
             }
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshAfterPolicyChangeAndNotBetweenQuery() throws Exception {
+        // An EXPIRE ROWS policy change on one view discards every view's cached refresh query, so
+        // the next incremental refresh of each view compiles its query again, here on pooled
+        // compilers that have analyzed a NOT BETWEEN on the designated timestamp. Each refresh must
+        // read only its refresh range, otherwise it writes rows outside the replace range and the
+        // view turns invalid.
+        assertMemoryLeak(() -> {
+            createBasePriceWithRows();
+            execute("CREATE MATERIALIZED VIEW price_1h AS (" + PRICE_1H_SQL + ") PARTITION BY DAY");
+            execute("CREATE MATERIALIZED VIEW other AS (SELECT * FROM base_price)");
+            drainWalAndMatViewQueues();
+            assertQuery("price_1h ORDER BY sym, ts").noLeakCheck().expectSize().returns("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """);
+
+            // Enough runs for the compiler pool to hand the query to each of its compilers.
+            for (int i = 0; i < 30; i++) {
+                assertQuery("SELECT count() FROM base_price WHERE ts NOT BETWEEN '2024-09-10T12:00' AND '2024-09-10T12:59'")
+                        .noLeakCheck()
+                        .expectSize()
+                        .noRandomAccess()
+                        .returns("count\n1\n");
+            }
+            // The policy expires none of the 2024 rows.
+            execute("ALTER MATERIALIZED VIEW other SET EXPIRE ROWS WHEN ts < '2000-01-01'");
+            execute("INSERT INTO base_price VALUES ('jpyusd', 103.27, '2024-09-10T14:05')");
+            drainWalAndMatViewQueues();
+
+            assertQuery("SELECT view_name, view_status, invalidation_reason FROM materialized_views() ORDER BY view_name")
+                    .noLeakCheck()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            other\tvalid\t
+                            price_1h\tvalid\t
+                            """);
+            assertQuery("price_1h ORDER BY sym, ts").noLeakCheck().expectSize().returns("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    jpyusd\t103.27\t2024-09-10T14:00:00.000000Z
+                    """);
+            assertSqlCursors(PRICE_1H_SQL + " ORDER BY sym, ts", "price_1h ORDER BY sym, ts");
+            assertQuery("other ORDER BY sym, ts").noLeakCheck().returns("""
+                    sym\tprice\tts
+                    gbpusd\t1.32\t2024-09-10T12:01:00.000000Z
+                    gbpusd\t1.323\t2024-09-10T12:02:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:02:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:02:00.000000Z
+                    jpyusd\t103.27\t2024-09-10T14:05:00.000000Z
+                    """);
+            assertSqlCursors("base_price ORDER BY sym, ts", "other ORDER BY sym, ts");
         });
     }
 
@@ -1178,6 +1238,42 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
                     "invalid EXPIRE ROWS predicate: expected a boolean expression"
             );
             org.junit.Assert.assertNull(engine.getTableTokenIfExists("mv"));
+        });
+    }
+
+    @Test
+    public void testCreateAfterReadingBetweenPolicyView() throws Exception {
+        // A read of a view with an EXPIRE ROWS WHEN ts BETWEEN ... policy filters its rows with a
+        // NOT BETWEEN on the designated timestamp, compiled on a pooled compiler. The initial
+        // refresh of a view created afterwards must still read its refresh range.
+        assertMemoryLeak(() -> {
+            createBasePriceWithRows();
+            execute("CREATE MATERIALIZED VIEW policied AS (SELECT * FROM base_price) " +
+                    "EXPIRE ROWS WHEN ts BETWEEN '2024-09-10T12:00' AND '2024-09-10T12:59'");
+            drainWalAndMatViewQueues();
+            // Enough reads for the compiler pool to hand the query to each of its compilers. The
+            // policy hides the three 12:xx rows.
+            for (int i = 0; i < 30; i++) {
+                assertQuery("SELECT count() FROM policied").noLeakCheck().expectSize().noRandomAccess().returns("count\n1\n");
+            }
+
+            execute("CREATE MATERIALIZED VIEW price_1h AS (" + PRICE_1H_SQL + ") PARTITION BY DAY");
+            drainWalAndMatViewQueues();
+
+            assertQuery("price_1h ORDER BY sym, ts").noLeakCheck().expectSize().returns("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """);
+            assertSqlCursors(PRICE_1H_SQL + " ORDER BY sym, ts", "price_1h ORDER BY sym, ts");
+            assertQuery("SELECT view_name, view_status, invalidation_reason FROM materialized_views() WHERE view_name = 'price_1h'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            view_name\tview_status\tinvalidation_reason
+                            price_1h\tvalid\t
+                            """);
         });
     }
 
@@ -3170,6 +3266,18 @@ public class MatViewExpireRowsTest extends AbstractCairoTest {
             execute(ddl, context);
         }
         return readerBorrows.get();
+    }
+
+    // Base table for the NOT BETWEEN refresh tests: three rows in the 12:00 hour and one at 13:02.
+    private static void createBasePriceWithRows() throws Exception {
+        execute("CREATE TABLE base_price (sym VARCHAR, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+        execute("""
+                INSERT INTO base_price VALUES
+                ('gbpusd', 1.320, '2024-09-10T12:01'),
+                ('gbpusd', 1.323, '2024-09-10T12:02'),
+                ('jpyusd', 103.21, '2024-09-10T12:02'),
+                ('gbpusd', 1.321, '2024-09-10T13:02')""");
+        drainWalAndMatViewQueues();
     }
 
     // Base table plus a policied passthrough mat view "mv" whose keep-set is the single row B/9.0.

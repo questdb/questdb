@@ -104,6 +104,7 @@ import static io.questdb.test.tools.TestUtils.generateRandom;
 
 
 public class MatViewTest extends AbstractCairoTest {
+    private static final String PRICE_1H_SQL = "select sym, last(price) as price, ts from base_price sample by 1h";
     private final int rowsPerQuery;
     private final TestTimestampType timestampType;
 
@@ -3121,6 +3122,40 @@ public class MatViewTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testCreateAfterNotBetweenQuery() throws Exception {
+        // The initial refresh of a new view compiles the view query on a pooled compiler that has
+        // analyzed a NOT BETWEEN on the designated timestamp. The refresh must read its refresh
+        // range, so the view holds every bucket and its next incremental refresh succeeds.
+        assertMemoryLeak(() -> {
+            createBasePriceWithRows();
+            runNotBetweenQueries();
+
+            createMatView(PRICE_1H_SQL);
+            drainQueues();
+
+            assertPrice1hRows("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """);
+            assertPrice1hValid();
+
+            execute("insert into base_price values ('jpyusd', 103.27, '2024-09-10T14:05')");
+            drainQueues();
+
+            assertPrice1hRows("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    jpyusd\t103.27\t2024-09-10T14:00:00.000000Z
+                    """);
+            assertPrice1hValid();
+        });
+    }
+
+    @Test
     public void testCreateDropCreate() throws Exception {
         assertMemoryLeak(() -> {
             executeWithRewriteTimestamp(
@@ -3620,6 +3655,35 @@ public class MatViewTest extends AbstractCairoTest {
                     .expectSize()
                     .noLeakCheck()
                     .returns(replaceExpectedTimestamp(expected));
+        });
+    }
+
+    @Test
+    public void testFullRefreshAfterBaseColumnAddAndNotBetweenQuery() throws Exception {
+        // ADD COLUMN on the base table makes the cached refresh query stale, so the FULL refresh
+        // compiles the view query again, on a pooled compiler that has analyzed a NOT BETWEEN on
+        // the designated timestamp. The refresh must still read its refresh range.
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """;
+            createBasePriceWithRows();
+            createMatView(PRICE_1H_SQL);
+            drainQueues();
+            assertPrice1hRows(expected);
+
+            execute("alter table base_price add column extra int");
+            drainQueues();
+            runNotBetweenQueries();
+
+            execute("refresh materialized view price_1h full");
+            drainQueues();
+
+            assertPrice1hRows(expected);
+            assertPrice1hValid();
         });
     }
 
@@ -4232,6 +4296,39 @@ public class MatViewTest extends AbstractCairoTest {
                             view_status\trefresh_base_table_txn
                             valid\t2
                             """);
+        });
+    }
+
+    @Test
+    public void testIncrementalRefreshAfterBaseColumnAddAndNotBetweenQuery() throws Exception {
+        // ADD COLUMN on the base table makes the cached refresh query stale, so the incremental
+        // refresh compiles the view query again, on a pooled compiler that has analyzed a NOT
+        // BETWEEN on the designated timestamp. The refresh must read only its refresh range,
+        // otherwise it writes rows outside the replace range and the view turns invalid.
+        assertMemoryLeak(() -> {
+            createBasePriceWithRows();
+            createMatView(PRICE_1H_SQL);
+            drainQueues();
+            assertPrice1hRows("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """);
+
+            runNotBetweenQueries();
+            execute("alter table base_price add column extra int");
+            execute("insert into base_price values ('jpyusd', 103.27, '2024-09-10T14:05', 1)");
+            drainQueues();
+
+            assertPrice1hValid();
+            assertPrice1hRows("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    jpyusd\t103.27\t2024-09-10T14:00:00.000000Z
+                    """);
         });
     }
 
@@ -6545,6 +6642,54 @@ public class MatViewTest extends AbstractCairoTest {
                             view_name\trefresh_type\tbase_table_name\tview_status\tinvalidation_reason\tlast_refresh_start_timestamp\tlast_refresh_finish_timestamp\trefresh_base_table_txn\tbase_table_txn
                             x_1h\timmediate\tx\tinvalid\ttruncate operation\t2024-01-01T01:01:01.842574Z\t2024-01-01T01:01:01.842574Z\t2\t4
                             """);
+        });
+    }
+
+    @Test
+    public void testRangeRefreshAfterBaseColumnAddAndNotBetweenQuery() throws Exception {
+        // ADD COLUMN on the base table makes the cached refresh query stale, so the RANGE refresh
+        // compiles the view query again, on a pooled compiler that has analyzed a NOT BETWEEN on
+        // the designated timestamp. The refresh must read only its range: rows outside it break
+        // the view's WAL commit, and WAL apply then suspends the view.
+        assertMemoryLeak(() -> {
+            final String expected = """
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    """;
+            createBasePriceWithRows();
+            createMatView(PRICE_1H_SQL);
+            drainQueues();
+            assertPrice1hRows(expected);
+
+            execute("alter table base_price add column extra int");
+            drainQueues();
+            runNotBetweenQueries();
+
+            execute("refresh materialized view price_1h range from '2024-09-10T12:00' to '2024-09-10T12:59'");
+            drainQueues();
+            assertPrice1hRows(expected);
+
+            // A completed RANGE refresh reports its status only after the next refresh, so the
+            // follow-up incremental refresh checks that the view's WAL still applies.
+            execute("insert into base_price values ('jpyusd', 103.27, '2024-09-10T14:05', 1)");
+            drainQueues();
+
+            assertQuery("select suspended from wal_tables() where name = 'price_1h'")
+                    .noLeakCheck()
+                    .inferRandomAccess()
+                    .inferTimestamp()
+                    .sizeMayVary()
+                    .returns("suspended\nfalse\n");
+            assertPrice1hValid();
+            assertPrice1hRows("""
+                    sym\tprice\tts
+                    gbpusd\t1.323\t2024-09-10T12:00:00.000000Z
+                    gbpusd\t1.321\t2024-09-10T13:00:00.000000Z
+                    jpyusd\t103.21\t2024-09-10T12:00:00.000000Z
+                    jpyusd\t103.27\t2024-09-10T14:00:00.000000Z
+                    """);
         });
     }
 
@@ -11284,8 +11429,45 @@ public class MatViewTest extends AbstractCairoTest {
                 .returns("rows\n" + expectedRows + "\n");
     }
 
+    // Checks the view's rows against the expected buckets and against the view query run
+    // directly on the base table, which takes no refresh range.
+    private void assertPrice1hRows(String expected) throws Exception {
+        assertQuery("price_1h order by sym, ts")
+                .expectSize()
+                .noLeakCheck()
+                .returns(replaceExpectedTimestamp(expected));
+        assertViewMatchesSqlOverBaseTable(PRICE_1H_SQL);
+    }
+
+    private void assertPrice1hValid() throws Exception {
+        assertQuery("select view_name, view_status, invalidation_reason from materialized_views()")
+                .noLeakCheck()
+                .noRandomAccess()
+                .returns("""
+                        view_name\tview_status\tinvalidation_reason
+                        price_1h\tvalid\t
+                        """);
+    }
+
     private String copySql(int from, int count) {
         return "select * from tmp where n >= " + from + " and n < " + (from + count);
+    }
+
+    private void createBasePriceWithRows() throws SqlException {
+        executeWithRewriteTimestamp(
+                "create table base_price (" +
+                        "sym varchar, price double, ts #TIMESTAMP" +
+                        ") timestamp(ts) partition by DAY WAL"
+        );
+        execute(
+                """
+                        insert into base_price values
+                        ('gbpusd', 1.320, '2024-09-10T12:01'),
+                        ('gbpusd', 1.323, '2024-09-10T12:02'),
+                        ('jpyusd', 103.21, '2024-09-10T12:02'),
+                        ('gbpusd', 1.321, '2024-09-10T13:02')"""
+        );
+        drainQueues();
     }
 
     private String createTableSql(String tableName, String columns, @Nullable String index, long startTs, long step, int count) {
@@ -11342,6 +11524,17 @@ public class MatViewTest extends AbstractCairoTest {
 
     private String replaceExpectedTimestamp(String expected) {
         return ColumnType.isTimestampMicro(timestampType.getTimestampType()) ? expected : expected.replaceAll(".000000Z", ".000000000Z");
+    }
+
+    private void runNotBetweenQueries() throws Exception {
+        // Enough runs for the compiler pool to hand the query to each of its compilers.
+        for (int i = 0; i < 30; i++) {
+            assertQuery("select count() from base_price where ts not between '2024-09-10T12:00' and '2024-09-10T12:59'")
+                    .noLeakCheck()
+                    .expectSize()
+                    .noRandomAccess()
+                    .returns("count\n1\n");
+        }
     }
 
     private void testAlignToCalendarTimezoneOffset() throws Exception {
