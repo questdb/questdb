@@ -197,12 +197,8 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
     private void calculateRanges(TableReader reader, LongList intervals) {
         isFrameCountUpperBoundComputed = false;
         if (intervals.size() > 0) {
-            if (reader.hasAnyDelta()) {
-                initialIntervalsLo = 0;
-                initialIntervalsHi = intervals.size() / 2;
-                initialPartitionLo = 0;
-                initialPartitionHi = reader.getPartitionCount();
-            } else if (PartitionBy.isPartitioned(reader.getPartitionedBy())) {
+            if (PartitionBy.isPartitioned(reader.getPartitionedBy())) {
+                // _txn min/max include Delta rows, so the cull also holds for Delta tables.
                 cullIntervals(reader, intervals);
                 if (initialIntervalsLo < initialIntervalsHi) {
                     cullPartitions(reader, intervals);
@@ -229,11 +225,6 @@ public abstract class AbstractIntervalPartitionFrameCursor implements PartitionF
         }
         if (initialIntervalsLo >= initialIntervalsHi || initialPartitionLo >= initialPartitionHi) {
             return 0;
-        }
-        if (reader.hasAnyDelta()) {
-            // Delta rows can extend beyond the base timestamp bounds. Every interval
-            // can emit at most one frame per partition, without opening delta state.
-            return (long) (initialIntervalsHi - initialIntervalsLo) * (initialPartitionHi - initialPartitionLo);
         }
         final long minTimestamp = reader.getMinTimestamp();
         final long maxTimestamp = reader.getMaxTimestamp();
