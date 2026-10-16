@@ -206,6 +206,21 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupSkipRewriteCopiesTwoRowGroupsKeepsTop() throws Exception {
+        // 12 rows, top 6 runs from row group 0 into row group 1, ci changed type: the new row at 09:30
+        // merges into row group 2 and opens the rewrite, which first copies row groups 0 and 1 through
+        // the materializer. Row group 1 starts at row 5: rows 5, 6 keep the top, rows 7, 8 their values.
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP SKIP KEYS(ts)", 6, 12, -1);
+            changeControlColumnType();
+            insertO3("2024-01-01T09:30:00.000000Z");
+            assertReaders(topRows(12, 6, -1, "2024-01-01T09:30:00.000000Z", true));
+        });
+    }
+
+    @Test
     public void testDedupUpsertTieAfterTopKeepsTop() throws Exception {
         // UPSERT of row 4 (03:00): rows 1..3 keep their position, the top (2) is inside the prefix
         Assume.assumeTrue(isWal);
@@ -227,6 +242,21 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             createShapeTables(" DEDUP UPSERT KEYS(ts)");
             insertO3("2024-01-01T02:00:00.000000Z");
             assertReaders(topRows(8, 2, 3, null, false));
+        });
+    }
+
+    @Test
+    public void testDuplicateTimestampsAtPrefixLineKeepTop() throws Exception {
+        // rows 3 and 4 both at 02:00, top 3, row groups of 6: the prefix line falls inside row group 0.
+        // A non-dedup row at 02:00 goes after both equal rows: rows 1..4 keep their position, and the
+        // top (3) ends inside that prefix
+        setInPlaceProperties(6);
+        assertMemoryLeak(() -> {
+            createShapeTables("", 3, 8, 4);
+            insertO3("2024-01-01T02:00:00.000000Z");
+            final List<Row> expected = topRows(8, 3, -1, null, true);
+            expected.add(4, new Row(50, "2024-01-01T02:00:00.000000Z", Kind.O3));
+            assertReaders(expected);
         });
     }
 
@@ -420,6 +450,50 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testTwoPartitionsInOneCommitKeepOwnTops() throws Exception {
+        // 2024-01-01 holds rows 1..8 before the columns exist (a top of the whole partition),
+        // 2024-01-02 rows 1, 2 before them and rows 3..8 after (top 2). One commit appends to
+        // 2024-01-01, which keeps its top, and merges before the top of 2024-01-02, which
+        // materializes it: each partition keeps the tops below its own limit
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            for (String t : tables()) {
+                createBaseTable(t, "");
+                execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, 8) + ", "
+                        + "(1, '2024-01-02T00:00:00.000000Z'), (2, '2024-01-02T01:00:00.000000Z')");
+                addColumns(t);
+                final StringBuilder sql = new StringBuilder("INSERT INTO " + t + " (v, ts, c1, c2, c3) VALUES ");
+                for (int v = 3; v <= 8; v++) {
+                    if (v > 3) {
+                        sql.append(", ");
+                    }
+                    final String literal = literalOf(v);
+                    sql.append('(').append(v).append(", '").append(tsOf(v).replace(O3_DAY, "2024-01-02")).append("', ")
+                            .append(literal).append(", ").append(literal).append(", ").append(literal).append(')');
+                }
+                execute(sql.toString());
+                execute("INSERT INTO " + t + " (v, ts) VALUES (100, '2024-01-03T00:00:00.000000Z')");
+            }
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            drainWalQueue();
+            for (String t : tables()) {
+                execute("INSERT INTO " + t + " (v, ts, c1, c2, c3) VALUES "
+                        + "(50, '2024-01-01T23:00:00.000000Z', " + o3Literal() + ", " + o3Literal() + ", " + o3Literal() + "), "
+                        + "(50, '2024-01-02T00:30:00.000000Z', " + o3Literal() + ", " + o3Literal() + ", " + o3Literal() + ")");
+            }
+            drainWalQueue();
+            final List<Row> expectedDay2 = topRows(8, 2, -1, null, false);
+            expectedDay2.add(1, new Row(50, "2024-01-02T00:30:00.000000Z", Kind.O3));
+            assertReaders(
+                    true,
+                    new String[]{"2024-01-01", "2024-01-02"},
+                    List.of(topRows(8, 8, -1, "2024-01-01T23:00:00.000000Z", true), expectedDay2)
+            );
+        });
+    }
+
+    @Test
     public void testWideTopMergeAfterTopKeepsTop() throws Exception {
         // top 6 runs from row group 0 into row group 1; the O3 row lands in row group 1 after the top
         setInPlaceProperties(4);
@@ -444,6 +518,14 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         execute("ALTER TABLE " + table + " ADD COLUMN cd DECIMAL(2,1)");
     }
 
+    private void assertDayRows(String[] days, List<List<Row>> expectedByDay, boolean isAltered, boolean isC3Altered) throws Exception {
+        for (int i = 0, n = expectedByDay.size(); i < n; i++) {
+            assertQuery("SELECT v, c1, c2, c3 FROM pt WHERE ts IN '" + days[i] + "' ORDER BY ts")
+                    .noLeakCheck()
+                    .returns(render(expectedByDay.get(i), isAltered, isC3Altered));
+        }
+    }
+
     // c1 to SYMBOL and c2 lazily to the lazy target, then (pt) CONVERT TO NATIVE and c3 to SYMBOL;
     // pt must match tw and the expected rows after each step
     private void assertReaders(List<Row> expected) throws Exception {
@@ -455,10 +537,13 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     private void assertReaders(List<Row> expected, boolean isAltering, String... parquetDays) throws Exception {
+        assertReaders(isAltering, parquetDays, List.of(expected));
+    }
+
+    // checks the rows of parquetDays[i] against expectedByDay[i], for the days that have expected rows
+    private void assertReaders(boolean isAltering, String[] parquetDays, List<List<Row>> expectedByDay) throws Exception {
         assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
-        assertQuery("SELECT v, c1, c2, c3 FROM pt WHERE ts IN '" + O3_DAY + "' ORDER BY ts")
-                .noLeakCheck()
-                .returns(render(expected, false));
+        assertDayRows(parquetDays, expectedByDay, false, false);
         if (!isAltering) {
             return;
         }
@@ -468,18 +553,18 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         }
         drainWalQueue();
         assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
-        assertQuery("SELECT v, c1, c2, c3 FROM pt WHERE ts IN '" + O3_DAY + "' ORDER BY ts")
-                .noLeakCheck()
-                .returns(render(expected, true));
+        assertDayRows(parquetDays, expectedByDay, true, false);
         // the filter on the lazily changed column, JIT on and off
-        final String nullCount = "count\n" + countTop(expected) + "\n";
-        for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
-            sqlExecutionContext.setJitMode(jitMode);
-            assertQuery("SELECT count() FROM pt WHERE ts IN '" + O3_DAY + "' AND c2 IS NULL")
-                    .noLeakCheck()
-                    .noRandomAccess()
-                    .expectSize()
-                    .returns(nullCount);
+        for (int i = 0, n = expectedByDay.size(); i < n; i++) {
+            final String nullCount = "count\n" + countTop(expectedByDay.get(i)) + "\n";
+            for (int jitMode : new int[]{SqlJitMode.JIT_MODE_ENABLED, SqlJitMode.JIT_MODE_DISABLED}) {
+                sqlExecutionContext.setJitMode(jitMode);
+                assertQuery("SELECT count() FROM pt WHERE ts IN '" + parquetDays[i] + "' AND c2 IS NULL")
+                        .noLeakCheck()
+                        .noRandomAccess()
+                        .expectSize()
+                        .returns(nullCount);
+            }
         }
         for (String day : parquetDays) {
             execute("ALTER TABLE pt CONVERT PARTITION TO NATIVE LIST '" + day + "'");
@@ -490,9 +575,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         }
         drainWalQueue();
         assertSqlCursors("tw ORDER BY ts", "pt ORDER BY ts");
-        assertQuery("SELECT v, c1, c2, c3 FROM pt WHERE ts IN '" + O3_DAY + "' ORDER BY ts")
-                .noLeakCheck()
-                .returns(render(expected, true, true));
+        assertDayRows(parquetDays, expectedByDay, true, true);
     }
 
     private void assertShape(int rowGroupSize, String o3Ts, boolean isTopKept) throws Exception {
@@ -538,19 +621,24 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         createShapeTables(dedup, 2);
     }
 
-    // rows 1..8, the columns added after `top` rows, 2024-01-01 converted to parquet
     private void createShapeTables(String dedup, int top) throws Exception {
+        createShapeTables(dedup, top, 8, -1);
+    }
+
+    // rows 1..rowCount, the columns added after `top` rows, 2024-01-01 converted to parquet; row
+    // tiedRow (-1: none, else past the top) takes the timestamp of the row before it
+    private void createShapeTables(String dedup, int top, int rowCount, int tiedRow) throws Exception {
         for (String t : tables()) {
             createBaseTable(t, dedup);
             execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, top));
             addColumns(t);
             final StringBuilder sql = new StringBuilder("INSERT INTO " + t + " (v, ts, c1, c2, c3, ci, cv, cg, cd) VALUES ");
-            for (int v = top + 1; v <= 8; v++) {
+            for (int v = top + 1; v <= rowCount; v++) {
                 if (v > top + 1) {
                     sql.append(", ");
                 }
                 final String literal = literalOf(v);
-                sql.append('(').append(v).append(", '").append(tsOf(v)).append("', ")
+                sql.append('(').append(v).append(", '").append(tsOf(v == tiedRow ? v - 1 : v)).append("', ")
                         .append(literal).append(", ").append(literal).append(", ").append(literal)
                         .append(", ").append(v).append(", '").append(v).append("', #s, ").append(v % 10).append(".5m)");
             }
@@ -579,7 +667,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         };
     }
 
-    // SQL literal of the value of row v (3..8), the same in every case: 0/false right after the top,
+    // SQL literal of the value of row v (3..8, repeating from row 9), the same in every case: 0/false right after the top,
     // the type's MIN and MAX, a 2-byte and the largest CHAR
     private String literalOf(int v) {
         return switch (type) {
@@ -672,9 +760,9 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_O3_REWRITE_UNUSED_MAX_BYTES, Long.MAX_VALUE);
     }
 
-    // text of the value of row v (3..8)
+    // text of the value of row v (3..8, repeating from row 9)
     private String textOf(int v) {
-        final int i = v - 3;
+        final int i = (v - 3) % 6;
         return switch (type) {
             case "BOOLEAN" -> v % 2 == 0 ? "true" : "false";
             case "BYTE" -> new String[]{"0", "-128", "127", "1", "-1", "42"}[i];
