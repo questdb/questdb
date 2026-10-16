@@ -7952,22 +7952,6 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
-    // Returns true when runFromModelFirst has placed the model of every ordering edge into the candidate:
-    // an edge that is neither a key nor a deferred edge keeps its direction.
-    private boolean isPlaceable(ObjList<IQueryModel> joinModels, int candidate) {
-        final JoinContext cc = joinModels.getQuick(candidate).getJoinContext();
-        if (cc != null) {
-            for (int i = 0, n = cc.parents.size(); i < n; i++) {
-                final int parentIndex = cc.parents.get(i);
-                if (fromModelAncestorRanks.getQuick(parentIndex) == -1 && !hasJoinKey(cc, parentIndex)
-                        && !isDeferredInnerKeyEdge(parentIndex, candidate)) {
-                    return false;
-                }
-            }
-        }
-        return true;
-    }
-
     // Returns true when a later model that the ON clause of the model at modelIndex reads, directly or
     // through other later models, reads that model back: neither can execute first. The walk follows
     // the reader lists of recordJoinModelRefs back from the model, through the later models that read
@@ -16177,10 +16161,10 @@ public class SqlOptimiser implements Mutable {
     // swapJoinOrder moves keys only up to the nearest join barrier, they are INNER and CROSS joins
     // written before the first barrier, and no other model is a parent of an ancestor. This method places
     // the ancestors again, model 0 first, then in written order each one that a key or a deferred edge
-    // links to a placed one, once the models of its other ordering edges are placed, and gives every key
-    // between two ancestors to the one placed later. Each placed model thus joins on every key it shares
-    // with the models placed before it, as when the query lists the ancestors in that order, and the
-    // order stays acyclic, as every edge among the ancestors follows the placement.
+    // links to a placed one, and gives every key between two ancestors to the one placed later. Each placed
+    // model thus joins on every key it shares with the models placed before it, as when the query lists the
+    // ancestors in that order, and the order stays acyclic, as every edge among the ancestors follows the
+    // placement.
     private void runFromModelFirst(IQueryModel parent, int fromModelJoinType) throws SqlException {
         final ObjList<IQueryModel> joinModels = parent.getJoinModels();
         final IntHashSet ancestors = fromModelAncestors;
@@ -16223,7 +16207,7 @@ public class SqlOptimiser implements Mutable {
             boolean isNextLinked = false;
             for (int i = 0, n = ancestors.size(); i < n; i++) {
                 final int candidate = ancestors.get(i);
-                if (rank.getQuick(candidate) != -1 || !isPlaceable(joinModels, candidate)) {
+                if (rank.getQuick(candidate) != -1) {
                     continue;
                 }
                 // a model that no key links to a placed model would join as a CROSS join, so it waits
@@ -16233,9 +16217,6 @@ public class SqlOptimiser implements Mutable {
                     next = candidate;
                     isNextLinked = isLinked;
                 }
-            }
-            if (next == -1) {
-                throw fromModelOrderException(parent);
             }
             rank.setQuick(next, placement.size());
             placement.add(next);
