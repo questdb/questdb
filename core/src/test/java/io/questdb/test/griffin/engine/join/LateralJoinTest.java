@@ -3968,7 +3968,8 @@ public class LateralJoinTest extends AbstractCairoTest {
     // which DuckDB does not run: per outer row, o.x = 1 and the NULL o.x match no a row, so every b
     // row is NULL-extended, and b.k = o.x keeps b rows 21 and 23 for o.x = 1. With o2, WHERE keys
     // o2.x on a and o2.y on b, and c's ON clause reads o2.x only, so the query runs, and matches the
-    // body run per outer row. Reading o2.y there instead fails. A view over the query returns its
+    // body run per outer row. Reading o2.y there instead fails, also when a later ON clause before the
+    // RIGHT join reads only o2.x, keyed on a. A view over the query returns its
     // rows, and so does the query with VARCHAR or SYMBOL keys.
     @Test
     public void testLateralOuterConditionBeforeRightJoinKeyOnMaster() throws Exception {
@@ -4000,6 +4001,10 @@ public class LateralJoinTest extends AbstractCairoTest {
             assertQuery(yRead)
                     .noLeakCheck()
                     .fails(yRead.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+            final String yThenXRead = "SELECT o2.id, l.aid, l.sid FROM o2 JOIN LATERAL (SELECT a.id aid, b.id sid FROM a JOIN c ON c.sid = a.id + 11 AND c.id > o2.y + 98 JOIN c c2 ON c2.sid = c.sid AND o2.x > 0 RIGHT JOIN b ON a.x = b.k WHERE a.x = o2.x AND b.k = o2.y AND a.id IS NOT NULL) l";
+            assertQuery(yThenXRead)
+                    .noLeakCheck()
+                    .fails(yThenXRead.indexOf("RIGHT"), "outer column reference in an ON clause at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
 
             assertQuery("SELECT o.id, l.aid, l.sid FROM o JOIN LATERAL (SELECT a.id aid, b.id sid FROM a RIGHT JOIN b ON a.x = b.k AND o.x > 1 WHERE b.k = o.x) l ORDER BY 1, 2, 3")
                     .noLeakCheck()
