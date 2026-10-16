@@ -55,8 +55,8 @@ import io.questdb.std.IntList;
 import io.questdb.std.IntObjHashMap;
 import io.questdb.std.LongObjHashMap;
 import io.questdb.std.Misc;
-import io.questdb.std.NumericException;
 import io.questdb.std.Numbers;
+import io.questdb.std.NumericException;
 import io.questdb.std.ObjList;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -89,7 +89,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
             if (!constant.isConstant()) {
                 continue;
             }
-            if (!isConvertibleKey(constant.getType(), keyType)) {
+            if (isInconvertibleKey(constant.getType(), keyType)) {
                 return true;
             }
             try {
@@ -157,7 +157,7 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 throw SqlException.$(argPositions.getQuick(i), "constant expected");
             }
 
-            if (!isConvertibleKey(keyArgType, keyType)) {
+            if (isInconvertibleKey(keyArgType, keyType)) {
                 throw SqlException.position(argPositions.getQuick(i))
                         .put("type mismatch [expected=").put(ColumnType.nameOf(keyType))
                         .put(", actual=").put(ColumnType.nameOf(keyArgType))
@@ -278,9 +278,12 @@ public class SwitchFunctionFactory implements FunctionFactory {
             value = driver.ceilFrom(value, constantType);
         }
         return switch (keyTag) {
-            case ColumnType.BYTE -> value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE ? ByteConstant.newInstance((byte) value) : null;
-            case ColumnType.SHORT -> value >= Short.MIN_VALUE && value <= Short.MAX_VALUE ? ShortConstant.newInstance((short) value) : null;
-            case ColumnType.INT -> value > Integer.MIN_VALUE && value <= Integer.MAX_VALUE ? IntConstant.newInstance((int) value) : null;
+            case ColumnType.BYTE ->
+                    value >= Byte.MIN_VALUE && value <= Byte.MAX_VALUE ? ByteConstant.newInstance((byte) value) : null;
+            case ColumnType.SHORT ->
+                    value >= Short.MIN_VALUE && value <= Short.MAX_VALUE ? ShortConstant.newInstance((short) value) : null;
+            case ColumnType.INT ->
+                    value > Integer.MIN_VALUE && value <= Integer.MAX_VALUE ? IntConstant.newInstance((int) value) : null;
             case ColumnType.LONG -> LongConstant.newInstance(value);
             case ColumnType.DATE -> DateConstant.newInstance(value);
             default -> TimestampConstant.newInstance(value, keyType);
@@ -306,9 +309,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
                 return getIntegralKey(keyType, constantType, ColumnType.isNull(constantType) ? Numbers.LONG_NULL : constant.getLong(null));
             }
             if (isTemporal(keyType) && ColumnType.isVarcharOrString(constantType)) {
-                final Function timestamp = parseTimestamp(constant.getStrA(null));
-                if (timestamp != null) {
-                    return getIntegralKey(keyType, timestamp.getType(), timestamp.getTimestamp(null));
+                try (Function timestamp = parseTimestamp(constant.getStrA(null))) {
+                    if (timestamp != null) {
+                        return getIntegralKey(keyType, timestamp.getType(), timestamp.getTimestamp(null));
+                    }
                 }
             } else if ((keyTag == ColumnType.BYTE || keyTag == ColumnType.SHORT) && isText(constantType) && constant.getStrA(null) == null) {
                 return null;
@@ -329,15 +333,15 @@ public class SwitchFunctionFactory implements FunctionFactory {
         return function.getStrA(record);
     }
 
-    private static boolean isConvertibleKey(int keyArgType, int keyType) {
+    private static boolean isInconvertibleKey(int keyArgType, int keyType) {
         if (!ColumnType.isConvertibleFrom(keyArgType, keyType)) {
-            return false;
-        }
-        if (ColumnType.isToSameOrWider(keyArgType, keyType) || keyType < ColumnType.BYTE || keyType > ColumnType.LONG) {
             return true;
         }
+        if (ColumnType.isToSameOrWider(keyArgType, keyType) || keyType < ColumnType.BYTE || keyType > ColumnType.LONG) {
+            return false;
+        }
         // the getter of an integral key type does not narrow a value other than text, e.g. DOUBLE has no getInt()
-        return ColumnType.isStringyType(keyArgType) || keyArgType == ColumnType.CHAR || CaseCommon.hasCastFactory(keyArgType, keyType);
+        return !ColumnType.isStringyType(keyArgType) && keyArgType != ColumnType.CHAR && !CaseCommon.hasCastFactory(keyArgType, keyType);
     }
 
     private static boolean isIntegral(short tag) {
@@ -346,8 +350,10 @@ public class SwitchFunctionFactory implements FunctionFactory {
 
     private static boolean isKeyType(int keyType) {
         return switch (ColumnType.tagOf(keyType)) {
-            case ColumnType.CHAR, ColumnType.INT, ColumnType.IPv4, ColumnType.BYTE, ColumnType.SHORT, ColumnType.LONG, ColumnType.FLOAT,
-                 ColumnType.DOUBLE, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN, ColumnType.STRING, ColumnType.VARCHAR,
+            case ColumnType.CHAR, ColumnType.INT, ColumnType.IPv4, ColumnType.BYTE, ColumnType.SHORT, ColumnType.LONG,
+                 ColumnType.FLOAT,
+                 ColumnType.DOUBLE, ColumnType.DATE, ColumnType.TIMESTAMP, ColumnType.BOOLEAN, ColumnType.STRING,
+                 ColumnType.VARCHAR,
                  ColumnType.SYMBOL -> true;
             default -> false;
         };
