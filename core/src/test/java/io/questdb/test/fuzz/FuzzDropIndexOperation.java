@@ -97,4 +97,12 @@ public class FuzzDropIndexOperation implements FuzzTransactionOperation {
             throw e instanceof RuntimeException re ? re : new RuntimeException(e);
         }
     }
+
+    public String getNewIndexTypeName() {
+        return newIndexTypeName;
+    }
+
+    public int getSymbolColumnIndex() {
+        return symbolColumnIndex;
+    }
 }

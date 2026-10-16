@@ -2778,6 +2778,77 @@ public class ColumnPurgeJobTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testReplayedPurgeOfDroppedPostingIndexAfterFailedPurge() throws Exception {
+        // No reader holds the old instance of sym, so DROP INDEX purges it at once. Neither DROP INDEX nor
+        // the first purge job can remove its sym.pci in partition 2 and one of its sealed .pv files in
+        // partition 3, and the job closes with the task incomplete in the purge log. Its .d and .pk files
+        // are gone, and the live column has no index. A new purge job replays the task and removes both
+        // files: its existence probe finds the .pci in partition 2 and the .pv by the directory scan in
+        // partition 3.
+        final AtomicBoolean isArmed = new AtomicBoolean();
+        final String[] failingFileSuffixes = new String[2];
+        ff = new TestFilesFacadeImpl() {
+            @Override
+            public boolean removeQuiet(LPSZ name) {
+                if (isArmed.get()) {
+                    for (String suffix : failingFileSuffixes) {
+                        if (Utf8s.endsWithAscii(name, suffix)) {
+                            return false;
+                        }
+                    }
+                }
+                return super.removeQuiet(name);
+            }
+        };
+        assertMemoryLeak(ff, () -> {
+            createReplayTable("PARTITION BY DAY BYPASS WAL", "POSTING INCLUDE (x)");
+            final String[] dirs = new String[5];
+            final long[] oldTxns = new long[5];
+            for (int i = 0; i < 5; i++) {
+                dirs[i] = partitionDir("t_replay", i);
+                oldTxns[i] = getColumnNameTxn("t_replay", "sym", i);
+            }
+            final String sealedValueFile = filesWithPrefix(listFiles(dirs[3]), "sym.pv.").first();
+            Assert.assertTrue(sealedValueFile, sealedValueFile.matches("sym\\.pv\\.[0-9]+"));
+            failingFileSuffixes[0] = Files.SEPARATOR + new File(dirs[2]).getName() + Files.SEPARATOR + "sym.pci";
+            failingFileSuffixes[1] = Files.SEPARATOR + new File(dirs[3]).getName() + Files.SEPARATOR + sealedValueFile;
+            isArmed.set(true);
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                execute("ALTER TABLE t_replay ALTER COLUMN sym DROP INDEX");
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(1, purgeJob.getOutstandingPurgeTasks());
+                // a row per partition of the task
+                assertIncompletePurgeLogRows(purgeJob, 2);
+            }
+            isArmed.set(false);
+            engine.releaseInactive();
+
+            final String[] expectedOldFiles = {"[]", "[]", "[sym.pci]", "[" + sealedValueFile + "]", "[]"};
+            final String[] listingsBefore = new String[5];
+            for (int i = 0; i < 5; i++) {
+                listingsBefore[i] = listFiles(dirs[i]);
+                Assert.assertEquals(listingsBefore[i], expectedOldFiles[i], filesOfInstance(listingsBefore[i], "sym", oldTxns[i]).toString());
+            }
+
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+                assertIncompletePurgeLogRows(purgeJob, 0);
+            }
+            for (int i = 0; i < 5; i++) {
+                final TreeSet<String> expectedFiles = new TreeSet<>(Arrays.asList(listingsBefore[i].split(" ")));
+                expectedFiles.removeAll(filesOfInstance(listingsBefore[i], "sym", oldTxns[i]));
+                Assert.assertEquals(dirs[i], String.join(" ", expectedFiles), listFiles(dirs[i]));
+            }
+            final String query = "SELECT ts, x FROM t_replay WHERE sym = 'A'";
+            assertQuery(query)
+                    .noLeakCheck()
+                    .timestamp("ts")
+                    .returns(replaceTimestampSuffix(ROWS_OF_A_IN_REPLAY_TABLE, timestampType.getTypeName()));
+            assertSqlCursors("SELECT ts, x FROM t_replay WHERE sym::STRING = 'A'", query);
+        });
+    }
+
+    @Test
     public void testReplayedPurgeOfPostingIndexDroppedAtTxnZero() throws Exception {
         // DROP INDEX as the first change of a table that is not partitioned gives s the column name txn 0
         // in default, next to the files of instance NONE. The replayed purge removes them and keeps s.d.0.
