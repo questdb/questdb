@@ -50,6 +50,12 @@ import java.util.Map;
  * outer row, or fail with the LateralJoinRewriter error that rejects the filter. A body that fails
  * on its own must fail because of its filter, so the filter must fail on the table alone, and the
  * query must fail too.
+ * <p>
+ * The rewriter may reject a query only when it cannot prove that the filter drops every
+ * NULL-extended row. A query without OR whose filter holds a comparison, IN, BETWEEN or IS [NOT]
+ * NULL that returns no row from null_trades, which holds the NULL-extended row, must therefore
+ * return rows: with constant operands, and with a bind variable or a scalar sub-query under the
+ * rules in {@link LateralJoinNullRejectionTest#testBindVariableValuesShareThePlan()}.
  */
 public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     private static final String ERROR_SUFFIX = "is not supported in a correlated lateral sub-query";
@@ -71,6 +77,18 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             new FuzzColumn("sy", "SYMBOL", new String[]{"''", "'a'", "'abc'"}, new String[]{"''", "'a'", "'abc'", "NULL"}, "str", new Object[]{null, "abc"}),
             new FuzzColumn("ip", "IPv4", new String[]{"'0.0.0.1'", "'1.1.1.1'", "'2.2.2.2'"}, new String[]{"'0.0.0.0'", "'1.1.1.1'", "'2.2.2.2'", "NULL"}, null, null),
             new FuzzColumn("u", "UUID", new String[]{"'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'"}, new String[]{"'a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11'", "'00000000-0000-0000-0000-000000000000'", "NULL"}, null, null),
+            new FuzzColumn("h", "LONG256", new String[]{"0x01", "0x05"}, new String[]{"0x01", "0x00", "0x05", "NULL"}, null, null),
+            new FuzzColumn("g1", "GEOHASH(1c)", new String[]{"#u", "#s"}, new String[]{"#u", "'u'", "NULL"}, null, null),
+            new FuzzColumn("g2", "GEOHASH(2c)", new String[]{"#u3", "#s3"}, new String[]{"#u3", "'u3'", "NULL"}, null, null),
+            new FuzzColumn("g4", "GEOHASH(4c)", new String[]{"#u33d", "#s33d"}, new String[]{"#u33d", "'u33d'", "NULL"}, null, null),
+            new FuzzColumn("g8", "GEOHASH(8c)", new String[]{"#u33dc0cp", "#s33dc0cp"}, new String[]{"#u33dc0cp", "'u33dc0cp'", "NULL"}, null, null),
+            new FuzzColumn("tn", "TIMESTAMP_NS", new String[]{"'2024-01-01T00:00:00.000000000Z'", "0::timestamp_ns"}, new String[]{"'2024-01-01'", "'2023-01-01'", "''", "NULL", "NULL::timestamp_ns"}, "timestamp_ns", new Object[]{null, 0L, 1_704_067_200_000_000_000L}),
+            new FuzzColumn("d8", "DECIMAL(2,0)", new String[]{"0::DECIMAL(2,0)", "10::DECIMAL(2,0)", "-1::DECIMAL(2,0)"}, new String[]{"0", "10", "-1", "NULL"}, null, null),
+            new FuzzColumn("d16", "DECIMAL(4,1)", new String[]{"0::DECIMAL(4,1)", "10::DECIMAL(4,1)", "-1.5::DECIMAL(4,1)"}, new String[]{"0", "10", "-1", "NULL"}, null, null),
+            new FuzzColumn("d32", "DECIMAL(9,2)", new String[]{"0::DECIMAL(9,2)", "10::DECIMAL(9,2)", "-1.5::DECIMAL(9,2)"}, new String[]{"0", "10", "-1", "NULL"}, null, null),
+            new FuzzColumn("d128", "DECIMAL(38,4)", new String[]{"0::DECIMAL(38,4)", "10::DECIMAL(38,4)", "-1.5::DECIMAL(38,4)"}, new String[]{"0", "10", "-1", "NULL"}, null, null),
+            new FuzzColumn("d256", "DECIMAL(60,4)", new String[]{"0::DECIMAL(60,4)", "10::DECIMAL(60,4)", "-1.5::DECIMAL(60,4)"}, new String[]{"0", "10", "-1", "NULL"}, null, null),
+            new FuzzColumn("arr", "DOUBLE[]", new String[]{"ARRAY[1.0, 2.0]", "ARRAY[3.0]"}, new String[]{"ARRAY[1.0, 2.0]", "NULL"}, null, null),
     };
     private static final String[] COMPARISONS = {"=", "!=", "<", "<=", ">", ">="};
     // correlated conjuncts: terminateHere() moves some into the outer-ref join's ON clause, and
@@ -78,18 +96,26 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     private static final String[] CORRELATED = {"t.id > {K}", "t.id >= {K}", "t.x = {K}", "t.id != {K}"};
     private static final String[] LATERAL_JOINS = {"JOIN LATERAL", "CROSS JOIN LATERAL", "LEFT JOIN LATERAL"};
     private static final int QUERIES_PER_ROUND = 40;
+    // A FULL join whose ON clause reads the outer key on refunds also NULL-extends refunds, and no
+    // filter on trades drops those rows, so the rewriter rejects every such query.
     private static final Shape[] SHAPES = {
-            new Shape("{T} t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE {P}", false),
-            new Shape("{T} t RIGHT JOIN refunds r ON r.k = {K} AND t.x = r.k WHERE {P}", false),
-            new Shape("{T} t JOIN xs x ON x.k = {K} RIGHT JOIN refunds r ON t.x = r.k WHERE {P}", false),
-            new Shape("{T} t JOIN xs x ON x.k = t.x AND x.k = {K} RIGHT JOIN refunds r ON t.x = r.k WHERE {P}", false),
-            new Shape("{T} t JOIN xs x ON x.k = {K} FULL JOIN refunds r ON t.x = r.k WHERE {P}", false),
-            new Shape("{T} t RIGHT JOIN refunds r ON t.x = r.k WHERE t.x = {K} AND {P}", true),
-            new Shape("{T} t FULL JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE {P}", false),
+            new Shape("{T} t RIGHT JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE {P}", false, false),
+            new Shape("{T} t RIGHT JOIN refunds r ON r.k = {K} AND t.x = r.k WHERE {P}", false, false),
+            new Shape("{T} t JOIN xs x ON x.k = {K} RIGHT JOIN refunds r ON t.x = r.k WHERE {P}", false, false),
+            new Shape("{T} t JOIN xs x ON x.k = t.x AND x.k = {K} RIGHT JOIN refunds r ON t.x = r.k WHERE {P}", false, false),
+            new Shape("{T} t JOIN xs x ON x.k = {K} FULL JOIN refunds r ON t.x = r.k WHERE {P}", false, false),
+            new Shape("{T} t RIGHT JOIN refunds r ON t.x = r.k WHERE t.x = {K} AND {P}", true, false),
+            new Shape("{T} t FULL JOIN refunds r ON t.x = r.k AND r.k = {K} WHERE {P}", false, true),
             // only the order as written keeps trades ahead of a join whose ON clause reads no trades column
-            new Shape("{T} t RIGHT JOIN refunds r ON r.k = {K} WHERE {P}", false),
-            new Shape("{T} t FULL JOIN refunds r ON r.k = {K} WHERE {P}", false)
+            new Shape("{T} t RIGHT JOIN refunds r ON r.k = {K} WHERE {P}", false, false),
+            new Shape("{T} t FULL JOIN refunds r ON r.k = {K} WHERE {P}", false, true)
     };
+    // queries whose LATERAL rows were compared with the reference rows
+    private int comparedCount;
+    // queries that must return rows, as their filter provably drops every NULL-extended row
+    private int nullRejectingCount;
+    // queries with a valid filter that the rewriter rejected
+    private int rejectedCount;
     // queries whose filter is valid, so the reference ran and the query was checked against it
     private int validCount;
 
@@ -138,6 +164,65 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         } catch (Throwable e) {
             throw new AssertionError("failed with " + e + bindSuffix + "\n    " + sql, e);
         }
+    }
+
+    private static boolean isEqualityOnlyType(FuzzColumn column) {
+        return column.type.startsWith("GEOHASH") || column.type.endsWith("[]");
+    }
+
+    // True when no row from null_trades passes the predicate, so it drops every NULL-extended row
+    private static boolean isFalseOnNullExtendedRow(Predicate predicate) {
+        try {
+            sink.clear();
+            printSql("SELECT count() FROM null_trades t WHERE " + predicate.sql);
+            return rowsOf(sink).getFirst().equals("0");
+        } catch (SqlException e) {
+            // e.g. a scalar sub-query that returns more than one row
+            return false;
+        }
+    }
+
+    // True when the filter provably drops every row that the join NULL-extends on trades, so the
+    // rewriter must accept the query: the filter has no OR and a predicate in a form that the
+    // rewriter proves is false on the NULL-extended row. The plan checks the value of <= and >=
+    // against a bind variable or a scalar sub-query once per execution, and the query fails when
+    // that value is NULL; the rewriter may check any such predicate of the filter.
+    private static boolean isNullRejectingFilter(Shape shape, boolean hasOr, List<Predicate> predicates) {
+        if (hasOr || shape.hasKeyOnFullJoinedTable) {
+            return false;
+        }
+        boolean hasNullRuntimeCheck = false;
+        for (int i = 0, n = predicates.size(); i < n; i++) {
+            final Predicate predicate = predicates.get(i);
+            if (predicate.kind == PredicateKind.RUNTIME_CHECKED && !isFalseOnNullExtendedRow(predicate)) {
+                hasNullRuntimeCheck = true;
+            }
+        }
+        for (int i = 0, n = predicates.size(); i < n; i++) {
+            final Predicate predicate = predicates.get(i);
+            switch (predicate.kind) {
+                case PROVABLE -> {
+                    if (isFalseOnNullExtendedRow(predicate)) {
+                        return true;
+                    }
+                }
+                case RUNTIME_CHECKED -> {
+                    if (!hasNullRuntimeCheck) {
+                        return true;
+                    }
+                }
+                default -> {
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean isTypeWithoutNull(FuzzColumn column) {
+        return switch (column.type) {
+            case "BOOLEAN", "BYTE", "SHORT" -> true;
+            default -> false;
+        };
     }
 
     // passes every column through, or computes it with a cast to its own type, whose type the
@@ -228,6 +313,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             case "long" -> bindVariableService.setLong(0, value == null ? Numbers.LONG_NULL : (Long) value);
             case "double" -> bindVariableService.setDouble(0, value == null ? Double.NaN : (Double) value);
             case "timestamp" -> bindVariableService.setTimestamp(0, value == null ? Numbers.LONG_NULL : (Long) value);
+            case "timestamp_ns" -> bindVariableService.setTimestampNano(0, value == null ? Numbers.LONG_NULL : (Long) value);
             default -> bindVariableService.setStr(0, (String) value);
         }
     }
@@ -235,9 +321,16 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     private void assertRandomQuery(Rnd rnd, List<String> outerRows, List<String> failures) throws SqlException {
         bindVariableService.clear();
         final Bind bind = new Bind();
-        final StringBuilder filter = new StringBuilder(randomPredicate(rnd, bind));
+        final List<Predicate> predicates = new ArrayList<>();
+        predicates.add(randomPredicate(rnd, bind));
+        final StringBuilder filter = new StringBuilder(predicates.getFirst().sql);
+        boolean hasOr = false;
         for (int i = 0, n = rnd.nextInt(3); i < n; i++) {
-            filter.append(rnd.nextInt(4) == 0 ? " OR " : " AND ").append(randomPredicate(rnd, bind));
+            final boolean isOr = rnd.nextInt(4) == 0;
+            hasOr |= isOr;
+            final Predicate predicate = randomPredicate(rnd, bind);
+            predicates.add(predicate);
+            filter.append(isOr ? " OR " : " AND ").append(predicate.sql);
         }
         final Shape shape = SHAPES[rnd.nextInt(SHAPES.length)];
         // The rewriter drops a correlated comparison next to WHERE t.x = o.k, whatever the join,
@@ -285,10 +378,15 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         }
         Collections.sort(expected);
         validCount++;
+        final boolean isNullRejecting = isNullRejectingFilter(shape, hasOr, predicates);
+        if (isNullRejecting) {
+            nullRejectingCount++;
+        }
 
         try {
             sink.clear();
             printSql(sql);
+            comparedCount++;
             final List<String> actual = rowsOf(sink);
             Collections.sort(actual);
             if (!actual.equals(expected)) {
@@ -297,6 +395,12 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         } catch (SqlException e) {
             if (!Chars.contains(e.getFlyweightMessage(), ERROR_SUFFIX)) {
                 failures.add("failed with [" + e.getPosition() + "] " + e.getFlyweightMessage() + bindSuffix + "\n    " + sql);
+            } else {
+                rejectedCount++;
+                if (isNullRejecting) {
+                    failures.add("REJECTED although its filter drops every NULL-extended row, [" + e.getPosition() + "] "
+                            + e.getFlyweightMessage() + bindSuffix + "\n    " + sql);
+                }
             }
         } catch (Throwable e) {
             throw new AssertionError("failed with " + e + bindSuffix + "\n    " + sql, e);
@@ -354,6 +458,16 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             }
             execute(sb.toString());
         }
+
+        // the row that a RIGHT or FULL join puts in place of a trade: NULL, or 0 or false for BYTE,
+        // SHORT and BOOLEAN, which have no NULL
+        sb.setLength(0);
+        sb.append("CREATE TABLE null_trades (id INT, x INT");
+        for (FuzzColumn column : COLUMNS) {
+            sb.append(", ").append(column.name).append(' ').append(column.type);
+        }
+        execute(sb.append(", ts TIMESTAMP) TIMESTAMP(ts)").toString());
+        execute("INSERT INTO null_trades (ts) VALUES (0::timestamp)");
     }
 
     private void fuzz(int rounds, double nullRate, int maxOuterRows, int maxRows) throws Exception {
@@ -362,6 +476,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             final List<String> failures = new ArrayList<>();
             int queryCount = 0;
             validCount = 0;
+            comparedCount = 0;
+            rejectedCount = 0;
+            nullRejectingCount = 0;
             for (int round = 0; round < rounds; round++) {
                 createTables(rnd, nullRate, maxOuterRows, maxRows);
                 sink.clear();
@@ -379,55 +496,97 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                 execute("DROP TABLE refunds");
                 execute("DROP TABLE xs");
                 execute("DROP TABLE trades");
+                execute("DROP TABLE null_trades");
             }
             bindVariableService.clear();
+            final String counts = queryCount + " queries, " + validCount + " with a valid filter, " + comparedCount
+                    + " compared, " + rejectedCount + " rejected, " + nullRejectingCount + " provably NULL-rejecting";
+            LOG.info().$("lateral null rejection fuzz [queries=").$(queryCount).$(", valid=").$(validCount)
+                    .$(", compared=").$(comparedCount).$(", rejected=").$(rejectedCount)
+                    .$(", nullRejecting=").$(nullRejectingCount).I$();
             if (!failures.isEmpty()) {
-                Assert.fail(failures.size() + " of " + queryCount + " queries failed (" + validCount + " with a valid filter):\n"
+                Assert.fail(failures.size() + " of " + queryCount + " queries failed (" + counts + "):\n"
                         + String.join("\n", failures.subList(0, Math.min(20, failures.size()))));
             }
-            // About 60% of the filters apply to their column types. A generator that made only
-            // invalid filters would check no rows and pass.
-            Assert.assertTrue(
-                    "only " + validCount + " of " + queryCount + " queries have a valid filter",
-                    validCount * 4 >= queryCount
-            );
+            // About a third of the queries return rows that the test compares. A generator that made
+            // only invalid filters, or a rewriter that rejected every query beyond the reach of the
+            // NULL-rejection check, would check no rows and pass.
+            Assert.assertTrue("too few queries compared: " + counts, comparedCount * 4 >= queryCount);
+            // About a fifth of the queries must return rows. A generator that made no provably
+            // NULL-rejecting filter would leave the rewriter free to reject every query.
+            Assert.assertTrue("too few queries provably NULL-rejecting: " + counts, nullRejectingCount * 8 >= queryCount);
         });
     }
 
-    private String randomPredicate(Rnd rnd, Bind bind) {
+    private Predicate randomPredicate(Rnd rnd, Bind bind) {
         final FuzzColumn column = COLUMNS[rnd.nextInt(COLUMNS.length)];
         final String ref = "t." + column.name;
         final String[] constants = column.constants;
-        switch (rnd.nextInt(10)) {
+        // GEOHASH and arrays have no order, IN or BETWEEN, so they take only = and !=
+        final boolean isEqualityOnly = isEqualityOnlyType(column);
+        switch (isEqualityOnly ? 3 : rnd.nextInt(10)) {
             case 0:
-                return ref + (rnd.nextBoolean() ? " IS NULL" : " IS NOT NULL");
+                return new Predicate(ref + (rnd.nextBoolean() ? " IS NULL" : " IS NOT NULL"), PredicateKind.PROVABLE);
             case 1: {
-                final StringBuilder sb = new StringBuilder(ref).append(rnd.nextInt(4) == 0 ? " NOT IN (" : " IN (");
+                final boolean isNotIn = rnd.nextInt(4) == 0;
+                final StringBuilder sb = new StringBuilder(ref).append(isNotIn ? " NOT IN (" : " IN (");
                 for (int i = 0, n = 1 + rnd.nextInt(3); i < n; i++) {
                     sb.append(i > 0 ? ", " : "").append(constants[rnd.nextInt(constants.length)]);
                 }
-                return sb.append(')').toString();
+                return new Predicate(sb.append(')').toString(), isNotIn ? PredicateKind.UNPROVEN : PredicateKind.PROVABLE);
             }
-            case 2:
-                return ref + (rnd.nextInt(4) == 0 ? " NOT BETWEEN " : " BETWEEN ")
-                        + constants[rnd.nextInt(constants.length)] + " AND " + constants[rnd.nextInt(constants.length)];
+            case 2: {
+                final boolean isNotBetween = rnd.nextInt(4) == 0;
+                return new Predicate(
+                        ref + (isNotBetween ? " NOT BETWEEN " : " BETWEEN ")
+                                + constants[rnd.nextInt(constants.length)] + " AND " + constants[rnd.nextInt(constants.length)],
+                        isNotBetween ? PredicateKind.UNPROVEN : PredicateKind.PROVABLE
+                );
+            }
             default: {
                 String operand = constants[rnd.nextInt(constants.length)];
+                boolean isRuntimeOperand = true;
                 if (column.bindType != null && bind.type == null && rnd.nextInt(4) == 0) {
                     bind.type = column.bindType;
                     bind.value = column.bindValues[rnd.nextInt(column.bindValues.length)];
                     operand = "$1";
                 } else if (rnd.nextInt(4) == 0) {
                     operand = randomScalarSubQuery(rnd, column);
+                } else {
+                    isRuntimeOperand = false;
                 }
-                final String op = COMPARISONS[rnd.nextInt(COMPARISONS.length)];
-                return rnd.nextBoolean() ? ref + ' ' + op + ' ' + operand : operand + ' ' + op + ' ' + ref;
+                final String op = isEqualityOnly ? (rnd.nextBoolean() ? "=" : "!=") : COMPARISONS[rnd.nextInt(COMPARISONS.length)];
+                final String sql = rnd.nextBoolean() ? ref + ' ' + op + ' ' + operand : operand + ' ' + op + ' ' + ref;
+                if (!isRuntimeOperand) {
+                    return new Predicate(sql, PredicateKind.PROVABLE);
+                }
+                // against a value known only when the query runs, < and > drop the NULL of a type
+                // with NULL whatever the value, <= and >= only while the value is not NULL, and =
+                // and != not provably
+                if (isTypeWithoutNull(column)) {
+                    return new Predicate(sql, PredicateKind.UNPROVEN);
+                }
+                return switch (op) {
+                    case "<", ">" -> new Predicate(sql, PredicateKind.PROVABLE);
+                    case "<=", ">=" -> new Predicate(sql, PredicateKind.RUNTIME_CHECKED);
+                    default -> new Predicate(sql, PredicateKind.UNPROVEN);
+                };
             }
         }
     }
 
     private enum FilterOutcome {
         COMPILE_ERROR, RUN_ERROR, RUNS
+    }
+
+    private enum PredicateKind {
+        // drops every NULL-extended row when it is false on null_trades
+        PROVABLE,
+        // <= or >= against a bind variable or a scalar sub-query, whose value the plan checks for
+        // NULL once per execution, on a type with NULL
+        RUNTIME_CHECKED,
+        // the rewriter does not claim to prove it, such as NOT IN or = against a bind variable
+        UNPROVEN
     }
 
     private static class Bind {
@@ -439,6 +598,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
                               Object[] bindValues) {
     }
 
-    private record Shape(String body, boolean hasWhereKey) {
+    private record Predicate(String sql, PredicateKind kind) {
+    }
+
+    private record Shape(String body, boolean hasWhereKey, boolean hasKeyOnFullJoinedTable) {
     }
 }

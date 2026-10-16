@@ -389,6 +389,46 @@ public class LateralJoinNullRejectionTest extends AbstractCairoTest {
         assertShape(Shape.RIGHT_ON);
     }
 
+    // WHERE t.x = o.k lets the rewriter remove the outer-ref join, and r.k = o.k in the ON clause then
+    // needs a WHERE conjunct that drops the rows that the RIGHT join NULL-extends. A conjunct on
+    // constants proves it, and so do < and > against a bind variable or a scalar sub-query whatever
+    // its value, and <= and >= while the value is not NULL, which the plan checks when it runs.
+    // Outer key 1 matches trade 10, key 2 trade 11, which holds NULLs, and key 3 no trade.
+    @Test
+    public void testRightJoinWithCorrelatedOnAndWhereKey() throws Exception {
+        assertMemoryLeak(() -> {
+            createTables();
+            final String body = "SELECT o.id, l.tid, l.rid FROM orders o JOIN LATERAL (SELECT t.id tid, r.id rid "
+                    + "FROM trades t RIGHT JOIN refunds r ON t.x = r.k AND r.k = o.k WHERE t.x = o.k AND ";
+            final String trade10 = """
+                    id\ttid\trid
+                    1\t10\t100
+                    """;
+            final String noRows = "id\ttid\trid\n";
+
+            assertQuery(body + "t.l BETWEEN 1 AND 10) l").noRandomAccess().expectSize().returns(trade10);
+            assertQuery(body + "t.st IN ('abc')) l").noRandomAccess().expectSize().returns(trade10);
+            assertQuery(body + "t.g4 = #u33d) l").noRandomAccess().expectSize().returns(trade10);
+
+            bindVariableService.clear();
+            bindVariableService.setLong(0, 5);
+            assertQuery(body + "t.l > $1) l").noRandomAccess().expectSize().returns(trade10);
+            bindVariableService.setLong(0, Numbers.LONG_NULL);
+            assertQuery(body + "t.l > $1) l").noRandomAccess().expectSize().returns(noRows);
+
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 0);
+            assertQuery(body + "t.i >= $1) l").noRandomAccess().expectSize().returns(trade10);
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            final String nullCheckedSql = body + "t.i >= $1) l";
+            assertException(nullCheckedSql, nullCheckedSql.indexOf("$1"), NULL_VALUE_SUFFIX);
+            bindVariableService.clear();
+
+            assertQuery(body + "t.d <= (SELECT max(d) FROM trades)) l").noRandomAccess().expectSize().returns(trade10);
+            assertQuery(body + "t.d < (SELECT max(d) FROM trades WHERE id = 99)) l").noRandomAccess().expectSize().returns(noRows);
+        });
+    }
+
     // WHERE t.x = o.k lets the rewriter key the rows by t.x and remove the outer-ref join
     @Test
     public void testRightJoinWithCorrelatedWhereKey() throws Exception {
