@@ -143,7 +143,7 @@ public class HorizonTimestampIterator implements QuietCloseable {
         }
     }
 
-    private static long addTimestampAndOffset(long timestamp, long offset) {
+    static long addTimestampAndOffset(long timestamp, long offset) {
         try {
             return Math.addExact(timestamp, offset);
         } catch (ArithmeticException e) {

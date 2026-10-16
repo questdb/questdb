@@ -491,11 +491,19 @@ public final class TableUtils {
             @NotNull SqlExecutionContext executionContext
     ) throws SqlException {
         final ExpressionNode tableNameExpr = model.getTableNameExpr();
-        final Function function = functionParser.parseFunction(
-                tableNameExpr,
-                AnyRecordMetadata.INSTANCE,
-                executionContext
-        );
+        final SqlExecutionContext.TableFunctionView previousView = executionContext.getTableFunctionView();
+        final ExpressionNode viewNameExpr = model.getViewNameExpr();
+        if (viewNameExpr != null) {
+            executionContext.setTableFunctionView(getTableFunctionView(viewNameExpr, executionContext));
+        }
+        final Function function;
+        try {
+            function = functionParser.parseFunction(tableNameExpr, AnyRecordMetadata.INSTANCE, executionContext);
+        } finally {
+            if (viewNameExpr != null) {
+                executionContext.setTableFunctionView(previousView);
+            }
+        }
         if (!ColumnType.isCursor(function.getType())) {
             Misc.free(function);
             throw SqlException.$(tableNameExpr.position, "function must return CURSOR");
@@ -522,7 +530,7 @@ public final class TableUtils {
         final FilesFacade ff = configuration.getFilesFacade();
         final CharSequence root = configuration.getDbRoot();
         final int mkDirMode = configuration.getMkDirMode();
-        createTable(ff, root, telemetry, mkDirMode, memory, path, structure, tableVersion, tableId, dirName);
+        createTable(ff, root, telemetry, mkDirMode, memory, path, structure, tableVersion, tableId, dirName, configuration.getCommitMode());
     }
 
     public static void createTable(
@@ -535,9 +543,10 @@ public final class TableUtils {
             TableStructure structure,
             int tableVersion,
             int tableId,
-            CharSequence dirName
+            CharSequence dirName,
+            int commitMode
     ) {
-        createTable(ff, root, telemetry, mkDirMode, memory, path, dirName, structure, tableVersion, tableId);
+        createTable(ff, root, telemetry, mkDirMode, memory, path, dirName, structure, tableVersion, tableId, commitMode);
     }
 
     public static void createTable(
@@ -548,13 +557,14 @@ public final class TableUtils {
             TableStructure structure,
             int tableVersion,
             int tableId,
-            CharSequence dirName
+            CharSequence dirName,
+            int commitMode
     ) {
         try (
                 Path path = new Path();
                 MemoryMARW mem = Vm.getCMARWInstance()
         ) {
-            createTable(ff, root, telemetry, mkDirMode, mem, path, dirName, structure, tableVersion, tableId);
+            createTable(ff, root, telemetry, mkDirMode, mem, path, dirName, structure, tableVersion, tableId, commitMode);
         }
     }
 
@@ -568,9 +578,10 @@ public final class TableUtils {
             CharSequence tableDir,
             TableStructure structure,
             int tableVersion,
-            int tableId
+            int tableId,
+            int commitMode
     ) {
-        createTableOrViewOrMatView(ff, root, mkDirMode, telemetry, memory, null, path, tableDir, structure, tableVersion, tableId);
+        createTableOrViewOrMatView(ff, root, mkDirMode, telemetry, memory, null, path, tableDir, structure, tableVersion, tableId, commitMode);
     }
 
     public static void createTableNameFile(MemoryMAR mem, CharSequence charSequence) {
@@ -590,9 +601,10 @@ public final class TableUtils {
             CharSequence tableDir,
             TableStructure structure,
             int tableVersion,
-            int tableId
+            int tableId,
+            int commitMode
     ) {
-        createTableOrMatViewInVolume(ff, root, telemetry, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId);
+        createTableOrMatViewInVolume(ff, root, telemetry, mkDirMode, memory, null, path, tableDir, structure, tableVersion, tableId, commitMode);
     }
 
     public static void createTableOrMatViewInVolume(
@@ -606,7 +618,8 @@ public final class TableUtils {
             CharSequence tableDir,
             TableStructure structure,
             int tableVersion,
-            int tableId
+            int tableId,
+            int commitMode
     ) {
         LOG.info().$("create table in volume [path=").$(path).I$();
         Path normalPath = Path.getThreadLocal2(root).concat(tableDir);
@@ -630,7 +643,7 @@ public final class TableUtils {
                 }
                 throw CairoException.critical(ff.errno()).put("could not create soft link [src=").put(path.trimTo(rootLen).$()).put(", tableDir=").put(tableDir).put(']');
             }
-            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId);
+            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId, commitMode);
         } finally {
             path.trimTo(rootLen);
         }
@@ -647,7 +660,8 @@ public final class TableUtils {
             CharSequence tableDir,
             TableStructure structure,
             int tableVersion,
-            int tableId
+            int tableId,
+            int commitMode
     ) {
         LOG.debug().$("create table [name=").$safe(tableDir).I$();
         path.of(root).concat(tableDir).$();
@@ -661,7 +675,7 @@ public final class TableUtils {
                 throw CairoException.critical(ff.errno()).put("could not create [dir=").put(path.trimTo(rootLen).$()).put(']');
             }
             dirCreated = true;
-            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId);
+            createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId, commitMode);
         } catch (Throwable e) {
             if (dirCreated) {
                 ff.rmdir(path.trimTo(rootLen).slash());
@@ -682,9 +696,10 @@ public final class TableUtils {
             CharSequence tableDir,
             TableStructure structure,
             int tableVersion,
-            int tableId
+            int tableId,
+            int commitMode
     ) {
-        createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME);
+        createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId, TXN_FILE_NAME, commitMode);
     }
 
     public static void createTableOrViewOrMatViewFiles(
@@ -699,6 +714,23 @@ public final class TableUtils {
             int tableVersion,
             int tableId,
             CharSequence txnFileName
+    ) {
+        createTableOrViewOrMatViewFiles(ff, memory, blockFileWriter, telemetry, path, rootLen, tableDir, structure, tableVersion, tableId, txnFileName, CommitMode.SYNC);
+    }
+
+    public static void createTableOrViewOrMatViewFiles(
+            FilesFacade ff,
+            MemoryMARW memory,
+            @Nullable BlockFileWriter blockFileWriter,
+            @Nullable Telemetry<TelemetryTask> telemetry,
+            Path path,
+            int rootLen,
+            CharSequence tableDir,
+            TableStructure structure,
+            int tableVersion,
+            int tableId,
+            CharSequence txnFileName,
+            int commitMode
     ) {
         final long dirFd = !ff.isRestrictedFileSystem() ? TableUtils.openRONoCache(ff, path.trimTo(rootLen).$(), LOG) : 0;
         try (MemoryMARW mem = memory) {
@@ -724,7 +756,8 @@ public final class TableUtils {
                                 structure.getColumnName(i),
                                 COLUMN_NAME_TXN_NONE,
                                 structure.getSymbolCapacity(i),
-                                structure.getSymbolCacheFlag(i)
+                                structure.getSymbolCacheFlag(i),
+                                commitMode
                         );
                         symbolMapCount++;
                     }
@@ -1133,6 +1166,32 @@ public final class TableUtils {
             dirName += TableUtils.SYSTEM_TABLE_NAME_SUFFIX;
         }
         return dirName;
+    }
+
+    /**
+     * Returns the view that the table-name functions and tables of a model expanded from that view
+     * read through, see
+     * {@link SqlExecutionContext#isTableFunctionVisible(TableToken, SqlExecutionContext.TableFunctionView)}.
+     * That is the definition SqlParser expanded the model from, so that the objects the definition
+     * names are those of the model, even when another session changes the view during the compile.
+     * A view name that SqlParser did not stamp resolves to the current definition.
+     */
+    public static SqlExecutionContext.TableFunctionView getTableFunctionView(
+            @NotNull ExpressionNode viewNameExpr,
+            @NotNull SqlExecutionContext executionContext
+    ) throws SqlException {
+        if (viewNameExpr.tableFunctionView != null) {
+            return viewNameExpr.tableFunctionView;
+        }
+        final TableToken viewToken = executionContext.getTableTokenIfExists(viewNameExpr.token);
+        if (viewToken == null || !viewToken.isView()) {
+            throw SqlException.viewDoesNotExist(viewNameExpr.position, viewNameExpr.token);
+        }
+        final ViewDefinition viewDefinition = executionContext.getCairoEngine().getViewGraph().getViewDefinition(viewToken);
+        if (viewDefinition == null) {
+            throw SqlException.viewDoesNotExist(viewNameExpr.position, viewNameExpr.token);
+        }
+        return new SqlExecutionContext.TableFunctionView(viewDefinition);
     }
 
     public static int getTableIdFromTableDir(CharSequence dirName) throws NumericException {
