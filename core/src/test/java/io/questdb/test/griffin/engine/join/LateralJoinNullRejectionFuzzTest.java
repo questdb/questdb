@@ -61,6 +61,9 @@ import java.util.Set;
  * the values of all such runtime operands of a filter, which drops the NULL-extended rows while any of
  * them is not NULL, see {@link LateralJoinNullRejectionTest#testRuntimeNullCheckOfAnyConjunct()}, so
  * the query must return rows when any of them drops the NULL-extended row.
+ * <p>
+ * Some shapes put a correlated sub-query on the slave side of the RIGHT join, which the rewriter
+ * repairs, with no later join or with a later INNER, LEFT, CROSS, RIGHT or FULL join.
  */
 public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     private static final String ERROR_SUFFIX = "is not supported in a correlated lateral sub-query";
@@ -106,6 +109,10 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // bind variable values of a filter on refunds, whose ids start at 100
     private static final Object[] REFUND_BIND_VALUES = {null, 0, 101};
     private static final String[] REFUND_CONSTANTS = {"0", "1", "2", "101", "NULL"};
+    // a filter on trades that drops the row of null_trades drops the rows that either join
+    // NULL-extends, as both hold NULL trades; a filter on refunds counts for the join with xs only,
+    // and the oracle does not count it
+    private static final Shape TWO_RIGHT_JOINS = new Shape("{T} t RIGHT JOIN refunds r ON r.k = {K} RIGHT JOIN xs x ON x.k = r.k WHERE {P}", false, false);
     // A FULL join whose ON clause reads the outer key on refunds also NULL-extends refunds, and no
     // filter on trades drops those rows, so the rewriter rejects every such query.
     private static final Shape[] SHAPES = {
@@ -119,14 +126,25 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             // only the order as written keeps trades ahead of a join whose ON clause reads no trades column
             new Shape("{T} t RIGHT JOIN refunds r ON r.k = {K} WHERE {P}", false, false),
             new Shape("{T} t FULL JOIN refunds r ON r.k = {K} WHERE {P}", false, true),
-            // TWO_RIGHT_JOINS: a filter on trades that drops the row of null_trades drops the rows
-            // that either join NULL-extends, as both hold NULL trades; a filter on refunds counts for
-            // the join with xs only, and the oracle does not count it
-            new Shape("{T} t RIGHT JOIN refunds r ON r.k = {K} RIGHT JOIN xs x ON x.k = r.k WHERE {P}", false, false)
+            TWO_RIGHT_JOINS,
+            // A correlated sub-query as the slave of a RIGHT join, which the rewriter repairs when no
+            // RIGHT, FULL or SPLICE join follows and the filter does not drop the rows that the join
+            // NULL-extends, see LateralJoinRewriter.checkOuterJoinsAfterOuterRef(). A later RIGHT or
+            // FULL join may make it reject the query. ({P}) keeps an OR of the filter from splitting
+            // off the WHERE key.
+            correlatedSlaveShape("", false),
+            correlatedSlaveShape(" JOIN xs x ON x.k = r.k", true),
+            correlatedSlaveShape(" LEFT JOIN xs x ON x.k = r.k", true),
+            correlatedSlaveShape(" CROSS JOIN xs x", true),
+            correlatedSlaveShape(" RIGHT JOIN xs x ON x.k = r.k", false),
+            correlatedSlaveShape(" FULL JOIN xs x ON x.k = r.k", false)
     };
-    private static final Shape TWO_RIGHT_JOINS = SHAPES[SHAPES.length - 1];
     // queries whose LATERAL rows were compared with the reference rows
     private int comparedCount;
+    // queries of a shape whose repaired RIGHT join a later INNER, LEFT or CROSS join follows, whose
+    // filter may keep the rows that the RIGHT join NULL-extends, and whose LATERAL rows were compared
+    // with the reference rows
+    private int laterJoinRepairComparedCount;
     // queries that must return rows only because a runtime-checked predicate after the first one of
     // the filter drops every NULL-extended row
     private int laterRuntimeVerdictCount;
@@ -216,6 +234,18 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
         } catch (Throwable e) {
             throw new AssertionError("failed with " + e + bindSuffix + "\n    " + sql, e);
         }
+    }
+
+    // trades RIGHT JOIN a correlated sub-query of refunds, then laterJoin, with the outer key in WHERE;
+    // hasLaterJoinAfterRepair tells that laterJoin is an INNER, LEFT or CROSS join
+    private static Shape correlatedSlaveShape(String laterJoin, boolean hasLaterJoinAfterRepair) {
+        return new Shape(
+                "{T} t RIGHT JOIN (SELECT * FROM refunds WHERE k = {K}) r ON t.x = r.k" + laterJoin + " WHERE t.x = {K} AND ({P})",
+                true,
+                false,
+                true,
+                hasLaterJoinAfterRepair
+        );
     }
 
     // True when the filter holds a predicate against a value known only when the query runs, which
@@ -400,11 +430,16 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     // Half of the queries read a mixed projection, see mixedProjection(), which passes knownColumn
     // through and computes computedColumn, and whose computed columns computedColumns receives. Each
     // run then has queries whose verdict needs a computed column next to a column of known type.
-    private static String randomTable(Rnd rnd, Set<String> computedColumns, String knownColumn, String computedColumn) {
+    // Without isUnionAllAllowed, the table is no UNION ALL.
+    private static String randomTable(Rnd rnd, Set<String> computedColumns, String knownColumn, String computedColumn, boolean isUnionAllAllowed) {
         if (rnd.nextBoolean()) {
             return mixedProjection(rnd, computedColumns, knownColumn, computedColumn);
         }
-        return switch (rnd.nextInt(8)) {
+        int source = rnd.nextInt(8);
+        while (source == 5 && !isUnionAllAllowed) {
+            source = rnd.nextInt(8);
+        }
+        return switch (source) {
             case 0 -> "(SELECT * FROM trades)";
             case 1 -> "(SELECT * FROM (SELECT * FROM trades))";
             case 2 -> "(SELECT DISTINCT * FROM trades)";
@@ -498,11 +533,14 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             setBindVariable(bind.type, bind.value);
         }
         final Set<String> computedColumns = new HashSet<>();
+        // The rewriter returns wrong rows when the master of the RIGHT join with a correlated
+        // sub-query is a UNION ALL, which is a separate bug, so those shapes read no UNION ALL.
+        final boolean isUnionAllAllowed = !shape.hasCorrelatedSlave;
         // a mixed projection passes the column of = $1 of the pair through and computes the column
         // of the sub-query comparison, so that the plan needs the latter while $1 is NULL
         final String table = isRuntimeCheckedPair
-                ? randomTable(rnd, computedColumns, predicates.get(0).column, predicates.get(1).column)
-                : randomTable(rnd, computedColumns, null, null);
+                ? randomTable(rnd, computedColumns, predicates.get(0).column, predicates.get(1).column, isUnionAllAllowed)
+                : randomTable(rnd, computedColumns, null, null, isUnionAllAllowed);
         final String lateralJoin = LATERAL_JOINS[rnd.nextInt(LATERAL_JOINS.length)];
         final String body = shape.body.replace("{T}", table).replace("{P}", filter);
         final String sql = "SELECT o.id, l.tid, l.rid FROM orders o " + lateralJoin
@@ -560,6 +598,11 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             comparedCount++;
             if (shape == TWO_RIGHT_JOINS) {
                 twoRightJoinsComparedCount++;
+            }
+            // the rewriter repairs the RIGHT join only when it cannot prove that the filter drops the
+            // rows that the join NULL-extends, see LateralJoinRewriter.checkOuterJoinsAfterOuterRef()
+            if (shape.hasLaterJoinAfterRepair && verdict == Verdict.UNPROVEN) {
+                laterJoinRepairComparedCount++;
             }
             if (isMixedTypeVerdict) {
                 mixedTypeVerdictCount++;
@@ -657,6 +700,7 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             int queryCount = 0;
             validCount = 0;
             comparedCount = 0;
+            laterJoinRepairComparedCount = 0;
             rejectedCount = 0;
             nullRejectingCount = 0;
             laterRuntimeVerdictCount = 0;
@@ -686,12 +730,14 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             final String counts = queryCount + " queries, " + validCount + " with a valid filter, " + comparedCount
                     + " compared, " + rejectedCount + " rejected, " + nullRejectingCount + " provably NULL-rejecting, "
                     + laterRuntimeVerdictCount + " by a later runtime-checked predicate, " + twoRightJoinsComparedCount
-                    + " compared with two RIGHT joins, " + mixedTypeVerdictCount + " proven by a computed column next to a runtime check, "
+                    + " compared with two RIGHT joins, " + laterJoinRepairComparedCount
+                    + " compared with a join after a repaired RIGHT join, " + mixedTypeVerdictCount + " proven by a computed column next to a runtime check, "
                     + nestedSubQueryComparedCount + " compared with a nested sub-query";
             LOG.info().$("lateral null rejection fuzz [queries=").$(queryCount).$(", valid=").$(validCount)
                     .$(", compared=").$(comparedCount).$(", rejected=").$(rejectedCount)
                     .$(", nullRejecting=").$(nullRejectingCount).$(", laterRuntimeVerdict=").$(laterRuntimeVerdictCount)
                     .$(", twoRightJoinsCompared=").$(twoRightJoinsComparedCount)
+                    .$(", laterJoinRepairCompared=").$(laterJoinRepairComparedCount)
                     .$(", mixedTypeVerdict=").$(mixedTypeVerdictCount)
                     .$(", nestedSubQueryCompared=").$(nestedSubQueryComparedCount).I$();
             if (!failures.isEmpty()) {
@@ -709,6 +755,9 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             // show that the plan checks the later ones too.
             Assert.assertTrue("no query provably NULL-rejecting by a later runtime-checked predicate: " + counts, laterRuntimeVerdictCount > 0);
             Assert.assertTrue("no query with two RIGHT joins compared: " + counts, twoRightJoinsComparedCount > 0);
+            // A generator that never followed the repaired RIGHT join with another join would not show
+            // that the repair holds when one does.
+            Assert.assertTrue("no query with a join after a repaired RIGHT join compared: " + counts, laterJoinRepairComparedCount > 0);
             // A generator that never put a computed column next to a column of known type would not
             // show that the code generator decides on both together.
             Assert.assertTrue("no query proven by a computed column next to a runtime check: " + counts, mixedTypeVerdictCount > 0);
@@ -820,6 +869,17 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
     private record Predicate(String sql, PredicateKind kind, String column) {
     }
 
-    private record Shape(String body, boolean hasWhereKey, boolean hasKeyOnFullJoinedTable) {
+    // hasCorrelatedSlave: the slave of the RIGHT join is a correlated sub-query, see correlatedSlaveShape();
+    // hasLaterJoinAfterRepair: an INNER, LEFT or CROSS join follows that RIGHT join
+    private record Shape(
+            String body,
+            boolean hasWhereKey,
+            boolean hasKeyOnFullJoinedTable,
+            boolean hasCorrelatedSlave,
+            boolean hasLaterJoinAfterRepair
+    ) {
+        Shape(String body, boolean hasWhereKey, boolean hasKeyOnFullJoinedTable) {
+            this(body, hasWhereKey, hasKeyOnFullJoinedTable, false, false);
+        }
     }
 }

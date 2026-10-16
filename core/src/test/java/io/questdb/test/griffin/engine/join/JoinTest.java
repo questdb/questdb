@@ -4966,6 +4966,160 @@ public class JoinTest extends AbstractCairoTest {
         });
     }
 
+    // FULL JOIN r NULL-extends a, b and d for r row 400, as RIGHT JOIN r does.
+    @Test
+    public void testInnerConjunctReadingTwoTablesFiltersAfterFullJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForMultiTableInnerConjunctAfterRightJoin();
+            assertQuery("SELECT a.k ak, r.id, c.w FROM a JOIN b ON a.k = b.k JOIN d ON d.k = a.k FULL JOIN r ON r.k = a.k JOIN c ON c.k = r.k AND a.x = b.y + d.z ORDER BY r.id")
+                    .noLeakCheck()
+                    .returns("""
+                            ak\tid\tw
+                            1\t100\t10
+                            3\t300\t30
+                            null\t400\t40
+                            """);
+        });
+    }
+
+    // $1 = 0 keeps k = 1 and k = 3, $1 = 2 keeps neither, and a NULL $1 makes b.y + d.z - $1 NULL, which
+    // matches only the NULL a.x of r row 400.
+    @Test
+    public void testInnerConjunctReadingTwoTablesFiltersAfterRightJoinBindVariable() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForMultiTableInnerConjunctAfterRightJoin();
+            final String query = "SELECT a.k ak, r.id, c.w FROM a JOIN b ON a.k = b.k JOIN d ON d.k = a.k RIGHT JOIN r ON r.k = a.k JOIN c ON c.k = r.k AND a.x = b.y + d.z - $1 ORDER BY r.id";
+            bindVariableService.clear();
+            bindVariableService.setInt(0, 0);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ak\tid\tw
+                            1\t100\t10
+                            3\t300\t30
+                            null\t400\t40
+                            """);
+            bindVariableService.setInt(0, 2);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ak\tid\tw
+                            null\t400\t40
+                            """);
+            bindVariableService.setInt(0, Numbers.INT_NULL);
+            assertQuery(query)
+                    .noLeakCheck()
+                    .returns("""
+                            ak\tid\tw
+                            null\t400\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerConjunctReadingTwoTablesFiltersAfterRightJoinInCte() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForMultiTableInnerConjunctAfterRightJoin();
+            assertQuery("""
+                    WITH j AS (
+                        SELECT a.k ak, r.id, c.w FROM a JOIN b ON a.k = b.k JOIN d ON d.k = a.k RIGHT JOIN r ON r.k = a.k
+                        JOIN c ON c.k = r.k AND a.x = b.y + d.z
+                    )
+                    SELECT * FROM j ORDER BY id""")
+                    .noLeakCheck()
+                    .returns("""
+                            ak\tid\tw
+                            1\t100\t10
+                            3\t300\t30
+                            null\t400\t40
+                            """);
+        });
+    }
+
+    // The INNER join filters the rows that it joins, as WHERE does, and the LIMIT-fenced reference runs the
+    // joins up to RIGHT JOIN r in a sub-query that LIMIT keeps whole, so that the conjunct can only run after it.
+    @Test
+    public void testInnerConjunctReadingTwoTablesFiltersAfterRightJoinMatchesReference() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForMultiTableInnerConjunctAfterRightJoin();
+            final String query = "SELECT a.k ak, r.id, c.w FROM a JOIN b ON a.k = b.k JOIN d ON d.k = a.k RIGHT JOIN r ON r.k = a.k JOIN c ON c.k = r.k AND a.x = b.y + d.z ORDER BY r.id";
+            assertSqlCursors(
+                    "SELECT a.k ak, r.id, c.w FROM a JOIN b ON a.k = b.k JOIN d ON d.k = a.k RIGHT JOIN r ON r.k = a.k JOIN c ON c.k = r.k WHERE a.x = b.y + d.z ORDER BY r.id",
+                    query
+            );
+            assertSqlCursors(
+                    """
+                            SELECT ak, id, w FROM (
+                                SELECT * FROM (
+                                    SELECT a.k ak, a.x ax, b.y by, d.z dz, r.k rk, r.id id
+                                    FROM a JOIN b ON a.k = b.k JOIN d ON d.k = a.k RIGHT JOIN r ON r.k = a.k
+                                    LIMIT 1_000_000
+                                ) x
+                                JOIN c ON c.k = x.rk AND x.ax = x.by + x.dz
+                            ) ORDER BY id""",
+                    query
+            );
+        });
+    }
+
+    // a.x - b.y = d.z reads a and b on the left of = and d on the right.
+    @Test
+    public void testInnerConjunctReadingTwoTablesOnEachSideFiltersAfterRightJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForMultiTableInnerConjunctAfterRightJoin();
+            assertQuery("SELECT a.k ak, r.id, c.w FROM a JOIN b ON a.k = b.k JOIN d ON d.k = a.k RIGHT JOIN r ON r.k = a.k JOIN c ON c.k = r.k AND a.x - b.y = d.z ORDER BY r.id")
+                    .noLeakCheck()
+                    .returns("""
+                            ak\tid\tw
+                            1\t100\t10
+                            3\t300\t30
+                            null\t400\t40
+                            """);
+        });
+    }
+
+    @Test
+    public void testInnerConjunctReadingTwoTablesOnLeftFiltersAfterRightJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForMultiTableInnerConjunctAfterRightJoin();
+            assertQuery("SELECT a.k ak, r.id, c.w FROM a JOIN b ON a.k = b.k JOIN d ON d.k = a.k RIGHT JOIN r ON r.k = a.k JOIN c ON c.k = r.k AND b.y + d.z = a.x ORDER BY r.id")
+                    .noLeakCheck()
+                    .returns("""
+                            ak\tid\tw
+                            1\t100\t10
+                            3\t300\t30
+                            null\t400\t40
+                            """);
+        });
+    }
+
+    // a.x = b.y + d.z reads a, b and d, which RIGHT JOIN r NULL-extends, so it filters the join with c, after
+    // RIGHT JOIN r. Below RIGHT JOIN r it dropped the a row of k = 2, and RIGHT JOIN r then NULL-extended
+    // r row 200, which the query returned as null/200/20.
+    @Test
+    public void testInnerConjunctReadingTwoTablesOnRightFiltersAfterRightJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createTablesForMultiTableInnerConjunctAfterRightJoin();
+            assertQuery("SELECT a.k ak, r.id, c.w FROM a JOIN b ON a.k = b.k JOIN d ON d.k = a.k RIGHT JOIN r ON r.k = a.k JOIN c ON c.k = r.k AND a.x = b.y + d.z ORDER BY r.id")
+                    .noLeakCheck()
+                    .withPlanContaining(
+                            """
+                                            Filter filter: a.x=b.y+d.z
+                                                Hash Join Light
+                                                  condition: c.k=r.k
+                                                    Hash Right Outer Join Light
+                                                      condition: r.k=a.k
+                                    """
+                    )
+                    .returns("""
+                            ak\tid\tw
+                            1\t100\t10
+                            3\t300\t30
+                            null\t400\t40
+                            """);
+        });
+    }
+
     @Test
     public void testInnerDerivedKeyInRightJoinFiltersInnerJoin() throws Exception {
         // f3's keys imply a1 = a0. As a key of RIGHT JOIN f1 it null-extended the f1 row (3, 1) instead of
@@ -19363,6 +19517,22 @@ public class JoinTest extends AbstractCairoTest {
         execute("INSERT INTO f2 VALUES (2, 1)");
         execute("CREATE TABLE f3 (a3 INT, b3 INT)");
         execute("INSERT INTO f3 VALUES (1, 1)");
+    }
+
+    // a, b and d join on k; a.x = b.y + d.z holds for k = 1 (5 = 2 + 3) and k = 3 (9 = 4 + 5), but not for
+    // k = 2 (7 = 3 + 0). r row 400 matches no a row, so RIGHT JOIN r NULL-extends a, b and d, and
+    // NULL = NULL + NULL holds, as = matches NULL to NULL.
+    private void createTablesForMultiTableInnerConjunctAfterRightJoin() throws SqlException {
+        execute("CREATE TABLE a (k INT, x INT)");
+        execute("INSERT INTO a VALUES (1, 5), (2, 7), (3, 9)");
+        execute("CREATE TABLE b (k INT, y INT)");
+        execute("INSERT INTO b VALUES (1, 2), (2, 3), (3, 4)");
+        execute("CREATE TABLE d (k INT, z INT)");
+        execute("INSERT INTO d VALUES (1, 3), (2, 0), (3, 5)");
+        execute("CREATE TABLE r (k INT, id INT)");
+        execute("INSERT INTO r VALUES (1, 100), (2, 200), (3, 300), (4, 400)");
+        execute("CREATE TABLE c (k INT, w INT)");
+        execute("INSERT INTO c VALUES (1, 10), (2, 20), (3, 30), (4, 40)");
     }
 
     private void createTablesForNonEquiRightJoinThenLeftJoin() throws SqlException {

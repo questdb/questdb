@@ -2346,6 +2346,131 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // CROSS JOIN c repeats each row of testLateralCorrelatedRightJoinSubQueryWhereKey() for the four c rows.
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterCrossJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyAndLaterJoinTables();
+            assertQuery("SELECT o.id, l.aid, l.sid, l.cid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k CROSS JOIN c WHERE a.x = o.x) l ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid\tcid
+                            1\t10\t21\t100
+                            1\t10\t21\t101
+                            1\t10\t21\t102
+                            1\t10\t21\t103
+                            2\tnull\t22\t100
+                            2\tnull\t22\t101
+                            2\tnull\t22\t102
+                            2\tnull\t22\t103
+                            """);
+        });
+    }
+
+    // A later FULL join NULL-extends the rows of the repaired RIGHT join, see
+    // testLateralCorrelatedRightJoinSubQueryWhereKeyLaterRightJoinFails().
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterFullJoinFails() throws Exception {
+        assertRepairedRightJoinFollowedByJoinFails("FULL JOIN c ON c.sid = s.id");
+    }
+
+    // The rewrite moves the equality between a.x and the outer key that s carries into WHERE, after
+    // the RIGHT join, and the INNER join with c then keeps the c row of each b row that WHERE keeps.
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterInnerJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyAndLaterJoinTables();
+            assertQuery("SELECT o.id, l.aid, l.sid, l.cid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k JOIN c ON c.sid = s.id WHERE a.x = o.x) l ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .withPlanContaining("Filter filter: s.__qdb_outer_ref__1_x=a.x", "Hash Right Outer Join")
+                    .returns("""
+                            id\taid\tsid\tcid
+                            1\t10\t21\t100
+                            2\tnull\t22\t101
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterInnerJoinCount() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyAndLaterJoinTables();
+            assertQuery("SELECT o.id, l.n FROM o JOIN LATERAL (SELECT count(*) n FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k JOIN c ON c.sid = s.id WHERE a.x = o.x) l ORDER BY 1")
+                    .noLeakCheck()
+                    .returns("""
+                            id\tn
+                            1\t1
+                            2\t1
+                            3\t0
+                            """);
+        });
+    }
+
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterInnerJoinLeftLateral() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyAndLaterJoinTables();
+            assertQuery("SELECT o.id, l.aid, l.sid, l.cid FROM o LEFT JOIN LATERAL (SELECT a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k JOIN c ON c.sid = s.id WHERE a.x = o.x) l ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .returns("""
+                            id\taid\tsid\tcid
+                            1\t10\t21\t100
+                            2\tnull\t22\t101
+                            3\tnull\tnull\tnull
+                            """);
+        });
+    }
+
+    // The reference runs the body once per outer row, with its o.x as a constant.
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterInnerJoinMatchesPerOuterRow() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyAndLaterJoinTables();
+            assertSqlCursors(
+                    """
+                            SELECT * FROM (
+                                SELECT 1 id, a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = 1) s ON a.x = s.k JOIN c ON c.sid = s.id WHERE a.x = 1
+                                UNION ALL
+                                SELECT 2 id, a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = NULL) s ON a.x = s.k JOIN c ON c.sid = s.id WHERE a.x = NULL
+                                UNION ALL
+                                SELECT 3 id, a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = 3) s ON a.x = s.k JOIN c ON c.sid = s.id WHERE a.x = 3
+                            ) ORDER BY 1, 2, 3, 4""",
+                    "SELECT o.id, l.aid, l.sid, l.cid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k JOIN c ON c.sid = s.id WHERE a.x = o.x) l ORDER BY 1, 2, 3, 4"
+            );
+        });
+    }
+
+    // No c row has sid = s.id + 100, so the LEFT join keeps each row with a NULL cid.
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterLeftJoin() throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyAndLaterJoinTables();
+            assertQuery("SELECT o.id, l.aid, l.sid, l.cid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k LEFT JOIN c ON c.sid = s.id + 100 WHERE a.x = o.x) l ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid\tcid
+                            1\t10\t21\tnull
+                            2\tnull\t22\tnull
+                            """);
+        });
+    }
+
+    // A later RIGHT join NULL-extends the rows of the RIGHT join with s, so the rewriter does not
+    // repair that join, see LateralJoinRewriter.checkOuterJoinsAfterOuterRef(), and the query fails
+    // at its join keyword.
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterRightJoinFails() throws Exception {
+        assertRepairedRightJoinFollowedByJoinFails("RIGHT JOIN c ON c.sid = s.id");
+    }
+
+    @Test
+    public void testLateralCorrelatedRightJoinSubQueryWhereKeyLaterSpliceJoinFails() throws Exception {
+        assertRepairedRightJoinFollowedByJoinFails("SPLICE JOIN c");
+    }
+
     @Test
     public void testLateralCorrelatedRightJoinSubQueryWhereKeyLeftLateral() throws Exception {
         assertMemoryLeak(() -> {
@@ -17894,6 +18019,25 @@ public class LateralJoinTest extends AbstractCairoTest {
                 .assertBinds(cases);
     }
 
+    // The query of testLateralCorrelatedRightJoinSubQueryWhereKeyLaterInnerJoin() with laterJoin in
+    // place of its INNER join fails at the RIGHT join with s, and the tables still serve that query.
+    private void assertRepairedRightJoinFollowedByJoinFails(String laterJoin) throws Exception {
+        assertMemoryLeak(() -> {
+            createNullOuterKeyAndLaterJoinTables();
+            assertQuery("SELECT o.id, l.aid, l.sid, l.cid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k " + laterJoin + " WHERE a.x = o.x) l")
+                    .noLeakCheck()
+                    .fails(97, "correlated sub-query at or before a RIGHT or FULL join is not supported in a correlated lateral sub-query");
+            assertQuery("SELECT o.id, l.aid, l.sid, l.cid FROM o JOIN LATERAL (SELECT a.id aid, s.id sid, c.id cid FROM a RIGHT JOIN (SELECT id, k, x FROM b WHERE x = o.x) s ON a.x = s.k JOIN c ON c.sid = s.id WHERE a.x = o.x) l ORDER BY 1, 2, 3, 4")
+                    .noLeakCheck()
+                    .expectSize()
+                    .returns("""
+                            id\taid\tsid\tcid
+                            1\t10\t21\t100
+                            2\tnull\t22\t101
+                            """);
+        });
+    }
+
     private void createOrdersAndTrades() throws Exception {
         execute("CREATE TABLE orders (id INT, customer STRING, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
         execute("CREATE TABLE trades (id INT, order_id INT, qty DOUBLE, price DOUBLE, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
@@ -17948,6 +18092,14 @@ public class LateralJoinTest extends AbstractCairoTest {
         execute("INSERT INTO trades VALUES (10, 1, 1::timestamp)");
         execute("INSERT INTO refunds VALUES (100, 1, 1::timestamp), (101, 2, 2::timestamp)");
         execute("INSERT INTO xs VALUES (1, 100)");
+    }
+
+    // createNullOuterKeyTables() and c, whose rows 100 and 101 match b rows 21 and 22, the rows that
+    // testLateralCorrelatedRightJoinSubQueryWhereKey() returns, by sid.
+    private void createNullOuterKeyAndLaterJoinTables() throws Exception {
+        createNullOuterKeyTables();
+        execute("CREATE TABLE c (id INT, sid INT)");
+        execute("INSERT INTO c VALUES (100, 21), (101, 22), (102, 20), (103, 23)");
     }
 
     // s = (SELECT id, k, x FROM b WHERE x = o.x) holds b rows 20 and 21 for o.x = 1, rows 22 and

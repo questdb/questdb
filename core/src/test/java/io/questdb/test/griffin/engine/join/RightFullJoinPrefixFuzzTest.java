@@ -36,7 +36,10 @@ import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
@@ -51,6 +54,9 @@ import java.util.regex.Pattern;
  * SQL: every ON clause reads tables joined before it, and every name resolves to one table. The data
  * holds NULL keys and rows that do not match. A reference may fail only where it cannot express its
  * query, see isUnsupportedReference(); any other failure of either query fails the test.
+ * An ON clause may also hold a conjunct cX = cY + cZ or cX = cY - cZ over earlier tables, mostly in an INNER
+ * join after a RIGHT or FULL join that NULL-extends those tables. SqlOptimiser must keep such a conjunct at its
+ * INNER join, after the outer join, see SqlOptimiser.addModelOnPredicateFromCollectedIndexes().
  * The implied-key queries tie, in the ON clause of an INNER join, the joined table to the table of the
  * join before it and to an earlier table, as in "JOIN t2 ON c0 = c2 AND c1 = c2", which implies
  * c0 = c1 for the rows that the INNER join keeps, and filter on one or both tables of the implied key.
@@ -64,6 +70,8 @@ import java.util.regex.Pattern;
  * filters its rows, so it takes no such copy.
  */
 public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
+    // a join of the flat form: its type and the number of its table
+    private static final Pattern FLAT_JOIN = Pattern.compile(" (JOIN|LEFT JOIN|CROSS JOIN|RIGHT JOIN|FULL JOIN|ASOF JOIN|LT JOIN) t(\\d)");
     // a FULL join whose slave a later INNER join ties to an earlier table, with WHERE on the slave only
     private static final Pattern FULL_JOIN_SLAVE_ONLY_REJECTED = Pattern.compile(
             "FULL JOIN t(\\d) ON [^J]*\\d JOIN t(\\d) ON c\\d = c\\2 AND c\\1 = c\\2 [^W]*WHERE c\\1 > 0$"
@@ -74,6 +82,12 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     // index of the LIMIT-fenced reference query in the array that generateQueries() returns
     private static final int LIMIT_FENCED = 3;
     private static final Log LOG = LogFactory.getLog(RightFullJoinPrefixFuzzTest.class);
+    // queries that the multi-table conjunct coverage test draws from a fixed seed
+    private static final int MULTI_TABLE_CORPUS_SIZE = 1_000;
+    // cY + cZ = cX or cY - cZ = cX, see appendMultiTableCondition()
+    private static final Pattern MULTI_TABLE_SUM_ON_LEFT = Pattern.compile("c(\\d) [+-] c(\\d) = c(\\d)");
+    // cX = cY + cZ or cX = cY - cZ, see appendMultiTableCondition()
+    private static final Pattern MULTI_TABLE_SUM_ON_RIGHT = Pattern.compile("c(\\d) = c(\\d) [+-] c(\\d)");
     // index of the reference query in the array that generateQueries() returns
     private static final int NESTED = 1;
     private static final int NESTED_QUERY_COUNT = 300;
@@ -131,6 +145,28 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testQueriesCoverMultiTableConjunctsAfterOuterJoin() {
+        // Without the multi-table branches of SqlOptimiser.addModelOnPredicateFromCollectedIndexes(), such a
+        // conjunct of an INNER join filtered below the RIGHT or FULL join, which then NULL-extended the rows
+        // that the conjunct dropped.
+        final Rnd rnd = new Rnd(42, 4242);
+        int sumOnLeftCount = 0;
+        int sumOnRightCount = 0;
+        for (int i = 0; i < MULTI_TABLE_CORPUS_SIZE; i++) {
+            final String flat = generateQueries(rnd, false, false, false)[0];
+            if (hasMultiTableConjunctAfterOuterJoin(flat, MULTI_TABLE_SUM_ON_LEFT)) {
+                sumOnLeftCount++;
+            }
+            if (hasMultiTableConjunctAfterOuterJoin(flat, MULTI_TABLE_SUM_ON_RIGHT)) {
+                sumOnRightCount++;
+            }
+        }
+        final String counts = "sumOnLeft=" + sumOnLeftCount + ", sumOnRight=" + sumOnRightCount + " of " + MULTI_TABLE_CORPUS_SIZE;
+        Assert.assertTrue(counts, sumOnLeftCount * 25 >= MULTI_TABLE_CORPUS_SIZE);
+        Assert.assertTrue(counts, sumOnRightCount * 25 >= MULTI_TABLE_CORPUS_SIZE);
+    }
+
+    @Test
     public void testWhereQueriesCoverScanFilterShapes() {
         // The shapes where a copy of a WHERE conjunct could change the rows: LATEST ON on the table, symbol
         // predicates that the NULL probe parses, bind variables whose value may be NULL, and several conjuncts
@@ -172,6 +208,23 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             sql.append(column).append(tables[left]).append(" < ").append(column).append(tables[joined]);
         } else {
             sql.append(column).append(tables[joined]).append(" > 0");
+        }
+    }
+
+    // Appends cX = cY + cZ or cX = cY - cZ, with the sum on either side of =, over the tables before the
+    // one at index joined, Y and Z distinct. X may be Y or Z, so the conjunct reads two or three tables.
+    private static void appendMultiTableCondition(Rnd rnd, StringBuilder sql, int[] tables, int joined) {
+        final int x = tables[rnd.nextInt(joined)];
+        final int yIndex = rnd.nextInt(joined);
+        int zIndex = rnd.nextInt(joined - 1);
+        if (zIndex >= yIndex) {
+            zIndex++;
+        }
+        final String sum = "c" + tables[yIndex] + (rnd.nextBoolean() ? " + c" : " - c") + tables[zIndex];
+        if (rnd.nextBoolean()) {
+            sql.append('c').append(x).append(" = ").append(sum);
+        } else {
+            sql.append(sum).append(" = c").append(x);
         }
     }
 
@@ -234,6 +287,8 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         String prefixSubQuery = null;
         int impliedKeyMaster = -1;
         int impliedKeySlave = -1;
+        // index of the last RIGHT or FULL join so far, which NULL-extends the tables before it
+        int outerJoined = -1;
         for (int joined = 1; joined < modelCount; joined++) {
             final boolean isLast = joined == modelCount - 1;
             final String joinType;
@@ -278,7 +333,20 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
                         join.append(" AND ");
                         appendCondition(rnd, join, tables, joined, rnd.nextInt(joined), isOuterJoinHeavy);
                     }
+                    // an INNER join after a RIGHT or FULL join mostly gets a conjunct over the tables that the
+                    // outer join NULL-extends, which must filter after the outer join; any join after the second
+                    // table may get one over all earlier tables
+                    if (joinType.equals("JOIN") && outerJoined >= 2 && rnd.nextInt(3) > 0) {
+                        join.append(" AND ");
+                        appendMultiTableCondition(rnd, join, tables, outerJoined);
+                    } else if (joined >= 2 && rnd.nextInt(3) == 0) {
+                        join.append(" AND ");
+                        appendMultiTableCondition(rnd, join, tables, joined);
+                    }
                 }
+            }
+            if (joinType.equals("RIGHT JOIN") || joinType.equals("FULL JOIN")) {
+                outerJoined = joined;
             }
             if (isLast) {
                 prefixSubQuery = "SELECT * FROM (SELECT * FROM " + firstTable + joins + ") p" + join;
@@ -322,6 +390,54 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         }
         flat.append(latestOn);
         return new String[]{flat.toString(), nested, prefixSubQuery, limitFenced};
+    }
+
+    // True when an INNER join of the flat query has a conjunct that matches the pattern, and a RIGHT or FULL
+    // join sits after every table that the conjunct reads and before the INNER join, which NULL-extends
+    // those tables, so the conjunct must filter after it.
+    private static boolean hasMultiTableConjunctAfterOuterJoin(String flat, Pattern conjunct) {
+        // position in the join order of each table of the query, the first table at 0
+        final int[] tablePositions = new int[TABLE_COUNT];
+        final List<String> joinTypes = new ArrayList<>();
+        final List<String> onClauses = new ArrayList<>();
+        tablePositions[flat.charAt("SELECT * FROM t".length()) - '0'] = 0;
+        joinTypes.add("FROM");
+        onClauses.add("");
+        final int whereIndex = flat.indexOf(" WHERE ");
+        final int end = whereIndex == -1 ? flat.length() : whereIndex;
+        final Matcher joinMatcher = FLAT_JOIN.matcher(flat).region(0, end);
+        int onStart = -1;
+        while (joinMatcher.find()) {
+            if (onStart != -1) {
+                onClauses.add(flat.substring(onStart, joinMatcher.start()));
+            }
+            tablePositions[joinMatcher.group(2).charAt(0) - '0'] = joinTypes.size();
+            joinTypes.add(joinMatcher.group(1));
+            onStart = joinMatcher.end();
+        }
+        if (onStart != -1) {
+            onClauses.add(flat.substring(onStart, end));
+        }
+        for (int join = 2, n = joinTypes.size(); join < n; join++) {
+            if (!joinTypes.get(join).equals("JOIN")) {
+                continue;
+            }
+            final Matcher conjunctMatcher = conjunct.matcher(onClauses.get(join));
+            if (!conjunctMatcher.find()) {
+                continue;
+            }
+            int lastRead = 0;
+            for (int group = 1; group <= 3; group++) {
+                lastRead = Math.max(lastRead, tablePositions[conjunctMatcher.group(group).charAt(0) - '0']);
+            }
+            for (int outerJoin = lastRead + 1; outerJoin < join; outerJoin++) {
+                final String joinType = joinTypes.get(outerJoin);
+                if (joinType.equals("RIGHT JOIN") || joinType.equals("FULL JOIN")) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     // an ASOF or LT join written after a RIGHT or FULL join, so that its left side has no designated
