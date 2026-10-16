@@ -450,29 +450,50 @@ public final class TableUtils {
     }
 
     /**
+     * The change to {@link #hashTxnBodyPartitionTable(long, long, long)} of a {@code _txn} partition table when
+     * the 4-byte int at {@code offset} from the table's start changes from {@code oldValue} to {@code newValue}.
+     * The table is the size int followed by {@code longCount} longs, so the hash folds {@code longCount}
+     * 8-byte words, word {@code t} weighted {@code m^(longCount - t)}, then the last long's high int as a
+     * trailing term weighted 1. A word's low int enters unsigned and its high int shifted up by 32 bits; the
+     * trailing int enters sign-extended, as {@code Unsafe.getInt} reads it. Changes to different ints add up,
+     * so a long's change is the sum of the changes of its low int (at {@code 4 + 8i}) and its high int
+     * (at {@code 8 + 8i}).
+     */
+    public static long txnBodyPartitionTableIntDelta(int longCount, long offset, int oldValue, int newValue) {
+        assert (offset & (Integer.BYTES - 1)) == 0 && offset <= (long) longCount * Long.BYTES;
+        final long word = offset >>> 3;
+        if (word == longCount) {
+            return (long) newValue - oldValue;
+        }
+        final long delta = (offset & (Long.BYTES - 1)) == 0
+                ? Integer.toUnsignedLong(newValue) - Integer.toUnsignedLong(oldValue)
+                : ((long) newValue << 32) - ((long) oldValue << 32);
+        return delta * txnBodyHashPower(longCount - word);
+    }
+
+    /**
      * {@code m^K}, where {@code K} is the number of terms {@code hashTxnBodyRange} folds over the
      * partition-table range {@code [partitionTableStart, recordSize)}, or 1 when the range is empty. See
      * {@link #combineTxnBodyChecksum(long, long, long)}.
      */
     public static long txnBodyPartitionTablePower(long recordSize, long partitionTableStart) {
+        return txnBodyHashPower(txnBodyPartitionTableTermCount(recordSize, partitionTableStart));
+    }
+
+    /**
+     * The number of terms {@code hashTxnBodyRange} folds over the partition-table range
+     * {@code [partitionTableStart, recordSize)}, 0 when the range is empty: the work one
+     * {@link #hashTxnBodyPartitionTable(long, long, long)} does.
+     */
+    public static long txnBodyPartitionTableTermCount(long recordSize, long partitionTableStart) {
         if (partitionTableStart >= recordSize) {
-            return 1L;
+            return 0;
         }
         // hashTxnBodyRange folds one term per 8-byte word, then one for a trailing 4-byte int, then one per
         // trailing byte.
         final long len = recordSize - partitionTableStart;
         final long tail = len & (Long.BYTES - 1);
-        long terms = (len >>> 3) + (tail >= Integer.BYTES ? 1 + tail - Integer.BYTES : tail);
-        long base = HASH_MEM_M2;
-        long power = 1L;
-        while (terms != 0) {
-            if ((terms & 1) != 0) {
-                power *= base;
-            }
-            base *= base;
-            terms >>>= 1;
-        }
-        return power;
+        return (len >>> 3) + (tail >= Integer.BYTES ? 1 + tail - Integer.BYTES : tail);
     }
 
     /**
@@ -535,6 +556,20 @@ public final class TableUtils {
             h = h * m + Unsafe.getByte(addr + i);
         }
         return h;
+    }
+
+    // m^terms, the weight hashTxnBodyRange gives a term followed by `terms` more.
+    private static long txnBodyHashPower(long terms) {
+        long base = HASH_MEM_M2;
+        long power = 1L;
+        while (terms != 0) {
+            if ((terms & 1) != 0) {
+                power *= base;
+            }
+            base *= base;
+            terms >>>= 1;
+        }
+        return power;
     }
 
     /**

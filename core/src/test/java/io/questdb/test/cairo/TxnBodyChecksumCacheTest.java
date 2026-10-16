@@ -24,6 +24,7 @@
 
 package io.questdb.test.cairo;
 
+import io.questdb.PropertyKey;
 import io.questdb.cairo.CairoConfiguration;
 import io.questdb.cairo.ColumnType;
 import io.questdb.cairo.CommitMode;
@@ -35,6 +36,7 @@ import io.questdb.cairo.TxReader;
 import io.questdb.cairo.TxWriter;
 import io.questdb.cairo.vm.Vm;
 import io.questdb.cairo.vm.api.MemoryCMARW;
+import io.questdb.griffin.SqlException;
 import io.questdb.log.Log;
 import io.questdb.log.LogFactory;
 import io.questdb.std.Files;
@@ -57,10 +59,11 @@ import static io.questdb.cairo.TableUtils.*;
  * The fast-path {@code _txn} commit assembles its body checksum from a cached partition-table hash instead of
  * hashing every partition. These tests pin that the cached value is always the one a full recomputation over
  * the written bytes gives, across every kind of commit and writer lifecycle event, that the fast path hashes
- * no partition table at all, and that a torn partition table under a fast-path record is still detected.
+ * no partition table at all, that a full-record commit hashes only the partition-table entries it changes, and
+ * that a torn partition table under a fast-path record is still detected.
  * <p>
- * Every commit is also cross-checked inside {@code TxWriter} by an assert against the full recomputation,
- * which the test JVM runs with enabled.
+ * {@code TxWriter} also checks every cached hash against a full recomputation, with assertions enabled, as the
+ * test JVM runs, wherever it drops them: on close, reopen, rollback and reload.
  */
 public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
     private static final long DAY_2024_01_01 = 1_704_067_200_000_000L;
@@ -104,9 +107,11 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
     @Test
     public void testFastPathCommitHashesNoPartitionTable() throws Exception {
         // The fast path's cost must not depend on the partition count: after the two full-record commits that
-        // arm it, a single-row append commit hashes no partition table at all, at 10 partitions or 100.
+        // arm it, a single-row append commit hashes no partition-table term at all, at 10 partitions or 1,000.
+        // The count includes every hash TxWriter computes, so a full recomputation on this path, even one
+        // only assertions run, fails it.
         assertMemoryLeak(() -> {
-            for (int partitions : new int[]{10, 100}) {
+            for (int partitions : new int[]{10, 1_000}) {
                 final String tableName = "x" + partitions;
                 execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY HOUR BYPASS WAL");
                 execute("INSERT INTO " + tableName + " SELECT timestamp_sequence(0, " + Micros.HOUR_MICROS + ") ts, x v FROM long_sequence(" + partitions + ")");
@@ -116,15 +121,16 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
                     for (int i = 0; i < 3; i++) {
                         appendRow(writer, ++ts, i);
                     }
-                    final long hashes = txWriter.getPartitionTableHashCount();
+                    final long terms = txWriter.getPartitionTableHashTermCount();
                     for (int i = 0; i < 100; i++) {
                         appendRow(writer, ++ts, i);
                     }
-                    Assert.assertEquals("fast-path commits must not hash the partition table", hashes, txWriter.getPartitionTableHashCount());
+                    Assert.assertEquals("fast-path commits must not hash the partition table", terms, txWriter.getPartitionTableHashTermCount());
 
-                    // A partition switch is a full-record commit, which hashes the partition table it writes, once.
+                    // A partition switch is a full-record commit with a longer partition table, which it hashes
+                    // once.
                     appendRow(writer, partitions * Micros.HOUR_MICROS, 0);
-                    Assert.assertEquals(hashes + 1, txWriter.getPartitionTableHashCount());
+                    Assert.assertEquals(terms + fullHashTerms(partitions + 1), txWriter.getPartitionTableHashTermCount());
                 }
                 assertTxnVerifies(tableName, PartitionBy.HOUR);
                 assertQuery("SELECT count() FROM " + tableName).noLeakCheck().expectSize().noRandomAccess().returns("count\n" + (partitions + 104) + "\n");
@@ -154,9 +160,9 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
                 tooMany.add(new MutableSymbolCount(0x5a5a5a5a));
                 writer.append();
                 writer.updateMaxTimestamp(writer.getMaxTimestamp() + 1);
-                final long hashesBeforeOverrun = writer.getPartitionTableHashCount();
+                final long termsBeforeOverrun = writer.getPartitionTableHashTermCount();
                 writer.commit(tooMany);
-                Assert.assertEquals(hashesBeforeOverrun + 1, writer.getPartitionTableHashCount());
+                Assert.assertEquals(termsBeforeOverrun + fullHashTerms(8), writer.getPartitionTableHashTermCount());
                 assertAreasVerify(path.$());
                 appendAndCommit(writer, symbols);
                 appendAndCommit(writer, symbols);
@@ -165,11 +171,11 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
                 // This one changes a covered byte of the published live record, whose own checksum then
                 // mismatches until its area is republished two commits later. The republishing commit must hash
                 // the bytes in place rather than reuse the entry cached before the change.
-                final long hashes = writer.getPartitionTableHashCount();
+                final long terms = writer.getPartitionTableHashTermCount();
                 writer.collectValueCount(symbols.size(), 0x3c3c3c3c);
                 appendAndCommit(writer, symbols);
                 appendAndCommit(writer, symbols);
-                Assert.assertEquals(hashes + 1, writer.getPartitionTableHashCount());
+                Assert.assertEquals(terms + fullHashTerms(8), writer.getPartitionTableHashTermCount());
                 assertAreasVerify(path.$());
                 for (int i = 0; i < 2; i++) {
                     appendAndCommit(writer, symbols);
@@ -181,9 +187,11 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
 
     @Test
     public void testPartitionTableHashCountPerCommitKind() throws Exception {
-        // Pins when each A/B slot's cached hash is filled and reused: a full-record commit hashes the table it
-        // writes, a fast-path commit reuses the entry of the slot it republishes (the two slots alternate and are
-        // independent), and reload/truncate/reopen drop entries rather than trust them.
+        // Pins, in hash terms, when each A/B slot's cached hash is filled, updated and reused: a full-record
+        // commit hashes the whole table it writes when its slot holds no entry for that geometry and otherwise
+        // folds in only the ints it changes, a fast-path commit reuses the entry of the slot it republishes (the
+        // two slots alternate and are independent), and reload/truncate/reopen drop entries rather than trust
+        // them.
         assertMemoryLeak(() -> {
             final TableToken token = createHourTable("per_kind");
             final ObjList<SymbolCountProvider> symbols = new ObjList<>();
@@ -195,7 +203,7 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
 
                 // A record-structure change: two full-record commits, then the fast path alternates A/B.
                 writer.bumpPartitionTableVersion();
-                assertHashesPerCommit(writer, path, symbols, 1, 1, 0, 0, 0, 0);
+                assertHashesPerCommit(writer, path, symbols, fullHashTerms(8), fullHashTerms(8), 0, 0, 0, 0);
 
                 // New symbol values change only excluded bytes: in place in the live area, and in the counts
                 // the fast path rewrites.
@@ -203,11 +211,17 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
                 writer.collectValueCount(0, 7);
                 assertHashesPerCommit(writer, path, symbols, 0, 0);
 
+                // An out-of-order size update rewrites the partition table with the same geometry: each of the
+                // two full-record commits folds in only the low int of that partition's size, the one int that
+                // differs from its slot's bytes.
+                writer.updatePartitionSizeByTimestamp(3 * Micros.HOUR_MICROS, writer.getPartitionSize(3) + 1);
+                assertHashesPerCommit(writer, path, symbols, 1, 1, 0, 0);
+
                 // Rollback reloads the writer from disk and drops both entries; the fast path then re-hashes each
                 // slot once and reuses it from then on.
                 writer.append();
                 Assert.assertTrue(writer.unsafeLoadAll());
-                assertHashesPerCommit(writer, path, symbols, 1, 1, 0, 0);
+                assertHashesPerCommit(writer, path, symbols, fullHashTerms(8), fullHashTerms(8), 0, 0);
 
                 // Truncate writes a whole record, then the table grows back through full-record commits.
                 writer.truncate(writer.getColumnVersion(), symbols);
@@ -217,18 +231,66 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
                 writer.initLastPartition(ts);
                 writer.append();
                 writer.updateMaxTimestamp(ts);
-                assertHashesPerCommit(writer, path, symbols, 1, 1, 0, 0);
+                assertHashesPerCommit(writer, path, symbols, fullHashTerms(1), fullHashTerms(1), 0, 0);
 
                 // Reopen, also as a TxWriter reused for the same file.
                 writer.close();
                 writer.ofRW(path.$(), ColumnType.TIMESTAMP, PartitionBy.HOUR);
                 writer.setCommitMode(CommitMode.NOSYNC);
-                assertHashesPerCommit(writer, path, symbols, 1, 1, 0, 0);
+                assertHashesPerCommit(writer, path, symbols, fullHashTerms(1), fullHashTerms(1), 0, 0);
                 writer.ofRW(path.$(), ColumnType.TIMESTAMP, PartitionBy.HOUR);
                 writer.setCommitMode(CommitMode.NOSYNC);
-                assertHashesPerCommit(writer, path, symbols, 1, 1, 0, 0);
+                assertHashesPerCommit(writer, path, symbols, fullHashTerms(1), fullHashTerms(1), 0, 0);
             }
         });
+    }
+
+    @Test
+    public void testPartitionTableIntDeltaMatchesFullHash() {
+        // A full-record commit folds each partition-table int it changes into the cached hash instead of hashing
+        // the table again. Random edits of the size int and of partition longs -- small steps, flag bits, the
+        // top bit, and the last long, whose high int is the sign-extended trailing term -- at every table start
+        // alignment must keep the folded hash equal to a full hash of the bytes.
+        final int maxLongCount = 64;
+        final long capacity = 16 + Long.BYTES + (long) maxLongCount * Long.BYTES;
+        final long addr = Unsafe.malloc(capacity, MemoryTag.NATIVE_DEFAULT);
+        try {
+            final Rnd rnd = TestUtils.generateRandom(LOG);
+            for (int round = 0; round < 1_000; round++) {
+                for (long i = 0; i < capacity; i += Long.BYTES) {
+                    Unsafe.putLong(addr + i, rnd.nextLong());
+                }
+                final int longCount = rnd.nextInt(maxLongCount + 1);
+                final long start = rnd.nextInt(16);
+                final long end = start + Integer.BYTES + (long) longCount * Long.BYTES;
+                Unsafe.putInt(addr + start, longCount * Long.BYTES);
+                long hash = hashTxnBodyPartitionTable(addr, end, start);
+                for (int edit = 0; edit < 20; edit++) {
+                    if (longCount == 0 || rnd.nextInt(10) == 0) {
+                        final int oldSize = Unsafe.getInt(addr + start);
+                        final int newSize = rnd.nextInt();
+                        Unsafe.putInt(addr + start, newSize);
+                        hash += txnBodyPartitionTableIntDelta(longCount, 0, oldSize, newSize);
+                    } else {
+                        final int index = rnd.nextBoolean() ? longCount - 1 : rnd.nextInt(longCount);
+                        final long offset = Integer.BYTES + (long) index * Long.BYTES;
+                        final long oldValue = Unsafe.getLong(addr + start + offset);
+                        final long newValue = switch (rnd.nextInt(4)) {
+                            case 0 -> oldValue + 1;
+                            case 1 -> oldValue ^ (1L << rnd.nextInt(Long.SIZE));
+                            case 2 -> oldValue | Long.MIN_VALUE;
+                            default -> rnd.nextLong();
+                        };
+                        Unsafe.putLong(addr + start + offset, newValue);
+                        hash += txnBodyPartitionTableIntDelta(longCount, offset, (int) oldValue, (int) newValue);
+                        hash += txnBodyPartitionTableIntDelta(longCount, offset + Integer.BYTES, (int) (oldValue >>> 32), (int) (newValue >>> 32));
+                    }
+                    Assert.assertEquals("round " + round + ", edit " + edit, hashTxnBodyPartitionTable(addr, end, start), hash);
+                }
+            }
+        } finally {
+            Unsafe.free(addr, capacity, MemoryTag.NATIVE_DEFAULT);
+        }
     }
 
     @Test
@@ -259,7 +321,7 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
                 ObjList<SymbolCountProvider> symbols = tableSymbols.getQuick(current);
 
                 for (int step = 0; step < 1_500; step++) {
-                    final long hashes = writer.getPartitionTableHashCount();
+                    final long terms = writer.getPartitionTableHashTermCount();
                     final int op = rnd.nextInt(20);
                     switch (op) {
                         case 0 -> {
@@ -362,7 +424,7 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
                         default -> appendAndCommit(writer, symbols);
                     }
                     commits++;
-                    if (writer.getPartitionTableHashCount() == hashes) {
+                    if (writer.getPartitionTableHashTermCount() == terms) {
                         cachedCommits++;
                     }
                     assertAreasVerify(path.$());
@@ -397,6 +459,52 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
         } finally {
             Unsafe.free(addr, capacity, MemoryTag.NATIVE_DEFAULT);
         }
+    }
+
+    @Test
+    public void testStaleEntryFailsAtClose() throws Exception {
+        // A self-check of the guard, not a production model: a partition-table byte of a slot whose hash is
+        // cached changes behind the writer, as a write that did not keep the entry exact would leave it. The
+        // writer checks its cached hashes when it drops them, so closing it must fail, and still unmap _txn.
+        assertMemoryLeak(() -> {
+            final TableToken token = createHourTable("stale");
+            final ObjList<SymbolCountProvider> symbols = new ObjList<>();
+            try (Path path = txnPath(token)) {
+                final TxWriter writer = new TxWriter(configuration.getFilesFacade(), configuration);
+                try {
+                    writer.ofRW(path.$(), ColumnType.TIMESTAMP, PartitionBy.HOUR);
+                    writer.setCommitMode(CommitMode.NOSYNC);
+                    populate(writer, symbols);
+                    appendAndCommit(writer, symbols);
+                    appendAndCommit(writer, symbols);
+                    final long terms = writer.getPartitionTableHashTermCount();
+                    appendAndCommit(writer, symbols);
+                    Assert.assertEquals("the live slot's hash must be cached", terms, writer.getPartitionTableHashTermCount());
+
+                    final MemoryCMARW mem = openWholeTxnFile(path.$());
+                    try {
+                        final boolean isA = (mem.getLong(TX_BASE_OFFSET_VERSION_64) & 1) == 0;
+                        final long areaOffset = mem.getInt(isA ? TX_BASE_OFFSET_A_32 : TX_BASE_OFFSET_B_32);
+                        final long partitionByteOffset = areaOffset + getPartitionTableSizeOffset(symbols.size()) + Integer.BYTES;
+                        final byte original = mem.getByte(partitionByteOffset);
+                        mem.putByte(partitionByteOffset, (byte) (original ^ 0x01));
+                        try {
+                            writer.close();
+                            Assert.fail("closing the writer must report the stale hash");
+                        } catch (AssertionError e) {
+                            TestUtils.assertContains(e.getMessage(), "stale _txn partition-table hash [slot=" + (isA ? 'A' : 'B'));
+                        } finally {
+                            mem.putByte(partitionByteOffset, original);
+                        }
+                    } finally {
+                        mem.close(false);
+                    }
+                } finally {
+                    writer.close();
+                }
+                assertAreasVerify(path.$());
+            }
+        });
     }
 
     @Test
@@ -487,11 +595,11 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
                 for (int i = 0; i < 3; i++) {
                     appendRow(writer, ++ts, i);
                 }
-                final long hashes = writer.getTxWriter().getPartitionTableHashCount();
+                final long terms = writer.getTxWriter().getPartitionTableHashTermCount();
                 for (int i = 0; i < 3; i++) {
                     appendRow(writer, ++ts, i);
                 }
-                Assert.assertEquals("the live record must come from a cached fast-path commit", hashes, writer.getTxWriter().getPartitionTableHashCount());
+                Assert.assertEquals("the live record must come from a cached fast-path commit", terms, writer.getTxWriter().getPartitionTableHashTermCount());
                 liveTxn = writer.getTxWriter().getTxn();
             }
             engine.releaseAllWriters();
@@ -553,6 +661,147 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
         });
     }
 
+    @Test
+    public void testWalApplyHashesOnlyChangedEntries() throws Exception {
+        // Every applied WAL transaction is a full-record commit, even a one-row append to the last partition.
+        // It rewrites the whole partition table, of which only a few longs change, and must hash only those:
+        // a handful of terms per transaction, not the 4,001 a full hash of 1,000 partitions takes.
+        assertMemoryLeak(() -> {
+            final int partitions = 1_000;
+            execute("CREATE TABLE w (ts TIMESTAMP, v LONG) TIMESTAMP(ts) PARTITION BY HOUR WAL");
+            execute("INSERT INTO w SELECT timestamp_sequence(0, " + Micros.HOUR_MICROS + ") ts, x v FROM long_sequence(" + partitions + ")");
+            drainWalQueue();
+            long ts = (partitions - 1) * Micros.HOUR_MICROS;
+            // The first applies after the bulk insert write each A/B slot with a new geometry, a full hash each.
+            for (int i = 0; i < 3; i++) {
+                execute("INSERT INTO w VALUES (" + (++ts) + ", " + i + ")");
+                drainWalQueue();
+            }
+            final int applies = 50;
+            final long middlePartitionTs = (partitions / 2) * Micros.HOUR_MICROS;
+            for (boolean isO3 : new boolean[]{false, true}) {
+                final TxWriter txWriter;
+                final long txn;
+                final long terms;
+                try (TableWriter writer = getWriter("w")) {
+                    txWriter = writer.getTxWriter();
+                    txn = txWriter.getTxn();
+                    terms = txWriter.getPartitionTableHashTermCount();
+                }
+                for (int i = 0; i < applies; i++) {
+                    final long rowTs = isO3 ? middlePartitionTs + 1 + i : ++ts;
+                    execute("INSERT INTO w VALUES (" + rowTs + ", " + i + ")");
+                    drainWalQueue();
+                }
+                try (TableWriter writer = getWriter("w")) {
+                    Assert.assertSame("the apply job must have used the pooled writer", txWriter, writer.getTxWriter());
+                    Assert.assertEquals("one commit per applied transaction", applies, txWriter.getTxn() - txn);
+                    final long applyTerms = txWriter.getPartitionTableHashTermCount() - terms;
+                    LOG.info().$("WAL apply partition-table hash terms [o3=").$(isO3).$(", applies=").$(applies).$(", terms=").$(applyTerms).I$();
+                    Assert.assertTrue("o3=" + isO3 + ", terms=" + applyTerms, applyTerms <= 4L * applies);
+                }
+                assertTxnVerifies("w", PartitionBy.HOUR);
+            }
+            assertQuery("SELECT count() FROM w").noLeakCheck().expectSize().noRandomAccess().returns("count\n" + (partitions + 3 + 2 * applies) + "\n");
+        });
+    }
+
+    @Test
+    public void testWalTableOperationsKeepChecksumExact() throws Exception {
+        // The WAL twin of testTableOperationsKeepChecksumExact. The apply job commits every transaction as a
+        // full-record commit that folds the partition-table entries it changes into the pooled writer's cached
+        // hashes, so those hashes live across the whole sequence: O3 split and squash, drop, detach and attach,
+        // conversion to Parquet and back, and truncate, each followed by appends. Every A/B area must verify
+        // after each step, and each writer release checks the cached hashes against a full recomputation.
+        assertMemoryLeak(() -> {
+            setProperty(PropertyKey.CAIRO_O3_PARTITION_SPLIT_MIN_SIZE, 1);
+            execute("CREATE TABLE w (ts TIMESTAMP, v LONG, s SYMBOL) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            // 144 rows a day, 2024-01-01 to 2024-01-05.
+            execute(
+                    "INSERT INTO w SELECT timestamp_sequence(" + DAY_2024_01_01 + ", 10 * " + Micros.MINUTE_MICROS + ") ts, x v, rnd_symbol('s0', 's1', 's2') s " +
+                            "FROM long_sequence(720)"
+            );
+            drainWalQueue();
+            long rows = 720;
+            Assert.assertEquals(5, countPartitions("w"));
+
+            // A large prefix before the O3 rows and a short suffix after them make the last partition split.
+            execute("INSERT INTO w SELECT timestamp_sequence('2024-01-05T22:00:00.000001Z', 1_000_000L) ts, -x v, 'o3' s FROM long_sequence(5)");
+            drainWalQueue();
+            rows += 5;
+            Assert.assertEquals("the O3 insert must split the last partition", 6, countPartitions("w"));
+            assertTxnVerifies("w", PartitionBy.DAY);
+            long ts = DAY_2024_01_01 + 5 * Micros.DAY_MICROS;
+            appendWalRows("w", ts, 5);
+            ts += 5;
+            rows += 5;
+
+            execute("ALTER TABLE w SQUASH PARTITIONS");
+            drainWalQueue();
+            Assert.assertEquals(6, countPartitions("w"));
+            assertTxnVerifies("w", PartitionBy.DAY);
+            appendWalRows("w", ts, 5);
+            ts += 5;
+            rows += 5;
+
+            execute("ALTER TABLE w DROP PARTITION LIST '2024-01-02'");
+            drainWalQueue();
+            rows -= 144;
+            assertTxnVerifies("w", PartitionBy.DAY);
+            appendWalRows("w", ts, 5);
+            ts += 5;
+            rows += 5;
+
+            execute("ALTER TABLE w DETACH PARTITION LIST '2024-01-04'");
+            drainWalQueue();
+            rows -= 144;
+            assertTxnVerifies("w", PartitionBy.DAY);
+            appendWalRows("w", ts, 5);
+            ts += 5;
+            rows += 5;
+            try (Path detached = new Path(); Path attachable = new Path()) {
+                final TableToken token = engine.verifyTableName("w");
+                detached.of(configuration.getDbRoot()).concat(token).concat("2024-01-04").put(DETACHED_DIR_MARKER);
+                attachable.of(configuration.getDbRoot()).concat(token).concat("2024-01-04").put(configuration.getAttachPartitionSuffix());
+                Assert.assertTrue(Files.rename(detached.$(), attachable.$()) > -1);
+            }
+            execute("ALTER TABLE w ATTACH PARTITION LIST '2024-01-04'");
+            drainWalQueue();
+            rows += 144;
+            assertTxnVerifies("w", PartitionBy.DAY);
+            appendWalRows("w", ts, 5);
+            ts += 5;
+            rows += 5;
+
+            execute("ALTER TABLE w CONVERT PARTITION TO PARQUET LIST '2024-01-03'");
+            drainWalQueue();
+            assertTxnVerifies("w", PartitionBy.DAY);
+            appendWalRows("w", ts, 5);
+            ts += 5;
+            rows += 5;
+            execute("ALTER TABLE w CONVERT PARTITION TO NATIVE LIST '2024-01-03'");
+            drainWalQueue();
+            assertTxnVerifies("w", PartitionBy.DAY);
+            appendWalRows("w", ts, 5);
+            ts += 5;
+            rows += 5;
+
+            engine.releaseAllWriters();
+            appendWalRows("w", ts, 5);
+            ts += 5;
+            rows += 5;
+            assertQuery("SELECT count() FROM w").noLeakCheck().expectSize().noRandomAccess().returns("count\n" + rows + "\n");
+            assertQuery("SELECT count() FROM w WHERE s = 'o3'").noLeakCheck().expectSize().noRandomAccess().returns("count\n5\n");
+
+            execute("TRUNCATE TABLE w");
+            drainWalQueue();
+            assertTxnVerifies("w", PartitionBy.DAY);
+            appendWalRows("w", ts, 5);
+            engine.releaseAllWriters();
+            assertQuery("SELECT count(), sum(v) FROM w").noLeakCheck().expectSize().noRandomAccess().returns("count\tsum\n5\t15\n");
+        });
+    }
+
     private static void appendAndCommit(TxWriter writer, ObjList<SymbolCountProvider> symbols) {
         writer.append();
         writer.updateMaxTimestamp(writer.getMaxTimestamp() + 1);
@@ -568,6 +817,15 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
 
     // Reads the whole _txn file and checks both A/B areas: wherever an area's stamp names its record, the stored
     // checksum must equal a full recomputation over that area's bytes. The live area must carry a stamp.
+    // Applies one-row WAL transactions after fromTs, each through the apply job, then checks _txn.
+    private static void appendWalRows(String tableName, long fromTs, int count) throws SqlException {
+        for (int i = 1; i <= count; i++) {
+            execute("INSERT INTO " + tableName + " VALUES (" + (fromTs + i) + ", " + i + ", 'w" + (i % 3) + "')");
+            drainWalQueue();
+        }
+        assertTxnVerifies(tableName, PartitionBy.DAY);
+    }
+
     private static void assertAreasVerify(LPSZ txnPath) {
         final FilesFacade ff = configuration.getFilesFacade();
         final long fd = ff.openRO(txnPath);
@@ -620,17 +878,17 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
         Assert.assertEquals(0, TxReader.getBodyChecksumFallbackCount());
     }
 
-    // Commits one after another, asserting how many partition tables each one hashed.
-    private static void assertHashesPerCommit(TxWriter writer, Path path, ObjList<SymbolCountProvider> symbols, int... expectedHashes) {
-        for (int i = 0; i < expectedHashes.length; i++) {
-            final long hashes = writer.getPartitionTableHashCount();
+    // Commits one after another, asserting how many partition-table hash terms each one computed.
+    private static void assertHashesPerCommit(TxWriter writer, Path path, ObjList<SymbolCountProvider> symbols, long... expectedTerms) {
+        for (int i = 0; i < expectedTerms.length; i++) {
+            final long terms = writer.getPartitionTableHashTermCount();
             if (i == 0) {
                 // The caller has already made whatever change the first commit publishes.
                 writer.commit(symbols);
             } else {
                 appendAndCommit(writer, symbols);
             }
-            Assert.assertEquals("commit " + i, expectedHashes[i], writer.getPartitionTableHashCount() - hashes);
+            Assert.assertEquals("commit " + i, expectedTerms[i], writer.getPartitionTableHashTermCount() - terms);
             assertAreasVerify(path.$());
             assertFreshReaderVerifies(path.$(), writer.getTxn());
         }
@@ -650,8 +908,20 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
         }
     }
 
+    private static long countPartitions(String tableName) {
+        try (TableWriter writer = getWriter(tableName)) {
+            return writer.getPartitionCount();
+        }
+    }
+
     private static TableToken createHourTable(String name) {
         return create(new TableModel(configuration, name, PartitionBy.HOUR).timestamp());
+    }
+
+    // The terms a full hash of a partition table of this many partitions folds: one per long, plus the
+    // trailing int.
+    private static long fullHashTerms(int partitions) {
+        return (long) partitions * LONGS_PER_TX_ATTACHED_PARTITION + 1;
     }
 
     // A writable mapping of the whole file, positioned at its end so that closing it does not truncate it.
@@ -726,10 +996,10 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
             final TxWriter txWriter = writer.getTxWriter();
             final boolean hasSecondSymbol = writer.getMetadata().getColumnCount() > 3;
             long ts = writer.getMaxTimestamp() == Long.MIN_VALUE ? DAY_2024_01_01 : writer.getMaxTimestamp();
-            long hashes = 0;
+            long terms = 0;
             for (int i = 0; i < count; i++) {
                 if (i == 3) {
-                    hashes = txWriter.getPartitionTableHashCount();
+                    terms = txWriter.getPartitionTableHashTermCount();
                 }
                 final TableWriter.Row row = writer.newRow(++ts);
                 row.putLong(1, i + 1);
@@ -740,7 +1010,7 @@ public class TxnBodyChecksumCacheTest extends AbstractCairoTest {
                 row.append();
                 writer.commit();
             }
-            Assert.assertEquals("fast-path commits must reuse the cached partition-table hash", hashes, txWriter.getPartitionTableHashCount());
+            Assert.assertEquals("fast-path commits must reuse the cached partition-table hash", terms, txWriter.getPartitionTableHashTermCount());
         }
         assertTxnVerifies(tableName, PartitionBy.DAY);
         return count;
