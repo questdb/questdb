@@ -2272,6 +2272,8 @@ public final class TableUtils {
                     -1,
                     seqTxn
             );
+            // every row keeps its position: the output keeps every column top of the source
+            partitionUpdater.setColumnTopRowLimit(Long.MAX_VALUE);
 
             final int columnCount = metadata.getColumnCount();
             ParquetRowGroupMaterializer.setTargetSchema(

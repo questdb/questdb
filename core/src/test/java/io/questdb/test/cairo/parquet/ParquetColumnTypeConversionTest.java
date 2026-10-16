@@ -55,7 +55,13 @@ import org.junit.Assert;
 import org.junit.Assume;
 import org.junit.Test;
 
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Tests lazy column type conversion on parquet partitions.
@@ -2082,6 +2088,63 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testProduceParquetFromParquetWithConversionsKeepsNoSentinelColumnTops() throws Exception {
+        // BOOLEAN, BYTE, SHORT and CHAR columns added after two rows have top 2 in the parquet file;
+        // the materializer re-encodes them (their _cv top is not 0) while it converts val. No row moves,
+        // so the candidate keeps the tops in its footer, and the decoder reads the top rows as NULL
+        // from the file. Before the fix the footer top was 0 and the top rows read as 0/false values.
+        assertMemoryLeak(() -> {
+            try {
+                execute("CREATE TABLE pt (val VARCHAR, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY WAL");
+                execute("INSERT INTO pt VALUES ('1', '2024-01-01T00:00:01.000000Z'), ('2', '2024-01-01T00:00:02.000000Z')");
+                execute("ALTER TABLE pt ADD COLUMN o BOOLEAN");
+                execute("ALTER TABLE pt ADD COLUMN b BYTE");
+                execute("ALTER TABLE pt ADD COLUMN s SHORT");
+                execute("ALTER TABLE pt ADD COLUMN c CHAR");
+                execute("""
+                        INSERT INTO pt VALUES
+                        ('3', '2024-01-01T00:00:03.000000Z', false, 0::BYTE, 0::SHORT, 'x'),
+                        ('4', '2024-01-01T00:00:04.000000Z', true, -128::BYTE, 32767::SHORT, 'y'),
+                        ('5', '2024-01-02T00:00:01.000000Z', true, 5::BYTE, 5::SHORT, 'z')
+                        """);
+                drainWalQueue();
+                execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                drainWalQueue();
+                execute("ALTER TABLE pt ALTER COLUMN val TYPE LONG");
+                drainWalQueue();
+
+                final String candidatePath = produceCurrentSchemaParquetCandidate(
+                        "pt",
+                        "LONG",
+                        ColumnType.VARCHAR,
+                        ColumnType.LONG
+                );
+                // QDB metadata of the candidate's footer, in schema order: val, ts, o, b, s, c
+                Assert.assertEquals("[0, 0, 2, 2, 2, 2]", footerColumnTops(candidatePath));
+
+                final String oldInputRoot = inputRoot;
+                inputRoot = root;
+                try {
+                    assertQuery("SELECT val, o, b, s, c FROM read_parquet('" + candidatePath.replace("'", "''") + "') ORDER BY ts")
+                            .noLeakCheck()
+                            .expectSize()
+                            .returns("""
+                                    val\to\tb\ts\tc
+                                    1\tfalse\t0\t0\t
+                                    2\tfalse\t0\t0\t
+                                    3\tfalse\t0\t0\tx
+                                    4\ttrue\t-128\t32767\ty
+                                    """);
+                } finally {
+                    inputRoot = oldInputRoot;
+                }
+            } finally {
+                tryDrop("pt");
+            }
+        });
+    }
+
+    @Test
     public void testProduceParquetFromParquetWithConversionsVarcharToLong() throws Exception {
         assertMemoryLeak(() -> assertDirectParquetMaterializerConversion(
                 "VARCHAR",
@@ -4050,6 +4113,17 @@ public class ParquetColumnTypeConversionTest extends AbstractCairoTest {
         } finally {
             tryDrop("pt");
         }
+    }
+
+    // The column tops of the QDB metadata (JSON) that the parquet file's footer holds, in schema order.
+    private String footerColumnTops(String parquetFilePath) throws Exception {
+        final String content = new String(java.nio.file.Files.readAllBytes(Paths.get(parquetFilePath)), StandardCharsets.ISO_8859_1);
+        final Matcher matcher = Pattern.compile("\"column_top\":(\\d+)").matcher(content);
+        final List<Integer> tops = new ArrayList<>();
+        while (matcher.find()) {
+            tops.add(Integer.parseInt(matcher.group(1)));
+        }
+        return tops.toString();
     }
 
     private void assertParquetColumnType(String parquetFilePath, int expectedColumnType) {
