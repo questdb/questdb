@@ -1317,6 +1317,36 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testNonDedupTieBeforeTopMaterializesTop() throws Exception {
+        // rows 4..6 at 03:00 across row groups 0 and 1, top 4 inside row group 0; O3 rows at 02:00 and
+        // 03:00: the prefix is rows 1..3, the top ends past it and materializes, as native. The row at
+        // 03:00 goes after row 6, into row group 1
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables("", 4, 8, 5, 6);
+            insertO3Rows(o3Row(50, "2024-01-01T02:00:00.000000Z"), o3Row(51, "2024-01-01T03:00:00.000000Z"));
+            final List<Row> expected = topRows(8, 4, -1, null, false);
+            expected.add(3, new Row(50, "2024-01-01T02:00:00.000000Z", Kind.O3));
+            expected.add(7, new Row(51, "2024-01-01T03:00:00.000000Z", Kind.O3));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
+    public void testNonDedupTieInNextRowGroupKeepsTop() throws Exception {
+        // rows 4..6 at 03:00 across row groups 0 and 1, top 5 ends inside row group 1; the O3 row at
+        // 03:00 goes after row 6: rows 1..6 keep their position and the top stays, as native
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables("", 5, 8, 5, 6);
+            insertO3("2024-01-01T03:00:00.000000Z");
+            final List<Row> expected = topRows(8, 5, -1, null, true);
+            expected.add(6, new Row(50, "2024-01-01T03:00:00.000000Z", Kind.O3));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
     public void testO3BetweenRowGroupsKeepsTop() throws Exception {
         // the row at 03:30 goes into a row group of its own between row groups 0 and 1
         assertShape(4, "2024-01-01T03:30:00.000000Z", true);
@@ -1769,9 +1799,20 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     // rows 1..rowCount, the columns added after `top` rows, 2024-01-01 converted to parquet; row
     // tiedRow (-1: none, else past the top) takes the timestamp of the row before it
     private void createShapeTables(String dedup, int top, int rowCount, int tiedRow) throws Exception {
+        createShapeTables(dedup, top, rowCount, tiedRow, tiedRow);
+    }
+
+    // rows 1..rowCount, the columns added after `top` rows, 2024-01-01 converted to parquet; rows
+    // tiedLo..tiedHi (-1: none) take the timestamp of row tiedLo - 1
+    private void createShapeTables(String dedup, int top, int rowCount, int tiedLo, int tiedHi) throws Exception {
         for (String t : tables()) {
             createBaseTable(t, dedup);
-            execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, top));
+            final StringBuilder topRows = new StringBuilder("INSERT INTO " + t + " (v, ts) VALUES ");
+            for (int v = 1; v <= top; v++) {
+                topRows.append(v > 1 ? ", " : "").append('(').append(v).append(", '")
+                        .append(tsOf(v >= tiedLo && v <= tiedHi ? tiedLo - 1 : v)).append("')");
+            }
+            execute(topRows.toString());
             addColumns(t);
             final StringBuilder sql = new StringBuilder("INSERT INTO " + t + " (v, ts, c1, c2, c3, ci, cv, cg, cd) VALUES ");
             for (int v = top + 1; v <= rowCount; v++) {
@@ -1779,7 +1820,7 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
                     sql.append(", ");
                 }
                 final String literal = literalOf(v);
-                sql.append('(').append(v).append(", '").append(tsOf(v == tiedRow ? v - 1 : v)).append("', ")
+                sql.append('(').append(v).append(", '").append(tsOf(v >= tiedLo && v <= tiedHi ? tiedLo - 1 : v)).append("', ")
                         .append(literal).append(", ").append(literal).append(", ").append(literal)
                         .append(", ").append(v).append(", '").append(v).append("', #s, ").append(v % 10).append(".5m)");
             }

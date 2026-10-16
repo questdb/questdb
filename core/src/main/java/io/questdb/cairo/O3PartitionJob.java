@@ -231,9 +231,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                 //
                 // Coalescing only matters for deduplicating commits: it exists so a dedup
                 // key at the shared timestamp is compared against every existing copy
-                // across the tied groups. Without dedup the tie is harmless (rows merge
-                // correctly per-group), so a non-deduplicating commit must NOT pay the
-                // forced rewrite. This gate must stay in lockstep with the
+                // across the tied groups. Without dedup computeMergeActions gives the O3 rows
+                // at the shared timestamp to the last tied group, after every stored row of
+                // that timestamp, as native does, so a non-deduplicating commit must NOT pay
+                // the forced rewrite. This gate must stay in lockstep with the
                 // coalesceBoundaryTies flag passed to computeMergeActions below.
                 final boolean isCommitDedup = tableWriter.isCommitDedupMode();
                 final int tieTimestampParquetIdx = tableToParquetIdx.getQuick(timestampIndex);
@@ -1841,9 +1842,10 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * {@link PartitionUpdater#setColumnTopRowLimit(long)}. It follows the native merge, which keeps
      * a column top iff the top ends inside the prefix of rows with {@code ts <= o3Lo - mergeEquals}
      * (O3OpenColumnJob), and stops at the first action that takes O3 rows: rows past the merge point
-     * of that action move, even at a tied timestamp in the next row group. When every row stays in
-     * place, the commit appends and the output keeps every top, as native does. A SKIP commit whose
-     * dedup drops every O3 row at or below the partition max appends as well: its lazy output open
+     * of that action move. No stored row of {@code o3Lo}'s timestamp sits in a later row group: the
+     * merge strategy gives the O3 rows of a tied timestamp to the last row group that holds it.
+     * When every row stays in place, the commit appends and the output keeps every top, as native
+     * does. A SKIP commit whose dedup drops every O3 row at or below the partition max appends as well: its lazy output open
      * lifts the limit to {@code Long.MAX_VALUE}. So does an UPSERT commit whose O3 rows at or below
      * the partition max all replace identical rows, which runs as SKIP, see
      * {@link #isUpsertIdenticalUpToPartitionMax}.
