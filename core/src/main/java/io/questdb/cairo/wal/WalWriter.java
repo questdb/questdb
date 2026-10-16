@@ -1506,14 +1506,15 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                             }
                             // Names a _cv stuck behind _txn instead of looping on it; see ColumnVersionReader.readSafe.
                             columnVersionReader.readSafe(milliClock, spinLockTimeout, txReader.getColumnVersion());
+                            throwIfTxnLiveAreaTorn();
                         } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
                     } catch (CairoException e) {
-                        if (!e.isCvTorn()) {
+                        if (!e.isCvTorn() && !e.isTxnLiveAreaTorn()) {
                             throw e;
                         }
                         // The table's symbol tables only let this writer skip symbols the table already knows.
-                        // Write every symbol value into the segment instead, and leave _cv to the table writer,
-                        // which repairs it or suspends the table once WAL apply opens it.
+                        // Write every symbol value into the segment instead, and leave _txn and _cv to the table
+                        // writer, which repairs them or suspends the table once WAL apply opens it.
                         LOG.error().$("could not read the table's symbol tables, writing symbols in full [table=").$(tableToken)
                                 .$(", error=").$safe(e.getFlyweightMessage())
                                 .I$();
@@ -1953,9 +1954,10 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
                 }
                 // Names a _cv stuck behind _txn instead of looping on it; see ColumnVersionReader.readSafe.
                 columnVersionReader.readSafe(milliClock, spinLockTimeout, txReader.getColumnVersion());
+                throwIfTxnLiveAreaTorn();
             } while (txReader.getColumnVersion() != columnVersionReader.getVersion());
         } catch (CairoException e) {
-            if (!e.isCvTorn()) {
+            if (!e.isCvTorn() && !e.isTxnLiveAreaTorn()) {
                 throw e;
             }
             // Keep the counts this writer already has, as on a version mismatch; see configureSymbolTable().
@@ -2472,6 +2474,18 @@ public class WalWriter extends WalWriterBase implements TableWriterAPI {
             long secondarySize = rollSink.getDestAuxSize(srcColumnIndex);
             MemoryMA destAuxColumn = getAuxColumn(destColumnIndex);
             destAuxColumn.switchTo(ff, newSecondaryFd, getDataAppendPageSize(), secondarySize, isTruncateFilesOnClose(), Vm.TRUNCATE_TO_POINTER);
+        }
+    }
+
+    // Waiting for _cv to agree with _txn helps only while the loaded _txn record is the live one. When the live area
+    // is torn, every load falls back to the previous record, which never catches up with _cv. Names it instead.
+    private void throwIfTxnLiveAreaTorn() {
+        if (txReader.getColumnVersion() != columnVersionReader.getVersion()
+                && txReader.getVersion() != txReader.unsafeReadVersion()
+                && txReader.unsafeIsLiveAreaTorn()) {
+            throw CairoException.txnLiveAreaTorn()
+                    .put("_txn live area is torn, WAL writer cannot read past the previous transaction [table=")
+                    .put(tableToken).put(", txn=").put(txReader.getTxn()).put(']');
         }
     }
 

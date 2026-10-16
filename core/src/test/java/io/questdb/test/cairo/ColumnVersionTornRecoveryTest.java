@@ -37,6 +37,7 @@ import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.TableWriter;
 import io.questdb.cairo.TxReader;
 import io.questdb.cairo.wal.LocalDurabilityPolicy;
+import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.griffin.SqlExecutionContext;
 import io.questdb.std.Files;
@@ -201,7 +202,7 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
             // no reader holding the versions it replaced, removes them right after its commit.
             commits.updateLastPartitions(true, 6);
             engine.clear();
-            installTornTxn(dir, commits);
+            final byte[] intactTxn = installTornTxn(dir, commits);
             final byte[] txnImage = readFile(dir + TXN_FILE_NAME);
             final byte[] cvImage = readFile(dir + COLUMN_VERSION_FILE_NAME);
             final String[] lastPartitionFiles = listPartitionFiles(dir, ROWS - 1);
@@ -215,6 +216,19 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
                 } catch (CairoException e) {
                     TestUtils.assertContains(e.getFlyweightMessage(), "_txn live area is torn; refusing to write from the previous transaction: a column file it reads is missing");
                 }
+                assertQuery("select suspended from wal_tables()").withEngine(restarted).withContext(ctx).noLeakCheck()
+                        .noRandomAccess()
+                        .returns("suspended\ntrue\n");
+
+                // The WAL keeps taking rows while the table cannot apply them, as for any suspended table. Its WAL
+                // writer reads the table's symbol counts through _txn and _cv, which never agree on this image.
+                final long sequencerTxn = restarted.getTableSequencerAPI().lastTxn(token);
+                final long fallbackCount = TxReader.getBodyChecksumFallbackCount();
+                assertReturnsOverTornTxn(dir, intactTxn, () -> restarted.execute("insert into x values (" + NEW_ROW_TS + "::timestamp, 's9', 777, 777)", ctx));
+                // The WAL writer's open loads the previous _txn record once, then writes its symbols in full.
+                Assert.assertEquals(1, TxReader.getBodyChecksumFallbackCount() - fallbackCount);
+                Assert.assertEquals(sequencerTxn + 1, restarted.getTableSequencerAPI().lastTxn(token));
+                TestUtils.drainWalQueue(restarted);
                 assertQuery("select suspended from wal_tables()").withEngine(restarted).withContext(ctx).noLeakCheck()
                         .noRandomAccess()
                         .returns("suspended\ntrue\n");
@@ -238,13 +252,37 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
             }
             final String expected = selectAll(engine, sqlExecutionContext, "x");
             engine.clear();
-            installTornTxn(dir, commits);
+            final byte[] intactTxn = installTornTxn(dir, commits);
 
             try (CairoEngine restarted = new CairoEngine(configuration)) {
                 final SqlExecutionContext ctx = TestUtils.createSqlExecutionCtx(restarted);
+                // Rows arrive before WAL apply repairs the table. Opening the WAL writer and rolling its segment
+                // both read the table's symbol counts through _txn and _cv.
+                final TableToken token = restarted.verifyTableName("x");
+                assertReturnsOverTornTxn(dir, intactTxn, () -> {
+                    try (WalWriter walWriter = restarted.getWalWriter(token)) {
+                        final TableWriter.Row first = walWriter.newRow(NEW_ROW_TS);
+                        first.putSym(1, "s9");
+                        first.putLong(2, 777);
+                        first.putInt(3, 777);
+                        first.append();
+                        walWriter.commit();
+                        walWriter.rollSegment();
+                        final TableWriter.Row second = walWriter.newRow(NEW_ROW_TS + HOUR);
+                        second.putSym(1, "s10");
+                        second.putLong(2, 778);
+                        second.putInt(3, 778);
+                        second.append();
+                        walWriter.commit();
+                    }
+                });
                 TestUtils.drainWalQueue(restarted);
-                assertQuery("x").withEngine(restarted).withContext(ctx).noLeakCheck().timestamp("ts").expectSize()
+                assertQuery("x where ts < " + NEW_ROW_TS).withEngine(restarted).withContext(ctx).noLeakCheck()
+                        .timestamp("ts")
                         .returns(expected);
+                assertQuery("select s, v, c from x where ts >= " + NEW_ROW_TS).withEngine(restarted).withContext(ctx)
+                        .noLeakCheck()
+                        .returns("s\tv\tc\ns9\t777\t777\ns10\t778\t778\n");
                 assertWalTableCaughtUp(restarted, ctx);
                 restarted.clear();
             }
@@ -365,6 +403,36 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
         }
     }
 
+    // A thread stuck on the torn _txn never returns, so the wait is bounded. If it is still running, the intact _txn
+    // goes back to release it, and the test fails with the stack it was stuck at.
+    private static void assertReturnsOverTornTxn(String dir, byte[] intactTxn, TestUtils.LeakProneCode code) throws Exception {
+        final Throwable[] error = new Throwable[1];
+        final Thread thread = new Thread(() -> {
+            try {
+                code.run();
+            } catch (Throwable e) {
+                error[0] = e;
+            } finally {
+                Path.clearThreadLocals();
+            }
+        }, "torn-txn-ingest");
+        thread.setDaemon(true);
+        thread.start();
+        thread.join(30_000);
+        if (thread.isAlive()) {
+            final StringBuilder stack = new StringBuilder("the thread did not return over a torn _txn:");
+            for (StackTraceElement frame : thread.getStackTrace()) {
+                stack.append("\n\tat ").append(frame);
+            }
+            writeFile(dir + TXN_FILE_NAME, intactTxn);
+            thread.join(30_000);
+            Assert.fail(stack.toString());
+        }
+        if (error[0] != null) {
+            throw new AssertionError(error[0]);
+        }
+    }
+
     // The area geometry the header gives column version areaVersion: {offset, size}.
     private static long[] cvArea(byte[] file, long areaVersion) {
         final ByteBuffer bb = ByteBuffer.wrap(file).order(ByteOrder.LITTLE_ENDIAN);
@@ -404,8 +472,9 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
 
     // Builds the image a power loss leaves when the first page of _txn reached the disk after commit N, and the
     // rest kept what it held after commit N-1. Takes the latest commit whose live area that tears, placed and
-    // sized like the one two commits back, so the stale bytes belong to that older record.
-    private static void installTornTxn(String dir, Commits commits) throws IOException {
+    // sized like the one two commits back, so the stale bytes belong to that older record. Returns commit N's
+    // intact _txn.
+    private static byte[] installTornTxn(String dir, Commits commits) throws IOException {
         for (int n = commits.size() - 1; n > 1; n--) {
             final byte[] torn = commits.txn(n);
             final byte[] previous = commits.txn(n - 1);
@@ -425,9 +494,10 @@ public class ColumnVersionTornRecoveryTest extends AbstractCairoTest {
             Assert.assertTrue(isCvAreaVerified(commits.cv(n), cvVersion(commits.cv(n))));
             writeFile(dir + TXN_FILE_NAME, image);
             writeFile(dir + COLUMN_VERSION_FILE_NAME, commits.cv(n));
-            return;
+            return torn;
         }
         Assert.fail("no commit tore the live _txn area over an intact previous area");
+        return null;
     }
 
     private static boolean isCvAreaStamped(byte[] file, long areaVersion) {
