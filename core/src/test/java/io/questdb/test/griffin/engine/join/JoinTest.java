@@ -13935,11 +13935,13 @@ public class JoinTest extends AbstractCairoTest {
     public void testOuterJoinInnerDerivedKeyStaysFilterWhenNullExtendedRowsSurvive() throws Exception {
         // c's keys imply a.w = b.k. Unless a later conjunct drops the rows that the outer join b
         // NULL-extends, the key would change them, so b keeps matching without it: with no such conjunct,
-        // with a conjunct on the side that b preserves, with one on only one side of a FULL JOIN, with
-        // b.f = false, which the NULL-extended BOOLEAN false passes, and with a conjunct of an INNER join
-        // that runs before RIGHT JOIN b. In the last query, c2's keys imply a.w = b.k across RIGHT JOIN d,
-        // which runs between b and c2, and the conjunct b.u > 2 runs before d, so it keeps the rows that d
-        // NULL-extends. Keyed on a.w = b.k, each query returns other rows.
+        // with a conjunct on the side that b preserves, with one on only the a side or only the b side of
+        // a FULL JOIN, with b.f = false, which the NULL-extended BOOLEAN false passes, and with a conjunct
+        // of an INNER join that runs before RIGHT JOIN b. With only b.u > 2, a.w = c.k does not drop the
+        // rows that the FULL JOIN NULL-extends on the a side, because NULL = NULL matches the c row whose k
+        // is NULL. In the last query, c2's keys imply a.w = b.k across RIGHT JOIN d, which runs between b
+        // and c2, and the conjunct b.u > 2 runs before d, so it keeps the rows that d NULL-extends. Keyed
+        // on a.w = b.k, each query returns other rows.
         assertMemoryLeak(() -> {
             createTablesForOuterJoinInnerDerivedKeyNullRejection();
             assertQuery("""
@@ -13989,6 +13991,24 @@ public class JoinTest extends AbstractCairoTest {
                     .withPlanContaining("Nested Loop Full Join")
                     .returns("""
                             ax\taw\tbx\tbk\tbu\tck
+                            2\t1\t5\t1\t4\t1
+                            2\t2\t2\t2\t3\t2
+                            4\t1\t5\t1\t4\t1
+                            5\t2\t2\t2\t3\t2
+                            """);
+            assertQuery("""
+                    SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, c.k ck
+                    FROM a
+                    FULL JOIN b ON b.x > 1
+                    JOIN c ON a.w = c.k AND b.k = c.k
+                    WHERE b.u > 2
+                    ORDER BY ax, aw, bx, bk, bu, ck
+                    """)
+                    .noLeakCheck()
+                    .withPlanContaining("Nested Loop Full Join")
+                    .returns("""
+                            ax\taw\tbx\tbk\tbu\tck
+                            0\t1\t5\t1\t4\t1
                             2\t1\t5\t1\t4\t1
                             2\t2\t2\t2\t3\t2
                             4\t1\t5\t1\t4\t1

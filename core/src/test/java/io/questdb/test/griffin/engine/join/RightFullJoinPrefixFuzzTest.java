@@ -36,6 +36,7 @@ import org.junit.Assert;
 import org.junit.Test;
 
 import java.util.Arrays;
+import java.util.regex.Pattern;
 
 /**
  * Compares a query that ends with a RIGHT or FULL join with the same query written with sub-queries.
@@ -49,8 +50,20 @@ import java.util.Arrays;
  * SQL: every ON clause reads tables joined before it, and every name resolves to one table. The data
  * holds NULL keys and rows that do not match. A reference may fail only where it cannot express its
  * query, see isUnsupportedReference(); any other failure of either query fails the test.
+ * The implied-key queries tie, in the ON clause of an INNER join, the joined table to the table of the
+ * join before it and to an earlier table, as in "JOIN t2 ON c0 = c2 AND c1 = c2", which implies
+ * c0 = c1 for the rows that the INNER join keeps, and filter on one or both tables of the implied key.
+ * SqlOptimiser hashes the outer join of t1 on such a key only when later conjuncts drop the rows that
+ * the outer join NULL-extends, see SqlOptimiser.isNullExtensionRejected().
  */
 public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
+    // a FULL join whose slave a later INNER join ties to an earlier table, with WHERE on the slave only
+    private static final Pattern FULL_JOIN_SLAVE_ONLY_REJECTED = Pattern.compile(
+            "FULL JOIN t(\\d) ON [^J]*\\d JOIN t(\\d) ON c\\d = c\\2 AND c\\1 = c\\2 [^W]*WHERE c\\1 > 0$"
+    );
+    // queries that the generator coverage test draws from a fixed seed
+    private static final int IMPLIED_KEY_CORPUS_SIZE = 1_000;
+    private static final int IMPLIED_KEY_QUERY_COUNT = 300;
     private static final Log LOG = LogFactory.getLog(RightFullJoinPrefixFuzzTest.class);
     // index of the reference query in the array that generateQueries() returns
     private static final int NESTED = 1;
@@ -61,13 +74,32 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     private static final int TABLE_COUNT = 10;
 
     @Test
+    public void testFlatJoinKeyedThroughLaterInnerJoinReturnsRowsOfNestedJoin() throws Exception {
+        assertFlatJoinReturnsRowsOf(NESTED, IMPLIED_KEY_QUERY_COUNT, true);
+    }
+
+    @Test
     public void testFlatJoinReturnsRowsOfNestedJoin() throws Exception {
-        assertFlatJoinReturnsRowsOf(NESTED, NESTED_QUERY_COUNT);
+        assertFlatJoinReturnsRowsOf(NESTED, NESTED_QUERY_COUNT, false);
     }
 
     @Test
     public void testFlatJoinReturnsRowsOfPrefixSubQuery() throws Exception {
-        assertFlatJoinReturnsRowsOf(PREFIX_SUB_QUERY, PREFIX_SUB_QUERY_COUNT);
+        assertFlatJoinReturnsRowsOf(PREFIX_SUB_QUERY, PREFIX_SUB_QUERY_COUNT, false);
+    }
+
+    @Test
+    public void testImpliedKeyQueriesRejectOnlySlaveOfFullJoin() {
+        // Without its check of the master side, SqlOptimiser keyed such a FULL join and returned the rows
+        // that it NULL-extends on the master side, which the INNER join keeps through NULL = NULL.
+        final Rnd rnd = new Rnd(42, 4242);
+        int matchCount = 0;
+        for (int i = 0; i < IMPLIED_KEY_CORPUS_SIZE; i++) {
+            if (FULL_JOIN_SLAVE_ONLY_REJECTED.matcher(generateQueries(rnd, true, true)[0]).find()) {
+                matchCount++;
+            }
+        }
+        Assert.assertTrue("only " + matchCount + " of " + IMPLIED_KEY_CORPUS_SIZE + " queries", matchCount * 25 >= IMPLIED_KEY_CORPUS_SIZE);
     }
 
     private static void appendCondition(Rnd rnd, StringBuilder sql, int[] tables, int joined, int left, boolean isOuterJoinHeavy) {
@@ -85,8 +117,10 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
     // Returns {flat, nested, prefix sub-query}: the same joins flat, as sub-queries nested in the order
     // written, and with the tables before the last join in a sub-query. With isOuterJoinHeavy, the
     // queries favour outer, non-equi and time-series joins, which the optimiser reorders around the
-    // RIGHT/FULL joins.
-    private static String[] generateQueries(Rnd rnd, boolean isOuterJoinHeavy) {
+    // RIGHT/FULL joins. With isImpliedKeyHeavy, the queries write only INNER and outer joins, every INNER
+    // join after the second table ties the table of the join before it to an earlier table, and WHERE
+    // filters on one or both tables of the last such tie.
+    private static String[] generateQueries(Rnd rnd, boolean isOuterJoinHeavy, boolean isImpliedKeyHeavy) {
         final int modelCount = isOuterJoinHeavy ? 4 + rnd.nextInt(5) : 3 + rnd.nextInt(6);
         final int[] tables = new int[TABLE_COUNT];
         for (int i = 0; i < TABLE_COUNT; i++) {
@@ -101,11 +135,20 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         final StringBuilder flat = new StringBuilder("SELECT * FROM t").append(tables[0]);
         String nested = "SELECT * FROM t" + tables[0];
         String prefixSubQuery = null;
+        int impliedKeyMaster = -1;
+        int impliedKeySlave = -1;
         for (int joined = 1; joined < modelCount; joined++) {
             final boolean isLast = joined == modelCount - 1;
             final String joinType;
             if (isLast) {
                 joinType = rnd.nextInt(3) == 0 ? "FULL JOIN" : "RIGHT JOIN";
+            } else if (isImpliedKeyHeavy) {
+                joinType = switch (rnd.nextInt(4)) {
+                    case 0 -> "JOIN";
+                    case 1 -> "LEFT JOIN";
+                    case 2 -> "RIGHT JOIN";
+                    default -> "FULL JOIN";
+                };
             } else {
                 final int r = rnd.nextInt(100);
                 if (r < (isOuterJoinHeavy ? 15 : 40)) {
@@ -127,10 +170,17 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             final StringBuilder join = new StringBuilder().append(' ').append(joinType).append(" t").append(tables[joined]);
             if (!joinType.equals("CROSS JOIN") && !joinType.equals("ASOF JOIN") && !joinType.equals("LT JOIN")) {
                 join.append(" ON ");
-                appendCondition(rnd, join, tables, joined, rnd.nextInt(joined), isOuterJoinHeavy);
-                if (rnd.nextInt(3) == 0) {
-                    join.append(" AND ");
+                if (isImpliedKeyHeavy && joinType.equals("JOIN") && joined > 1) {
+                    impliedKeyMaster = tables[rnd.nextInt(joined - 1)];
+                    impliedKeySlave = tables[joined - 1];
+                    join.append('c').append(impliedKeyMaster).append(" = c").append(tables[joined])
+                            .append(" AND c").append(impliedKeySlave).append(" = c").append(tables[joined]);
+                } else {
                     appendCondition(rnd, join, tables, joined, rnd.nextInt(joined), isOuterJoinHeavy);
+                    if (rnd.nextInt(3) == 0) {
+                        join.append(" AND ");
+                        appendCondition(rnd, join, tables, joined, rnd.nextInt(joined), isOuterJoinHeavy);
+                    }
                 }
             }
             if (isLast) {
@@ -139,7 +189,16 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             flat.append(join);
             nested = "SELECT * FROM (" + nested + ") n" + joined + join;
         }
-        if (rnd.nextInt(10) < 3) {
+        if (impliedKeySlave != -1) {
+            final String where = switch (rnd.nextInt(3)) {
+                case 0 -> " WHERE c" + impliedKeySlave + " > 0";
+                case 1 -> " WHERE c" + impliedKeyMaster + " > 0";
+                default -> " WHERE c" + impliedKeyMaster + " > 0 AND c" + impliedKeySlave + " > 0";
+            };
+            flat.append(where);
+            nested = "SELECT * FROM (" + nested + ") n" + where;
+            prefixSubQuery += where;
+        } else if (rnd.nextInt(10) < 3) {
             final int table = tables[rnd.nextInt(modelCount)];
             final String where = switch (rnd.nextInt(4)) {
                 case 0 -> " WHERE c" + table + " > 0";
@@ -185,7 +244,7 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
         return String.join("\n", rows);
     }
 
-    private void assertFlatJoinReturnsRowsOf(int referenceIndex, int queryCount) throws Exception {
+    private void assertFlatJoinReturnsRowsOf(int referenceIndex, int queryCount, boolean isImpliedKeyHeavy) throws Exception {
         assertMemoryLeak(() -> {
             final Rnd rnd = TestUtils.generateRandom(LOG);
             createTables();
@@ -193,7 +252,7 @@ public class RightFullJoinPrefixFuzzTest extends AbstractCairoTest {
             final StringSink referenceRows = new StringSink();
             int checkedCount = 0;
             for (int i = 0; i < queryCount; i++) {
-                final String[] queries = generateQueries(rnd, referenceIndex == PREFIX_SUB_QUERY);
+                final String[] queries = generateQueries(rnd, referenceIndex == PREFIX_SUB_QUERY || isImpliedKeyHeavy, isImpliedKeyHeavy);
                 final String flat = queries[0];
                 final String reference = queries[referenceIndex];
                 try {

@@ -968,3 +968,81 @@ NULL	NULL	1	NULL
 NULL	NULL	2	NULL
 NULL	NULL	3	NULL
 NULL	NULL	4	NULL
+
+# ==== keys implied by a later INNER join ====
+# The ON clause of an INNER join written after an outer join ties a column of the joined table to a
+# column of each side of the outer join, as in JOIN c ON a.w = c.k AND b.k = c.k, which implies
+# a.w = b.k for the rows that the INNER join keeps. The FULL JOIN may hash on a.w = b.k only when
+# later conjuncts drop the rows it NULL-extends on both sides. Here WHERE drops only the rows with a
+# NULL b, and a.w = c.k keeps the rows with a NULL a, because NULL = NULL matches the c row whose k
+# is NULL.
+
+statement ok
+DROP TABLE IF EXISTS a
+
+statement ok
+DROP TABLE IF EXISTS b
+
+statement ok
+DROP TABLE IF EXISTS c
+
+statement ok
+CREATE TABLE a (x INT, w INT)
+
+statement ok
+CREATE TABLE b (x INT, k INT, u INT, f BOOLEAN)
+
+statement ok
+CREATE TABLE c (k INT)
+
+statement ok
+INSERT INTO a VALUES (0, 1), (-1, NULL), (2, 2), (4, 1), (2, 1), (1, 3), (5, 2), (6, 9)
+
+statement ok
+INSERT INTO b VALUES (5, 1, 4, true), (1, 1, 3, false), (0, 1, 3, true), (-1, 1, 1, true), (3, 0, 3, false), (5, 0, 0, true), (2, 2, 3, true)
+
+statement ok
+INSERT INTO c VALUES (1), (2), (NULL)
+
+# FULL JOIN on a non-equi ON clause, with WHERE on the b side only
+query IIIIII rowsort
+SELECT a.x ax, a.w aw, b.x bx, b.k bk, b.u bu, c.k ck FROM a FULL JOIN b ON b.x > 1 JOIN c ON a.w = c.k AND b.k = c.k WHERE b.u > 2
+----
+0	1	5	1	4	1
+2	1	5	1	4	1
+2	2	2	2	3	2
+4	1	5	1	4	1
+5	2	2	2	3	2
+
+statement ok
+DROP TABLE a
+
+statement ok
+DROP TABLE b
+
+statement ok
+DROP TABLE c
+
+statement ok
+CREATE TABLE a (id INT, x INT, w INT)
+
+statement ok
+CREATE TABLE b (id INT, u INT, k INT, y INT)
+
+statement ok
+CREATE TABLE c (id INT, k INT)
+
+statement ok
+INSERT INTO a VALUES (1, 10, 1), (2, 3, 2)
+
+statement ok
+INSERT INTO b VALUES (11, 5, NULL, 1), (12, 1, 2, 1), (13, 50, 7, 1)
+
+statement ok
+INSERT INTO c VALUES (21, NULL), (22, 2), (23, 7)
+
+# FULL JOIN whose ON clause reads both sides, with WHERE on the b side only
+query III rowsort
+SELECT a.id, b.id, c.id FROM a FULL JOIN b ON a.x > b.u JOIN c ON a.w = c.k AND b.k = c.k WHERE b.y = 1
+----
+2	12	22
