@@ -313,6 +313,12 @@ public final class TableUtils {
     private static final int PARQUET_CONFIG_LEVEL_MASK = 0xFF;
     private static final int PARQUET_CONFIG_LEVEL_SHIFT = 16;
     private static final long XXH3_PRIME_MX1 = 0x165667919E3779F9L;
+    // Counts _txn partition-table hash terms; TxnBodyChecksumCacheTest relies on it. It lives in TableUtils
+    // because every partition-table hash passes through this class, whatever the caller: a full hash through
+    // hashTxnBodyPartitionTableRange(), a changed int through txnBodyPartitionTableIntDelta(). So the test sees
+    // a full hash on the commit path even from code that bypasses TxWriter.
+    @TestOnly
+    private static long txnBodyPartitionTableHashTermCount;
 
     private TableUtils() {
     }
@@ -403,7 +409,7 @@ public final class TableUtils {
         h = hashTxnBodyRange(recordBaseAddr, TX_OFFSET_DATA_VERSION_64, TX_OFFSET_SEQ_TXN_64, h);
         // A record that ends at the partition table's start has no partition table to hash.
         if (partitionTableStart < recordSize) {
-            h = hashTxnBodyRange(recordBaseAddr, partitionTableStart, recordSize, h);
+            h = hashTxnBodyPartitionTableRange(recordBaseAddr, recordSize, partitionTableStart, h);
         }
         h = xxh3Avalanche64(h);
         // 0 is the "absent" sentinel; never emit it for a real record.
@@ -432,6 +438,18 @@ public final class TableUtils {
     }
 
     /**
+     * How many partition-table hash terms the {@code _txn} body checksum has folded in this process, by any
+     * caller: every term of a full partition-table hash, whether {@link #calculateTxnBodyChecksum(long, long, long)}
+     * or {@link #hashTxnBodyPartitionTable(long, long, long)} computes it, and one per changed int
+     * {@link #txnBodyPartitionTableIntDelta(int, long, int, int)} folds. Capture it before an operation and
+     * assert on the delta afterwards.
+     */
+    @TestOnly
+    public static long getTxnBodyPartitionTableHashTermCount() {
+        return txnBodyPartitionTableHashTermCount;
+    }
+
+    /**
      * The pre-avalanche hash of the covered header ranges {@code [0, 40)} and {@code [48, 80)} of a
      * {@code _txn} record, folded from 0. See {@link #combineTxnBodyChecksum(long, long, long)}.
      */
@@ -446,7 +464,7 @@ public final class TableUtils {
      * {@link #combineTxnBodyChecksum(long, long, long)}.
      */
     public static long hashTxnBodyPartitionTable(long recordBaseAddr, long recordSize, long partitionTableStart) {
-        return partitionTableStart < recordSize ? hashTxnBodyRange(recordBaseAddr, partitionTableStart, recordSize, 0) : 0;
+        return partitionTableStart < recordSize ? hashTxnBodyPartitionTableRange(recordBaseAddr, recordSize, partitionTableStart, 0) : 0;
     }
 
     /**
@@ -461,6 +479,7 @@ public final class TableUtils {
      */
     public static long txnBodyPartitionTableIntDelta(int longCount, long offset, int oldValue, int newValue) {
         assert (offset & (Integer.BYTES - 1)) == 0 && offset <= (long) longCount * Long.BYTES;
+        txnBodyPartitionTableHashTermCount++;
         final long word = offset >>> 3;
         if (word == longCount) {
             return (long) newValue - oldValue;
@@ -527,6 +546,13 @@ public final class TableUtils {
         checkSum = checkSum * 31 + lagTxnCount;
         //noinspection UseHashCodeMethodInspection
         return (int) (checkSum ^ (checkSum >>> 32));
+    }
+
+    // Folds the non-empty partition-table range [partitionTableStart, recordSize) of a _txn record into h. Every
+    // full partition-table hash passes here.
+    private static long hashTxnBodyPartitionTableRange(long recordBaseAddr, long recordSize, long partitionTableStart, long h) {
+        txnBodyPartitionTableHashTermCount += txnBodyPartitionTableTermCount(recordSize, partitionTableStart);
+        return hashTxnBodyRange(recordBaseAddr, partitionTableStart, recordSize, h);
     }
 
     /**

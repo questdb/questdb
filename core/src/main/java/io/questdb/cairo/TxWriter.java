@@ -37,7 +37,6 @@ import io.questdb.std.Unsafe;
 import io.questdb.std.Vect;
 import io.questdb.std.str.LPSZ;
 import org.jetbrains.annotations.Nullable;
-import org.jetbrains.annotations.TestOnly;
 
 import java.io.Closeable;
 
@@ -66,8 +65,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private int lastRecordBaseOffset = -1;
     private long lastRecordStructureVersion = -1;
     private long lastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
-    @TestOnly
-    private long partitionTableHashTermCount;
     private long prevLastSealedPartitionMaxTimestamp = Long.MIN_VALUE;
     private long prevMaxTimestamp;
     private long prevMinTimestamp;
@@ -333,16 +330,6 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
 
     public long getLastTxSize() {
         return txPartitionCount == 1 ? transientRowCount - prevTransientRowCount : transientRowCount;
-    }
-
-    /**
-     * How many partition-table hash terms this writer has computed for the body checksum: every term a full
-     * hash folds, whether it fills a slot's cached hash or checks one, and one per changed int a full-record
-     * commit folds into a cached hash. A fast-path commit whose slot hash is cached adds none.
-     */
-    @TestOnly
-    public long getPartitionTableHashTermCount() {
-        return partitionTableHashTermCount;
     }
 
     /**
@@ -914,7 +901,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
                     areaOffset,
                     recordSize,
                     partitionTableStart,
-                    hashPartitionTable(areaAddr, recordSize, partitionTableStart),
+                    hashTxnBodyPartitionTable(areaAddr, recordSize, partitionTableStart),
                     txnBodyPartitionTablePower(recordSize, partitionTableStart)
             );
         }
@@ -1031,18 +1018,12 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
     private void foldPartitionTableInt(PartitionTableHash partitionTableHash, int longCount, long tableOffset, int oldValue, int newValue) {
         if (newValue != oldValue) {
             partitionTableHash.hash += txnBodyPartitionTableIntDelta(longCount, tableOffset, oldValue, newValue);
-            partitionTableHashTermCount++;
         }
     }
 
     private long getLong(long offset) {
         assert offset + 8 <= readRecordSize;
         return txMemBase.getLong(readBaseOffset + offset);
-    }
-
-    private long hashPartitionTable(long areaAddr, long recordSize, long partitionTableStart) {
-        partitionTableHashTermCount += txnBodyPartitionTableTermCount(recordSize, partitionTableStart);
-        return hashTxnBodyPartitionTable(areaAddr, recordSize, partitionTableStart);
     }
 
     private void insertPartitionSizeByTimestamp(int index, long partitionTimestamp, long partitionSize, long partitionNameTxn) {
@@ -1083,7 +1064,7 @@ public final class TxWriter extends TxReader implements Closeable, Mutable, Symb
             return true;
         }
         final long areaAddr = txMemBase.addressOf(partitionTableHash.areaOffset);
-        return partitionTableHash.hash == hashPartitionTable(areaAddr, partitionTableHash.recordSize, partitionTableHash.partitionTableStart);
+        return partitionTableHash.hash == hashTxnBodyPartitionTable(areaAddr, partitionTableHash.recordSize, partitionTableHash.partitionTableStart);
     }
 
     // Resets the commit bookkeeping to the record just loaded. False when the file has never committed.
