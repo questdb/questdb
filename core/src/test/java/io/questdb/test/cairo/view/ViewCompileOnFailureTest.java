@@ -340,6 +340,27 @@ public class ViewCompileOnFailureTest extends AbstractViewTest {
     }
 
     @Test
+    public void testWalkReadsViewOnceAsLateralOuterSource() throws Exception {
+        // the LATERAL rewrite shares the outer source, here the view's own model, with the outer
+        // reference it builds, through a QueryModelWrapper that reports the view's name
+        assertMemoryLeak(() -> {
+            createFixture();
+            final String lateral = "SELECT o.s FROM v o JOIN LATERAL (SELECT count() c FROM t WHERE t.ts <= o.ts) l ON true";
+            try (SqlCompiler compiler = engine.getSqlCompiler()) {
+                final ObjList<CharSequence> names = new ObjList<>();
+                for (int depth : new int[]{0, DEPTH}) {
+                    final String sql = nest(ViewCompileOnFailureTest::wrapIn, lateral, depth);
+                    final ExecutionModel model = compiler.generateExecutionModel(sql, sqlExecutionContext);
+                    names.clear();
+                    SqlUtil.collectAllTableAndViewNames(model.getQueryModel(), names, true);
+                    Assert.assertEquals("depth " + depth, "[v]", names.toString());
+                }
+            }
+            Assert.assertEquals("", drainCompileTasks());
+        });
+    }
+
+    @Test
     public void testWalkReadsViewOncePerShape() throws Exception {
         assertMemoryLeak(() -> {
             createFixture();
