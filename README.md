@@ -387,7 +387,7 @@ To get started with contributing:
 ✨ As a sign of our gratitude, we send QuestDB swag to our contributors!
 
 A big thanks goes to the following wonderful people who have contributed to
-QuestDB [emoji key](https://allcontributors.org/docs/en/emoji-key):
+QuestDB [emoji key](https://allcontributors.org/docs/emoji-key):
 
 <!-- ALL-CONTRIBUTORS-LIST:START - Do not remove or modify this section -->
 <!-- prettier-ignore-start -->
