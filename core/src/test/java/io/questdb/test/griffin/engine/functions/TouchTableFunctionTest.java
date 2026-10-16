@@ -24,7 +24,14 @@
 
 package io.questdb.test.griffin.engine.functions;
 
+import io.questdb.cairo.CairoException;
+import io.questdb.cairo.sql.AtomicBooleanCircuitBreaker;
+import io.questdb.cairo.sql.PageFrameTouch;
+import io.questdb.cairo.sql.SqlExecutionCircuitBreaker;
 import io.questdb.griffin.SqlException;
+import io.questdb.std.Files;
+import io.questdb.std.MemoryTag;
+import io.questdb.std.Unsafe;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
@@ -74,6 +81,49 @@ public class TouchTableFunctionTest extends AbstractCairoTest {
             sink.clear();
             TestUtils.printSql(engine, sqlExecutionContext, query, sink);
             TestUtils.assertContains(sink, "data_pages");
+        });
+    }
+
+    @Test
+    public void testTouchLocalParquetAndNativePartitions() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t AS (SELECT x, 'value'::varchar s, 'a'::symbol sym, timestamp_sequence(0, 3_600_000_000) ts FROM long_sequence(30)), INDEX(sym) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '1970-01-01'");
+            execute("ALTER TABLE t ADD COLUMN added LONG");
+            sink.clear();
+            TestUtils.printSql(engine, sqlExecutionContext,
+                    "SELECT touch(SELECT x, s, sym, added, ts FROM t WHERE ts IN '1970-01-01')", sink);
+            TestUtils.assertContains(sink, "data_pages");
+            Assert.assertFalse("parquet chunks must be touched", sink.toString().contains("data_pages\": 0"));
+            Assert.assertFalse("parquet partition indexes must be touched", sink.toString().contains("index_key_pages\":0,"));
+            sink.clear();
+            TestUtils.printSql(engine, sqlExecutionContext, "SELECT touch(SELECT * FROM t)", sink);
+            TestUtils.assertContains(sink, "data_pages");
+        });
+    }
+
+    @Test
+    public void testTouchMemoryIncludesUnalignedTailAndChecksCancellation() throws Exception {
+        assertMemoryLeak(() -> {
+            final long size = 66 * Files.PAGE_SIZE;
+            final long address = Unsafe.malloc(size, MemoryTag.NATIVE_DEFAULT);
+            try {
+                final long boundary = address + Files.PAGE_SIZE - address % Files.PAGE_SIZE;
+                Assert.assertEquals(2, PageFrameTouch.touchMemory(boundary - 1, 2, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                Assert.assertEquals(1, PageFrameTouch.touchMemory(boundary, Files.PAGE_SIZE, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                Assert.assertEquals(0, PageFrameTouch.touchMemory(0, size, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                Assert.assertEquals(0, PageFrameTouch.touchMemory(address, 0, SqlExecutionCircuitBreaker.NOOP_CIRCUIT_BREAKER));
+                final AtomicBooleanCircuitBreaker breaker = new AtomicBooleanCircuitBreaker(engine);
+                breaker.cancel();
+                try {
+                    PageFrameTouch.touchMemory(address, size, breaker);
+                    Assert.fail("TOUCH must check cancellation within large chunks");
+                } catch (CairoException e) {
+                    Assert.assertTrue(e.isInterruption());
+                }
+            } finally {
+                Unsafe.free(address, size, MemoryTag.NATIVE_DEFAULT);
+            }
         });
     }
 
