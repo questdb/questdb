@@ -343,7 +343,7 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
     }
 
     @Test
-    public void testDropAndViewChangeFlushFailureStopsTheEngine() throws Exception {
+    public void testDropAndViewChangeFlushFailure() throws Exception {
         // DROP TABLE and ALTER VIEW flush the sequencer log in the append (SYNC: msync, ADAPTIVE W=0: fdatasync) or
         // after it (ADAPTIVE W>0). A failed flush must stop the engine, as on the insert path. NOSYNC and ASYNC do not
         // flush the log in the append. Their DROP TABLE flushes it once, at the dropped table's clean sequencer close,
