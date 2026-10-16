@@ -24,8 +24,10 @@
 
 package io.questdb.test.cairo.idx;
 
+import io.questdb.cairo.TableUtils;
 import io.questdb.cairo.idx.PostingIndexUtils;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
@@ -65,12 +67,13 @@ public class PostingIndexUtilsTest extends AbstractCairoTest {
             "s.pc0.10.0.12", "10",
             "s.pc3.10.12", "10",
     };
-    // owned by no posting column instance of s
+    // owned by no posting column instance of s; s.d.0 stays out, because it marks instance 0 of s and
+    // changes what the removal of NONE takes (testRemoveAllSealedFilesKeepsCoverFilesOfInstanceZero)
     private static final String[] FOREIGN_FILES = {
             "s.pc", "s.pcX.0.1", "s.pc0.", "s.pc0.0.", "s.pc0.a.1", "s.pc.0.1", "s.pc0", "s.pc0.0.1.2.3", "s.pc0.-1.1",
             "s.pv.", "s.pv.x", "s.pv.0.", "s.pv.a.1", "s.pv.1.2.3", "s.px.1", "s.p", "s.pvv.1",
             "s2.pc0.0.1", "s2.pv.1", "sx.pv.1", "t.pc0.0.1", "s_pc0.0.1",
-            "s.pk", "s.pk.0", "s.d", "s.d.0", "s.k.0", "s.v.0",
+            "s.pk", "s.pk.0", "s.d", "s.d.1", "s2.d.0", "s.k.0", "s.v.0",
     };
     // not sealed files: the scan ignores them, removeAllSealedFiles removes the one of its instance
     private static final String[] PCI_FILES = {"s.pci", "s.pci.0", "s.pci.1", "s.pci.10", "s.pci.5"};
@@ -120,6 +123,64 @@ public class PostingIndexUtilsTest extends AbstractCairoTest {
                 final String[] remaining = dir.list();
                 Assert.assertNotNull(remaining);
                 Assert.assertEquals("posting column name txn " + postingColumnNameTxn, expected.toString(), new TreeSet<>(Arrays.asList(remaining)).toString());
+            }
+        });
+    }
+
+    @Test
+    public void testRemoveAllSealedFilesKeepsCoverFilesOfInstanceZero() throws Exception {
+        // DROP INDEX or ALTER COLUMN TYPE at table txn 0 writes <col>.d.0, instance 0 of the column, next
+        // to the files of instance NONE in the default partition of a table that is not partitioned.
+        // Every .pc file of host token 0 there belongs to instance 0, so the removal of NONE keeps them.
+        assertMemoryLeak(() -> {
+            final FilesFacade ff = configuration.getFilesFacade();
+            for (String columnName : new String[]{"s", "сим"}) {
+                try (Path path = new Path()) {
+                    final String[] noneFiles = {
+                            fileName(PostingIndexUtils.valueFileName(path.of(""), columnName, COLUMN_NAME_TXN_NONE, 0)),
+                            fileName(PostingIndexUtils.valueFileName(path.of(""), columnName, COLUMN_NAME_TXN_NONE, 3)),
+                            fileName(PostingIndexUtils.coverInfoFileName(path.of(""), columnName, COLUMN_NAME_TXN_NONE)),
+                    };
+                    final String[] instanceZeroFiles = {
+                            fileName(PostingIndexUtils.valueFileName(path.of(""), columnName, 0, 0)),
+                            fileName(PostingIndexUtils.valueFileName(path.of(""), columnName, 0, 1)),
+                            fileName(PostingIndexUtils.coverInfoFileName(path.of(""), columnName, 0)),
+                    };
+                    final String[] tokenZeroCoverFiles = {
+                            fileName(PostingIndexUtils.coverDataFileName(path.of(""), columnName, 0, 0, COLUMN_NAME_TXN_NONE, 1)),
+                            fileName(PostingIndexUtils.coverDataFileName(path.of(""), columnName, 1, 0, 7, 1)),
+                            fileName(PostingIndexUtils.coverDataFileName(path.of(""), columnName, 2, 0, 0, 0)),
+                    };
+                    final String dataFileOfNone = fileName(TableUtils.dFile(path.of(""), columnName, COLUMN_NAME_TXN_NONE));
+                    final String dataFileOfZero = fileName(TableUtils.dFile(path.of(""), columnName, 0));
+                    final String dataFileOfOne = fileName(TableUtils.dFile(path.of(""), columnName, 1));
+                    final String context = columnName + ", ";
+
+                    // with the data file of instance 0, NONE leaves the token-0 .pc files
+                    File dir = createRemovalDir(dataFileOfNone, dataFileOfZero, noneFiles, instanceZeroFiles, tokenZeroCoverFiles);
+                    Assert.assertFalse(removeAllSealedFiles(ff, path, dir, columnName, COLUMN_NAME_TXN_NONE));
+                    Assert.assertEquals(context + "NONE next to instance 0",
+                            sortedNames(new String[]{dataFileOfNone, dataFileOfZero}, instanceZeroFiles, tokenZeroCoverFiles),
+                            sortedNames(dir.list()));
+                    // the removal of instance 0 takes every token-0 .pc file
+                    Assert.assertFalse(removeAllSealedFiles(ff, path, dir, columnName, 0));
+                    Assert.assertEquals(context + "0 after NONE", sortedNames(new String[]{dataFileOfNone, dataFileOfZero}), sortedNames(dir.list()));
+
+                    dir = createRemovalDir(dataFileOfNone, dataFileOfZero, noneFiles, instanceZeroFiles, tokenZeroCoverFiles);
+                    Assert.assertFalse(removeAllSealedFiles(ff, path, dir, columnName, 0));
+                    Assert.assertEquals(context + "0 next to NONE",
+                            sortedNames(new String[]{dataFileOfNone, dataFileOfZero}, noneFiles),
+                            sortedNames(dir.list()));
+
+                    // without the data file of instance 0, NONE owns the token-0 .pc files
+                    for (String dataFile : new String[]{dataFileOfNone, dataFileOfOne}) {
+                        dir = createRemovalDir(dataFile, null, noneFiles, instanceZeroFiles, tokenZeroCoverFiles);
+                        Assert.assertFalse(removeAllSealedFiles(ff, path, dir, columnName, COLUMN_NAME_TXN_NONE));
+                        Assert.assertEquals(context + "NONE next to " + dataFile,
+                                sortedNames(new String[]{dataFile}, instanceZeroFiles),
+                                sortedNames(dir.list()));
+                    }
+                }
             }
         });
     }
@@ -203,6 +264,27 @@ public class PostingIndexUtilsTest extends AbstractCairoTest {
         });
     }
 
+    private static String fileName(LPSZ name) {
+        return Utf8s.stringFromUtf8Bytes(name);
+    }
+
+    private static boolean removeAllSealedFiles(FilesFacade ff, Path path, File dir, String columnName, long postingColumnNameTxn) {
+        path.of(dir.getAbsolutePath()).slash();
+        final int pathLen = path.size();
+        final boolean hasFailed = PostingIndexUtils.removeAllSealedFiles(ff, path, pathLen, columnName, postingColumnNameTxn);
+        Assert.assertEquals(pathLen, path.size());
+        return hasFailed;
+    }
+
+    private static String sortedNames(String[]... nameLists) {
+        final TreeSet<String> names = new TreeSet<>();
+        for (String[] nameList : nameLists) {
+            Assert.assertNotNull(nameList);
+            names.addAll(Arrays.asList(nameList));
+        }
+        return names.toString();
+    }
+
     private static boolean isOwnedBy(String owners, long postingColumnNameTxn) {
         for (String owner : owners.split(",")) {
             if (Long.parseLong(owner) == postingColumnNameTxn) {
@@ -210,6 +292,25 @@ public class PostingIndexUtilsTest extends AbstractCairoTest {
             }
         }
         return false;
+    }
+
+    private File createRemovalDir(String dataFile, String dataFileOfZero, String[]... nameLists) {
+        final File dir = new File(root, "posting_removal_dir_" + scanDirCount++);
+        Assert.assertTrue(dir.mkdirs());
+        try {
+            Assert.assertTrue(new File(dir, dataFile).createNewFile());
+            if (dataFileOfZero != null) {
+                Assert.assertTrue(new File(dir, dataFileOfZero).createNewFile());
+            }
+            for (String[] names : nameLists) {
+                for (String name : names) {
+                    Assert.assertTrue(name, new File(dir, name).createNewFile());
+                }
+            }
+        } catch (IOException e) {
+            throw new AssertionError(e);
+        }
+        return dir;
     }
 
     private File createScanDir() {

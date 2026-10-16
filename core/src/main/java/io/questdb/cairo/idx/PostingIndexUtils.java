@@ -25,6 +25,7 @@
 package io.questdb.cairo.idx;
 
 import io.questdb.cairo.CairoException;
+import io.questdb.cairo.TableUtils;
 import io.questdb.std.Files;
 import io.questdb.std.FilesFacade;
 import io.questdb.std.MemoryTag;
@@ -1672,7 +1673,9 @@ public final class PostingIndexUtils {
 
     /**
      * Removes the .pci file plus every sealed .pv.* and .pc&lt;N&gt;.*.* file that
-     * belongs to the given posting-column-name txn.
+     * belongs to the given posting-column-name txn. For {@code COLUMN_NAME_TXN_NONE} it keeps the
+     * {@code .pc} files when the directory holds {@code <columnName>.d.0}: they belong to instance 0,
+     * which shares their host token 0, see {@link #coverFileHostTxn(long)}.
      *
      * @return {@code true} when at least one file failed to remove and is
      * still on disk afterwards. The caller must treat this as "purge could
@@ -1691,10 +1694,21 @@ public final class PostingIndexUtils {
         if (ff.exists(pciFile) && !ff.removeQuiet(pciFile) && ff.exists(pciFile)) {
             anyFailed[0] = true;
         }
+        // A .pc name writes instance NONE and instance 0 with the same host token 0. Both share a
+        // directory only after a change at table txn 0 in the default partition of a table that is not
+        // partitioned (DROP INDEX, ALTER COLUMN TYPE). Instance NONE committed no rows there and sealed
+        // no .pc file, so every .pc file of the token 0 belongs to instance 0. The change writes
+        // <columnName>.d.0 before it queues the purge of NONE, and only the purge of instance 0, which
+        // takes its .pc files too, removes it.
+        final boolean isCoverDataOfInstanceZero = postingColumnNameTxn == COLUMN_NAME_TXN_NONE
+                && ff.exists(TableUtils.dFile(path.trimTo(pathTrimTo), columnName, 0));
         path.trimTo(pathTrimTo);
         scanSealedFiles(ff, path, pathTrimTo, columnName, postingColumnNameTxn, new SealedFileVisitor() {
             @Override
             public void onCoverDataFile(int includeIdx, long coveredColumnNameTxn, long sealTxn) {
+                if (isCoverDataOfInstanceZero) {
+                    return;
+                }
                 LPSZ p = coverDataFileName(path.trimTo(pathTrimTo), columnName, includeIdx, postingColumnNameTxn, coveredColumnNameTxn, sealTxn);
                 if (!ff.removeQuiet(p) && ff.exists(p)) {
                     anyFailed[0] = true;
