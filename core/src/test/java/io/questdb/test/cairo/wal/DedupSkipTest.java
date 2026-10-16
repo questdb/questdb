@@ -34,10 +34,13 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.cairo.wal.WalWriter;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.FilesFacade;
+import io.questdb.std.Numbers;
+import io.questdb.std.Unsafe;
 import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.std.TestFilesFacadeImpl;
+import io.questdb.test.tools.TestUtils;
 import org.junit.Assert;
 import org.junit.Test;
 
@@ -1362,6 +1365,83 @@ public class DedupSkipTest extends AbstractCairoTest {
 
             assertByteColumnTopReadsNull("t");
             assertByteColumnTopReadsNull("u");
+        });
+    }
+
+    @Test
+    public void testUpsertParquetIdentityCheckOutOfMemoryKeepsByteColumnTop() throws Exception {
+        // An UPSERT commit resends a stored row unchanged and adds a row after the partition. The identity check
+        // decodes the dedup keys of the row group that holds the row, then runs out of memory while it decodes the
+        // wide VARCHAR values of that row group, before the output opens. The table suspends with the partition as
+        // it was. Once the table resumes, the retry appends the new row and keeps the top of the BYTE column, as
+        // the native twin "n" does
+        node1.setProperty(PropertyKey.CAIRO_PARTITION_ENCODER_PARQUET_ROW_GROUP_SIZE, 4);
+        // after an out of memory error, the WAL apply suspends the table or retries it after a backoff of up to
+        // this many milliseconds
+        node1.setProperty(PropertyKey.CAIRO_WRITE_BACK_OFF_TIMEOUT_ON_MEM_PRESSURE, 2);
+        node1.setProperty(PropertyKey.CAIRO_SQL_STR_FUNCTION_BUFFER_MAX_SIZE, 4 * Numbers.SIZE_1MB);
+        assertMemoryLeak(() -> {
+            for (String tableName : new String[]{"t", "n"}) {
+                execute("CREATE TABLE " + tableName + " (ts TIMESTAMP, sym SYMBOL, v LONG, s VARCHAR) TIMESTAMP(ts) PARTITION BY DAY WAL DEDUP UPSERT KEYS(ts, sym)");
+                // rows 5, 7 and 8 of the second row group hold 4 MB values, the resent row 6 a short one
+                execute("""
+                        INSERT INTO %s
+                        SELECT
+                            '2024-01-01'::TIMESTAMP + (x - 1) * 3_600_000_000,
+                            CASE WHEN x <= 4 THEN 'a' WHEN x <= 8 THEN 'b' ELSE 'c' END,
+                            x,
+                            CASE WHEN x IN (5, 7, 8) THEN rpad('w'::VARCHAR, 4_000_000, 'w'::VARCHAR) ELSE 'v' || x END
+                        FROM long_sequence(12)
+                        """.formatted(tableName));
+                execute("INSERT INTO " + tableName + " VALUES ('2024-01-02T00:00:00.000000Z', 'a', 100, 'v100')");
+            }
+            drainWalQueue();
+            execute("ALTER TABLE t CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+            for (String tableName : new String[]{"t", "n"}) {
+                // a column without NULL turns the identity check on
+                execute("ALTER TABLE " + tableName + " ADD COLUMN b BYTE");
+            }
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("t");
+            final String partitions = readTxnToString(tableToken, false, true, true, true);
+            final Set<String> partitionDirs = listPartitionDirs(tableToken);
+
+            final String rows = """
+                     VALUES
+                    ('2024-01-01T05:00:00.000000Z', 'b', 6, 'v6', NULL),
+                    ('2024-01-01T23:00:00.000000Z', 'x', 2023, 'v2023', 23::BYTE)
+                    """;
+            execute("INSERT INTO n" + rows);
+            drainWalQueue();
+            execute("INSERT INTO t" + rows);
+            final long savedLimit = Unsafe.getRssMemLimit();
+            try {
+                // room for the commit and the decode of the keys, not for the 12 MB of VARCHAR values
+                Unsafe.setRssMemLimit(Unsafe.getRssMemUsed() + 2 * Numbers.SIZE_1MB);
+                TestUtils.assertEventually(() -> {
+                    drainWalQueue();
+                    Assert.assertTrue(engine.getTableSequencerAPI().isSuspended(tableToken));
+                }, 60);
+            } finally {
+                Unsafe.setRssMemLimit(savedLimit);
+            }
+            // the commit fails as a whole, the decode error shows in the log of O3PartitionJob
+            assertQuery("SELECT suspended, errorTag, errorMessage FROM wal_tables() WHERE name = 't'")
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            suspended\terrorTag\terrorMessage
+                            true\tOUT OF MEMORY\tbulk update failed and will be rolled back
+                            """);
+            Assert.assertEquals(partitions, readTxnToString(tableToken, false, true, true, true));
+            Assert.assertEquals(partitionDirs, listPartitionDirs(tableToken));
+
+            execute("ALTER TABLE t RESUME WAL");
+            drainWalQueue();
+            Assert.assertFalse(engine.getTableSequencerAPI().isSuspended(tableToken));
+            assertSqlCursors("n", "t");
+            assertByteColumnTopReadsNull("t");
+            assertByteColumnTopReadsNull("n");
         });
     }
 
