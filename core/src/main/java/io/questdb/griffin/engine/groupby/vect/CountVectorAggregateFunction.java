@@ -107,9 +107,4 @@ public class CountVectorAggregateFunction extends LongFunction implements Vector
     public boolean wrapUp(long pRosti) {
         return Rosti.keyedIntCountWrapUp(pRosti, valueOffset, count.sum() > 0 ? count.sum() : -1);
     }
-
-    @FunctionalInterface
-    private interface CountFunc {
-        boolean count(long pRosti, long pKeys, long count, int valueOffset);
-    }
 }

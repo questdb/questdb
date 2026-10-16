@@ -658,6 +658,25 @@ public class SqlOptimiser implements Mutable {
         return tableFactory;
     }
 
+    // Returns null when the bind variable has no type yet.
+    private static @Nullable Function getDefinedBindVariable(
+            CharSequence token,
+            @Nullable BindVariableService bindVariableService
+    ) {
+        if (bindVariableService == null) {
+            return null;
+        }
+        if (Chars.startsWith(token, ':')) {
+            return bindVariableService.getFunction(token);
+        }
+        try {
+            final int index = Numbers.parseInt(token, 1, token.length());
+            return index < 1 ? null : bindVariableService.getFunction(index - 1);
+        } catch (NumericException e) {
+            return null;
+        }
+    }
+
     // The SHOW statements that list objects or read their metadata, like the functions that declare
     // SqlExecutionRequirements.DISCLOSES_OBJECTS do. Returns null for one that lists no objects.
     private static @Nullable String getObjectDisclosingStatement(int showKind) {
@@ -731,6 +750,25 @@ public class SqlOptimiser implements Mutable {
             }
         }
         return false;
+    }
+
+    private static boolean hasUndefinedBindVariable(
+            @Nullable ExpressionNode node,
+            @Nullable BindVariableService bindVariableService
+    ) {
+        if (node == null) {
+            return false;
+        }
+        if (node.type == BIND_VARIABLE) {
+            return getDefinedBindVariable(node.token, bindVariableService) == null;
+        }
+        for (int i = 0, n = node.args.size(); i < n; i++) {
+            if (hasUndefinedBindVariable(node.args.getQuick(i), bindVariableService)) {
+                return true;
+            }
+        }
+        return hasUndefinedBindVariable(node.lhs, bindVariableService)
+                || hasUndefinedBindVariable(node.rhs, bindVariableService);
     }
 
     // Returns true when every leaf in the expression tree is a literal constant
@@ -853,6 +891,20 @@ public class SqlOptimiser implements Mutable {
                 || isSysdateKeyword(token)
                 || isSystimestampKeyword(token)
                 || isCurrentTimestampKeyword(token);
+    }
+
+    private static boolean isWindowJoinChain(IQueryModel model) {
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        boolean hasWindowJoin = false;
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            if (joinModels.getQuick(i).getJoinType() == IQueryModel.JOIN_WINDOW) {
+                if (hasWindowJoin) {
+                    return true;
+                }
+                hasWindowJoin = true;
+            }
+        }
+        return false;
     }
 
     private static void linkDependencies(IQueryModel model, int parent, int child) {
@@ -6027,6 +6079,39 @@ public class SqlOptimiser implements Mutable {
         return false;
     }
 
+    private boolean isIntegerAggregateConstant(@Nullable ExpressionNode node, SqlExecutionContext sqlExecutionContext) {
+        if (isIntegerConstant(node)) {
+            return true;
+        }
+        if (node == null) {
+            return false;
+        }
+        if (node.type == OPERATION && node.paramCount == 1 && Chars.equals(node.token, '-')) {
+            return isIntegerAggregateConstant(node.rhs, sqlExecutionContext);
+        }
+
+        final int type;
+        if (node.type == FUNCTION && isCastKeyword(node.token) && node.paramCount == 2
+                && node.rhs.type == CONSTANT && isEffectivelyConstantExpression(node.lhs)
+                && !hasUndefinedBindVariable(node.lhs, sqlExecutionContext.getBindVariableService())) {
+            // Keep the cast in the expression; its target type is already available on the AST.
+            type = ColumnType.typeOf(node.rhs.token);
+        } else if (node.type == BIND_VARIABLE) {
+            final Function bind = getDefinedBindVariable(node.token, sqlExecutionContext.getBindVariableService());
+            // Do not infer a missing bind's type or inspect its current value.
+            if (bind == null) {
+                return false;
+            }
+            type = bind.getType();
+        } else {
+            return false;
+        }
+        return switch (type) {
+            case ColumnType.BYTE, ColumnType.SHORT, ColumnType.INT, ColumnType.LONG -> true;
+            default -> false;
+        };
+    }
+
     private boolean isIntegerConstant(@Nullable ExpressionNode n) {
         if (n == null || n.type != CONSTANT) {
             return false;
@@ -9510,7 +9595,8 @@ public class SqlOptimiser implements Mutable {
     // sum(x*10) into sum(x) * 10, etc.
     // sum(x+10) into sum(x) + count(x)*10
     // sum(x-10) into sum(x) - count(x)*10
-    private ExpressionNode rewriteAggregate(ExpressionNode agg, IQueryModel model) {
+    // Integer bind variables use the same rewrite as literals, including their overflow behavior.
+    private ExpressionNode rewriteAggregate(ExpressionNode agg, IQueryModel model, SqlExecutionContext sqlExecutionContext) {
         if (agg == null) {
             return null;
         }
@@ -9523,24 +9609,30 @@ public class SqlOptimiser implements Mutable {
                         && Chars.equalsIgnoreCase("sum", agg.token)
                         && op.type == OPERATION
                         && op.paramCount == 2
+                        && (Chars.equals(op.token, '*') || Chars.equals(op.token, '+') || Chars.equals(op.token, '-'))
         ) {
-            if (Chars.equals(op.token, '*')) { // sum(x*10) == sum(x)*10
-                if (isIntegerConstant(op.rhs) && isSimpleIntegerColumn(op.lhs, model)) {
-                    agg.rhs = op.lhs;
-                    op.lhs = agg;
-                    return op;
-                } else if (isIntegerConstant(op.lhs) && isSimpleIntegerColumn(op.rhs, model)) {
-                    agg.rhs = op.rhs;
-                    op.rhs = agg;
-                    return op;
-                }
-            } else if (Chars.equals(op.token, '+') || Chars.equals(op.token, '-')) { // sum(x+10) == sum(x)+count(x)*10 , sum(x-10) == sum(x)-count(x)*10
-                if (isIntegerConstant(op.rhs)) {
-                    return pushOperationOutsideAgg(agg, op, op.lhs, op.rhs, model);
-                } else if (isIntegerConstant(op.lhs)) {
-                    return pushOperationOutsideAgg(agg, op, op.rhs, op.lhs, model);
-                }
+            final boolean isColumnLhs;
+            if (isSimpleIntegerColumn(op.lhs, model) && isIntegerAggregateConstant(op.rhs, sqlExecutionContext)) {
+                isColumnLhs = true;
+            } else if (isSimpleIntegerColumn(op.rhs, model) && isIntegerAggregateConstant(op.lhs, sqlExecutionContext)) {
+                isColumnLhs = false;
+            } else {
+                return agg;
             }
+
+            final ExpressionNode column = isColumnLhs ? op.lhs : op.rhs;
+            final ExpressionNode constant = isColumnLhs ? op.rhs : op.lhs;
+            if (Chars.equals(op.token, '*')) { // sum(x*10) == sum(x)*10
+                agg.rhs = column;
+                if (isColumnLhs) {
+                    op.lhs = agg;
+                } else {
+                    op.rhs = agg;
+                }
+                return op;
+            }
+            // sum(x+10) == sum(x)+count(x)*10, sum(x-10) == sum(x)-count(x)*10
+            return pushOperationOutsideAgg(agg, op, column, constant, model);
         }
 
         return agg;
@@ -12382,7 +12474,7 @@ public class SqlOptimiser implements Mutable {
             );
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
 
             // group-by column could have spit out a function call, e.g.
             // select sum(f(x)) from t -> select sum(col) from (select f(x) col) from t)
@@ -12420,7 +12512,7 @@ public class SqlOptimiser implements Mutable {
             );
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
             rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
             rewriteStatus |= REWRITE_STATUS_USE_WINDOW_MODEL;
             return rewriteStatus;
@@ -12451,7 +12543,7 @@ public class SqlOptimiser implements Mutable {
 
             qc = ensureAliasUniqueness(outerVirtualModel, qc);
             outerVirtualModel.addBottomUpColumn(qc);
-            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias()));
+            distinctModel.addBottomUpColumn(nextColumn(qc.getAlias(), qc.isIncludeIntoWildcard(), 0));
             if (!isWindowJoin && !isHorizonJoin) {
                 for (int j = beforeSplit, n = groupByModel.getBottomUpColumns().size(); j < n; j++) {
                     emitLiterals(
@@ -12681,6 +12773,7 @@ public class SqlOptimiser implements Mutable {
         if (isWindowJoin) {
             rewriteStatus |= REWRITE_STATUS_USE_WINDOW_JOIN_MODE;
         }
+        final boolean isWindowJoinChain = isWindowJoin && isWindowJoinChain(baseModel);
         final boolean isHorizonJoin = isHorizonJoin(baseModel);
         if (isHorizonJoin) {
             rewriteStatus |= REWRITE_STATUS_USE_HORIZON_JOIN_MODE;
@@ -12763,7 +12856,7 @@ public class SqlOptimiser implements Mutable {
 
                         // aggregates cannot yet reference the projection, they have to reference the columns from
                         // the underlying table(s) or sub-queries
-                        ExpressionNode repl = rewriteAggregate(qc.getAst(), baseModel);
+                        ExpressionNode repl = isWindowJoinChain ? qc.getAst() : rewriteAggregate(qc.getAst(), baseModel, sqlExecutionContext);
                         if (repl == qc.getAst()) { // no rewrite
                             // use pre-computed duplicate detection result
                             if (hasDuplicateAggregates) {
@@ -12773,7 +12866,7 @@ public class SqlOptimiser implements Mutable {
                         }
 
                         rewriteStatus |= REWRITE_STATUS_USE_OUTER_MODEL;
-                        qc.of(qc.getAlias(), repl);
+                        qc.of(qc.getAlias(), repl, qc.isIncludeIntoWildcard());
                     } else if (functionParser.getFunctionFactoryCache().isCursor(qc.getAst().token)) {
                         continue;
                     }
