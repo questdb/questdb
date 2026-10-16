@@ -64,7 +64,13 @@ import java.util.concurrent.TimeUnit;
  * <p>
  * Tune the workload via system properties:
  * <ul>
+ *   <li>{@code -Dhost=<host>} (default localhost)</li>
+ *   <li>{@code -DhttpPort=<port>} (default 9000)</li>
+ *   <li>{@code -Dparquet=true} to convert all partitions before measuring</li>
+ *   <li>{@code -DpgPort=<port>} (default 8812)</li>
+ *   <li>{@code -Drepetitions=<n>} (default 1)</li>
  *   <li>{@code -DrowCount=<n>} (default 10_000_000)</li>
+ *   <li>{@code -DrunOtherProtocols=false} to measure QWP only</li>
  *   <li>{@code -Dskip.populate=true} to re-use an existing table</li>
  * </ul>
  */
@@ -76,11 +82,14 @@ public class QwpEgressReadBenchmarkWide {
     // delta dict grows for most of the batch sequence rather than settling into a
     // cached state immediately.
     private static final int HIGH_CARD = 100_000;
-    private static final String HOST = "localhost";
-    private static final int HTTP_PORT = 9000;
-    private static final int PG_PORT = 8812;
+    private static final String HOST = System.getProperty("host", "localhost");
+    private static final int HTTP_PORT = Integer.getInteger("httpPort", 9000);
+    private static final boolean PARQUET;
+    private static final int PG_PORT = Integer.getInteger("pgPort", 8812);
     private static final long PROGRESS_INTERVAL = 1_000_000;
+    private static final int REPETITIONS;
     private static final long ROW_COUNT;
+    private static final boolean RUN_OTHER_PROTOCOLS;
     private static final boolean SKIP_POPULATE;
     private static final String TABLE_NAME = "egress_bench_wide";
 
@@ -91,26 +100,36 @@ public class QwpEgressReadBenchmarkWide {
         } else {
             System.out.println("skip.populate=true, re-using existing " + TABLE_NAME);
         }
+        if (PARQUET) {
+            convertToParquet();
+        }
 
         System.out.println();
         System.out.println("=== Cold warm-up (runs discarded) ===");
         runQwp(/*warmup=*/ true);
-        runPgWire(/*warmup=*/ true);
-        runHttpExec(/*warmup=*/ true);
+        if (RUN_OTHER_PROTOCOLS) {
+            runPgWire(/*warmup=*/ true);
+            runHttpExec(/*warmup=*/ true);
+        }
 
         System.out.println();
         System.out.println("=== Measurement ===");
-        Result qwp = runQwp(false);
-        Result pg = runPgWire(false);
-        Result http = runHttpExec(false);
+        Result qwp = null;
+        for (int i = 0; i < REPETITIONS; i++) {
+            qwp = runQwp(false);
+        }
+        Result pg = RUN_OTHER_PROTOCOLS ? runPgWire(false) : null;
+        Result http = RUN_OTHER_PROTOCOLS ? runHttpExec(false) : null;
 
         System.out.println();
         System.out.println("=== Comparison ===");
         System.out.printf("%-20s %12s %12s %12s%n", "Protocol", "time(ms)", "rows/sec", "MiB/sec");
         System.out.printf("%-20s %12s %12s %12s%n", "--------", "--------", "--------", "-------");
         printRow("QWP egress (WS)", qwp);
-        printRow("PostgreSQL wire", pg);
-        printRow("HTTP /exec JSON", http);
+        if (RUN_OTHER_PROTOCOLS) {
+            printRow("PostgreSQL wire", pg);
+            printRow("HTTP /exec JSON", http);
+        }
     }
 
     private static String[] buildSymbolPool(String prefix) {
@@ -131,6 +150,14 @@ public class QwpEgressReadBenchmarkWide {
         TimeZone.setDefault(TimeZone.getTimeZone("UTC"));
         return DriverManager.getConnection(
                 String.format("jdbc:postgresql://%s:%d/qdb", HOST, PG_PORT), p);
+    }
+
+    private static void convertToParquet() throws Exception {
+        System.out.println("Converting all partitions to parquet...");
+        try (Connection c = createPgConnection(); Statement st = c.createStatement()) {
+            st.execute("ALTER TABLE " + TABLE_NAME + " CONVERT PARTITION TO PARQUET WHERE ts >= 0");
+        }
+        System.out.println("  conversion complete");
     }
 
     private static void ingestRows() {
@@ -440,7 +467,10 @@ public class QwpEgressReadBenchmarkWide {
     }
 
     static {
+        PARQUET = Boolean.parseBoolean(System.getProperty("parquet", "false"));
+        REPETITIONS = Math.max(1, Integer.getInteger("repetitions", 1));
         ROW_COUNT = Long.getLong("rowCount", DEFAULT_ROW_COUNT);
+        RUN_OTHER_PROTOCOLS = Boolean.parseBoolean(System.getProperty("runOtherProtocols", "true"));
         SKIP_POPULATE = Boolean.parseBoolean(System.getProperty("skip.populate", "false"));
     }
 }
