@@ -4199,6 +4199,50 @@ public class LateralJoinTest extends AbstractCairoTest {
         });
     }
 
+    // Each type of key, with a second column k2 of the same type compared with the outer key, so that
+    // the comparison reads only the outer column that the WHERE key maps to a.k. = and != treat NULL
+    // as a value. Per outer row, the a rows whose k matches and whose k2 differs from it: 5 and 6 for
+    // v1, 1 for v2 and 2 for NULL. The rewriter removes the outer-ref join, which a GROUP BY over o
+    // would feed, and runs a.k2 != a.k on the scan of a.
+    @Test
+    public void testLateralWhereKeyAndCorrelatedComparisonSecondKeyTypes() throws Exception {
+        assertMemoryLeak(() -> {
+            final String[][] types = {
+                    {"SYMBOL", "'p'", "'q'"},
+                    {"VARCHAR", "'p'", "'q'"},
+                    {"STRING", "'p'", "'q'"},
+                    {"TIMESTAMP", "'2024-01-01T00:00:00.000000Z'", "'2024-01-02T00:00:00.000000Z'"},
+                    {"DOUBLE", "1.5", "2.5"},
+                    {"UUID", "'11111111-1111-1111-1111-111111111111'", "'22222222-2222-2222-2222-222222222222'"},
+                    {"IPv4", "'1.1.1.1'", "'2.2.2.2'"},
+                    {"LONG256", "'0x01'", "'0x02'"},
+            };
+            for (String[] type : types) {
+                final String v1 = type[1];
+                final String v2 = type[2];
+                execute("CREATE TABLE o (id INT, k " + type[0] + ")");
+                execute("CREATE TABLE a (id INT, k " + type[0] + ", k2 " + type[0] + ")");
+                execute("INSERT INTO o VALUES (1, " + v1 + "), (2, " + v2 + "), (3, NULL)");
+                execute("INSERT INTO a VALUES "
+                        + "(0, " + v1 + ", " + v1 + "), (5, " + v1 + ", " + v2 + "), (6, " + v1 + ", NULL), "
+                        + "(1, " + v2 + ", " + v1 + "), (7, " + v2 + ", " + v2 + "), "
+                        + "(2, NULL, " + v1 + "), (8, NULL, NULL)");
+                assertQuery("SELECT o.id, l.aid FROM o JOIN LATERAL (SELECT a.id aid FROM a WHERE a.k = o.k AND a.k2 != o.k) l ORDER BY 1, 2")
+                        .noLeakCheck()
+                        .withPlanNotContaining("Group By")
+                        .returns("""
+                                id\taid
+                                1\t5
+                                1\t6
+                                2\t1
+                                3\t2
+                                """);
+                execute("DROP TABLE o");
+                execute("DROP TABLE a");
+            }
+        });
+    }
+
     // Each type of key, with values v1, v2 and NULL; = matches NULL to NULL. Per outer row, a.id >
     // o.id keeps the a row with the larger id of each key: 5 for v1, 6 for v2 and 7 for NULL.
     @Test
