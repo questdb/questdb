@@ -46,7 +46,7 @@ use parquet_format_safe::thrift::protocol::{TCompactInputProtocol, TCompactOutpu
 use parquet_format_safe::{
     ColumnChunk, ColumnMetaData, CompressionCodec, DataPageHeader, DictionaryPageHeader,
     Encoding as ThriftEncoding, OffsetIndex, PageEncodingStats, PageHeader, PageType, RowGroup,
-    Type,
+    Statistics, Type,
 };
 use qdb_core::col_type::{ColumnType, ColumnTypeTag};
 use qdb_parquet_meta::convert::resolve_column_id;
@@ -330,11 +330,12 @@ impl ParquetUpdater {
         // them for the new groups iff the source carries any chunk statistics.
         // Read that from the statistics, not the page index. ADD COLUMN raw-copies
         // the data columns (keeping their stats) without a ColumnIndex and
-        // backfills a stats-less null column, so a file can legitimately carry
-        // statistics with no index; hence `any`, not `all` (the null column has
-        // none). ColumnIndex uniformity is a separate decision, gated by
-        // source_column_indexed in end(). A rewrite keeps the runtime config; an
-        // empty source has nothing to match.
+        // backfills a null column whose statistics hold only its null_count, or
+        // nothing when the rewrite writes no statistics, so a file can
+        // legitimately carry statistics with no index; hence `any`, not `all`
+        // (the null column may have none). ColumnIndex uniformity is a separate
+        // decision, gated by source_column_indexed in end(). A rewrite keeps the
+        // runtime config; an empty source has nothing to match.
         let write_statistics = if is_rewrite || metadata.row_groups.is_empty() {
             write_statistics
         } else {
@@ -1094,8 +1095,13 @@ impl ParquetUpdater {
             })?;
 
             let col_offset = null_chunk_offset_base + null_bytes_buf.len() as u64;
-            let (chunk_bytes, thrift_col) =
-                generate_null_column_chunk_bytes(field, col_type, row_count, col_offset)?;
+            let (chunk_bytes, thrift_col) = generate_null_column_chunk_bytes(
+                field,
+                col_type,
+                row_count,
+                col_offset,
+                self.parquet_file.options().write_statistics,
+            )?;
             null_bytes_buf.extend_from_slice(&chunk_bytes);
             merged_cols[target_pos] = Some(thrift_col);
         }
@@ -2075,6 +2081,13 @@ fn build_raw_row_group(
 /// includes both repetition and definition levels with correct bit widths
 /// matching the nested schema, and the leaf physical type and full path.
 ///
+/// With `write_statistics`, an Optional chunk carries `null_count = row_count`
+/// and no min/max, the statistics the encoder writes for a row group inside a
+/// column top. The `_pm` decoder reads a chunk's leading NULLs from that count,
+/// and for BOOLEAN, BYTE, SHORT and CHAR, which have no NULL sentinel, the count
+/// is the only way it tells the column top rows from 0/false. A Required chunk
+/// holds real zero values and carries no statistics.
+///
 /// Returns `(raw_page_bytes, thrift_column_chunk)` where `raw_page_bytes`
 /// must be written at `file_offset` in the output file, and the thrift
 /// metadata references that offset.
@@ -2083,6 +2096,7 @@ fn generate_null_column_chunk_bytes(
     column_type: ColumnType,
     row_count: usize,
     file_offset: u64,
+    write_statistics: bool,
 ) -> ParquetResult<(Vec<u8>, ColumnChunk)> {
     let field_info = parquet_field.get_field_info();
     let is_required = field_info.repetition == Repetition::Required;
@@ -2223,7 +2237,20 @@ fn generate_null_column_chunk_bytes(
         data_page_offset,
         index_page_offset: None,
         dictionary_page_offset: dict_page_offset,
-        statistics: None,
+        statistics: if write_statistics && !is_required {
+            Some(Statistics {
+                max: None,
+                min: None,
+                null_count: Some(row_count as i64),
+                distinct_count: None,
+                max_value: None,
+                min_value: None,
+                is_max_value_exact: None,
+                is_min_value_exact: None,
+            })
+        } else {
+            None
+        },
         encoding_stats: Some(encoding_stats),
         bloom_filter_offset: None,
         bloom_filter_length: None,
@@ -2962,13 +2989,19 @@ mod tests {
         let (int_schema, _) = to_parquet_schema(&int_partition, false, -1, SeqTxn::UNSET)?;
         let (symbol_schema, _) = to_parquet_schema(&symbol_partition, false, -1, SeqTxn::UNSET)?;
 
-        let (_, int_chunk) =
-            super::generate_null_column_chunk_bytes(&int_schema.fields()[0], int_type, 10, 100)?;
+        let (_, int_chunk) = super::generate_null_column_chunk_bytes(
+            &int_schema.fields()[0],
+            int_type,
+            10,
+            100,
+            true,
+        )?;
         let (_, symbol_chunk) = super::generate_null_column_chunk_bytes(
             &symbol_schema.fields()[0],
             symbol_type,
             10,
             200,
+            true,
         )?;
 
         assert_eq!(
@@ -2994,6 +3027,197 @@ mod tests {
                 },
             ])
         );
+        Ok(())
+    }
+
+    fn null_chunk_statistics(
+        field: &super::ParquetType,
+        column_type: ColumnType,
+        row_count: usize,
+        write_statistics: bool,
+    ) -> Result<Option<parquet_format_safe::Statistics>, Box<dyn Error>> {
+        let (_, chunk) = super::generate_null_column_chunk_bytes(
+            field,
+            column_type,
+            row_count,
+            100,
+            write_statistics,
+        )?;
+        Ok(chunk.meta_data.expect("chunk metadata").statistics)
+    }
+
+    #[test]
+    fn generate_null_column_chunk_bytes_writes_null_count() -> Result<(), Box<dyn Error>> {
+        use crate::parquet_write::schema::column_type_to_parquet_type;
+        use qdb_core::col_type::encode_array_type;
+
+        let only_null_count = |row_count: usize| parquet_format_safe::Statistics {
+            max: None,
+            min: None,
+            null_count: Some(row_count as i64),
+            distinct_count: None,
+            max_value: None,
+            min_value: None,
+            is_max_value_exact: None,
+            is_min_value_exact: None,
+        };
+        let column_types = [
+            ColumnTypeTag::Int.into_type(),
+            ColumnTypeTag::Boolean.into_type(),
+            ColumnTypeTag::Byte.into_type(),
+            ColumnTypeTag::Short.into_type(),
+            ColumnTypeTag::Char.into_type(),
+            ColumnTypeTag::Symbol.into_type(),
+            ColumnTypeTag::Varchar.into_type(),
+            encode_array_type(ColumnTypeTag::Double, 1)?,
+        ];
+        for column_type in column_types {
+            let field = column_type_to_parquet_type(1, "n", column_type, false, false)?;
+            assert_eq!(
+                field.get_field_info().repetition,
+                super::Repetition::Optional
+            );
+            // one row, and more rows than one RLE run of definition levels holds
+            for row_count in [1usize, 100_000] {
+                assert_eq!(
+                    null_chunk_statistics(&field, column_type, row_count, true)?,
+                    Some(only_null_count(row_count)),
+                    "{column_type:?} rows {row_count}"
+                );
+                assert_eq!(
+                    null_chunk_statistics(&field, column_type, row_count, false)?,
+                    None,
+                    "{column_type:?} rows {row_count} without statistics"
+                );
+            }
+        }
+
+        // a Required BYTE field (files from versions that wrote the no-sentinel types as
+        // Required) holds real zero values: no NULL to count
+        let required_field = super::ParquetType::try_from_primitive(
+            "n".to_string(),
+            parquet2::schema::types::PhysicalType::Int32,
+            super::Repetition::Required,
+            None,
+            None,
+            Some(1),
+        )?;
+        let byte_type = ColumnTypeTag::Byte.into_type();
+        assert_eq!(
+            null_chunk_statistics(&required_field, byte_type, 10, true)?,
+            None
+        );
+
+        // the encoder writes the same statistics for a row group inside a column top: the
+        // BOOLEAN, BYTE, SHORT, CHAR and INT columns of a source with top 8, row groups of 4
+        let (src, _) = write_topped_source([8; 5])?;
+        let md = read_footer(&src)?;
+        for (i, (_, _, tag)) in TOPPED_TAGS.iter().enumerate() {
+            let col = i + 1;
+            assert_eq!(
+                null_chunk_statistics(&md.schema_descr.fields()[col], tag.into_type(), 4, true)?,
+                Some(chunk_statistics(&md, 0, col)),
+                "{tag:?}"
+            );
+        }
+        Ok(())
+    }
+
+    /// Rewrites a 4-row [ts(id=0), val(id=1)] source into [ts, val, added(id=2)] with
+    /// `copy_row_group_with_null_columns()` and returns the `_pm` column chunk of `added`.
+    fn null_column_pm_chunk(
+        added: ColumnType,
+        write_statistics: bool,
+    ) -> Result<qdb_parquet_meta::ColumnChunkRaw, Box<dyn Error>> {
+        use crate::allocator::TestAllocatorState;
+        use crate::parquet_metadata::reader::ParquetMetaReader;
+        use std::io::Read as _;
+
+        let ts = [1i64, 2, 3, 4];
+        let val = [10i32, 20, 30, 40];
+        let src = NamedTempFile::new()?;
+        ParquetWriter::new(src.reopen()?)
+            .with_statistics(write_statistics)
+            .finish(Partition {
+                table: "t".to_string(),
+                columns: vec![
+                    make_designated_ts_with_id(0, "ts", &ts),
+                    make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+                ],
+            })?;
+        let src_len = src.as_file().metadata()?.len();
+
+        let out = NamedTempFile::new()?;
+        let pm = NamedTempFile::new()?;
+        let alloc = TestAllocatorState::new();
+        let mut updater = super::ParquetUpdater::new(
+            alloc.allocator(),
+            src.reopen()?,
+            src_len,
+            out.reopen()?,
+            0, // rewrite
+            None,
+            write_statistics,
+            false,
+            CompressionOptions::Uncompressed,
+            None,
+            None,
+            DEFAULT_BLOOM_FILTER_FPP,
+            0.0,
+            Some(pm.reopen()?),
+            0,
+            0,
+            -1,
+            SeqTxn::UNSET,
+        )?;
+        updater.set_target_schema(&Partition {
+            table: "t".to_string(),
+            columns: vec![
+                make_designated_ts_with_id(0, "ts", &ts),
+                make_column_with_id(1, "val", ColumnTypeTag::Int.into_type(), &val),
+                make_column_with_id(2, "added", added, &[0u8]),
+            ],
+        })?;
+        updater.copy_row_group_with_null_columns(0, &[(2, added)])?;
+        updater.end(None)?;
+
+        let pm_size = updater.result_parquet_meta_size();
+        let mut pm_bytes = Vec::new();
+        pm.reopen()?.read_to_end(&mut pm_bytes)?;
+        let reader = ParquetMetaReader::from_file_size(&pm_bytes, pm_size as u64)?;
+        Ok(*reader.row_group(0)?.column_chunk(2)?)
+    }
+
+    #[test]
+    fn copy_row_group_with_null_columns_writes_pm_null_count() -> Result<(), Box<dyn Error>> {
+        // every row of the null chunk is a definition-level NULL: the _pm decoder reads the chunk
+        // as all NULL (null_count == num_values) and its rows as the leading NULLs of a column top
+        use crate::parquet_metadata::types::StatFlags;
+        for tag in [
+            ColumnTypeTag::Boolean,
+            ColumnTypeTag::Byte,
+            ColumnTypeTag::Short,
+            ColumnTypeTag::Char,
+            ColumnTypeTag::Int,
+            ColumnTypeTag::Varchar,
+        ] {
+            let chunk = null_column_pm_chunk(tag.into_type(), true)?;
+            assert!(
+                StatFlags(chunk.stat_flags).has_null_count(),
+                "{tag:?} null chunk has a null count"
+            );
+            assert_eq!(chunk.num_values, 4, "{tag:?}");
+            assert_eq!(chunk.null_count, 4, "{tag:?}");
+            assert!(!StatFlags(chunk.stat_flags).has_min_stat(), "{tag:?}");
+            assert!(!StatFlags(chunk.stat_flags).has_max_stat(), "{tag:?}");
+
+            // statistics off: no chunk of the file carries a null count
+            let chunk = null_column_pm_chunk(tag.into_type(), false)?;
+            assert!(
+                !StatFlags(chunk.stat_flags).has_null_count(),
+                "{tag:?} null chunk without statistics"
+            );
+        }
         Ok(())
     }
 
