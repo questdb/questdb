@@ -304,6 +304,197 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testDedupSkipDroppedAtMaxThenAppendKeepsTop() throws Exception {
+        // top 7, the duplicate of row 8 (07:00) sits on the partition max: it still counts among the
+        // O3 rows at or below the max, all dropped, and the row at 23:00 appends. A merge would keep
+        // rows 1..7 in place, which ends the top with the prefix; the append keeps it
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP SKIP KEYS(ts)", 7);
+            insertO3Rows(o3Row(8, "2024-01-01T07:00:00.000000Z"), o3Row(50, "2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(8, 7, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupSkipDroppedInLastRowGroupThenAppendKeepsTop() throws Exception {
+        // 10 rows in row groups of 4, 4 and 2, top 9: one MERGE of the last row group takes the
+        // duplicate of row 10 (09:00), which the dedup drops, and the row at 23:00, which it keeps.
+        // The merge writes rows, and its own duplicate is the only O3 row at or below the max
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP SKIP KEYS(ts)", 9, 10, -1);
+            insertO3Rows(o3Row(10, "2024-01-01T09:00:00.000000Z"), o3Row(50, "2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(10, 9, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupSkipDroppedThenAppendAbsentColumnKeepsTop() throws Exception {
+        // c1..c3 are absent from the parquet file (top 8): the duplicate of row 4 is dropped, the row
+        // at 23:00 rewrites the file with the new schema; every old row reads NULL
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createAbsentColumnTables("", " DEDUP SKIP KEYS(ts)");
+            insertO3Rows(o3Row(4, "2024-01-01T03:00:00.000000Z"), o3Row(50, "2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(8, 8, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupSkipDroppedThenAppendIntoPartialRowGroupKeepsTop() throws Exception {
+        // 10 rows in row groups of 4, 4 and 2, top 9: the duplicate of row 6 is dropped, the row at
+        // 23:00 merges into the partial last row group, past its max
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP SKIP KEYS(ts)", 9, 10, -1);
+            insertO3Rows(o3Row(6, "2024-01-01T05:00:00.000000Z"), o3Row(50, "2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(10, 9, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupSkipDroppedThenAppendKeepsTop() throws Exception {
+        // top 6, the duplicate of row 4 (03:00) is dropped and the row at 23:00 lands after the partition:
+        // native turns the commit into an append, which keeps the top, and so does the parquet update
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP SKIP KEYS(ts)", 6);
+            insertO3Rows(o3Row(4, "2024-01-01T03:00:00.000000Z"), o3Row(50, "2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupSkipDroppedThenAppendRewriteKeepsTop() throws Exception {
+        // ci changed type: the rewrite opens at the row group of the row at 23:00 and first copies row
+        // groups 0 and 1 through the materializer, which keeps the top rows
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP SKIP KEYS(ts)", 6);
+            changeControlColumnType();
+            insertO3Rows(o3Row(4, "2024-01-01T03:00:00.000000Z"), o3Row(50, "2024-01-01T23:00:00.000000Z"));
+            assertReaders(topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", true));
+        });
+    }
+
+    @Test
+    public void testDedupSkipDroppedThenAppendSurvivesReopen() throws Exception {
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP SKIP KEYS(ts)", 6);
+            insertO3Rows(o3Row(4, "2024-01-01T03:00:00.000000Z"), o3Row(50, "2024-01-01T23:00:00.000000Z"));
+            engine.releaseAllWriters();
+            engine.releaseAllReaders();
+            insertO3("2024-01-01T23:30:00.000000Z");
+            final List<Row> expected = topRows(8, 6, -1, "2024-01-01T23:00:00.000000Z", true);
+            expected.add(new Row(50, "2024-01-01T23:30:00.000000Z", Kind.O3));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
+    public void testDedupSkipDroppedThenAppendTwoPartitionsKeepOwnTops() throws Exception {
+        // 2024-01-01 and 2024-01-02 hold rows 1..8 with top 3 each. One commit drops a duplicate in
+        // each: 2024-01-01 then appends at 23:00 and keeps its top, 2024-01-02 merges a row at 02:30
+        // after the duplicate of row 2 and materializes its top, as native does
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            for (String t : tables()) {
+                createBaseTable(t, " DEDUP SKIP KEYS(ts)");
+                execute("INSERT INTO " + t + " (v, ts) VALUES " + rowsNoValue(1, 3) + ", "
+                        + rowsNoValue(1, 3).replace(O3_DAY, "2024-01-02"));
+                addColumns(t);
+                final StringBuilder sql = new StringBuilder("INSERT INTO " + t + " (v, ts, c1, c2, c3) VALUES ");
+                for (String day : new String[]{O3_DAY, "2024-01-02"}) {
+                    for (int v = 4; v <= 8; v++) {
+                        if (sql.charAt(sql.length() - 1) == ')') {
+                            sql.append(", ");
+                        }
+                        final String literal = literalOf(v);
+                        sql.append('(').append(v).append(", '").append(tsOf(v).replace(O3_DAY, day)).append("', ")
+                                .append(literal).append(", ").append(literal).append(", ").append(literal).append(')');
+                    }
+                }
+                execute(sql.toString());
+                execute("INSERT INTO " + t + " (v, ts) VALUES (100, '2024-01-03T00:00:00.000000Z')");
+            }
+            drainWalQueue();
+            execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01', '2024-01-02'");
+            drainWalQueue();
+            insertO3Rows(
+                    o3Row(4, "2024-01-01T03:00:00.000000Z"),
+                    o3Row(50, "2024-01-01T23:00:00.000000Z"),
+                    o3Row(2, "2024-01-02T01:00:00.000000Z"),
+                    o3Row(50, "2024-01-02T02:30:00.000000Z")
+            );
+            final List<Row> expectedDay2 = topRows(8, 3, -1, null, false);
+            expectedDay2.add(3, new Row(50, "2024-01-02T02:30:00.000000Z", Kind.O3));
+            assertReaders(
+                    true,
+                    new String[]{"2024-01-01", "2024-01-02"},
+                    List.of(topRows(8, 3, -1, "2024-01-01T23:00:00.000000Z", true), expectedDay2)
+            );
+        });
+    }
+
+    @Test
+    public void testDedupSkipDroppedThenMergeMaterializesTop() throws Exception {
+        // top 3, the duplicate of row 2 (01:00) is dropped, but the row at 02:30 merges into row group 0:
+        // native merges with the prefix of row 1 and materializes the top, the row at 23:00 does not
+        // turn the commit into an append. The top stays inside the merged row group
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP SKIP KEYS(ts)", 3);
+            insertO3Rows(
+                    o3Row(2, "2024-01-01T01:00:00.000000Z"),
+                    o3Row(50, "2024-01-01T02:30:00.000000Z"),
+                    o3Row(50, "2024-01-01T23:00:00.000000Z")
+            );
+            final List<Row> expected = topRows(8, 3, -1, "2024-01-01T02:30:00.000000Z", false);
+            expected.add(new Row(50, "2024-01-01T23:00:00.000000Z", Kind.O3));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
+    public void testDedupSkipNewKeyAtStoredTimestampMaterializesTop() throws Exception {
+        // KEYS(ts, v): the O3 row at 01:00 has another v than row 2, so the dedup keeps it and native
+        // merges with the prefix of row 1, which materializes the top (3), although the row at 23:00
+        // lands after the partition
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP SKIP KEYS(ts, v)", 3);
+            insertO3Rows(o3Row(50, "2024-01-01T01:00:00.000000Z"), o3Row(50, "2024-01-01T23:00:00.000000Z"));
+            final List<Row> expected = topRows(8, 3, -1, "2024-01-01T01:00:00.000000Z", false);
+            expected.add(new Row(50, "2024-01-01T23:00:00.000000Z", Kind.O3));
+            assertReaders(expected);
+        });
+    }
+
+    @Test
+    public void testDedupSkipNewRowJustAfterMaxKeepsTop() throws Exception {
+        // the duplicate of row 4 is dropped, the new row lands one microsecond after the partition max
+        Assume.assumeTrue(isWal);
+        setInPlaceProperties(4);
+        assertMemoryLeak(() -> {
+            createShapeTables(" DEDUP SKIP KEYS(ts)", 6);
+            insertO3Rows(o3Row(4, "2024-01-01T03:00:00.000000Z"), o3Row(50, "2024-01-01T07:00:00.000001Z"));
+            assertReaders(topRows(8, 6, -1, "2024-01-01T07:00:00.000001Z", true));
+        });
+    }
+
+    @Test
     public void testDedupSkipPartlyDroppedKeepsTop() throws Exception {
         Assume.assumeTrue(isWal);
         setInPlaceProperties(4);
@@ -845,11 +1036,15 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         return count;
     }
 
+    private void createAbsentColumnTables(String extraColumn) throws Exception {
+        createAbsentColumnTables(extraColumn, "");
+    }
+
     // rows 1..8 of 2024-01-01 converted to parquet before c1..c3 exist: the columns are absent from the
     // parquet file; extraColumn (empty: none) is an INT column present in the file
-    private void createAbsentColumnTables(String extraColumn) throws Exception {
+    private void createAbsentColumnTables(String extraColumn, String dedup) throws Exception {
         for (String t : tables()) {
-            createBaseTable(t, "");
+            createBaseTable(t, dedup);
             if (!extraColumn.isEmpty()) {
                 execute("ALTER TABLE " + t + " ADD COLUMN " + extraColumn + " INT");
             }
@@ -949,6 +1144,14 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
         drainWalQueue();
     }
 
+    // inserts the rows, each from o3Row(), into pt and tw in one commit
+    private void insertO3Rows(String... rows) throws Exception {
+        for (String t : tables()) {
+            execute("INSERT INTO " + t + " (v, ts, c1, c2, c3) VALUES " + String.join(", ", rows));
+        }
+        drainWalQueue();
+    }
+
     // SQL literal of the value of row v (3..8, repeating from row 9), the same in every case: 0/false right after the top,
     // the type's MIN and MAX, a 2-byte and the largest CHAR
     private String literalOf(int v) {
@@ -967,6 +1170,11 @@ public class O3ParquetNoSentinelColumnTopTest extends AbstractCairoTest {
             case "SHORT" -> "999::SHORT";
             default -> "'q'";
         };
+    }
+
+    // the VALUES tuple of a row with v at ts and the O3 value in c1..c3, see insertO3Rows()
+    private String o3Row(int v, String ts) {
+        return "(" + v + ", '" + ts + "', " + o3Literal() + ", " + o3Literal() + ", " + o3Literal() + ")";
     }
 
     private String o3Text() {

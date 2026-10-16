@@ -445,6 +445,17 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                             }
 
                             if (isWrite && !isOutputOpen) {
+                                // The actions before this one dropped all their O3 rows, and duplicateCount
+                                // includes the duplicates of this one. When it counts every O3 row at or below
+                                // the partition max, the commit only appends past the partition end: native
+                                // turns such a commit into an append, which keeps every column top
+                                final long o3RowsUpToPartitionMax = Vect.boundedBinarySearchIndexT(
+                                        sortedTimestampsAddr,
+                                        partitionMaxTimestamp,
+                                        srcOooLo,
+                                        srcOooHi,
+                                        Vect.BIN_SEARCH_SCAN_DOWN
+                                ) - srcOooLo + 1;
                                 // set before the call, so that the cleanup covers an output that opened partially
                                 isOutputOpen = true;
                                 openParquetOutput(
@@ -463,7 +474,7 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
                                         hasSchemaChange,
                                         forceFullReencode,
                                         timestampIndex,
-                                        columnTopRowLimit,
+                                        duplicateCount == o3RowsUpToPartitionMax ? Long.MAX_VALUE : columnTopRowLimit,
                                         parquetMetaReader,
                                         partitionUpdater,
                                         tableWriter,
@@ -1797,7 +1808,9 @@ public class O3PartitionJob extends AbstractQueueConsumerJob<O3PartitionTask> {
      * a column top iff the top ends inside the prefix of rows with {@code ts <= o3Lo - mergeEquals}
      * (O3OpenColumnJob), and stops at the first action that takes O3 rows: rows past the merge point
      * of that action move, even at a tied timestamp in the next row group. When every row stays in
-     * place, the commit appends and the output keeps every top, as native does.
+     * place, the commit appends and the output keeps every top, as native does. A SKIP commit whose
+     * dedup drops every O3 row at or below the partition max appends as well: its lazy output open
+     * lifts the limit to {@code Long.MAX_VALUE}.
      */
     private static long computeColumnTopRowLimit(
             ObjList<O3ParquetMergeStrategy.MergeAction> actions,
