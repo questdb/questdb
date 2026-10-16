@@ -38,14 +38,18 @@ import io.questdb.cairo.sql.RecordCursorFactory;
 import io.questdb.griffin.SqlCompiler;
 import io.questdb.griffin.SqlException;
 import io.questdb.std.Files;
+import io.questdb.std.FilesFacade;
 import io.questdb.std.FilesFacadeImpl;
 import io.questdb.std.IntList;
 import io.questdb.std.Os;
 import io.questdb.std.Rnd;
 import io.questdb.std.datetime.microtime.Micros;
+import io.questdb.std.str.LPSZ;
 import io.questdb.std.str.Path;
+import io.questdb.std.str.Utf8s;
 import io.questdb.test.AbstractCairoTest;
 import io.questdb.test.fuzz.FuzzChangeColumnTypeOperation;
+import io.questdb.test.std.TestFilesFacadeImpl;
 import io.questdb.test.tools.TestUtils;
 import org.junit.After;
 import org.junit.AfterClass;
@@ -61,6 +65,7 @@ import java.util.Arrays;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -87,8 +92,15 @@ import static io.questdb.test.cairo.fuzz.FuzzRunner.MAX_WAL_APPLY_TIME_PER_TABLE
  */
 public class WalWriterFuzzTest extends AbstractFuzzTest {
     private static boolean ASYNC_MUNMAP = false;
+    // the purges of the last runTxnZeroCoveredSymbolFuzz(): the purge job consumed and saved them in its
+    // log, it refused them (see addPurgesRefusedByTruncate()), and the check before VACUUM TABLE skipped
+    // their POSTING files
+    private final Set<String> txnZeroRunRefusedPurges = new HashSet<>();
     private boolean existingFilesParanoia;
     private boolean fsAllowsMixedIO;
+    private long txnZeroRunPurgeTasksConsumed = -1;
+    private long txnZeroRunPurgeTasksLogged = -1;
+    private int txnZeroRunSkippedRefusedPurgeFileCount;
 
     @BeforeClass
     public static void setUpStatic() throws Exception {
@@ -429,17 +441,37 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
 
     @Test
     public void testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbolFuzz() throws Exception {
-        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG), null);
+        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG), null, null);
     }
 
     @Test
     public void testConvertPartitionToParquetWithCoveringIndexOnTxnZeroSymbolLostPurgeLog() throws Exception {
-        // Pins a run of the fuzz test above where an IO failure that the fuzz plants for the non-WAL
-        // writer hits the purge job instead, as it saves a purge in its log. The job saves no purge after
-        // that, so the purge job after the run cannot replay the deferred purges of the WAL tables: the
-        // check before VACUUM TABLE skips, and the check after VACUUM TABLE proves VACUUM removes the files.
-        // The fuzz test drew the default symbol index type from other seeds.
-        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 882492233733669L, 1792176408151L), "BITMAP");
+        // Pins a run of the fuzz test above where an IO failure hits the purge job as it saves a purge in
+        // its log. The job saves no purge after that, so the purge job after the run cannot replay the
+        // deferred purges of the WAL tables: the check before VACUUM TABLE skips, and the check after VACUUM
+        // TABLE proves VACUUM removes the files. In the original run an IO failure that the fuzz plants for
+        // the non-WAL writer hit the purge job by chance; the files facade below fails the first file the
+        // purge job opens in a partition of its log, which is the first save, in every run. The fuzz test
+        // drew the default symbol index type from other seeds.
+        final AtomicBoolean isPurgeLogOpenFailed = new AtomicBoolean();
+        runTxnZeroCoveredSymbolRandomFuzz(
+                generateRandom(LOG, 882492233733669L, 1792176408151L),
+                "BITMAP",
+                new TestFilesFacadeImpl() {
+                    @Override
+                    public long openRW(LPSZ name, int opts) {
+                        if (isPurgeLogPartitionFile(name) && isPurgeLogOpenFailed.compareAndSet(false, true)) {
+                            return -1;
+                        }
+                        return super.openRW(name, opts);
+                    }
+                }
+        );
+        // an IO failure of the fuzz can hit the purge job before the files facade does, with the same effect
+        Assert.assertTrue(
+                txnZeroRunPurgeTasksLogged + " < " + txnZeroRunPurgeTasksConsumed,
+                txnZeroRunPurgeTasksLogged < txnZeroRunPurgeTasksConsumed
+        );
     }
 
     @Test
@@ -448,8 +480,28 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         // table while the purge of the dropped index waits in the purge log. DROP PARTITION changes the
         // truncate version, and the purge job refuses the purge: the check before VACUUM TABLE exempts
         // its files, and the check after VACUUM TABLE proves VACUUM removes them. The fuzz test drew the
-        // default symbol index type from other seeds.
-        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 882356240241250L, 1792176272157L), "POSTING DELTA");
+        // default symbol index type from other seeds. The IO failures of the fuzz stay on the thread that
+        // applies the non-WAL transactions: one that hit the purge job would lose the purge log, and the
+        // check before VACUUM TABLE would skip.
+        fuzzer.setIoFailureOnApplyThreadOnly(true);
+        runTxnZeroCoveredSymbolRandomFuzz(generateRandom(LOG, 882356240241250L, 1792176272157L), "POSTING DELTA", null);
+        Assert.assertEquals(txnZeroRunPurgeTasksConsumed, txnZeroRunPurgeTasksLogged);
+        // instance 0 of sym0 in partition 2022-02-24 (name txn 1) of the non-WAL table, whose index DROP
+        // INDEX dropped before DROP PARTITION of 2022-02-25
+        final TableToken tableToken = engine.verifyTableName(getTestName() + "_nonwal");
+        final int timestampType;
+        try (TableReader reader = getReader(tableToken.getTableName())) {
+            timestampType = reader.getMetadata().getTimestampType();
+        }
+        final String sym0Key = refusedPurgeKey(
+                tableToken.getDirName(),
+                ColumnType.getTimestampDriver(timestampType).parseFloorLiteral("2022-02-24"),
+                1,
+                "sym0",
+                0
+        );
+        Assert.assertTrue(sym0Key + " in " + txnZeroRunRefusedPurges, txnZeroRunRefusedPurges.contains(sym0Key));
+        Assert.assertTrue("skipped files: " + txnZeroRunSkippedRefusedPurgeFileCount, txnZeroRunSkippedRefusedPurgeFileCount > 0);
     }
 
     @Test
@@ -1063,6 +1115,7 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
                             || (matcher == coverFileMatcher && fileTxn == 0 && refusedPurges.contains(refusedPurgeKey(
                             tableDirName, partitionTimestamp, partitionNameTxn, matcher.group(1), TableUtils.COLUMN_NAME_TXN_NONE)))) {
                         LOG.info().$("skipping posting file of a refused purge [dir=").$(dir).$(", file=").$(name).I$();
+                        txnZeroRunSkippedRefusedPurgeFileCount++;
                         continue;
                     }
                     final String context = dir + ", " + name + " in " + Arrays.toString(names);
@@ -1195,6 +1248,13 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
         }
     }
 
+    // whether name is a file in a partition of the purge log of ColumnPurgeJob
+    private static boolean isPurgeLogPartitionFile(LPSZ name) {
+        final File partitionDir = new File(Utf8s.stringFromUtf8Bytes(name)).getParentFile();
+        final File tableDir = partitionDir != null ? partitionDir.getParentFile() : null;
+        return tableDir != null && tableDir.getName().contains("column_versions_purge_log~");
+    }
+
     // the key of a purged column version in a partition, see addPurgesRefusedByTruncate()
     private static String refusedPurgeKey(String tableDirName, long partitionTimestamp, long partitionNameTxn, CharSequence columnName, long columnNameTxn) {
         return tableDirName + "/" + partitionTimestamp + "/" + partitionNameTxn + "/" + columnName + "/" + columnNameTxn;
@@ -1236,9 +1296,15 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
      *
      * @param defaultSymbolIndexType when not null, the default symbol index type, which otherwise
      *                               AbstractFuzzTest draws from its own seeds
+     * @param filesFacade            when not null, the files facade under the IO failures of the fuzz
      */
-    private void runTxnZeroCoveredSymbolRandomFuzz(Rnd rnd, String defaultSymbolIndexType) throws Exception {
+    private void runTxnZeroCoveredSymbolRandomFuzz(Rnd rnd, String defaultSymbolIndexType, FilesFacade filesFacade) throws Exception {
         setTestParams(rnd);
+        if (filesFacade != null) {
+            // set after setTestParams(), which can set the test up again and reset ff
+            ff = filesFacade;
+            fuzzer.withDb(engine, sqlExecutionContext);
+        }
         if (defaultSymbolIndexType != null) {
             node1.setProperty(PropertyKey.CAIRO_DEFAULT_SYMBOL_INDEX_TYPE, defaultSymbolIndexType);
         }
@@ -1317,8 +1383,11 @@ public class WalWriterFuzzTest extends AbstractFuzzTest {
             final long purgeTasksConsumed = engine.getMessageBus().getColumnPurgeSubSeq().current() - purgeTasksConsumedBeforeRun;
             final long purgeTasksLogged = countPurgeLogTasks();
             Assert.assertTrue(purgeTasksLogged + " > " + purgeTasksConsumed, purgeTasksLogged <= purgeTasksConsumed);
+            txnZeroRunPurgeTasksConsumed = purgeTasksConsumed;
+            txnZeroRunPurgeTasksLogged = purgeTasksLogged;
             // read before purgeColumnVersions(), whose purge job replays and truncates the purge log
-            final Set<String> refusedPurges = new HashSet<>();
+            final Set<String> refusedPurges = txnZeroRunRefusedPurges;
+            refusedPurges.clear();
             addPurgesRefusedByTruncate(tableNameNoWal, refusedPurges);
             for (String walTableName : walTableNames) {
                 addPurgesRefusedByTruncate(walTableName, refusedPurges);
