@@ -61,7 +61,35 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         if (!masterCursor.hasNext()) {
             return false;
         }
+        return findSlaveRecord();
+    }
 
+    public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
+        super.of(masterCursor, slaveCursor);
+        this.circuitBreaker = circuitBreaker;
+    }
+
+    @Override
+    public long preComputedStateSize() {
+        return 0;
+    }
+
+    @Override
+    public void toTop() {
+        super.toTop();
+        origSlaveFrameIndex = -1;
+        origSlaveRowId = -1;
+        origHasSlave = false;
+    }
+
+    /**
+     * Finds the slave record of the current master record. A subclass whose hasNext() skips this
+     * call for some master records leaves the slave state consistent, because the next call
+     * restores the slave cursor position and nextSlave() only moves forward in time.
+     *
+     * @return always true
+     */
+    protected final boolean findSlaveRecord() {
         // Common slave cursor state restoration logic
         if (origSlaveRowId != -1) {
             slaveTimeFrameCursor.jumpTo(origSlaveFrameIndex);
@@ -100,24 +128,6 @@ public abstract class AbstractKeyedAsOfJoinRecordCursor extends AbstractAsOfJoin
         performKeyMatching(masterTimestamp);
 
         return true;
-    }
-
-    public void of(RecordCursor masterCursor, TimeFrameCursor slaveCursor, SqlExecutionCircuitBreaker circuitBreaker) {
-        super.of(masterCursor, slaveCursor);
-        this.circuitBreaker = circuitBreaker;
-    }
-
-    @Override
-    public long preComputedStateSize() {
-        return 0;
-    }
-
-    @Override
-    public void toTop() {
-        super.toTop();
-        origSlaveFrameIndex = -1;
-        origSlaveRowId = -1;
-        origHasSlave = false;
     }
 
     /**

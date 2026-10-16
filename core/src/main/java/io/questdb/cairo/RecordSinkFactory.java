@@ -444,6 +444,17 @@ public class RecordSinkFactory {
     }
 
     /**
+     * Converts the value of a TIMESTAMP key column to the nanoseconds of a TIMESTAMP_NS key. The
+     * generated copiers and LoopingRecordSink call it for the columns set in writeTimestampAsNanos.
+     * It keeps NULL as NULL, which a multiplication by 1000 turns into 0, the value of 1970-01-01. Like
+     * that multiplication, it doesn't check for overflow, so a value outside the TIMESTAMP_NS range
+     * wraps instead of failing the query.
+     */
+    public static long timestampToNanos(long timestamp) {
+        return MicrosTimestampDriver.INSTANCE.toNanos(timestamp);
+    }
+
+    /**
      * Calculates chunk boundaries for splitting columns across multiple methods.
      * Returns an IntList where boundaries[i] to boundaries[i+1] defines chunk i.
      */
@@ -814,7 +825,7 @@ public class RecordSinkFactory {
         final int wPutDecimal128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal128", "(Lio/questdb/std/Decimal128;)V");
         final int wPutDecimal256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal256", "(Lio/questdb/std/Decimal256;)V");
 
-        final int constantLong1000 = asm.poolLongConst(1000L);
+        final int timestampToNanosIndex = asm.poolMethod(RecordSinkFactory.class, "timestampToNanos", "(J)J");
         final int copyNameIndex = asm.poolUtf8("copy");
         final int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
         final int setFunctionsIndex = asm.poolUtf8("setFunctions");
@@ -1241,8 +1252,7 @@ public class RecordSinkFactory {
                         asm.iconst(skewedIdx);
                         asm.invokeInterface(rGetTimestamp, 1);
                         if (timestampAsNanos) {
-                            asm.ldc2_w(constantLong1000);
-                            asm.lmul();
+                            asm.invokeStatic(timestampToNanosIndex);
                         }
                         asm.invokeInterface(wPutTimestamp, 2);
                         break;
@@ -1624,7 +1634,7 @@ public class RecordSinkFactory {
         final int wPutDecimal128 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal128", "(Lio/questdb/std/Decimal128;)V");
         final int wPutDecimal256 = asm.poolInterfaceMethod(RecordSinkSPI.class, "putDecimal256", "(Lio/questdb/std/Decimal256;)V");
 
-        final int constantLong1000 = asm.poolLongConst(1000L);
+        final int timestampToNanosIndex = asm.poolMethod(RecordSinkFactory.class, "timestampToNanos", "(J)J");
         final int copyNameIndex = asm.poolUtf8("copy");
         final int copySigIndex = asm.poolUtf8("(Lio/questdb/cairo/sql/Record;Lio/questdb/cairo/RecordSinkSPI;)V");
         final int setFunctionsIndex = asm.poolUtf8("setFunctions");
@@ -1769,9 +1779,7 @@ public class RecordSinkFactory {
                     asm.iconst(getSkewedIndex(index, skewIndex));
                     asm.invokeInterface(rGetTimestamp, 1);
                     if (timestampAsNanos) {
-                        // Convert microseconds to nanoseconds: multiply by 1000
-                        asm.ldc2_w(constantLong1000);
-                        asm.lmul();
+                        asm.invokeStatic(timestampToNanosIndex);
                     }
                     asm.invokeInterface(wPutTimestamp, 2);
                     break;

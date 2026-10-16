@@ -184,11 +184,8 @@ public class LoopingRecordSink implements RecordSink {
                 w.putDate(r.getDate(idx));
                 break;
             case ColumnType.TIMESTAMP:
-                long ts = r.getTimestamp(idx);
-                if (tsNanos) {
-                    ts *= 1000L;
-                }
-                w.putTimestamp(ts);
+                final long ts = r.getTimestamp(idx);
+                w.putTimestamp(tsNanos ? RecordSinkFactory.timestampToNanos(ts) : ts);
                 break;
             case ColumnType.BYTE:
                 w.putByte(r.getByte(idx));

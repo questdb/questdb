@@ -231,8 +231,10 @@ public final class Os {
         try {
             File tempLib = null;
             try {
-                int dot = lib.indexOf('.');
-                tempLib = File.createTempFile(lib.substring(0, dot), lib.substring(dot));
+                // lib is a resource or file path; a dot in a directory name must not split it
+                String libFileName = new File(lib).getName();
+                int dot = libFileName.indexOf('.');
+                tempLib = File.createTempFile(libFileName.substring(0, dot), libFileName.substring(dot));
                 // copy to tempLib
                 try (FileOutputStream out = new FileOutputStream(tempLib)) {
                     byte[] buf = new byte[4096];

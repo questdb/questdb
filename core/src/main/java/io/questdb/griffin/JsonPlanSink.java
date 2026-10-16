@@ -70,13 +70,7 @@ public class JsonPlanSink extends BasePlanSink {
         checkType(NODE_CHILD);
         depth++;
         lastNodeType = NODE_NONE;
-        if (p instanceof RecordCursorFactory) {
-            factoryStack.push((RecordCursorFactory) p);
-            p.toPlan(this);
-            factoryStack.pop();
-        } else {
-            p.toPlan(this);
-        }
+        childToPlan(p);
         closeChild();
         lastNodeType = NODE_CHILD;
         lastNodeDepth = --depth;

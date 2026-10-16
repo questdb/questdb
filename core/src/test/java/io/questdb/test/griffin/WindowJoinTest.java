@@ -4399,6 +4399,72 @@ public class WindowJoinTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testWindowJoinAfterCrossJoinAndAsOfJoinKeepsProjection() throws Exception {
+        // A join with no dependency, written before an ASOF/LT join that precedes the WINDOW JOIN,
+        // used to run after the WINDOW JOIN. The WINDOW JOIN then generated as an intermediate join
+        // and the query returned every joined column instead of its SELECT list.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            createWindowJoinAfterAsOfJoinTables();
+            final String windowJoin = " WINDOW JOIN td2 ON td2.k = ta.k RANGE BETWEEN 1 MINUTES PRECEDING AND 1 MINUTES FOLLOWING";
+
+            assertQuery("SELECT ta.x, sum(td2.k) s FROM ta CROSS JOIN b ASOF JOIN td1 ON td1.k = ta.k" + windowJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\ts
+                            10\t1
+                            10\t1
+                            """);
+            assertQuery("SELECT ta.x, sum(td2.k) s FROM ta CROSS JOIN b LT JOIN td1 ON td1.k = ta.k" + windowJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .expectSize()
+                    .returns("""
+                            x\ts
+                            10\t1
+                            10\t1
+                            """);
+            assertQuery("SELECT ta.x, sum(td2.k) s FROM ta JOIN b ON ta.x > b.y ASOF JOIN td1 ON td1.k = ta.k" + windowJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x\ts
+                            10\t1
+                            """);
+            assertQuery("SELECT ta.x, sum(td2.k) s FROM ta LEFT JOIN b ON ta.x > b.y ASOF JOIN td1 ON td1.k = ta.k" + windowJoin)
+                    .noLeakCheck()
+                    .noRandomAccess()
+                    .returns("""
+                            x\ts
+                            10\t1
+                            """);
+        });
+    }
+
+    @Test
+    public void testWindowJoinAfterNonEquiRightJoinAndAsOfJoinFails() throws Exception {
+        // As written, the left side of the ASOF and WINDOW joins is the RIGHT/FULL join output,
+        // which has no designated timestamp. The optimiser used to run the WINDOW JOIN before the
+        // outer join and return every joined column instead of failing.
+        Assume.assumeTrue(leftTableTimestampType == TestTimestampType.MICRO);
+        Assume.assumeTrue(rightTableTimestampType == TestTimestampType.MICRO);
+        assertMemoryLeak(() -> {
+            createWindowJoinAfterAsOfJoinTables();
+            for (String outerJoin : new String[]{"RIGHT", "FULL"}) {
+                final String sql = "SELECT ta.x, td1.v, sum(td2.k) s FROM ta " + outerJoin + " JOIN b ON ta.x > b.y"
+                        + " ASOF JOIN td1 ON td1.k = ta.k"
+                        + " WINDOW JOIN td2 ON td2.k = td1.k RANGE BETWEEN 1 MINUTES PRECEDING AND 1 MINUTES FOLLOWING";
+                assertQuery(sql)
+                        .noLeakCheck()
+                        .fails(sql.indexOf("ASOF"), "left side of time series join has no timestamp");
+            }
+        });
+    }
+
+    @Test
     public void testWindowJoinBinarySearch() throws Exception {
         assertMemoryLeak(() -> {
             prepareTable();
@@ -8488,6 +8554,17 @@ public class WindowJoinTest extends AbstractCairoTest {
                 }
             }
         }
+    }
+
+    private void createWindowJoinAfterAsOfJoinTables() throws SqlException {
+        execute("CREATE TABLE ta (ts TIMESTAMP, x INT, k INT) TIMESTAMP(ts)");
+        execute("INSERT INTO ta VALUES ('2024-01-01T00:00:02.000000Z', 10, 1)");
+        execute("CREATE TABLE b (y INT)");
+        execute("INSERT INTO b VALUES (5), (100)");
+        execute("CREATE TABLE td1 (ts TIMESTAMP, k INT, v SYMBOL) TIMESTAMP(ts)");
+        execute("INSERT INTO td1 VALUES ('2024-01-01T00:00:01.000000Z', 1, 'a1')");
+        execute("CREATE TABLE td2 (ts TIMESTAMP, k INT, w SYMBOL) TIMESTAMP(ts)");
+        execute("INSERT INTO td2 VALUES ('2024-01-01T00:00:01.500000Z', 1, 'b1')");
     }
 
     private void prepareTable() throws SqlException {

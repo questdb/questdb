@@ -241,6 +241,12 @@ public interface RecordCursorFactory extends Closeable, Sinkable, Plannable {
     /**
      * Returns an independent cursor for the given consumer ID. Idempotent —
      * same sharedId always returns the same cursor instance.
+     * <p>
+     * The cursor reads the state that the primary cursor of this factory builds. Do not
+     * read its rows, nor a size that it computes by reading rows, before
+     * {@link #getCursor(SqlExecutionContext)} of this factory has returned in the same
+     * execution. The parents of both cursors open their children in their own order, so
+     * a cursor that reads the rows of its children while it opens can break this.
      *
      * @param executionContext SQL execution context
      * @param sharedId         unique consumer identifier (0-based)
