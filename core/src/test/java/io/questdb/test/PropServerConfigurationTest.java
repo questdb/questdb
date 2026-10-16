@@ -3370,7 +3370,6 @@ public class PropServerConfigurationTest {
         Assert.assertEquals(12345, configuration.getAdaptiveEpochIntervalMs());
         Assert.assertEquals(123456, configuration.getAdaptiveEpochMaxRows());
         Assert.assertEquals(7777, configuration.getAdaptiveCommitGroupWindowUs());
-        Assert.assertFalse(configuration.isAdaptiveRecoveryRollForwardEnabled());
         Assert.assertFalse(configuration.isAdaptiveEpochFlushOnClose());
         Assert.assertFalse(configuration.isAdaptiveEpochColumnSyncBatched());
         Assert.assertEquals(12, configuration.getCreateAsSelectRetryCount());

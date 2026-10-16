@@ -185,6 +185,11 @@ public class CairoTestConfiguration extends CairoConfigurationWrapper {
     }
 
     @Override
+    public boolean isAdaptiveRecoveryRollForwardEnabled() {
+        return overrides.isAdaptiveRecoveryRollForwardEnabled();
+    }
+
+    @Override
     public boolean isMultiKeyDedupEnabled() {
         return true;
     }

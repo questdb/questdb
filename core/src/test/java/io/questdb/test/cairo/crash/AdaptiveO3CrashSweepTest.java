@@ -278,7 +278,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
         final List<Long>[] resultBox = new List[1];
         setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
         setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 0);
-        setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, recoveryOn ? "true" : "false");
+        staticOverrides.setAdaptiveRecoveryRollForwardEnabled(recoveryOn);
         try {
             runWithCrashFacade(() -> {
                 crashFf.modelSharedJournal = false; // per-inode strictness (ext4 fast_commit)
@@ -356,7 +356,7 @@ public class AdaptiveO3CrashSweepTest extends AbstractAdaptiveCrashSweepTest {
         } finally {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             setProperty(PropertyKey.CAIRO_ADAPTIVE_EPOCH_INTERVAL, 1000);
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, "true");
+            staticOverrides.setAdaptiveRecoveryRollForwardEnabled(true);
         }
         return resultBox[0];
     }

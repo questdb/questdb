@@ -130,6 +130,7 @@ public class Overrides {
 
     private final Properties defaultProperties = new Properties();
     private final Properties properties = new Properties();
+    private boolean adaptiveRecoveryRollForwardEnabled = true;
     private boolean changed = true;
     private long currentMicros = -1;
     private final MicrosecondClock defaultMicrosecondClock = () -> currentMicros >= 0 ? currentMicros : MicrosecondClockImpl.INSTANCE.getTicks();
@@ -206,6 +207,10 @@ public class Overrides {
         return testMicrosClock;
     }
 
+    public boolean isAdaptiveRecoveryRollForwardEnabled() {
+        return adaptiveRecoveryRollForwardEnabled;
+    }
+
     public boolean isHidingTelemetryTable() {
         return isHiddenTelemetryTable;
     }
@@ -236,6 +241,15 @@ public class Overrides {
         changed = true;
         spinLockTimeout = AbstractCairoTest.DEFAULT_SPIN_LOCK_TIMEOUT;
         freeLeakedReaders = false;
+        adaptiveRecoveryRollForwardEnabled = true;
+    }
+
+    /**
+     * Turns startup roll-forward off so a test can drive {@link io.questdb.cairo.RecoveryCoordinator}'s refusal
+     * path. There is no server property for this.
+     */
+    public void setAdaptiveRecoveryRollForwardEnabled(boolean enabled) {
+        this.adaptiveRecoveryRollForwardEnabled = enabled;
     }
 
     public void setCurrentMicros(long currentMicros) {

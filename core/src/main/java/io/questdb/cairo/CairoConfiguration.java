@@ -249,6 +249,7 @@ public interface CairoConfiguration {
      * Whether startup recovery ({@link RecoveryCoordinator}) restores each WAL table that has a save point
      * from it, before WAL apply replays the transactions after it. When {@code false}, startup refuses a
      * table that has a save point rather than expose applied state that may be torn; no effect otherwise.
+     * Not a server property: only tests turn it off, to drive the refusal path.
      *
      * @return {@code true} to run the adaptive epoch roll-forward on startup
      */

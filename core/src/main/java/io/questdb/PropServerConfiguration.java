@@ -241,7 +241,6 @@ public class PropServerConfiguration implements ServerConfiguration {
     private final long adaptiveEpochIntervalMs;
     private final long adaptiveEpochMaxRows;
     private final long adaptiveCommitGroupWindowUs;
-    private final boolean adaptiveRecoveryRollForwardEnabled;
     private final boolean adaptiveEpochFlushOnClose;
     private final boolean adaptiveEpochColumnSyncBatched;
     private final boolean walCommitWritebackDrain;
@@ -1729,7 +1728,6 @@ public class PropServerConfiguration implements ServerConfiguration {
             // 0 fdatasyncs every commit before it returns. A negative value clamps to 0, so a
             // misconfiguration never weakens durability.
             this.adaptiveCommitGroupWindowUs = Math.max(0, getMicros(properties, env, PropertyKey.CAIRO_ADAPTIVE_COMMIT_GROUP_WINDOW, 50_000));
-            this.adaptiveRecoveryRollForwardEnabled = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, true);
             this.adaptiveEpochFlushOnClose = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_FLUSH_ON_CLOSE, true);
             this.adaptiveEpochColumnSyncBatched = getBoolean(properties, env, PropertyKey.CAIRO_ADAPTIVE_EPOCH_COLUMN_SYNC_BATCHED, true);
             this.walCommitWritebackDrain = getBoolean(properties, env, PropertyKey.CAIRO_WAL_COMMIT_WRITEBACK_DRAIN, true);
@@ -4332,11 +4330,6 @@ public class PropServerConfiguration implements ServerConfiguration {
         @Override
         public long getAdaptiveCommitGroupWindowUs() {
             return adaptiveCommitGroupWindowUs;
-        }
-
-        @Override
-        public boolean isAdaptiveRecoveryRollForwardEnabled() {
-            return adaptiveRecoveryRollForwardEnabled;
         }
 
         @Override

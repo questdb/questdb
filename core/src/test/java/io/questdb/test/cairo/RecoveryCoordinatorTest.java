@@ -442,7 +442,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
     public void testRecoveryDisableSwitchFailsClosedForAdaptiveTable() throws Exception {
         assertMemoryLeak(() -> {
             setProperty(PropertyKey.CAIRO_COMMIT_MODE, "adaptive");
-            setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, "false");
+            staticOverrides.setAdaptiveRecoveryRollForwardEnabled(false);
             try {
                 execute("create table disabled_recovery (ts timestamp, v long) timestamp(ts) partition by day wal");
                 engine.releaseAllWriters();
@@ -453,7 +453,7 @@ public class RecoveryCoordinatorTest extends AbstractCairoTest {
                     TestUtils.assertContains(expected.getFlyweightMessage(), "refusing unsafe startup");
                 }
             } finally {
-                setProperty(PropertyKey.CAIRO_ADAPTIVE_RECOVERY_ROLL_FORWARD_ENABLED, "true");
+                staticOverrides.setAdaptiveRecoveryRollForwardEnabled(true);
                 setProperty(PropertyKey.CAIRO_COMMIT_MODE, "nosync");
             }
         });
