@@ -72,6 +72,7 @@ import io.questdb.std.str.StringSink;
 import io.questdb.test.QueryAssertion;
 import io.questdb.test.fuzz.FuzzAddCoveringIndexOperation;
 import io.questdb.test.fuzz.FuzzDropCreateTableOperation;
+import io.questdb.test.fuzz.FuzzDropIndexOperation;
 import io.questdb.test.fuzz.FuzzTransaction;
 import io.questdb.test.fuzz.FuzzTransactionGenerator;
 import io.questdb.test.fuzz.FuzzTransactionOperation;
@@ -108,6 +109,7 @@ public class FuzzRunner {
     private double colTypeChangeProb;
     private boolean createWalAsParquet;
     private double dataAddProb;
+    private double dropIndexProb;
     private CairoEngine engine;
     private double equalTsRowsProb;
     private FailureFileFacade ff;
@@ -310,6 +312,11 @@ public class FuzzRunner {
                                 writer = null;
                                 coveringOp.executePostDrain(engine, tableName);
                                 writer = TestUtils.getWriter(engine, tableName);
+                            } else if (transaction.operationList.getQuick(opIdx) instanceof FuzzDropIndexOperation dropIndexOp) {
+                                Misc.free(writer);
+                                writer = null;
+                                dropIndexOp.executePostDrain(engine, tableName);
+                                writer = TestUtils.getWriter(engine, tableName);
                             }
                         }
                     }
@@ -423,7 +430,7 @@ public class FuzzRunner {
         TableToken tableToken = engine.verifyTableName(tableName);
         applyToWal(transactions, tableName, walWriterCount, applyRnd);
         drainWalQueue(applyRnd, tableName);
-        executeCoveringIndexOps(transactions, tableName);
+        executeIndexOps(transactions, tableName);
         drainWalQueue(applyRnd, tableName);
         Assert.assertFalse("Table is suspended", engine.getTableSequencerAPI().isSuspended(tableToken));
     }
@@ -533,7 +540,9 @@ public class FuzzRunner {
                 generateSymbols(rnd, rnd.nextInt(Math.max(1, symbolCountMax - 5)) + 5, symbolStrLenMax, tableName),
                 (int) sequencerMetadata.getMetadataVersion(),
                 setParquetEncodingProb,
-                addCoveringIndexProb, setTableFormatProb,
+                addCoveringIndexProb,
+                dropIndexProb,
+                setTableFormatProb,
                 isNoSentinelTypeChangeEnabled
         );
     }
@@ -820,6 +829,15 @@ public class FuzzRunner {
     }
 
     /**
+     * Makes the generator drop the index of a symbol column, and index it again with BITMAP or a POSTING
+     * kind five times in eight, see {@link FuzzDropIndexOperation}. Every setFuzzProbabilities() call
+     * keeps it.
+     */
+    public void setDropIndexProbability(double dropIndexProb) {
+        this.dropIndexProb = dropIndexProb;
+    }
+
+    /**
      * Makes the generator change a STRING, SYMBOL or VARCHAR column to BOOLEAN, BYTE or SHORT on a parquet
      * partition and those types back to text, with in-order writes only, see
      * FuzzTransactionGenerator.generateSet(). The parallel WAL apply needs one WAL writer to keep the order.
@@ -894,7 +912,7 @@ public class FuzzRunner {
         ObjList<ObjList<FuzzTransaction>> tablesTransactions = new ObjList<>();
         tablesTransactions.add(transactions);
         applyManyWalParallel(tablesTransactions, applyRnd, tableName, false, true);
-        executeCoveringIndexOps(transactions, tableName);
+        executeIndexOps(transactions, tableName);
         drainWalQueue(applyRnd, tableName);
     }
 
@@ -1524,12 +1542,14 @@ public class FuzzRunner {
         }
     }
 
-    private void executeCoveringIndexOps(ObjList<FuzzTransaction> transactions, String tableName) {
+    private void executeIndexOps(ObjList<FuzzTransaction> transactions, String tableName) {
         for (int i = 0, n = transactions.size(); i < n; i++) {
             ObjList<FuzzTransactionOperation> ops = transactions.getQuick(i).operationList;
             for (int j = 0, m = ops.size(); j < m; j++) {
                 if (ops.getQuick(j) instanceof FuzzAddCoveringIndexOperation coveringOp) {
                     coveringOp.executePostDrain(engine, tableName);
+                } else if (ops.getQuick(j) instanceof FuzzDropIndexOperation dropIndexOp) {
+                    dropIndexOp.executePostDrain(engine, tableName);
                 }
             }
         }

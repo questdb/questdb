@@ -283,19 +283,18 @@ public class ColumnPurgeJob extends SynchronizedJob implements Closeable {
                             continue;
                         }
                         int timestampType;
-                        byte indexType = IndexType.BITMAP; // default to BITMAP for backward compatibility
                         // Read metadata from the user table being purged, not from the
-                        // purge-log table (this.tableToken). Reading the wrong token
-                        // makes timestampType and indexType reflect the log table's
-                        // schema, which silently breaks POSTING file cleanup after
-                        // a restart that replays in-flight purge tasks.
+                        // purge-log table (this.tableToken), whose timestamp type may differ.
                         try (TableMetadata metadata = engine.getTableMetadata(token)) {
                             timestampType = metadata.getTimestampType();
-                            int columnIndex = metadata.getColumnIndexQuiet(columnName);
-                            if (columnIndex > -1) {
-                                indexType = metadata.getColumnIndexType(columnIndex);
-                            }
                         }
+                        // The purge log does not keep the index type of the purged column instance,
+                        // and the live column, if any, may have another one: DROP INDEX, DROP COLUMN,
+                        // RENAME COLUMN, ALTER COLUMN TYPE and an index change all queue purges.
+                        // The POSTING removal takes the files of every index type, the POSTING
+                        // files and then the BITMAP .k and .v files, and every file it takes is
+                        // named with the column name txn of the purged instance.
+                        final byte indexType = IndexType.POSTING;
 
                         taskInitialized = true;
                         task.of(

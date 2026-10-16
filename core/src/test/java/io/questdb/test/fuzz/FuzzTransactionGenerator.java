@@ -113,6 +113,7 @@ public class FuzzTransactionGenerator {
                 metaVersion,
                 probabilityOfSetParquetEncoding,
                 probabilityOfAddCoveringIndex,
+                0.0,
                 probabilityOfSetTableFormat,
                 false
         );
@@ -168,6 +169,7 @@ public class FuzzTransactionGenerator {
             int metaVersion,
             double probabilityOfSetParquetEncoding,
             double probabilityOfAddCoveringIndex,
+            double probabilityOfDropIndex,
             double probabilityOfSetTableFormat,
             boolean isNoSentinelTypeChangeEnabled
     ) {
@@ -187,6 +189,7 @@ public class FuzzTransactionGenerator {
                 + probabilityOfConvertPartitionToParquet
                 + probabilityOfConvertPartitionToNative
                 + probabilityOfAddCoveringIndex
+                + probabilityOfDropIndex
                 + probabilityOfDataInsert
                 + probabilityOfSymbolAccessValidation
                 + probabilityOfQuery
@@ -201,6 +204,7 @@ public class FuzzTransactionGenerator {
         probabilityOfConvertPartitionToParquet = probabilityOfConvertPartitionToParquet / sumOfProbabilities;
         probabilityOfConvertPartitionToNative = probabilityOfConvertPartitionToNative / sumOfProbabilities;
         probabilityOfAddCoveringIndex = probabilityOfAddCoveringIndex / sumOfProbabilities;
+        probabilityOfDropIndex = probabilityOfDropIndex / sumOfProbabilities;
         probabilityOfSymbolAccessValidation = probabilityOfSymbolAccessValidation / sumOfProbabilities;
         probabilityOfQuery = probabilityOfQuery / sumOfProbabilities;
         probabilityOfSetParquetEncoding = probabilityOfSetParquetEncoding / sumOfProbabilities;
@@ -317,6 +321,10 @@ public class FuzzTransactionGenerator {
 
             aggregateProbability += probabilityOfAddCoveringIndex;
             boolean wantToAddCoveringIndex = !wantSomething && rndDouble < aggregateProbability;
+            wantSomething |= wantToAddCoveringIndex;
+
+            aggregateProbability += probabilityOfDropIndex;
+            boolean wantToDropIndex = !wantSomething && rndDouble < aggregateProbability;
 
             if (wantToRemoveColumn) {
                 RecordMetadata newTableMetadata = generateDropColumn(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
@@ -348,6 +356,8 @@ public class FuzzTransactionGenerator {
                 generateConvertPartitionToNative(transactionList, metaVersion, waitBarrierVersion++, lastTimestamp, rnd);
             } else if (wantToAddCoveringIndex) {
                 generateAddCoveringIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
+            } else if (wantToDropIndex) {
+                generateDropIndex(transactionList, metaVersion, waitBarrierVersion, rnd, meta);
             } else if (wantToAddNewColumn && getNonDeletedColumnCount(meta) < MAX_COLUMNS) {
                 meta = generateAddColumn(transactionList, metaVersion++, waitBarrierVersion++, rnd, meta);
             } else if (wantToChangeColumnType && FuzzChangeColumnTypeOperation.canChangeColumnType(meta)) {
@@ -533,6 +543,43 @@ public class FuzzTransactionGenerator {
 
         FuzzTransaction transaction = new FuzzTransaction();
         transaction.operationList.add(new FuzzAddCoveringIndexOperation(symCol, includeIndices, indexTypeName));
+        transaction.structureVersion = metadataVersion;
+        transaction.waitBarrierVersion = waitBarrierVersion;
+        transaction.rollback = true;
+        transactionList.add(transaction);
+    }
+
+    /**
+     * Drops the index of a symbol column and, five times in eight, indexes it again with BITMAP or a POSTING
+     * kind.
+     * The operation checks the index of the column when it runs, as the generator metadata does not
+     * follow the index changes.
+     */
+    private static void generateDropIndex(
+            ObjList<FuzzTransaction> transactionList, int metadataVersion, int waitBarrierVersion,
+            Rnd rnd, RecordMetadata meta
+    ) {
+        IntList symbolCols = new IntList();
+        for (int i = 0, n = meta.getColumnCount(); i < n; i++) {
+            int colType = meta.getColumnType(i);
+            if (colType > 0 && ColumnType.isSymbol(colType)) {
+                symbolCols.add(i);
+            }
+        }
+        if (symbolCols.size() == 0) {
+            return;
+        }
+        final int symCol = symbolCols.getQuick(rnd.nextInt(symbolCols.size()));
+        final String newIndexTypeName = switch (rnd.nextInt(8)) {
+            case 0, 1 -> "BITMAP";
+            case 2 -> "POSTING";
+            case 3 -> "POSTING DELTA";
+            case 4 -> "POSTING EF";
+            default -> null;
+        };
+
+        FuzzTransaction transaction = new FuzzTransaction();
+        transaction.operationList.add(new FuzzDropIndexOperation(symCol, newIndexTypeName));
         transaction.structureVersion = metadataVersion;
         transaction.waitBarrierVersion = waitBarrierVersion;
         transaction.rollback = true;
