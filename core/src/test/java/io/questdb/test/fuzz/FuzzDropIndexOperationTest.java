@@ -25,10 +25,16 @@
 package io.questdb.test.fuzz;
 
 import io.questdb.cairo.IndexType;
+import io.questdb.cairo.TableToken;
 import io.questdb.cairo.sql.TableMetadata;
+import io.questdb.cairo.sql.TableRecordMetadata;
+import io.questdb.std.ObjList;
+import io.questdb.std.Rnd;
 import io.questdb.test.AbstractCairoTest;
 import org.junit.Assert;
 import org.junit.Test;
+
+import java.util.TreeSet;
 
 public class FuzzDropIndexOperationTest extends AbstractCairoTest {
 
@@ -61,6 +67,92 @@ public class FuzzDropIndexOperationTest extends AbstractCairoTest {
                     .noLeakCheck()
                     .returns("s\tx\nb\t2\n");
         });
+    }
+
+    @Test
+    public void testGenerateSetEmitsDropIndexOperations() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (ts TIMESTAMP, x LONG, s SYMBOL INDEX TYPE POSTING) TIMESTAMP(ts) PARTITION BY DAY WAL");
+            drainWalQueue();
+            final TableToken tableToken = engine.verifyTableName("t");
+            try (
+                    TableRecordMetadata sequencerMetadata = engine.getLegacyMetadata(tableToken);
+                    TableMetadata tableMetadata = engine.getTableMetadata(tableToken)
+            ) {
+                // DROP INDEX the only kind of transaction: each one drops the index of s, the only symbol
+                // column, and indexes it again with one of the four index types or not at all
+                final ObjList<FuzzTransaction> transactions = generateSet(sequencerMetadata, tableMetadata, 1, 0);
+                Assert.assertEquals(100, transactions.size());
+                final TreeSet<String> newIndexTypeNames = new TreeSet<>();
+                for (int i = 0, n = transactions.size(); i < n; i++) {
+                    final FuzzTransaction transaction = transactions.getQuick(i);
+                    Assert.assertEquals(1, transaction.operationList.size());
+                    Assert.assertTrue(transaction.rollback);
+                    final FuzzDropIndexOperation operation = (FuzzDropIndexOperation) transaction.operationList.getQuick(0);
+                    Assert.assertEquals(2, operation.getSymbolColumnIndex());
+                    newIndexTypeNames.add(String.valueOf(operation.getNewIndexTypeName()));
+                }
+                Assert.assertEquals("[BITMAP, POSTING, POSTING DELTA, POSTING EF, null]", newIndexTypeNames.toString());
+
+                // with no DROP INDEX probability, the generator draws the transactions it drew before
+                // DROP INDEX existed: inserts only here
+                final ObjList<FuzzTransaction> inserts = generateSet(sequencerMetadata, tableMetadata, 0, 1);
+                Assert.assertTrue(inserts.size() > 0);
+                for (int i = 0, n = inserts.size(); i < n; i++) {
+                    final FuzzTransaction transaction = inserts.getQuick(i);
+                    for (int j = 0, m = transaction.operationList.size(); j < m; j++) {
+                        Assert.assertTrue(transaction.operationList.getQuick(j) instanceof FuzzInsertOperation);
+                    }
+                }
+            }
+        });
+    }
+
+    private static ObjList<FuzzTransaction> generateSet(
+            TableRecordMetadata sequencerMetadata,
+            TableMetadata tableMetadata,
+            double probabilityOfDropIndex,
+            double probabilityOfDataInsert
+    ) {
+        final long minTimestamp = 1_704_067_200_000_000L; // 2024-01-01
+        return FuzzTransactionGenerator.generateSet(
+                0,
+                sequencerMetadata,
+                tableMetadata,
+                new Rnd(42, 4242),
+                minTimestamp,
+                minTimestamp + 5 * 86_400_000_000L,
+                100,
+                100,
+                false,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                probabilityOfDataInsert,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                5,
+                new String[]{"a", "b", "c"},
+                (int) sequencerMetadata.getMetadataVersion(),
+                0,
+                0,
+                probabilityOfDropIndex,
+                0,
+                false
+        );
     }
 
     private static void assertIndexType(byte expectedIndexType) {
