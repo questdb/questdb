@@ -1065,6 +1065,112 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testVacuumPostingCoverInfoRemoveFails() throws Exception {
+        // VACUUM cannot remove the orphan .pci file of an old instance of s the first time, while it
+        // removes the orphan .pv and .pc files of that instance; the column purge job removes the .pci
+        // file on retry.
+        final AtomicReference<String> failingFile = new AtomicReference<>();
+        final AtomicInteger failedRemoveCount = new AtomicInteger();
+        assertMemoryLeak(newOrphanPurgeFilesFacade(new ArrayList<>(), failingFile, failedRemoveCount), () -> {
+            final StalePostingInstance stale = createStalePostingInstance();
+            final String coverInfoFile;
+            try (Path path = new Path()) {
+                coverInfoFile = fileName(PostingIndexUtils.coverInfoFileName(path.of(""), "s", stale.staleTxn));
+                path.of(configuration.getDbRoot()).concat(engine.verifyTableName("pt")).concat(stale.partitionDir).concat(coverInfoFile);
+                Assert.assertTrue(configuration.getFilesFacade().touch(path.$()));
+            }
+            Assert.assertEquals("s.pci." + stale.staleTxn, coverInfoFile);
+            failingFile.set(Files.SEPARATOR + coverInfoFile);
+
+            vacuumTablePt();
+            Assert.assertEquals(1, failedRemoveCount.get());
+            Assert.assertEquals(sortedFiles(stale.liveFiles, coverInfoFile), listFiles("pt", stale.partitionDir));
+
+            try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                runPurgeJob(purgeJob);
+                Assert.assertEquals(0, purgeJob.getOutstandingPurgeTasks());
+            }
+            Assert.assertEquals(1, failedRemoveCount.get());
+            Assert.assertEquals(stale.liveFiles, listFiles("pt", stale.partitionDir));
+            assertPostingRowsOfY("after the retry", true, stale.rowsOfY);
+        });
+    }
+
+    @Test
+    public void testVacuumPurgesOrphanCoverInfoFile() throws Exception {
+        // An orphan .pci file, the only file left of a stale instance of s, as an earlier version could
+        // leave it: s.pci.1 where s has the column name txn NONE, and s.pci where UPDATE moved s past
+        // NONE. VACUUM removes it from native and parquet partitions and from the default partition of a
+        // table that is not partitioned, without removing a directory, and keeps the live files.
+        final ArrayList<String> directoryRemovals = new ArrayList<>();
+        assertMemoryLeak(newOrphanPurgeFilesFacade(directoryRemovals, new AtomicReference<>(), new AtomicInteger()), () -> {
+            for (String walMode : WAL_MODES) {
+                for (String layout : new String[]{"DAY", "NONE", "PARQUET", "UPDATED"}) {
+                    if (layout.equals("NONE") && walMode.equals("WAL")) {
+                        // a WAL table is always partitioned
+                        continue;
+                    }
+                    final String context = walMode + ", " + layout;
+                    execute("DROP TABLE IF EXISTS pt");
+                    execute("CREATE TABLE pt (v INT, ts TIMESTAMP, s SYMBOL INDEX TYPE " + POSTING_INDEX_CLAUSES[0]
+                            + ", d DOUBLE, vc VARCHAR) TIMESTAMP(ts) PARTITION BY " + (layout.equals("NONE") ? "NONE " : "DAY ") + walMode);
+                    insertPostingRows();
+                    if (layout.equals("PARQUET")) {
+                        execute("ALTER TABLE pt CONVERT PARTITION TO PARQUET LIST '2024-01-01'");
+                        drainWalQueue();
+                    } else if (layout.equals("UPDATED")) {
+                        // rewrites s in 2024-01-01 with the same value; no reader, so the writer
+                        // removes the instance NONE there
+                        update("UPDATE pt SET s = 'x' WHERE v = 3");
+                        drainWalQueue();
+                    }
+                    final String[] partitionDirs = livePartitionDirs("pt");
+                    Assert.assertEquals(context, layout.equals("NONE") ? 1 : 2, partitionDirs.length);
+                    Assert.assertEquals(context, layout.equals("PARQUET"), listFiles("pt", partitionDirs[0]).contains("data.parquet"));
+                    // txn 1 is committed and is not the column name txn of s in any partition
+                    final long staleTxn = 1;
+                    Assert.assertTrue(context, getTableTxn() > staleTxn);
+                    final String[] liveFiles = new String[partitionDirs.length];
+                    final String[] orphanFiles = new String[partitionDirs.length];
+                    try (Path path = new Path()) {
+                        for (int i = 0; i < partitionDirs.length; i++) {
+                            final long columnNameTxn = getColumnNameTxn("pt", "s", i);
+                            if (layout.equals("UPDATED") && i == 0) {
+                                Assert.assertTrue(context, columnNameTxn > staleTxn);
+                            } else {
+                                Assert.assertEquals(context, TableUtils.COLUMN_NAME_TXN_NONE, columnNameTxn);
+                            }
+                            orphanFiles[i] = fileName(PostingIndexUtils.coverInfoFileName(
+                                    path.of(""), "s", columnNameTxn == TableUtils.COLUMN_NAME_TXN_NONE ? staleTxn : TableUtils.COLUMN_NAME_TXN_NONE
+                            ));
+                            liveFiles[i] = listFiles("pt", partitionDirs[i]);
+                            Assert.assertFalse(context + ", " + liveFiles[i], (" " + liveFiles[i] + " ").contains(" " + orphanFiles[i] + " "));
+                            path.of(configuration.getDbRoot()).concat(engine.verifyTableName("pt")).concat(partitionDirs[i]).concat(orphanFiles[i]);
+                            Assert.assertTrue(context, configuration.getFilesFacade().touch(path.$()));
+                            Assert.assertEquals(context, sortedFiles(liveFiles[i], orphanFiles[i]), listFiles("pt", partitionDirs[i]));
+                        }
+                    }
+                    Assert.assertEquals(context, layout.equals("UPDATED") ? "s.pci" : "s.pci.1", orphanFiles[0]);
+
+                    vacuumTablePt();
+                    Assert.assertEquals(context, "[]", directoryRemovals.toString());
+                    for (int i = 0; i < partitionDirs.length; i++) {
+                        Assert.assertEquals(context + ", " + partitionDirs[i], liveFiles[i], listFiles("pt", partitionDirs[i]));
+                    }
+                    try (ColumnPurgeJob purgeJob = createPurgeJob()) {
+                        runPurgeJob(purgeJob);
+                        Assert.assertEquals(context, 0, purgeJob.getOutstandingPurgeTasks());
+                    }
+                    for (int i = 0; i < partitionDirs.length; i++) {
+                        Assert.assertEquals(context + ", " + partitionDirs[i], liveFiles[i], listFiles("pt", partitionDirs[i]));
+                    }
+                    assertPostingRowsOfY(context, true, POSTING_ROWS_OF_Y);
+                }
+            }
+        });
+    }
+
+    @Test
     public void testVacuumPurgesOrphanIndexFilesOfEveryPartition() throws Exception {
         // UPDATE with an open reader leaves the old instance of each updated column in every partition.
         // The test then deletes the column file of each, and the .pk of s, so that only these remain:
@@ -1646,7 +1752,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
             Assert.assertTrue(configuration.getFilesFacade().touch(path.trimTo(pathLen).concat(coverDataFile).$()));
         }
         Assert.assertEquals(sortedFiles(liveFiles, valueFile, coverDataFile), listFiles("pt", partitionDir));
-        return new StalePostingInstance(partitionDir, liveFiles, coverDataFile, """
+        return new StalePostingInstance(partitionDir, staleTxn, liveFiles, coverDataFile, """
                 ts\ts\td\tvc
                 2024-01-01T00:00:00.000000Z\ty\t1.5\ta1
                 2024-01-01T01:00:00.000000Z\ty\t2.5\ta2
@@ -1697,7 +1803,7 @@ public class VacuumColumnVersionTest extends AbstractCairoTest {
         }
     }
 
-    private record StalePostingInstance(String partitionDir, String liveFiles, String coverDataFile, String rowsOfY) {
+    private record StalePostingInstance(String partitionDir, long staleTxn, String liveFiles, String coverDataFile, String rowsOfY) {
     }
 
     private record OrphanIndexFiles(String[] partitionDirs, String[] liveFiles) {
