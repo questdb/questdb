@@ -893,6 +893,20 @@ public class SqlOptimiser implements Mutable {
                 || isCurrentTimestampKeyword(token);
     }
 
+    private static boolean isWindowJoinChain(IQueryModel model) {
+        final ObjList<IQueryModel> joinModels = model.getJoinModels();
+        boolean hasWindowJoin = false;
+        for (int i = 1, n = joinModels.size(); i < n; i++) {
+            if (joinModels.getQuick(i).getJoinType() == IQueryModel.JOIN_WINDOW) {
+                if (hasWindowJoin) {
+                    return true;
+                }
+                hasWindowJoin = true;
+            }
+        }
+        return false;
+    }
+
     private static void linkDependencies(IQueryModel model, int parent, int child) {
         model.getJoinModels().getQuick(parent).addDependency(child);
     }
@@ -12759,6 +12773,7 @@ public class SqlOptimiser implements Mutable {
         if (isWindowJoin) {
             rewriteStatus |= REWRITE_STATUS_USE_WINDOW_JOIN_MODE;
         }
+        final boolean isWindowJoinChain = isWindowJoin && isWindowJoinChain(baseModel);
         final boolean isHorizonJoin = isHorizonJoin(baseModel);
         if (isHorizonJoin) {
             rewriteStatus |= REWRITE_STATUS_USE_HORIZON_JOIN_MODE;
@@ -12841,7 +12856,7 @@ public class SqlOptimiser implements Mutable {
 
                         // aggregates cannot yet reference the projection, they have to reference the columns from
                         // the underlying table(s) or sub-queries
-                        ExpressionNode repl = rewriteAggregate(qc.getAst(), baseModel, sqlExecutionContext);
+                        ExpressionNode repl = isWindowJoinChain ? qc.getAst() : rewriteAggregate(qc.getAst(), baseModel, sqlExecutionContext);
                         if (repl == qc.getAst()) { // no rewrite
                             // use pre-computed duplicate detection result
                             if (hasDuplicateAggregates) {

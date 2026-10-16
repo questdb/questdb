@@ -804,6 +804,18 @@ public class GroupByRewriteTest extends AbstractCairoTest {
             }
             execute("CREATE TABLE c AS (SELECT sym FROM g GROUP BY sym ORDER BY SUM(x * :k) DESC)");
             assertQuery("c").noLeakCheck().expectSize().returns(descending);
+
+            execute("CREATE TABLE w (x INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO w VALUES (1, '2024-01-01'), (1, '2024-01-02'), (2, '2024-01-03')");
+            for (String orderBy : new String[]{"row_number() OVER (ORDER BY ts) * 2", "rank() OVER (ORDER BY ts) + 1"}) {
+                assertQuery("SELECT DISTINCT x, rank() OVER (ORDER BY ts) r FROM w ORDER BY " + orderBy + " DESC")
+                        .noLeakCheck().expectSize().returns("""
+                                x\tr
+                                2\t3
+                                1\t2
+                                1\t1
+                                """);
+            }
         });
     }
 
@@ -883,6 +895,42 @@ public class GroupByRewriteTest extends AbstractCairoTest {
     }
 
     @Test
+    public void testSumShortColumnTop() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE t (k SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO t VALUES ('a', '2024-01-01T00:00:00.000000Z'), ('a', '2024-01-01T01:00:00.000000Z')");
+            execute("ALTER TABLE t ADD COLUMN x SHORT");
+            execute("INSERT INTO t (k, ts, x) VALUES ('b', '2024-01-02T00:00:00.000000Z', 5)");
+            execute("CREATE TABLE n (ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO n VALUES ('2024-01-01T00:00:00.000000Z'), ('2024-01-01T01:00:00.000000Z')");
+            execute("ALTER TABLE n ADD COLUMN k INT");
+            execute("ALTER TABLE n ADD COLUMN x SHORT");
+            execute("INSERT INTO n (ts, k, x) VALUES ('2024-01-02T00:00:00.000000Z', 7, 5)");
+            bindVariableService.setInt("k", 2);
+            final String select = "SELECT k, SUM(x * :k) a, SUM(x + :k) b, SUM(:k - x) c, SUM(x * -2) d, SUM(x) e FROM ";
+            assertQuery(select + "t GROUP BY k ORDER BY k")
+                    .noLeakCheck().expectSize().withPlanContaining("vectorized: true").returns("""
+                            k\ta\tb\tc\td\te
+                            a\t0\t4\t4\t0\t0
+                            b\t10\t7\t-3\t-10\t5
+                            """);
+            for (String[] agg : new String[][]{
+                    {"SUM(x * :k)", "0", "10"},
+                    {"SUM(x - :k)", "-4", "3"},
+                    {"SUM(x * -2)", "0", "-10"},
+                    {"SUM(x)", "0", "5"}
+            }) {
+                assertQuery("SELECT k, " + agg[0] + " s FROM n GROUP BY k ORDER BY k")
+                        .noLeakCheck().expectSize().withPlanContaining("vectorized: true").returns("""
+                                k\ts
+                                null\t%s
+                                7\t%s
+                                """.formatted(agg[1], agg[2]));
+            }
+        });
+    }
+
+    @Test
     public void testSumUntypedIndexedBind() throws Exception {
         assertMemoryLeak(() -> {
             execute("CREATE TABLE t (x SHORT)");
@@ -904,6 +952,12 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     s
                     2043016224
                     """);
+            // A recompilation sees the inferred type and moves the multiplication outside the aggregate.
+            assertQuery("SELECT SUM($1::INT * x) s FROM t")
+                    .noLeakCheck().noRandomAccess().expectSize().withPlanContaining("values: [sum(x)]").returns("""
+                            s
+                            27812820000
+                            """);
             assertUntypedBind("SELECT SUM((-$1)::INT * x) s FROM t", ColumnType.DOUBLE, "927094", """
                     s
                     -2043016224
@@ -912,15 +966,36 @@ public class GroupByRewriteTest extends AbstractCairoTest {
                     s\tm
                     20410\t2043016224
                     """);
-            // A recompilation sees the inferred type and moves the multiplication outside the aggregate.
-            bindVariableService.clear();
-            bindVariableService.setInt(0, 927_094);
-            try (RecordCursorFactory factory = select("SELECT SUM($1::INT * x) s FROM t")) {
-                assertFactory(factory).withContext(sqlExecutionContext)
-                        .noRandomAccess().expectSize().returns("""
-                                s
-                                27812820000
-                                """);
+        });
+    }
+
+    @Test
+    public void testSumWindowJoinChain() throws Exception {
+        assertMemoryLeak(() -> {
+            execute("CREATE TABLE tr (sym SYMBOL, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("CREATE TABLE pr (sym SYMBOL, b SHORT, i INT, ts TIMESTAMP) TIMESTAMP(ts) PARTITION BY DAY");
+            execute("INSERT INTO tr VALUES ('A', '2023-01-01T09:10:00.000000Z')");
+            execute("""
+                    INSERT INTO pr VALUES
+                    ('A', 1, 1, '2023-01-01T09:06:00.000000Z'),
+                    ('A', 1, 1, '2023-01-01T09:09:30.000000Z'),
+                    ('A', 1, 1, '2023-01-01T09:10:00.000000Z')
+                    """);
+            bindVariableService.setInt("k", 10);
+            for (boolean isParallel : new boolean[]{false, true}) {
+                sqlExecutionContext.setParallelWindowJoinEnabled(isParallel);
+                for (String operand : new String[]{"10", ":k", "-(-10)", "10::INT"}) {
+                    assertQuery("""
+                            SELECT t.ts, SUM(p.i * %1$s) s1, SUM(p.b + %1$s) s2, SUM(p1.b + %1$s) s3, SUM(p1.i - %1$s) s4
+                            FROM tr t
+                            WINDOW JOIN pr p ON (t.sym = p.sym) RANGE BETWEEN 1 MINUTE PRECEDING AND 1 MINUTE FOLLOWING EXCLUDE PREVAILING
+                            WINDOW JOIN pr p1 ON (t.sym = p1.sym) RANGE BETWEEN 5 MINUTE PRECEDING AND 5 MINUTE FOLLOWING EXCLUDE PREVAILING
+                            """.formatted(operand))
+                            .noLeakCheck().noRandomAccess().expectSize(!isParallel).timestamp("ts").returns("""
+                                    ts\ts1\ts2\ts3\ts4
+                                    2023-01-01T09:10:00.000000Z\t20\t22\t33\t-27
+                                    """);
+                }
             }
         });
     }
