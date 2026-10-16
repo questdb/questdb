@@ -27,24 +27,19 @@ package io.questdb.cairo.sql.async;
 import io.questdb.std.Mutable;
 
 /**
- * Lightweight task for unordered page frame reduction. Unlike {@link PageFrameReduceTask},
- * this task holds no off-heap resources — workers read the frame index and sequence reference,
- * then release the queue slot immediately. Per-frame resources live on the atom.
+ * Lightweight ticket for unordered page frame reduction. Unlike {@link PageFrameReduceTask},
+ * this task holds no off-heap resources and names no frame: a worker releases the queue slot,
+ * then claims the sequence's next unclaimed frame via {@link UnorderedPageFrameSequence#claimFrame(long)}.
+ * A ticket left over after the owner claimed every frame claims nothing and is dropped.
  */
 public class UnorderedPageFrameReduceTask implements Mutable {
-    private int frameIndex = -1;
     private UnorderedPageFrameSequence<?> frameSequence;
     private long frameSequenceId = -1;
 
     @Override
     public void clear() {
-        frameIndex = -1;
         frameSequence = null;
         frameSequenceId = -1;
-    }
-
-    public int getFrameIndex() {
-        return frameIndex;
     }
 
     public UnorderedPageFrameSequence<?> getFrameSequence() {
@@ -55,9 +50,8 @@ public class UnorderedPageFrameReduceTask implements Mutable {
         return frameSequenceId;
     }
 
-    public void of(UnorderedPageFrameSequence<?> seq, int frameIndex) {
+    public void of(UnorderedPageFrameSequence<?> seq) {
         this.frameSequence = seq;
         this.frameSequenceId = seq.getId();
-        this.frameIndex = frameIndex;
     }
 }
