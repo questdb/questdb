@@ -455,7 +455,8 @@ public class LateralJoinNullRejectionFuzzTest extends AbstractCairoTest {
             case "long" -> bindVariableService.setLong(0, value == null ? Numbers.LONG_NULL : (Long) value);
             case "double" -> bindVariableService.setDouble(0, value == null ? Double.NaN : (Double) value);
             case "timestamp" -> bindVariableService.setTimestamp(0, value == null ? Numbers.LONG_NULL : (Long) value);
-            case "timestamp_ns" -> bindVariableService.setTimestampNano(0, value == null ? Numbers.LONG_NULL : (Long) value);
+            case "timestamp_ns" ->
+                    bindVariableService.setTimestampNano(0, value == null ? Numbers.LONG_NULL : (Long) value);
             default -> bindVariableService.setStr(0, (String) value);
         }
     }
