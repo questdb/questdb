@@ -346,7 +346,9 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
     public void testDropAndViewChangeFlushFailureStopsTheEngine() throws Exception {
         // DROP TABLE and ALTER VIEW flush the sequencer log in the append (SYNC: msync, ADAPTIVE W=0: fdatasync) or
         // after it (ADAPTIVE W>0). A failed flush must stop the engine, as on the insert path. NOSYNC and ASYNC do not
-        // flush the log, so they never see the failure.
+        // flush the log in the append. Their DROP TABLE flushes it once, at the dropped table's clean sequencer close,
+        // where a failed flush is logged and fences the table: the statement succeeds and the engine keeps running.
+        // ALTER VIEW does not close its sequencer, so it does not flush.
         final String[][] modes = {
                 {"sync", "0"},
                 {"adaptive", "0"},
@@ -372,7 +374,9 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
                         execute("create view v" + i + " as (select ts, x from base_t" + i + ")");
                         final String sql = String.format(statement, i, i);
                         final String row = mode[0] + " W=" + mode[1] + ", " + sql + ": ";
-                        expected.append(row).append(flushes ? "engine stopped" : "no flush").append('\n');
+                        final String outcome = flushes ? "engine stopped"
+                                : statement.startsWith("drop") ? "flush failed, statement succeeded, engine runs" : "no flush";
+                        expected.append(row).append(outcome).append('\n');
                         actual.append(row).append(failNextLogFlush(ff, sql, "insert into base_t" + i + " values (1, 1, 1)")).append('\n');
                         engine.resetDurabilityFailure();
                         i++;
@@ -931,7 +935,11 @@ public class DurableFrontierTest extends AbstractCrashConsistencyTest {
             return thrown == null ? "no flush" : "no flush, failed: " + thrown;
         }
         if (thrown == null) {
-            return "flush failed, statement succeeded";
+            if (engine.isDurabilityFailed() || fatalCalls.get() != 0) {
+                return "flush failed, statement succeeded, engine stopped";
+            }
+            execute(nextWrite);
+            return "flush failed, statement succeeded, engine runs";
         }
         if (!engine.isDurabilityFailed() || fatalCalls.get() != 1) {
             return "flush failed, engine runs: " + thrown;
